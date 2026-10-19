@@ -1443,6 +1443,9 @@
             connMode = 'local';
             checkLiveStateNotifications(payload.state);
             appState = payload.state;
+            if (payload.state.personalLedger) {
+              mergePersonalLedger(payload.state.personalLedger);
+            }
             if (!sseSource) connectSse(bridgeBase);
             persistCache();
             renderAll();
@@ -1477,6 +1480,9 @@
           if (store?.state?.snapshot) {
             checkLiveStateNotifications(store.state.snapshot);
             appState = store.state.snapshot;
+          }
+          if (store?.personal_ledger && typeof store.personal_ledger === 'object') {
+            mergePersonalLedger(store.personal_ledger);
           }
           if (store?.threads && typeof store.threads === 'object') {
             mergeRemoteThreads(store.threads);
@@ -1806,7 +1812,7 @@
           <span class="pill-count amber">NEW</span>
         </div>
         <div class="meta-timestamp" style="color:var(--text-secondary);font-size:12.5px">
-          Get native lock-screen alerts when Antigravity or Claude Code needs 1-tap tool approval, finishes a background turn, or hits a quota window, plus daily workbench briefings.
+          Get native lock-screen alerts for maturing Payment Holds, timed reminders, Morning 50% baseline brief &amp; Evening 100-Point Scorecard check-in, plus 1-tap VS Code approvals.
         </div>
         <div class="push-banner-actions">
           <button type="button" class="btn-brass-sm" data-push-act="enable">
@@ -1843,7 +1849,7 @@
     const amHours = {
       6: '06:00',
       7: '07:00',
-      8: '08:00',
+      8: '08:30 / 08:00',
       9: '09:00',
       10: '10:00',
       11: '11:00',
@@ -1853,7 +1859,7 @@
       18: '18:00',
       19: '19:00',
       20: '20:00',
-      21: '21:00',
+      21: '21:30 / 21:00',
       22: '22:00'
     };
     const descText = iosNeedsInstall
@@ -1867,13 +1873,22 @@
         <div class="section-head" style="margin-bottom:0">
           <div>
             <div class="eyebrow">WEB PUSH NOTIFICATIONS</div>
-            <h2 class="section-title" style="font-size:17px;margin-top:2px">Lock-Screen Alerts &amp; Daily Briefings</h2>
+            <h2 class="section-title" style="font-size:17px;margin-top:2px">Lock-Screen Alerts, Payment Holds &amp; Daily 100% Briefings</h2>
             <div class="brass-rule-single"></div>
           </div>
           ${statusChip}
         </div>
         <div class="meta-timestamp" style="line-height:1.45">${esc(descText)}</div>
         <div class="push-pref-list">
+          <div class="push-pref-row">
+            <label class="push-pref-label">
+              <input type="checkbox" data-nf="paymentHolds" ${nf.paymentHolds !== false ? 'checked' : ''}>
+              <div class="push-pref-text">
+                <strong>Exact-time Payment Hold maturity &amp; timed reminder alerts</strong>
+                <span>Pings the moment a payment wait-timer matures or a scheduled reminder hits</span>
+              </div>
+            </label>
+          </div>
           <div class="push-pref-row">
             <label class="push-pref-label">
               <input type="checkbox" data-nf="approvals" ${nf.approvals !== false ? 'checked' : ''}>
@@ -1905,24 +1920,24 @@
             <label class="push-pref-label">
               <input type="checkbox" data-nf="morning" ${nf.morning !== false ? 'checked' : ''}>
               <div class="push-pref-text">
-                <strong>Morning Executive Command Pulse briefing</strong>
-                <span>Daily morning summary of active sessions, pending approvals, and quota readiness</span>
+                <strong>Morning Brief — Matured Payment Holds, Urgent Tasks &amp; 50% Starting Ledger</strong>
+                <span>Daily morning summary of matured payment holds, urgent tasks, and your 50% discipline baseline</span>
               </div>
             </label>
             <select class="push-hour-select tabular" data-nf="morningHour" aria-label="Morning briefing time">
-              ${renderHourOptions(amHours, nf.morningHour || 9)}
+              ${renderHourOptions(amHours, nf.morningHour || 8)}
             </select>
           </div>
           <div class="push-pref-row">
             <label class="push-pref-label">
               <input type="checkbox" data-nf="evening" ${nf.evening !== false ? 'checked' : ''}>
               <div class="push-pref-text">
-                <strong>Evening Uncommitted Git &amp; Open Workbench digest</strong>
-                <span>Daily evening summary of modified repositories, open tabs, and daily token burn</span>
+                <strong>Evening 100-Point Scorecard Check-In &amp; Workbench Digest</strong>
+                <span>Evening reminder to score today's 5 Do's &amp; 5 Don'ts plus dirty git repo digest</span>
               </div>
             </label>
             <select class="push-hour-select tabular" data-nf="eveningHour" aria-label="Evening digest time">
-              ${renderHourOptions(pmHours, nf.eveningHour || 20)}
+              ${renderHourOptions(pmHours, nf.eveningHour || 21)}
             </select>
           </div>
         </div>
@@ -1946,7 +1961,7 @@
 
   // Navigation switching
   function switchTab(tabName) {
-    const valid = ['pulse', 'sessions', 'chat', 'workspaces', 'analytics'];
+    const valid = ['pulse', 'discipline', 'sessions', 'chat', 'workspaces', 'analytics'];
     const target = valid.includes(tabName) ? tabName : 'pulse';
     prefs.activeTab = target;
     saveJson(STORAGE_KEYS.PREFS, prefs);
@@ -1962,7 +1977,9 @@
       btn.classList.toggle('active', btn.dataset.tab === target);
     });
 
-    if (target === 'chat') {
+    if (target === 'discipline') {
+      renderDisciplineView();
+    } else if (target === 'chat') {
       ensureSelectedThread();
       renderChatView();
       fetchThreadDetail(prefs.selectedThreadId);
@@ -1990,6 +2007,12 @@
     if (bannerEl) {
       bannerEl.innerHTML = renderPulseNotifBannerHtml();
     }
+    const discPulseEl = $('pulse-discipline-section');
+    if (discPulseEl) {
+      discPulseEl.innerHTML = renderPulseDisciplineSectionHtml();
+    }
+    updateDisciplineBadges();
+
     const rows = appState?.rows || [];
     const approvals = appState?.approvals || [];
     const activeTotal = rows.filter((r) => r.id && !r.archived).length;
@@ -2958,11 +2981,967 @@
     }
   }
 
+  // ---------- Daily 100-Point Discipline & Smart Reminders Views ----------
+  function getActiveRemindersSummary(nowMs = Date.now()) {
+    const all = (personalLedger.reminders || []).filter((r) => r && !r.deleted);
+    const active = all.filter((r) => !r.completed);
+    const completed = all.filter((r) => r.completed);
+    let maturedCount = 0;
+    let holdingCount = 0;
+    let dueTodayCount = 0;
+    let nextHoldItem = null;
+
+    const endOfToday = new Date();
+    endOfToday.setHours(23, 59, 59, 999);
+    const eodMs = endOfToday.getTime();
+
+    for (const item of active) {
+      const b = classifyReminderBucket(item, nowMs);
+      const tMs = Number(item.matureAt || item.dueAt || 0);
+      if (b === 'urgent_matured') {
+        maturedCount++;
+      } else if (b === 'holding') {
+        holdingCount++;
+        if (tMs && (!nextHoldItem || tMs < Number(nextHoldItem.matureAt || nextHoldItem.dueAt || Infinity))) {
+          nextHoldItem = item;
+        }
+      } else if (b === 'today' || (tMs && tMs <= eodMs)) {
+        dueTodayCount++;
+      }
+    }
+
+    return {
+      all,
+      active,
+      completed,
+      maturedCount,
+      holdingCount,
+      dueTodayCount,
+      urgentTotal: maturedCount + dueTodayCount,
+      nextHoldItem
+    };
+  }
+
+  function updateDisciplineBadges() {
+    const todayDisc = computeDayDiscipline(localIsoDate());
+    const remSum = getActiveRemindersSummary();
+    const railBadge = $('badge-discipline');
+    const dockBadge = $('dock-badge-discipline');
+
+    const label = remSum.maturedCount > 0 ? `${remSum.maturedCount}!` : `${todayDisc.score}%`;
+    if (railBadge) {
+      railBadge.textContent = label;
+      railBadge.classList.toggle('alert', remSum.maturedCount > 0 || todayDisc.score < 50);
+    }
+    if (dockBadge) {
+      dockBadge.textContent = label;
+      dockBadge.hidden = false;
+      dockBadge.classList.toggle('alert', remSum.maturedCount > 0 || todayDisc.score < 50);
+    }
+  }
+
+  function renderPulseDisciplineSectionHtml() {
+    const todayIso = localIsoDate();
+    const d = computeDayDiscipline(todayIso);
+    const remSum = getActiveRemindersSummary();
+    const scoreColor =
+      d.tone === 'emerald'
+        ? 'var(--emerald)'
+        : d.tone === 'brass'
+          ? 'var(--brass)'
+          : d.tone === 'amber'
+            ? 'var(--amber)'
+            : 'var(--crimson)';
+    const deltaSign = d.deltaFromStart > 0 ? `+${d.deltaFromStart}%` : `${d.deltaFromStart}%`;
+
+    const maturedItems = remSum.active
+      .filter((r) => classifyReminderBucket(r) === 'urgent_matured')
+      .slice(0, 2);
+    const holdingItems = remSum.active
+      .filter((r) => classifyReminderBucket(r) === 'holding')
+      .sort((a, b) => Number(a.matureAt || a.dueAt || 0) - Number(b.matureAt || b.dueAt || 0))
+      .slice(0, 2);
+
+    return `
+      <div class="pulse-disc-grid">
+        <div class="pulse-disc-card" data-goto-tab="discipline">
+          <div>
+            <div class="eyebrow">DAILY 100-POINT DISCIPLINE · TODAY</div>
+            <div class="pulse-disc-score-row" style="margin-top:4px">
+              <div class="pulse-disc-big tabular" style="color:${scoreColor}">${d.score}%</div>
+              <div>
+                <div style="font-size:12px;font-weight:700;color:var(--text-primary)">
+                  Starts at 50% · <span class="mono" style="color:${scoreColor}">${deltaSign} net</span>
+                </div>
+                <div class="meta-timestamp">
+                  Do's: <strong style="color:var(--emerald)">+${d.doEarned}%</strong> (${d.doFullCount} full, ${d.doHalfCount} half) · Don'ts: <strong style="color:${d.dontLost > 0 ? 'var(--crimson)' : 'var(--text-secondary)'}">-${d.dontLost}%</strong> (${d.dontCleanCount}/5 clean)
+                </div>
+              </div>
+            </div>
+            <div class="disc-bar-track" style="margin-top:8px">
+              <div class="disc-bar-midline" title="50% Starting Baseline"></div>
+              <div class="disc-bar-fill" style="width:${d.score}%;background:${scoreColor}"></div>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+            <span class="chip-btn active" style="pointer-events:none">Score Today →</span>
+          </div>
+        </div>
+
+        <div class="pulse-disc-card" data-goto-tab="discipline">
+          <div style="min-width:0;flex:1">
+            <div class="eyebrow">PAYMENT WAIT-TIMERS &amp; SMART REMINDERS</div>
+            <div style="display:flex;gap:14px;align-items:baseline;margin-top:4px;flex-wrap:wrap">
+              <div>
+                <span class="pulse-disc-big tabular" style="font-size:24px;color:${remSum.maturedCount > 0 ? 'var(--amber)' : 'var(--text-primary)'}">${remSum.maturedCount}</span>
+                <span class="meta-timestamp"> matured / ready</span>
+              </div>
+              <div>
+                <span class="pulse-disc-big tabular" style="font-size:24px;color:var(--brass)">${remSum.holdingCount}</span>
+                <span class="meta-timestamp"> cooling off</span>
+              </div>
+              <div>
+                <span class="pulse-disc-big tabular" style="font-size:24px;color:var(--steel)">${remSum.active.length}</span>
+                <span class="meta-timestamp"> active total</span>
+              </div>
+            </div>
+            <div class="meta-timestamp" style="margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+              ${
+                maturedItems.length
+                  ? `🔥 Ready: <strong>${esc(maturedItems[0].title)}</strong>${maturedItems[0].amount ? ` ($${fmtInt(maturedItems[0].amount)})` : ''}`
+                  : holdingItems.length
+                    ? `⏳ Next hold: <strong>${esc(holdingItems[0].title)}</strong> (${formatHoldCountdown(holdingItems[0].matureAt || holdingItems[0].dueAt)})`
+                    : `No active payment holds — tap to add a payment wait-timer or task.`
+              }
+            </div>
+          </div>
+          <div>
+            <span class="chip-btn" style="pointer-events:none">+ Hold / Task →</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderWaitAdvisorInnerHtml() {
+    const cat = detectRelevanceCategory(remDraft.title, remDraft.kind, remDraft.categoryOverride);
+    const sug = suggestPaymentWait(remDraft.title, remDraft.amount);
+    const targetInfo = computeTargetTimestampFromChoice(
+      remDraft.waitChoice,
+      remDraft.title,
+      remDraft.amount
+    );
+    const targetDateStr = new Date(targetInfo.targetMs).toLocaleString([], {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    const isPaymentOrWait = remDraft.kind === 'payment' || remDraft.kind === 'wait';
+    const isRecurring = remDraft.kind === 'recurring';
+
+    const waitChips = isPaymentOrWait
+      ? [
+          { k: 'auto', lbl: `✨ Auto (${sug.waitDays}d)` },
+          { k: '1d', lbl: '+24h' },
+          { k: '2d', lbl: '+2d' },
+          { k: '3d', lbl: '+3d' },
+          { k: '4d', lbl: '+4d' },
+          { k: '7d', lbl: '+7d' },
+          { k: '10d', lbl: '+10d' },
+          { k: 'nextmon', lbl: 'Next Mon' }
+        ]
+      : [
+          { k: '1h', lbl: 'In 1h' },
+          { k: '3h', lbl: 'In 3h' },
+          { k: 'tonight', lbl: 'Tonight 20:30' },
+          { k: '1d', lbl: 'Tomorrow' },
+          { k: '2d', lbl: '+2d' },
+          { k: '3d', lbl: '+3d' },
+          { k: '7d', lbl: '+7d' },
+          { k: 'nextmon', lbl: 'Next Mon' }
+        ];
+
+    const recurChips = [
+      { k: 'daily', lbl: '🔁 Daily' },
+      { k: 'weekdays', lbl: '🏢 Weekdays (Mon–Fri)' },
+      { k: 'weekly', lbl: '📅 Weekly' },
+      { k: 'monthly', lbl: '🗓️ Monthly' }
+    ];
+
+    return `
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--brass)">
+            ${
+              remDraft.kind === 'payment'
+                ? `💸 Payment Hold Advisor · ${esc(sug.tier)}`
+                : remDraft.kind === 'wait'
+                  ? `⏳ Cooling-Off Wait Timer · ${esc(targetInfo.label)}`
+                  : remDraft.kind === 'recurring'
+                    ? `🔁 Recurring Routine Cadence`
+                    : `⏰ Smart Task Timing · ${esc(targetInfo.label)}`
+            }
+          </div>
+          <div class="meta-timestamp" style="margin-top:2px">
+            ${
+              remDraft.kind === 'payment'
+                ? esc(sug.reason)
+                : remDraft.kind === 'wait'
+                  ? 'Deliberate pause before committing or replying — you will get a push when the wait expires.'
+                  : remDraft.kind === 'recurring'
+                    ? 'Completing a recurring reminder automatically rolls it forward to the next cycle.'
+                    : 'Auto-grouped by urgency and BHFIRMS company relevance.'
+            }
+          </div>
+        </div>
+        <span class="rem-badge cat" id="rem-auto-cat-chip" title="Auto-detected relevance group">${cat.icon} ${esc(cat.label)}</span>
+      </div>
+
+      <div class="wait-chip-row">
+        ${waitChips
+          .map(
+            (c) => `
+          <button type="button" class="wait-chip ${remDraft.waitChoice === c.k ? 'active' : ''}" data-wait-choice="${c.k}">
+            ${esc(c.lbl)}
+          </button>
+        `
+          )
+          .join('')}
+      </div>
+
+      ${
+        isRecurring
+          ? `
+        <div class="wait-chip-row" style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--border-subtle)">
+          <span class="meta-timestamp" style="align-self:center;margin-right:4px">Repeat:</span>
+          ${recurChips
+            .map(
+              (rc) => `
+            <button type="button" class="wait-chip ${remDraft.recur === rc.k ? 'active' : ''}" data-recur-choice="${rc.k}">
+              ${esc(rc.lbl)}
+            </button>
+          `
+            )
+            .join('')}
+        </div>
+      `
+          : ''
+      }
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:6px;border-top:1px solid var(--border-subtle);flex-wrap:wrap;gap:6px">
+        <span class="meta-timestamp">
+          🔔 Push &amp; Maturity Target: <strong class="mono" style="color:var(--text-primary)">${esc(targetDateStr)}</strong>
+        </span>
+        <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
+          <span class="meta-timestamp" style="font-size:10.5px">Group:</span>
+          <button type="button" class="wait-chip ${!remDraft.categoryOverride ? 'active' : ''}" style="padding:2px 7px;font-size:10.5px" data-cat-override="">Auto</button>
+          ${Object.values(REM_CATEGORIES)
+            .map(
+              (c) => `
+            <button type="button" class="wait-chip ${remDraft.categoryOverride === c.id ? 'active' : ''}" style="padding:2px 7px;font-size:10.5px" data-cat-override="${c.id}" title="${esc(c.label)}">
+              ${c.icon}
+            </button>
+          `
+            )
+            .join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderReminderCardHtml(item, nowMs = Date.now()) {
+    const bucket = classifyReminderBucket(item, nowMs);
+    const cat =
+      REM_CATEGORIES[item.category] ||
+      detectRelevanceCategory(item.title, item.kind, item.category);
+    const targetMs = Number(item.matureAt || item.dueAt || 0);
+    const isHold = item.kind === 'payment' || item.kind === 'wait';
+    const isMatured = isHold && targetMs && nowMs >= targetMs && !item.completed;
+    const isHolding = isHold && targetMs && nowMs < targetMs && !item.completed;
+    const isOverdue = !isHold && targetMs && nowMs >= targetMs && !item.completed;
+
+    const cardStateClass = item.completed
+      ? 'completed'
+      : isMatured
+        ? 'matured'
+        : isHolding
+          ? 'holding'
+          : isOverdue
+            ? 'overdue'
+            : '';
+
+    const countdownTxt = formatHoldCountdown(targetMs, nowMs);
+    const targetFormatted = targetMs
+      ? new Date(targetMs).toLocaleString([], {
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        })
+      : '';
+
+    let progressPct = 0;
+    if (isHold && item.createdAt && targetMs > item.createdAt) {
+      progressPct = Math.max(
+        3,
+        Math.min(100, Math.round(((nowMs - item.createdAt) / (targetMs - item.createdAt)) * 100))
+      );
+    } else if (isMatured) {
+      progressPct = 100;
+    }
+
+    const kindBadge =
+      item.kind === 'payment'
+        ? `<span class="rem-badge ${isMatured ? 'matured' : 'hold'}">${isMatured ? '🔓 Hold Matured · Ready to Pay' : `⏳ Payment Hold · ${countdownTxt}`}</span>`
+        : item.kind === 'wait'
+          ? `<span class="rem-badge ${isMatured ? 'matured' : 'hold'}">${isMatured ? '🔓 Wait Complete' : `⏳ Cooling Off · ${countdownTxt}`}</span>`
+          : item.kind === 'recurring'
+            ? `<span class="rem-badge recur">🔁 ${esc(item.recur || 'daily')}</span>`
+            : `<span class="rem-badge ${isOverdue ? 'matured' : 'cat'}">⏰ ${esc(countdownTxt)}</span>`;
+
+    return `
+      <div class="rem-card ${cardStateClass}" data-rem-id="${esc(item.id)}">
+        <div class="rem-card-top">
+          <div style="min-width:0;flex:1">
+            <div class="rem-card-title">${esc(item.title)}</div>
+            <div class="rem-card-meta">
+              ${item.amount > 0 ? `<span class="rem-badge amt">$${fmtInt(item.amount)}</span>` : ''}
+              ${kindBadge}
+              <span class="rem-badge cat">${cat.icon} ${esc(cat.label)}</span>
+              ${targetFormatted ? `<span class="meta-timestamp">Target: ${esc(targetFormatted)}</span>` : ''}
+            </div>
+          </div>
+          <div class="rem-actions">
+            ${
+              !item.completed
+                ? `
+              <button type="button" class="rem-act-btn done" data-rem-act="done" data-rem-id="${esc(item.id)}">
+                ${item.kind === 'payment' ? '✓ Paid / Done' : item.kind === 'recurring' ? '✓ Complete & Roll' : '✓ Done'}
+              </button>
+              ${
+                isHold
+                  ? `
+                <button type="button" class="rem-act-btn" data-rem-act="wait2d" data-rem-id="${esc(item.id)}" title="Add 2 more days of cooling-off">+2d Hold</button>
+                <button type="button" class="rem-act-btn" data-rem-act="wait7d" data-rem-id="${esc(item.id)}" title="Add 7 more days of cooling-off">+7d</button>
+                ${
+                  isHolding
+                    ? `<button type="button" class="rem-act-btn" data-rem-act="release" data-rem-id="${esc(item.id)}" title="Release hold immediately">Release Now</button>`
+                    : ''
+                }
+              `
+                  : `
+                <button type="button" class="rem-act-btn" data-rem-act="wait1d" data-rem-id="${esc(item.id)}" title="Snooze 24 hours">+24h</button>
+              `
+              }
+            `
+                : `
+              <button type="button" class="rem-act-btn" data-rem-act="reopen" data-rem-id="${esc(item.id)}">↺ Reopen</button>
+            `
+            }
+            <button type="button" class="rem-act-btn" data-rem-act="delete" data-rem-id="${esc(item.id)}" title="Delete">✕</button>
+          </div>
+        </div>
+        ${
+          isHold && !item.completed
+            ? `
+          <div class="hold-progress-track" title="Hold elapsed: ${progressPct}%">
+            <div class="hold-progress-fill" style="width:${progressPct}%;background:${isMatured ? 'var(--emerald)' : 'var(--brass)'}"></div>
+          </div>
+        `
+            : ''
+        }
+      </div>
+    `;
+  }
+
+  function renderRemindersListHtml() {
+    const nowMs = Date.now();
+    const remSum = getActiveRemindersSummary(nowMs);
+    const groupMode = prefs.remGroupMode || 'urgency'; // 'urgency' | 'relevance'
+    const showDone = Boolean(prefs.remShowCompleted);
+
+    if (!remSum.active.length && (!showDone || !remSum.completed.length)) {
+      return `
+        <div class="empty-card" style="padding:28px;text-align:center">
+          <div style="font-size:15px;font-weight:700;color:var(--text-primary)">No Active Holds or Reminders</div>
+          <p class="meta-timestamp" style="max-width:460px;margin:6px auto 0">
+            When someone asks for a payment or action, drop it above. THEO calculates how long to hold based on amount &amp; urgency, groups it automatically, and pushes your phone when the wait matures.
+          </p>
+        </div>
+      `;
+    }
+
+    const groups = [];
+    if (groupMode === 'urgency') {
+      const buckets = [
+        {
+          id: 'urgent_matured',
+          title: '🔥 Action Required & Matured Payment Holds',
+          sub: 'Wait timer expired or due right now — ready to release or execute'
+        },
+        {
+          id: 'holding',
+          title: '⏳ Active Cooling-Off & Payment Holds (Wait Now)',
+          sub: 'Do not pay yet — let the timer run until maturity'
+        },
+        {
+          id: 'today',
+          title: '⚡ Due Today',
+          sub: 'Scheduled for completion before midnight'
+        },
+        {
+          id: 'recurring',
+          title: '🔁 Recurring Routines',
+          sub: 'Auto-advances to next cycle when marked done'
+        },
+        {
+          id: 'upcoming',
+          title: '📅 Upcoming & Backlog',
+          sub: 'Future scheduled tasks'
+        }
+      ];
+
+      for (const b of buckets) {
+        const items = remSum.active
+          .filter((r) => classifyReminderBucket(r, nowMs) === b.id)
+          .sort((x, y) => Number(x.matureAt || x.dueAt || 0) - Number(y.matureAt || y.dueAt || 0));
+        if (items.length) {
+          groups.push({ ...b, items });
+        }
+      }
+    } else {
+      for (const cat of Object.values(REM_CATEGORIES)) {
+        const items = remSum.active
+          .filter((r) => {
+            const c =
+              REM_CATEGORIES[r.category] ||
+              detectRelevanceCategory(r.title, r.kind, r.category);
+            return c.id === cat.id;
+          })
+          .sort((x, y) => Number(x.matureAt || x.dueAt || 0) - Number(y.matureAt || y.dueAt || 0));
+        if (items.length) {
+          groups.push({
+            id: cat.id,
+            title: `${cat.icon} ${cat.label}`,
+            sub: `${items.length} active item${items.length === 1 ? '' : 's'}`,
+            items
+          });
+        }
+      }
+    }
+
+    return `
+      <div class="rem-groups-grid">
+        ${groups
+          .map(
+            (g) => `
+          <div class="rem-group-block">
+            <div class="rem-group-hdr">
+              <div>
+                <div class="rem-group-title">${esc(g.title)}</div>
+                <div class="meta-timestamp" style="font-size:11px">${esc(g.sub || '')}</div>
+              </div>
+              <span class="chip-btn" style="pointer-events:none;font-size:11px;padding:2px 8px">${g.items.length}</span>
+            </div>
+            <div class="rem-list">
+              ${g.items.map((item) => renderReminderCardHtml(item, nowMs)).join('')}
+            </div>
+          </div>
+        `
+          )
+          .join('')}
+
+        ${
+          showDone && remSum.completed.length
+            ? `
+          <div class="rem-group-block">
+            <div class="rem-group-hdr">
+              <div class="rem-group-title">✓ Recently Completed (${remSum.completed.length})</div>
+              <button type="button" class="btn-ghost-sm" data-rem-act="clear-done" style="font-size:11px;padding:2px 8px">Clear Completed</button>
+            </div>
+            <div class="rem-list">
+              ${remSum.completed
+                .slice(0, 15)
+                .map((item) => renderReminderCardHtml(item, nowMs))
+                .join('')}
+            </div>
+          </div>
+        `
+            : ''
+        }
+      </div>
+    `;
+  }
+
+  function renderDisciplineView() {
+    const root = $('discipline-view-root');
+    if (!root) return;
+
+    const todayIso = localIsoDate();
+    if (!selectedScoreDate) selectedScoreDate = todayIso;
+    const curDisc = computeDayDiscipline(selectedScoreDate);
+    const isToday = selectedScoreDate === todayIso;
+
+    const scoreColor =
+      curDisc.tone === 'emerald'
+        ? 'var(--emerald)'
+        : curDisc.tone === 'brass'
+          ? 'var(--brass)'
+          : curDisc.tone === 'amber'
+            ? 'var(--amber)'
+            : 'var(--crimson)';
+    const deltaSign =
+      curDisc.deltaFromStart > 0 ? `+${curDisc.deltaFromStart}%` : `${curDisc.deltaFromStart}%`;
+
+    // Build 7-day trend array ending today
+    const historyDays = [];
+    let sevenDaySum = 0;
+    for (let i = 6; i >= 0; i--) {
+      const dt = new Date();
+      dt.setDate(dt.getDate() - i);
+      const iso = localIsoDate(dt);
+      const dayStat = computeDayDiscipline(iso);
+      sevenDaySum += dayStat.score;
+      const dayName =
+        i === 0
+          ? 'Today'
+          : dt.toLocaleDateString([], { weekday: 'short' });
+      historyDays.push({
+        iso,
+        label: dayName,
+        score: dayStat.score,
+        tone: dayStat.tone,
+        selected: iso === selectedScoreDate
+      });
+    }
+    const sevenDayAvg = Math.round(sevenDaySum / 7);
+    const remSum = getActiveRemindersSummary();
+    const groupMode = prefs.remGroupMode || 'urgency';
+
+    root.innerHTML = `
+      <!-- 1. Daily 100-Point Discipline Hero Banner -->
+      <div class="disc-hero-card">
+        <div class="disc-score-head">
+          <div>
+            <div class="eyebrow">DAILY 100-POINT PERSONAL DISCIPLINE LEDGER</div>
+            <div class="disc-score-big-wrap" style="margin-top:4px">
+              <div class="disc-score-big tabular" style="color:${scoreColor}">${curDisc.score}%</div>
+              <div class="disc-score-delta">
+                <span class="chip-btn active" style="pointer-events:none;font-size:11px;padding:2px 9px">
+                  Baseline 50% · ${deltaSign}
+                </span>
+                <span class="meta-timestamp">
+                  7-Day Avg: <strong class="mono">${sevenDayAvg}%</strong>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div class="disc-date-nav">
+            <button type="button" data-disc-date-act="prev" title="Previous day">‹ Prev</button>
+            <span class="disc-date-label mono">${isToday ? `Today · ${selectedScoreDate}` : selectedScoreDate}</span>
+            <button type="button" data-disc-date-act="today" ${isToday ? 'disabled style="opacity:0.4"' : ''}>Today</button>
+            <button type="button" data-disc-date-act="next" ${isToday ? 'disabled style="opacity:0.4"' : ''} title="Next day">Next ›</button>
+          </div>
+        </div>
+
+        <div class="disc-bar-track">
+          <div class="disc-bar-midline" title="50% Day-Start Baseline (All 5 Don'ts Intact)"></div>
+          <div class="disc-bar-fill" style="width:${curDisc.score}%;background:${scoreColor}"></div>
+        </div>
+
+        <div class="disc-formula-pills">
+          <span class="disc-pill">🛡️ Day Start: <strong>50%</strong> (5 Don'ts intact)</span>
+          <span class="disc-pill good">⚡ 5 Do's Earned: <strong>+${curDisc.doEarned}%</strong> / +50%</span>
+          <span class="disc-pill ${curDisc.dontLost > 0 ? 'bad' : ''}">🚫 5 Don'ts Penalties: <strong>-${curDisc.dontLost}%</strong> (${curDisc.dontKept}% kept)</span>
+          <button type="button" class="btn-ghost-sm" data-disc-date-act="reset-day" style="margin-left:auto;font-size:11px;padding:3px 9px">Reset ${isToday ? 'Today' : selectedScoreDate} to 50%</button>
+        </div>
+
+        <!-- 7-Day Spark Strip -->
+        <div class="disc-history-strip">
+          ${historyDays
+            .map((hd) => {
+              const c =
+                hd.tone === 'emerald'
+                  ? 'var(--emerald)'
+                  : hd.tone === 'brass'
+                    ? 'var(--brass)'
+                    : hd.tone === 'amber'
+                      ? 'var(--amber)'
+                      : 'var(--crimson)';
+              return `
+                <div class="disc-day-cell ${hd.selected ? 'today' : ''}" data-disc-pick-date="${hd.iso}">
+                  <div class="disc-day-lbl">${esc(hd.label)}</div>
+                  <div class="disc-day-val tabular" style="color:${c}">${hd.score}%</div>
+                  <div class="disc-day-mini-bar">
+                    <div class="disc-day-mini-fill" style="width:${hd.score}%;background:${c}"></div>
+                  </div>
+                </div>
+              `;
+            })
+            .join('')}
+        </div>
+      </div>
+
+      <!-- 2. Two-Column 5 DO'S (+50%) & 5 DON'TS (50% Shield) -->
+      <div class="disc-top-grid">
+        <!-- 5 DO'S -->
+        <div class="disc-col-card">
+          <div class="disc-col-hdr">
+            <div>
+              <div class="disc-col-title" style="color:var(--emerald)">✅ The 5 Daily Do's (+10% Full · +5% Partial)</div>
+              <div class="meta-timestamp">Build momentum upward from your 50% baseline</div>
+            </div>
+            <span class="chip-btn active" style="pointer-events:none">+${curDisc.doEarned}% / 50%</span>
+          </div>
+
+          <div class="habit-list">
+            ${DAILY_DOS.map((item) => {
+              const st = curDisc.dos[item.id] || 'none';
+              return `
+                <div class="habit-row">
+                  <div class="habit-info">
+                    <span class="habit-icon">${item.icon}</span>
+                    <div style="min-width:0">
+                      <div class="habit-name">${esc(item.label)}</div>
+                      <div class="habit-sub">${esc(item.sub)}</div>
+                    </div>
+                  </div>
+                  <div class="habit-btn-group">
+                    <button type="button" class="habit-btn ${st === 'none' ? 'active-neutral' : ''}" data-habit-group="do" data-habit-id="${item.id}" data-habit-val="none">0%</button>
+                    <button type="button" class="habit-btn ${st === 'half' ? 'active-do-half' : ''}" data-habit-group="do" data-habit-id="${item.id}" data-habit-val="half">+5% Half</button>
+                    <button type="button" class="habit-btn ${st === 'full' ? 'active-do-full' : ''}" data-habit-group="do" data-habit-id="${item.id}" data-habit-val="full">+10% Full</button>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+
+        <!-- 5 DON'TS -->
+        <div class="disc-col-card">
+          <div class="disc-col-hdr">
+            <div>
+              <div class="disc-col-title" style="color:var(--brass)">🛡️ The 5 Daily Don'ts (Start w/ 50% · -5% Half · -10% Slip)</div>
+              <div class="meta-timestamp">You start with all 50% intact — protect your shield</div>
+            </div>
+            <span class="chip-btn ${curDisc.dontLost > 0 ? '' : 'active'}" style="pointer-events:none;${curDisc.dontLost > 0 ? 'border-color:var(--crimson);color:var(--crimson)' : ''}">
+              ${curDisc.dontKept}% / 50% Kept
+            </span>
+          </div>
+
+          <div class="habit-list">
+            ${DAILY_DONTS.map((item) => {
+              const st = curDisc.donts[item.id] || 'clean';
+              return `
+                <div class="habit-row">
+                  <div class="habit-info">
+                    <span class="habit-icon">${item.icon}</span>
+                    <div style="min-width:0">
+                      <div class="habit-name">${esc(item.label)}</div>
+                      <div class="habit-sub">${esc(item.sub)}</div>
+                    </div>
+                  </div>
+                  <div class="habit-btn-group">
+                    <button type="button" class="habit-btn ${st === 'clean' ? 'active-dont-clean' : ''}" data-habit-group="dont" data-habit-id="${item.id}" data-habit-val="clean">10% Kept</button>
+                    <button type="button" class="habit-btn ${st === 'half' ? 'active-dont-half' : ''}" data-habit-group="dont" data-habit-id="${item.id}" data-habit-val="half">-5% Half</button>
+                    <button type="button" class="habit-btn ${st === 'broken' ? 'active-dont-broke' : ''}" data-habit-group="dont" data-habit-id="${item.id}" data-habit-val="broken">-10% Slip</button>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. Smart Reminders & Payment Hold Wait-Timer Composer -->
+      <div class="rem-composer-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+          <div>
+            <div class="eyebrow">SMART REMINDERS &amp; PAYMENT WAIT-TIMER</div>
+            <h3 style="font-size:15px;font-weight:700;margin:2px 0 0">Add Payment Hold, Cooling-Off Wait, or Recurring Task</h3>
+          </div>
+          <div class="rem-type-seg">
+            <button type="button" class="${remDraft.kind === 'payment' ? 'active' : ''}" data-rem-kind="payment">💸 Payment Hold</button>
+            <button type="button" class="${remDraft.kind === 'wait' ? 'active' : ''}" data-rem-kind="wait">⏳ Wait / Cool-Off</button>
+            <button type="button" class="${remDraft.kind === 'task' ? 'active' : ''}" data-rem-kind="task">⚡ One-Off Task</button>
+            <button type="button" class="${remDraft.kind === 'recurring' ? 'active' : ''}" data-rem-kind="recurring">🔁 Recurring</button>
+          </div>
+        </div>
+
+        <form class="rem-composer-form" id="rem-composer-form">
+          <div class="rem-input-row">
+            <input
+              type="text"
+              class="rem-input"
+              id="rem-title-input"
+              value="${esc(remDraft.title)}"
+              placeholder="${
+                remDraft.kind === 'payment'
+                  ? 'e.g., Supplier concrete invoice for WTC / Resort kitchen advance…'
+                  : remDraft.kind === 'wait'
+                    ? 'e.g., Wait before replying to contractor quote / equipment offer…'
+                    : remDraft.kind === 'recurring'
+                      ? 'e.g., Review Resorts & Trading cash position / Check Brains sync…'
+                      : 'e.g., Call bank manager / Approve Blanca weekend roster…'
+              }"
+              autocomplete="off"
+            >
+            ${
+              remDraft.kind === 'payment'
+                ? `
+              <input
+                type="text"
+                inputmode="decimal"
+                class="rem-input rem-amt-input mono"
+                id="rem-amt-input"
+                value="${esc(remDraft.amount)}"
+                placeholder="$ Amount (optional)"
+                autocomplete="off"
+              >
+            `
+                : ''
+            }
+            <button type="submit" class="btn-brass-sm" style="padding:10px 16px;font-size:13px;white-space:nowrap">
+              ${
+                remDraft.kind === 'payment'
+                  ? '+ Start Payment Hold'
+                  : remDraft.kind === 'wait'
+                    ? '+ Start Wait Timer'
+                    : '+ Add Reminder'
+              }
+            </button>
+          </div>
+
+          <div class="wait-advisor-box" id="wait-advisor-live">
+            ${renderWaitAdvisorInnerHtml()}
+          </div>
+        </form>
+      </div>
+
+      <!-- 4. Auto-Grouping Controls & Active Reminders Stream -->
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span class="eyebrow">AUTO-GROUPED BY:</span>
+          <div class="seg-control">
+            <button type="button" class="seg-btn ${groupMode === 'urgency' ? 'active' : ''}" data-rem-group-mode="urgency">
+              🔥 Urgency &amp; Hold Maturity (${remSum.active.length})
+            </button>
+            <button type="button" class="seg-btn ${groupMode === 'relevance' ? 'active' : ''}" data-rem-group-mode="relevance">
+              🏢 Relevance / Company
+            </button>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:8px">
+          <button type="button" class="chip-btn ${prefs.remShowCompleted ? 'active' : ''}" data-rem-toggle-done="1">
+            ${prefs.remShowCompleted ? 'Hide' : 'Show'} Completed (${remSum.completed.length})
+          </button>
+        </div>
+      </div>
+
+      <div id="rem-list-live">
+        ${renderRemindersListHtml()}
+      </div>
+    `;
+  }
+
+  function addReminderFromDraft() {
+    const titleEl = $('rem-title-input');
+    const amtEl = $('rem-amt-input');
+    if (titleEl) remDraft.title = titleEl.value.trim();
+    if (amtEl) remDraft.amount = amtEl.value.trim();
+
+    if (!remDraft.title) {
+      showToast('Enter a payment request or reminder title first');
+      titleEl?.focus();
+      return;
+    }
+
+    const nowMs = Date.now();
+    const amount = parseAmountFromText(remDraft.title, remDraft.amount);
+    const cat = detectRelevanceCategory(remDraft.title, remDraft.kind, remDraft.categoryOverride);
+    const targetInfo = computeTargetTimestampFromChoice(
+      remDraft.waitChoice,
+      remDraft.title,
+      remDraft.amount
+    );
+
+    const newItem = {
+      id: `rem_${nowMs.toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+      title: remDraft.title,
+      kind: remDraft.kind || 'payment',
+      amount: amount > 0 ? amount : 0,
+      category: cat.id,
+      waitDays: targetInfo.waitDays,
+      waitLabel: targetInfo.label,
+      recur: remDraft.kind === 'recurring' ? remDraft.recur || 'daily' : '',
+      createdAt: nowMs,
+      updatedAt: nowMs,
+      matureAt:
+        remDraft.kind === 'payment' || remDraft.kind === 'wait' ? targetInfo.targetMs : 0,
+      dueAt: targetInfo.targetMs,
+      completed: false,
+      completedAt: 0
+    };
+
+    personalLedger.reminders.unshift(newItem);
+    personalLedger.updatedAt = nowMs;
+
+    // Reset draft inputs
+    remDraft.title = '';
+    remDraft.amount = '';
+    remDraft.waitChoice = 'auto';
+
+    haptic(15);
+    playChime('send');
+    persistAndSyncPersonalLedger();
+    scheduleExactReminderPush(newItem);
+    renderAll();
+
+    showToast(
+      newItem.kind === 'payment'
+        ? `💸 Payment Hold started (${targetInfo.label}) — Push scheduled`
+        : newItem.kind === 'wait'
+          ? `⏳ Cooling-off timer started (${targetInfo.label})`
+          : `⏰ Reminder added (${cat.label})`
+    );
+  }
+
+  function completeReminder(id) {
+    const item = (personalLedger.reminders || []).find((r) => r && r.id === id);
+    if (!item) return;
+    const nowMs = Date.now();
+
+    if (item.kind === 'recurring' && !item.completed) {
+      // Roll recurring task forward to its next cycle
+      let nextStepMs = 24 * 3600 * 1000;
+      if (item.recur === 'weekly') nextStepMs = 7 * 24 * 3600 * 1000;
+      else if (item.recur === 'monthly') nextStepMs = 30 * 24 * 3600 * 1000;
+      else if (item.recur === 'weekdays') {
+        const d = new Date();
+        const dow = d.getDay();
+        const addDays = dow === 5 ? 3 : dow === 6 ? 2 : 1;
+        nextStepMs = addDays * 24 * 3600 * 1000;
+      }
+      item.lastCompletedAt = nowMs;
+      item.dueAt = nowMs + nextStepMs;
+      item.matureAt = item.dueAt;
+      item.updatedAt = nowMs;
+      personalLedger.updatedAt = nowMs;
+      haptic(15);
+      playChime('approve');
+      persistAndSyncPersonalLedger();
+      scheduleExactReminderPush(item);
+      renderAll();
+      showToast(`🔁 Completed & rolled forward (${item.recur || 'daily'})`);
+      return;
+    }
+
+    item.completed = true;
+    item.completedAt = nowMs;
+    item.updatedAt = nowMs;
+    personalLedger.updatedAt = nowMs;
+    haptic(15);
+    playChime('approve');
+    cancelExactReminderPush(item.id);
+    persistAndSyncPersonalLedger();
+    renderAll();
+    showToast(item.kind === 'payment' ? '✓ Payment hold marked complete' : '✓ Reminder completed');
+  }
+
+  function reopenReminder(id) {
+    const item = (personalLedger.reminders || []).find((r) => r && r.id === id);
+    if (!item) return;
+    item.completed = false;
+    item.completedAt = 0;
+    item.updatedAt = Date.now();
+    personalLedger.updatedAt = Date.now();
+    persistAndSyncPersonalLedger();
+    renderAll();
+    showToast('↺ Reminder reopened');
+  }
+
+  function extendReminderHold(id, extraDays) {
+    const item = (personalLedger.reminders || []).find((r) => r && r.id === id);
+    if (!item) return;
+    const nowMs = Date.now();
+    const baseMs = Math.max(nowMs, Number(item.matureAt || item.dueAt || nowMs));
+    const nextMs = baseMs + extraDays * 24 * 3600 * 1000;
+    item.matureAt = nextMs;
+    item.dueAt = nextMs;
+    item.waitDays = Number(item.waitDays || 0) + extraDays;
+    item.updatedAt = nowMs;
+    personalLedger.updatedAt = nowMs;
+    alertedReminderIds.delete(item.id);
+    haptic(10);
+    persistAndSyncPersonalLedger();
+    scheduleExactReminderPush(item);
+    renderAll();
+    showToast(`⏳ Extended wait by +${extraDays}d`);
+  }
+
+  function releaseReminderHoldNow(id) {
+    const item = (personalLedger.reminders || []).find((r) => r && r.id === id);
+    if (!item) return;
+    const nowMs = Date.now();
+    item.matureAt = nowMs - 1000;
+    item.dueAt = nowMs - 1000;
+    item.updatedAt = nowMs;
+    personalLedger.updatedAt = nowMs;
+    haptic(12);
+    cancelExactReminderPush(item.id);
+    persistAndSyncPersonalLedger();
+    renderAll();
+    showToast('🔓 Hold released — moved to Action Required');
+  }
+
+  function deleteReminder(id) {
+    const item = (personalLedger.reminders || []).find((r) => r && r.id === id);
+    if (!item) return;
+    item.deleted = true;
+    item.updatedAt = Date.now();
+    personalLedger.updatedAt = Date.now();
+    cancelExactReminderPush(item.id);
+    persistAndSyncPersonalLedger();
+    renderAll();
+    showToast('Reminder removed');
+  }
+
+  function clearCompletedReminders() {
+    const nowMs = Date.now();
+    for (const r of personalLedger.reminders || []) {
+      if (r && r.completed && !r.deleted) {
+        r.deleted = true;
+        r.updatedAt = nowMs;
+      }
+    }
+    personalLedger.updatedAt = nowMs;
+    persistAndSyncPersonalLedger();
+    renderAll();
+    showToast('Cleared completed items');
+  }
+
+  function stepScoreDate(deltaDays) {
+    const parts = String(selectedScoreDate || localIsoDate()).split('-').map(Number);
+    const dt = new Date(parts[0], (parts[1] || 1) - 1, parts[2] || 1);
+    dt.setDate(dt.getDate() + deltaDays);
+    const nextIso = localIsoDate(dt);
+    const todayIso = localIsoDate();
+    selectedScoreDate = nextIso > todayIso ? todayIso : nextIso;
+    renderDisciplineView();
+  }
+
   function renderAll() {
     updateConnectionBanner();
     renderOutboxBadge();
+    updateDisciplineBadges();
     renderPulseView();
     renderSessionsView();
+    if (prefs.activeTab === 'discipline') renderDisciplineView();
     if (prefs.activeTab === 'chat') renderChatView();
     if (prefs.activeTab === 'workspaces') renderWorkspacesView();
     if (prefs.activeTab === 'analytics') renderAnalyticsView();
@@ -2988,7 +3967,10 @@
     const resEl = $('cmd-results');
     if (!resEl) return;
     const q = query.trim().toLowerCase();
+    const todayDisc = computeDayDiscipline(localIsoDate());
     const items = [
+      { title: `🎯 Open Daily 100% Discipline & Payment Holds (${todayDisc.score}% Today)`, sub: 'Personal Ledger', act: 'open-discipline' },
+      { title: '💸 New Payment Hold Wait-Timer', sub: 'Treasury Cooling-Off', act: 'new-payment-hold' },
       { title: '+ New Google Antigravity Session', sub: 'Action', act: 'new-agy' },
       { title: '+ New Claude Code Session', sub: 'Action', act: 'new-claude' },
       { title: 'Sync with VS Code & Cloud Relay Now', sub: 'Connectivity', act: 'sync' },
@@ -3073,7 +4055,140 @@
       }
     });
 
+    document.addEventListener('input', (e) => {
+      if (e.target.id === 'rem-title-input' || e.target.id === 'rem-amt-input') {
+        const tEl = $('rem-title-input');
+        const aEl = $('rem-amt-input');
+        if (tEl) remDraft.title = tEl.value;
+        if (aEl) remDraft.amount = aEl.value;
+        const adv = $('wait-advisor-live');
+        if (adv) adv.innerHTML = renderWaitAdvisorInnerHtml();
+      }
+    });
+
+    document.addEventListener('submit', (e) => {
+      if (e.target.id === 'rem-composer-form') {
+        e.preventDefault();
+        addReminderFromDraft();
+      }
+    });
+
     document.addEventListener('click', async (e) => {
+      // 1. Daily 100-Point Habit Buttons (5 Do's & 5 Don'ts)
+      const habitBtn = e.target.closest('[data-habit-group]');
+      if (habitBtn) {
+        haptic(12);
+        const group = habitBtn.dataset.habitGroup;
+        const habitId = habitBtn.dataset.habitId;
+        const val = habitBtn.dataset.habitVal;
+        setHabitState(selectedScoreDate || localIsoDate(), group, habitId, val);
+        const updated = computeDayDiscipline(selectedScoreDate || localIsoDate());
+        playChime(group === 'do' && val !== 'none' ? 'approve' : 'send');
+        showToast(`Daily Score: ${updated.score}% (Do's +${updated.doEarned}%, Don'ts -${updated.dontLost}%)`);
+        return;
+      }
+
+      // 2. Discipline Date Navigator & 7-Day Spark Strip
+      const pickDateEl = e.target.closest('[data-disc-pick-date]');
+      if (pickDateEl) {
+        selectedScoreDate = pickDateEl.dataset.discPickDate || localIsoDate();
+        renderDisciplineView();
+        return;
+      }
+
+      const dateActBtn = e.target.closest('[data-disc-date-act]');
+      if (dateActBtn) {
+        const act = dateActBtn.dataset.discDateAct;
+        if (act === 'prev') stepScoreDate(-1);
+        else if (act === 'next') stepScoreDate(1);
+        else if (act === 'today') {
+          selectedScoreDate = localIsoDate();
+          renderDisciplineView();
+        } else if (act === 'reset-day') {
+          const targetIso = selectedScoreDate || localIsoDate();
+          personalLedger.dailyScores[targetIso] = {
+            iso: targetIso,
+            dos: {},
+            donts: {},
+            updatedAt: Date.now()
+          };
+          personalLedger.updatedAt = Date.now();
+          persistAndSyncPersonalLedger();
+          renderAll();
+          showToast(`Reset ${targetIso} to 50% starting baseline`);
+        }
+        return;
+      }
+
+      // 3. Reminder Composer Mode & Wait Advisor Chips
+      const kindBtn = e.target.closest('[data-rem-kind]');
+      if (kindBtn) {
+        remDraft.kind = kindBtn.dataset.remKind;
+        if (remDraft.kind === 'payment' || remDraft.kind === 'wait') {
+          remDraft.waitChoice = 'auto';
+        } else if (remDraft.waitChoice === 'auto') {
+          remDraft.waitChoice = '1d';
+        }
+        renderDisciplineView();
+        $('rem-title-input')?.focus();
+        return;
+      }
+
+      const waitChip = e.target.closest('[data-wait-choice]');
+      if (waitChip) {
+        remDraft.waitChoice = waitChip.dataset.waitChoice;
+        const adv = $('wait-advisor-live');
+        if (adv) adv.innerHTML = renderWaitAdvisorInnerHtml();
+        return;
+      }
+
+      const recurChip = e.target.closest('[data-recur-choice]');
+      if (recurChip) {
+        remDraft.recur = recurChip.dataset.recurChoice;
+        const adv = $('wait-advisor-live');
+        if (adv) adv.innerHTML = renderWaitAdvisorInnerHtml();
+        return;
+      }
+
+      const catChip = e.target.closest('[data-cat-override]');
+      if (catChip) {
+        remDraft.categoryOverride = catChip.dataset.catOverride || '';
+        const adv = $('wait-advisor-live');
+        if (adv) adv.innerHTML = renderWaitAdvisorInnerHtml();
+        return;
+      }
+
+      const grpModeBtn = e.target.closest('[data-rem-group-mode]');
+      if (grpModeBtn) {
+        prefs.remGroupMode = grpModeBtn.dataset.remGroupMode;
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        renderDisciplineView();
+        return;
+      }
+
+      const toggleDoneBtn = e.target.closest('[data-rem-toggle-done]');
+      if (toggleDoneBtn) {
+        prefs.remShowCompleted = !prefs.remShowCompleted;
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        renderDisciplineView();
+        return;
+      }
+
+      const remActBtn = e.target.closest('[data-rem-act]');
+      if (remActBtn) {
+        const act = remActBtn.dataset.remAct;
+        const id = remActBtn.dataset.remId;
+        if (act === 'done') completeReminder(id);
+        else if (act === 'reopen') reopenReminder(id);
+        else if (act === 'wait1d') extendReminderHold(id, 1);
+        else if (act === 'wait2d') extendReminderHold(id, 2);
+        else if (act === 'wait7d') extendReminderHold(id, 7);
+        else if (act === 'release') releaseReminderHoldNow(id);
+        else if (act === 'delete') deleteReminder(id);
+        else if (act === 'clear-done') clearCompletedReminders();
+        return;
+      }
+
       const pushBtn = e.target.closest('[data-push-act]');
       if (pushBtn) {
         haptic(10);
@@ -3341,6 +4456,12 @@
           saveJson(STORAGE_KEYS.PREFS, prefs);
           switchTab('chat');
           fetchThreadDetail(tid);
+        } else if (act === 'open-discipline') {
+          switchTab('discipline');
+        } else if (act === 'new-payment-hold') {
+          remDraft.kind = 'payment';
+          switchTab('discipline');
+          setTimeout(() => $('rem-title-input')?.focus(), 40);
         } else if (act === 'new-agy') {
           prefs.composerMode = 'new-antigravity';
           switchTab('chat');
@@ -3518,10 +4639,10 @@
     }
 
     showToast(
-      res.mode === 'local'
-        ? `Sent to ${provider === 'claude' ? 'Claude Code' : 'Antigravity'} (Direct Bridge)`
-        : res.mode === 'cloud'
-          ? `Dispatched via THEO Cloud Relay`
+      res.mode === 'cloud'
+        ? `Dispatched via THEO Cloud Relay`
+        : res.mode === 'local'
+          ? `Sent to ${provider === 'claude' ? 'Claude Code' : 'Antigravity'} (Direct Bridge)`
           : `Queued in Outbox (will send when online)`
     );
   }
@@ -3581,10 +4702,12 @@
       switchTab(tabParam || prefs.activeTab || 'pulse');
     }
     renderAll();
+    checkDueRemindersTick();
     syncData();
     setInterval(() => {
       if (!document.hidden) syncData();
     }, 12000);
+    setInterval(checkDueRemindersTick, 15000);
     registerServiceWorker();
   }
 
