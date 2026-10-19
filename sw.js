@@ -1,10 +1,13 @@
-const CACHE_NAME = 'theo-remote-v6';
+/* THEO Remote PWA Service Worker, v8 (2026-10-19).
+   App shell: network-first for HTML/JS/CSS, cache-first for static assets.
+   Web Push: RFC 8291 aes128gcm push listener + notificationclick focus/open + local SW notification fallback. */
+const CACHE_NAME = 'theo-remote-v8';
 const APP_SHELL = [
   './',
   './index.html',
-  './css/theo.css?v=6',
-  './js/endpoints.js?v=6',
-  './js/app.js?v=6',
+  './css/theo.css?v=8',
+  './js/endpoints.js?v=8',
+  './js/app.js?v=8',
   './manifest.json',
   './icon.svg',
   './icon-180.png',
@@ -37,10 +40,93 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'SKIP_WAITING') {
-    self.skipWaiting();
+function buildNotifOptions(d) {
+  return {
+    body: d.body || 'Tap to open THEO Remote Workbench.',
+    icon: './icon-192.png',
+    badge: './icon-192.png',
+    tag: d.tag || 'theo-notif',
+    renotify: true,
+    vibrate: [180, 80, 180, 80, 260],
+    data: {
+      url: d.url || './',
+      tab: d.tab || 'pulse',
+      threadId: d.threadId || '',
+      provider: d.provider || ''
+    }
+  };
+}
+
+self.addEventListener('push', (event) => {
+  let d = {};
+  if (event.data) {
+    try {
+      d = event.data.json();
+    } catch {
+      try {
+        d = { title: 'THEO Workbench', body: event.data.text() };
+      } catch {}
+    }
   }
+  const title = d.title || 'THEO Workbench';
+  const opts = buildNotifOptions(d);
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      list.forEach((c) => {
+        try {
+          c.postMessage({ type: 'theo-push', payload: d });
+        } catch {}
+      });
+      return self.registration.showNotification(title, opts);
+    })
+  );
+});
+
+self.addEventListener('message', (event) => {
+  const m = event.data;
+  if (!m) return;
+  if (m.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+    return;
+  }
+  if (m.type === 'show-notification') {
+    const d = m.payload || {};
+    event.waitUntil(
+      self.registration.showNotification(d.title || 'THEO Workbench', buildNotifOptions(d))
+    );
+  }
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const data = (event.notification && event.notification.data) || {};
+  const targetTab = data.tab || (data.threadId ? 'chat' : 'pulse');
+  const qs = new URLSearchParams();
+  if (targetTab) qs.set('tab', targetTab);
+  if (data.threadId) qs.set('thread', data.threadId);
+  if (data.provider) qs.set('provider', data.provider);
+  const targetUrl = data.url && data.url !== './' ? data.url : `./?${qs.toString()}`;
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      for (const c of list) {
+        if ('focus' in c) {
+          try {
+            c.postMessage({
+              type: 'theo-nav',
+              tab: targetTab,
+              threadId: data.threadId || '',
+              provider: data.provider || ''
+            });
+          } catch {}
+          return c.focus();
+        }
+      }
+      if (self.clients.openWindow) {
+        return self.clients.openWindow(targetUrl);
+      }
+    })
+  );
 });
 
 self.addEventListener('fetch', (event) => {
@@ -73,14 +159,14 @@ self.addEventListener('fetch', (event) => {
           }
           return res;
         })
-        .catch(() => caches.match(req).then((r) => r || caches.match('./index.html')))
+        .catch(() => caches.match(req, { ignoreSearch: true }).then((r) => r || caches.match('./index.html', { ignoreSearch: true })))
     );
     return;
   }
 
   // Cache-first for icons/fonts/SVGs
   event.respondWith(
-    caches.match(req).then(
+    caches.match(req, { ignoreSearch: true }).then(
       (cached) =>
         cached ||
         fetch(req).then((res) => {

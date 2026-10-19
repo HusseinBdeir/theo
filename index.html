@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/theo.css?v=6">
+  <link rel="stylesheet" href="css/theo.css?v=8">
 </head>
 <body>
   <!-- Optional Security PIN Lock Overlay -->
@@ -92,6 +92,11 @@
           <svg class="nav-icon" viewBox="0 0 20 20"><path d="M2 10h3.5l2-5.5 4 11 2.5-5.5H18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span class="nav-label">Pulse &amp; Approvals</span>
           <span class="nav-badge amber tabular" id="badge-pulse" hidden>0</span>
+        </button>
+        <button type="button" class="nav-item" data-tab="discipline">
+          <svg class="nav-icon" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="1.65"/><path d="M10 6v4l2.8 2" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="nav-label">Reminders &amp; 100%</span>
+          <span class="nav-badge brass tabular" id="badge-discipline">50%</span>
         </button>
         <button type="button" class="nav-item" data-tab="sessions">
           <svg class="nav-icon" viewBox="0 0 20 20"><rect x="2.5" y="3.5" width="15" height="4" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="2.5" y="10" width="15" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
@@ -175,6 +180,12 @@
             </div>
             <div class="hero-kpis" id="pulse-kpis"></div>
           </div>
+
+          <!-- Home Screen Push Notification Banner -->
+          <div id="pulse-notif-banner"></div>
+
+          <!-- Daily 100-Point Score & Payment Holds / Urgent Reminders Summary -->
+          <div class="section-block" id="pulse-discipline-section"></div>
 
           <!-- 1-Tap Remote Approvals & Waiting Sessions -->
           <div class="section-block" id="approvals-section">
@@ -413,6 +424,9 @@
             <div class="brass-double-rule"></div>
           </div>
 
+          <!-- Web Push Notifications & Lock-Screen Alerts -->
+          <div class="section-block" id="push-settings-panel"></div>
+
           <!-- Remote Connectivity, QR Pairing & Security -->
           <div class="section-block ledger-panel">
             <div class="section-head">
@@ -424,6 +438,11 @@
             <div class="pairing-grid" id="pairing-grid"></div>
           </div>
         </section>
+
+        <!-- VIEW 6: REMINDERS, PAYMENT HOLDS & DAILY 100-POINT LEDGER -->
+        <section class="view-pane" id="view-discipline" data-view="discipline">
+          <div id="discipline-view-root"></div>
+        </section>
       </main>
 
       <!-- Mobile Docked Bottom Tab Bar -->
@@ -432,6 +451,11 @@
           <svg viewBox="0 0 20 20"><path d="M2 10h3.5l2-5.5 4 11 2.5-5.5H18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span>Pulse</span>
           <em class="dock-dot amber" id="dock-badge-pulse" hidden></em>
+        </button>
+        <button type="button" class="dock-btn" data-tab="discipline">
+          <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="1.65"/><path d="M10 6v4l2.8 2" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>Tasks·100</span>
+          <em class="dock-count tabular" id="dock-badge-discipline" hidden>50%</em>
         </button>
         <button type="button" class="dock-btn" data-tab="sessions">
           <svg viewBox="0 0 20 20"><rect x="2.5" y="3.5" width="15" height="4" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="2.5" y="10" width="15" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
@@ -483,7 +507,7 @@
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=6"></script>
-  <script src="js/app.js?v=6"></script>
+  <script src="js/endpoints.js?v=8"></script>
+  <script src="js/app.js?v=8"></script>
 </body>
 </html>

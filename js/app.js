@@ -5,8 +5,66 @@
     CACHE: 'theo_remote_cache_v1',
     PREFS: 'theo_remote_prefs_v1',
     OUTBOX: 'theo_remote_outbox_v1',
-    PIN: 'theo_remote_pin_v1'
+    PIN: 'theo_remote_pin_v1',
+    DEVID: 'theo_remote_devid_v1',
+    PUSH_HINT: 'theo_remote_pushhint_v1',
+    PERSONAL: 'theo_personal_ledger_v1'
   };
+
+  const DEFAULT_NOTIF = {
+    enabled: false,
+    approvals: true,
+    completed: true,
+    quota: true,
+    paymentHolds: true,
+    dailyScorecard: true,
+    morning: true,
+    morningHour: 8,
+    evening: true,
+    eveningHour: 21
+  };
+
+  // ---------- Daily 100-Point Discipline Ledger (5 Do's & 5 Don'ts · Starts at 50%) ----------
+  const DAILY_DOS = [
+    { id: 'wake', label: 'Waking up early', icon: '☀️', hint: 'Up on time & morning routine' },
+    { id: 'work', label: 'Work', icon: '💼', hint: 'Focused executive & ops output' },
+    { id: 'skills', label: 'Skills', icon: '🧠', hint: 'Deliberate learning & craft' },
+    { id: 'fitness', label: 'Fitness', icon: '💪', hint: 'Gym, calisthenics, football or padel' },
+    { id: 'social', label: 'Socializing', icon: '🤝', hint: 'Meaningful connection & presence' }
+  ];
+
+  const DAILY_DONTS = [
+    { id: 'games', label: 'Video games', icon: '🎮', hint: '10% held intact when avoided' },
+    { id: 'series', label: 'Series', icon: '📺', hint: '10% held intact when avoided' },
+    { id: 'music', label: 'Music', icon: '🎧', hint: '10% held intact when avoided' },
+    { id: 'socialmedia', label: 'Social media', icon: '📱', hint: '10% held intact when avoided' },
+    { id: 'nsfw', label: '18+ things', icon: '🚫', hint: '10% held intact when avoided' }
+  ];
+
+  // ---------- Automated Relevance / Domain Classifier ----------
+  const REM_CATEGORIES = {
+    payments: { id: 'payments', label: 'Payments & Treasury', icon: '💸', color: 'brass' },
+    hospitality: { id: 'hospitality', label: 'Hospitality · Resorts', icon: '🏖️', color: 'emerald' },
+    trading: { id: 'trading', label: 'Trading · Korri / Shacman', icon: '🚛', color: 'amber' },
+    manufacturing: { id: 'manufacturing', label: 'Manufacturing · WTC / BBC / Lions', icon: '🏗️', color: 'steel' },
+    realestate_ins: { id: 'realestate_ins', label: 'Real Estate & Insurance', icon: '🏢', color: 'steel' },
+    holding: { id: 'holding', label: 'Bdeir Holding & Finance', icon: '🏛️', color: 'brass' },
+    personal: { id: 'personal', label: 'Personal & Growth', icon: '🎯', color: 'emerald' }
+  };
+
+  const _VAPID = {
+    pub: 'BKAC6gWORFSoi6Yf7XuS3voZnBgflXmG1GzW0K1pt4hcNoY7FNYPK-Jn-gAghKvphbSM_-ieA6U8w0E9yEgKB68',
+    jwk: {
+      kty: 'EC',
+      crv: 'P-256',
+      x: 'oALqBY5EVKiLph_te5Le-hmcGB-VeYbUbNbQrWm3iFw',
+      y: 'NoY7FNYPK-Jn-gAghKvphbSM_-ieA6U8w0E9yEgKB68',
+      d: 'MS5ta1KAESpycusDW8d1NMaj3fxc_oNO_F0V23oh5aA',
+      ext: true
+    },
+    sub: 'mailto:hussein@bhfirms.com'
+  };
+  let _vapidSignKey = null;
 
   const PROVIDER_ICONS = {
     antigravity: `<svg viewBox="6 8 100 100" aria-hidden="true"><path d="M89.7 93.7C94.4 97.2 101.4 94.9 94.9 88.4C75.7 69.8 79.8 18.4 55.9 18.4C31.9 18.4 36 69.8 16.8 88.4C9.8 95.4 17.4 97.2 22 93.7C40.1 81.4 38.9 59.9 55.9 59.9C72.8 59.9 71.6 81.4 89.7 93.7Z" fill="#3186FF"/></svg>`,
@@ -80,8 +138,12 @@
     selectedRepoId: 'resort-operations',
     composerMode: 'reply',
     composerRepoPrefix: '',
-    customBridgeUrl: ''
+    customBridgeUrl: '',
+    remGroupBy: 'urgency',
+    remShowDone: false,
+    notif: { ...DEFAULT_NOTIF }
   });
+  prefs.notif = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
 
   const cachedStore = loadJson(STORAGE_KEYS.CACHE, {
     state: null,
@@ -99,7 +161,1109 @@
   let sseSource = null;
   let lastRenderedThreadId = '';
   let lastRenderedMsgCount = 0;
+  let pushSub = null;
+  let pushBusy = false;
+  let pushSyncTimer = null;
+  let statePrimed = false;
+  const seenApprovalIds = new Set();
+  const prevRowStatuses = new Map();
   const pendingThreadRequests = new Map();
+  const alertedReminderIds = new Set();
+
+  // ---------- Personal Ledger State (Daily 100% Score + Smart Reminders / Payment Holds) ----------
+  function localIsoDate(dt = new Date()) {
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  }
+
+  function shiftIsoDate(iso, deltaDays) {
+    const [y, m, d] = String(iso || localIsoDate())
+      .split('-')
+      .map(Number);
+    const dt = new Date(y, (m || 1) - 1, (d || 1) + Number(deltaDays || 0));
+    return localIsoDate(dt);
+  }
+
+  function fmtDateNice(iso) {
+    const today = localIsoDate();
+    if (iso === today) return 'Today';
+    if (iso === shiftIsoDate(today, -1)) return 'Yesterday';
+    const [y, m, d] = String(iso || today)
+      .split('-')
+      .map(Number);
+    const dt = new Date(y, (m || 1) - 1, d || 1);
+    return dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+
+  let personalLedger = loadJson(STORAGE_KEYS.PERSONAL, {
+    reminders: [],
+    dailyScores: {},
+    updatedAt: 0
+  });
+  if (!personalLedger || typeof personalLedger !== 'object') {
+    personalLedger = { reminders: [], dailyScores: {}, updatedAt: 0 };
+  }
+  if (!Array.isArray(personalLedger.reminders)) personalLedger.reminders = [];
+  if (!personalLedger.dailyScores || typeof personalLedger.dailyScores !== 'object') {
+    personalLedger.dailyScores = {};
+  }
+
+  let selectedScoreDate = localIsoDate();
+  const remDraft = {
+    kind: 'payment', // 'payment' | 'task' | 'wait' | 'recurring'
+    title: '',
+    amount: '',
+    waitChoice: 'auto', // 'auto' | '1h' | '3h' | 'tonight' | '1d' | '2d' | '3d' | '4d' | '7d' | '10d' | 'nextmon'
+    recur: 'daily', // 'daily' | 'weekdays' | 'weekly' | 'monthly'
+    categoryOverride: ''
+  };
+
+  function getDayRecord(iso = localIsoDate()) {
+    const rec = personalLedger.dailyScores?.[iso] || {};
+    const dos = {};
+    const donts = {};
+    for (const item of DAILY_DOS) {
+      const v = rec?.dos?.[item.id];
+      dos[item.id] = v === 'full' || v === 'half' ? v : 'none';
+    }
+    for (const item of DAILY_DONTS) {
+      const v = rec?.donts?.[item.id];
+      donts[item.id] = v === 'broken' || v === 'half' ? v : 'clean';
+    }
+    return {
+      iso,
+      dos,
+      donts,
+      updatedAt: Number(rec.updatedAt || 0)
+    };
+  }
+
+  function computeDayDiscipline(isoOrRec = localIsoDate()) {
+    const rec = typeof isoOrRec === 'string' ? getDayRecord(isoOrRec) : isoOrRec;
+    let doEarned = 0;
+    let doFullCount = 0;
+    let doHalfCount = 0;
+    for (const item of DAILY_DOS) {
+      const st = rec.dos?.[item.id] || 'none';
+      if (st === 'full') {
+        doEarned += 10;
+        doFullCount++;
+      } else if (st === 'half') {
+        doEarned += 5;
+        doHalfCount++;
+      }
+    }
+
+    let dontLost = 0;
+    let dontCleanCount = 0;
+    let dontSlipCount = 0;
+    for (const item of DAILY_DONTS) {
+      const st = rec.donts?.[item.id] || 'clean';
+      if (st === 'broken') {
+        dontLost += 10;
+        dontSlipCount++;
+      } else if (st === 'half') {
+        dontLost += 5;
+        dontSlipCount++;
+      } else {
+        dontCleanCount++;
+      }
+    }
+
+    const dontKept = 50 - dontLost;
+    const score = Math.max(0, Math.min(100, 50 + doEarned - dontLost));
+    const deltaFromStart = score - 50;
+    const tone =
+      score >= 80 ? 'emerald' : score >= 50 ? 'brass' : score >= 35 ? 'amber' : 'crimson';
+    const hasInteracted = Boolean(rec.updatedAt > 0 || doEarned > 0 || dontLost > 0);
+
+    return {
+      iso: rec.iso,
+      score,
+      deltaFromStart,
+      doEarned,
+      dontLost,
+      dontKept,
+      doFullCount,
+      doHalfCount,
+      dontCleanCount,
+      dontSlipCount,
+      tone,
+      hasInteracted,
+      dos: rec.dos,
+      donts: rec.donts
+    };
+  }
+
+  function setHabitState(iso, group, habitId, nextVal) {
+    const cur = getDayRecord(iso);
+    if (group === 'do') {
+      cur.dos[habitId] = nextVal === 'full' || nextVal === 'half' ? nextVal : 'none';
+    } else {
+      cur.donts[habitId] = nextVal === 'broken' || nextVal === 'half' ? nextVal : 'clean';
+    }
+    cur.updatedAt = Date.now();
+    personalLedger.dailyScores[iso] = cur;
+    personalLedger.updatedAt = Date.now();
+    persistAndSyncPersonalLedger();
+    renderAll();
+  }
+
+  function parseAmountFromText(text, explicitAmt = '') {
+    const cleanExp = String(explicitAmt ?? '').replace(/[$,\s]/g, '');
+    if (cleanExp && !Number.isNaN(Number(cleanExp)) && Number(cleanExp) > 0) {
+      return Number(cleanExp);
+    }
+    const s = String(text || '');
+    const m =
+      s.match(/\$\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*(k)?/i) ||
+      s.match(/\b(\d+(?:,\d{3})*(?:\.\d+)?)\s*(k)?\s*(?:usd|dollars|\$)\b/i) ||
+      s.match(/\b(\d+(?:\.\d+)?)\s*k\b/i);
+    if (!m) return 0;
+    const num = Number(String(m[1]).replace(/,/g, ''));
+    if (Number.isNaN(num)) return 0;
+    const hasK = Boolean(m[2] || /\bk\b/i.test(m[0]));
+    return hasK ? num * 1000 : num;
+  }
+
+  function detectRelevanceCategory(text, kind = 'task', override = '') {
+    if (override && REM_CATEGORIES[override]) return REM_CATEGORIES[override];
+    const s = String(text || '').toLowerCase();
+    if (
+      kind === 'payment' ||
+      /\b(pay|payment|invoice|wire|transfer|cheque|check|supplier|advance|deposit|disburse|remit|\$|usd)\b/i.test(s)
+    ) {
+      return REM_CATEGORIES.payments;
+    }
+    if (/\b(blanca|la\s*una|launa|palms|voile|platinum|resort|hotel|cabana|pos|kitchen|guest|beach)\b/i.test(s)) {
+      return REM_CATEGORIES.hospitality;
+    }
+    if (/\b(korri|shacman|truck|trucks|spare|parts|workshop|vin|trading|customs|shipment)\b/i.test(s)) {
+      return REM_CATEGORIES.trading;
+    }
+    if (/\b(wtc|bbc|bbconstruction|lions|quarry|crusher|asphalt|concrete|filter\s*press|plant|diesel|mixer)\b/i.test(s)) {
+      return REM_CATEGORIES.manufacturing;
+    }
+    if (/\b(property|properties|tenant|lease|rent|villa|apartment|real\s*estate|insurance|policy|claim|broker|underwriter)\b/i.test(s)) {
+      return REM_CATEGORIES.realestate_ins;
+    }
+    if (/\b(holding|brains|vat|tax|audit|bank|audi|kyc|payroll|salary|lawyer|contract|soa|board)\b/i.test(s)) {
+      return REM_CATEGORIES.holding;
+    }
+    return REM_CATEGORIES.personal;
+  }
+
+  function suggestPaymentWait(text, rawAmount = '') {
+    const s = String(text || '').toLowerCase();
+    const amt = parseAmountFromText(text, rawAmount);
+
+    if (/\b(salary|payroll|wage|electricity|edl|water|tax|vat|customs|urgent|emergency)\b/i.test(s)) {
+      return {
+        waitDays: 1,
+        waitMs: 24 * 3600 * 1000,
+        tier: 'Urgent / Statutory (24h)',
+        amt,
+        reason: 'Statutory, payroll, or utility item — 24h verification hold so operations never stall.'
+      };
+    }
+    if (/\b(deposit|advance|retainer|down\s*payment)\b/i.test(s) && amt <= 5000) {
+      return {
+        waitDays: 3,
+        waitMs: 3 * 24 * 3600 * 1000,
+        tier: 'Advance / Deposit (3d)',
+        amt,
+        reason: 'Advance / deposit request — 3-day cooling-off to verify delivery schedule & terms.'
+      };
+    }
+    if (amt > 15000) {
+      return {
+        waitDays: 10,
+        waitMs: 10 * 24 * 3600 * 1000,
+        tier: `Strategic · $${fmtInt(amt)} (10d)`,
+        amt,
+        reason: 'High-value disbursement (>$15k) — 10-day treasury hold + full Statement of Account check.'
+      };
+    }
+    if (amt > 5000) {
+      return {
+        waitDays: 7,
+        waitMs: 7 * 24 * 3600 * 1000,
+        tier: `Major · $${fmtInt(amt)} (7d)`,
+        amt,
+        reason: 'Major payout ($5k–$15k) — 7-day hold to confirm goods receipt & Brains/ERP reconciliation.'
+      };
+    }
+    if (amt >= 1000) {
+      return {
+        waitDays: 4,
+        waitMs: 4 * 24 * 3600 * 1000,
+        tier: `Medium · $${fmtInt(amt)} (4d)`,
+        amt,
+        reason: 'Medium operational invoice ($1k–$5k) — 4-day hold batches weekly supplier disbursements.'
+      };
+    }
+    if (amt > 0) {
+      return {
+        waitDays: 2,
+        waitMs: 2 * 24 * 3600 * 1000,
+        tier: `Routine · $${fmtInt(amt)} (2d)`,
+        amt,
+        reason: 'Routine payout (<$1k) — 48h cooling-off keeps cash-out discipline without friction.'
+      };
+    }
+    return {
+      waitDays: 3,
+      waitMs: 3 * 24 * 3600 * 1000,
+      tier: 'Standard Cooling-Off (3d)',
+      amt: 0,
+      reason: 'Standard 3-day payment hold (enter an amount like $800, $2,500, or $8,000 to auto-scale wait time).'
+    };
+  }
+
+  function computeTargetTimestampFromChoice(choice, text, rawAmount) {
+    const now = new Date();
+    const nowMs = now.getTime();
+    if (choice === 'auto') {
+      const sug = suggestPaymentWait(text, rawAmount);
+      return { targetMs: nowMs + sug.waitMs, waitDays: sug.waitDays, label: sug.tier, reason: sug.reason };
+    }
+    if (choice === '1h') {
+      return { targetMs: nowMs + 3600 * 1000, waitDays: 0.04, label: 'In 1 hour', reason: '1-hour quick reminder.' };
+    }
+    if (choice === '3h') {
+      return { targetMs: nowMs + 3 * 3600 * 1000, waitDays: 0.125, label: 'In 3 hours', reason: '3-hour same-day wait.' };
+    }
+    if (choice === 'tonight') {
+      const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 20, 30, 0);
+      const tMs = dt.getTime() > nowMs ? dt.getTime() : nowMs + 2 * 3600 * 1000;
+      return { targetMs: tMs, waitDays: 0.5, label: 'Tonight 20:30', reason: 'Scheduled for tonight at 20:30.' };
+    }
+    if (choice === 'nextmon') {
+      const day = now.getDay();
+      const daysUntilMon = ((8 - day) % 7) || 7;
+      const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysUntilMon, 9, 0, 0);
+      return {
+        targetMs: dt.getTime(),
+        waitDays: daysUntilMon,
+        label: `Next Mon (${daysUntilMon}d)`,
+        reason: 'Held until Monday 09:00 weekly disbursement run.'
+      };
+    }
+    const dayMatch = String(choice || '').match(/^(\d+)d$/);
+    const dCount = dayMatch ? Number(dayMatch[1]) : 3;
+    return {
+      targetMs: nowMs + dCount * 24 * 3600 * 1000,
+      waitDays: dCount,
+      label: `Wait ${dCount} day${dCount === 1 ? '' : 's'}`,
+      reason: `Manual ${dCount}-day hold timer.`
+    };
+  }
+
+  function formatHoldCountdown(targetMs, nowMs = Date.now()) {
+    if (!targetMs) return 'No timer';
+    const diff = Number(targetMs) - nowMs;
+    if (diff <= 0) {
+      const agoMin = Math.floor(Math.abs(diff) / 60000);
+      if (agoMin < 60) return `Matured ${agoMin}m ago`;
+      const agoHrs = Math.floor(agoMin / 60);
+      if (agoHrs < 24) return `Matured ${agoHrs}h ago`;
+      return `Matured ${Math.floor(agoHrs / 24)}d ago`;
+    }
+    const totalMin = Math.ceil(diff / 60000);
+    if (totalMin < 60) return `${totalMin}m wait left`;
+    const hrs = Math.floor(totalMin / 60);
+    const mins = totalMin % 60;
+    if (hrs < 48) return `${hrs}h ${mins}m wait left`;
+    const days = Math.floor(hrs / 24);
+    const remHrs = hrs % 24;
+    return `${days}d ${remHrs}h wait left`;
+  }
+
+  function classifyReminderBucket(item, nowMs = Date.now()) {
+    if (item.completed) return 'completed';
+    const isHold = item.kind === 'payment' || item.kind === 'wait';
+    const targetMs = Number(item.matureAt || item.dueAt || 0);
+    if (isHold) {
+      if (targetMs && nowMs >= targetMs) {
+        return 'urgent_matured';
+      }
+      return 'holding';
+    }
+    if (targetMs && targetMs <= nowMs + 2 * 3600 * 1000) {
+      return 'urgent_matured';
+    }
+    const endOfToday = new Date();
+    endOfToday.setHours(23, 59, 59, 999);
+    if (targetMs && targetMs <= endOfToday.getTime()) {
+      return 'today';
+    }
+    if (item.kind === 'recurring') {
+      return 'recurring';
+    }
+    return 'upcoming';
+  }
+
+  function mergePersonalLedger(incoming) {
+    if (!incoming || typeof incoming !== 'object') return false;
+    let changed = false;
+
+    // 1. Merge reminders by id using updatedAt
+    if (Array.isArray(incoming.reminders)) {
+      const map = new Map();
+      for (const r of personalLedger.reminders || []) {
+        if (r && r.id) map.set(r.id, r);
+      }
+      for (const rem of incoming.reminders) {
+        if (!rem || !rem.id) continue;
+        const cur = map.get(rem.id);
+        if (!cur || Number(rem.updatedAt || 0) > Number(cur.updatedAt || 0)) {
+          map.set(rem.id, rem);
+          changed = true;
+        }
+      }
+      personalLedger.reminders = Array.from(map.values()).sort(
+        (a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0)
+      );
+    }
+
+    // 2. Merge dailyScores by date key using updatedAt
+    if (incoming.dailyScores && typeof incoming.dailyScores === 'object') {
+      for (const [iso, rec] of Object.entries(incoming.dailyScores)) {
+        if (!rec || typeof rec !== 'object') continue;
+        const cur = personalLedger.dailyScores[iso];
+        if (!cur || Number(rec.updatedAt || 0) > Number(cur.updatedAt || 0)) {
+          personalLedger.dailyScores[iso] = rec;
+          changed = true;
+        }
+      }
+    }
+
+    if (changed) {
+      personalLedger.updatedAt = Math.max(
+        Number(personalLedger.updatedAt || 0),
+        Number(incoming.updatedAt || Date.now())
+      );
+      saveJson(STORAGE_KEYS.PERSONAL, personalLedger);
+    }
+    return changed;
+  }
+
+  let personalSyncTimer = null;
+  function persistAndSyncPersonalLedger() {
+    saveJson(STORAGE_KEYS.PERSONAL, personalLedger);
+    schedulePushSync();
+    clearTimeout(personalSyncTimer);
+    personalSyncTimer = setTimeout(() => {
+      pushPersonalLedgerToCloud().catch(() => {});
+    }, 350);
+  }
+
+  async function pushPersonalLedgerToCloud() {
+    // 1. Sync with Direct Local Bridge (:4318) if connected
+    if (localBridgeBase) {
+      fetch(`${localBridgeBase}/api/personal-ledger`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personalLedger })
+      }).catch(() => {});
+    }
+    // 2. Sync with Dataverse Cloud Relay
+    if (cloudCfg.url && cloudCfg.key) {
+      try {
+        const res = await callCloudPush({
+          op: 'patch',
+          patch: {
+            personal_ledger: personalLedger
+          }
+        });
+        const remoteLedger = res?.docs?.personal_ledger || res?.personal_ledger;
+        if (remoteLedger) {
+          mergePersonalLedger(remoteLedger);
+        }
+      } catch {}
+    }
+  }
+
+  // ---------- Full Web Push Notifications (RFC 8291 aes128gcm + RFC 8292 VAPID ES256) ----------
+  function b64ToBytes(b64) {
+    const s = String(b64 || '')
+      .replace(/-/g, '+')
+      .replace(/_/g, '/');
+    const pad = s.length % 4 === 0 ? '' : '===='.slice(s.length % 4);
+    const bin = atob(s + pad);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  function bytesToB64(bytes) {
+    const u = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    let s = '';
+    for (let i = 0; i < u.length; i++) s += String.fromCharCode(u[i]);
+    return btoa(s);
+  }
+
+  function bytesToB64u(bytes) {
+    return bytesToB64(bytes)
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+  }
+
+  function catBytes(...arrays) {
+    let n = 0;
+    for (const a of arrays) n += a.length;
+    const out = new Uint8Array(n);
+    let o = 0;
+    for (const a of arrays) {
+      out.set(a, o);
+      o += a.length;
+    }
+    return out;
+  }
+
+  async function signVapid(endpoint, expSec) {
+    const subtle = window.crypto && window.crypto.subtle;
+    if (!subtle) throw new Error('WebCrypto unavailable');
+    if (!_vapidSignKey) {
+      _vapidSignKey = await subtle.importKey(
+        'jwk',
+        _VAPID.jwk,
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        false,
+        ['sign']
+      );
+    }
+    const aud = new URL(endpoint).origin;
+    const enc = new TextEncoder();
+    const hdr = bytesToB64u(enc.encode(JSON.stringify({ typ: 'JWT', alg: 'ES256' })));
+    const claims = bytesToB64u(
+      enc.encode(
+        JSON.stringify({
+          aud,
+          exp: Math.floor(expSec || Date.now() / 1000 + 43200),
+          sub: _VAPID.sub
+        })
+      )
+    );
+    const input = enc.encode(`${hdr}.${claims}`);
+    const sig = new Uint8Array(
+      await subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, _vapidSignKey, input)
+    );
+    return `vapid t=${hdr}.${claims}.${bytesToB64u(sig)}, k=${_VAPID.pub}`;
+  }
+
+  async function encryptWebPush(subJson, payloadObj) {
+    const subtle = window.crypto && window.crypto.subtle;
+    if (!subtle) throw new Error('WebCrypto unavailable');
+    const keys = (subJson && subJson.keys) || {};
+    const uPub = b64ToBytes(keys.p256dh);
+    const authBytes = b64ToBytes(keys.auth);
+    if (uPub.length !== 65 || authBytes.length !== 16) {
+      throw new Error('Invalid subscription keys');
+    }
+    const salt = window.crypto.getRandomValues(new Uint8Array(16));
+    const sKP = await subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+    const sPub = new Uint8Array(await subtle.exportKey('raw', sKP.publicKey));
+    const uPubKey = await subtle.importKey('raw', uPub, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+    const shared = await subtle.deriveBits({ name: 'ECDH', public: uPubKey }, sKP.privateKey, 256);
+    const enc = new TextEncoder();
+    const zKey = await subtle.importKey('raw', shared, 'HKDF', false, ['deriveBits']);
+    const keyInfo = catBytes(enc.encode('WebPush: info\x00'), uPub, sPub);
+    const ikm = await subtle.deriveBits(
+      { name: 'HKDF', hash: 'SHA-256', salt: authBytes, info: keyInfo },
+      zKey,
+      256
+    );
+    const ikmKey = await subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
+    const cekBits = await subtle.deriveBits(
+      { name: 'HKDF', hash: 'SHA-256', salt, info: enc.encode('Content-Encoding: aes128gcm\x00') },
+      ikmKey,
+      128
+    );
+    const nonce = new Uint8Array(
+      await subtle.deriveBits(
+        { name: 'HKDF', hash: 'SHA-256', salt, info: enc.encode('Content-Encoding: nonce\x00') },
+        ikmKey,
+        96
+      )
+    );
+    const cek = await subtle.importKey('raw', cekBits, 'AES-GCM', false, ['encrypt']);
+    const plain = catBytes(
+      enc.encode(typeof payloadObj === 'string' ? payloadObj : JSON.stringify(payloadObj)),
+      new Uint8Array([2])
+    );
+    const ct = new Uint8Array(await subtle.encrypt({ name: 'AES-GCM', iv: nonce }, cek, plain));
+    const hdr = new Uint8Array([0, 0, 16, 0, 65]);
+    return bytesToB64(catBytes(salt, hdr, sPub, ct));
+  }
+
+  function getDeviceId() {
+    let id = loadJson(STORAGE_KEYS.DEVID, '');
+    if (!id) {
+      id = `theo_dev_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+      saveJson(STORAGE_KEYS.DEVID, id);
+    }
+    return id;
+  }
+
+  function isStandalone() {
+    try {
+      return Boolean(
+        (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+          window.navigator.standalone === true
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  function pushSupported() {
+    return (
+      typeof window !== 'undefined' &&
+      'Notification' in window &&
+      'serviceWorker' in navigator &&
+      'PushManager' in window
+    );
+  }
+
+  function notifPerm() {
+    try {
+      return (typeof Notification !== 'undefined' && Notification.permission) || 'default';
+    } catch {
+      return 'default';
+    }
+  }
+
+  async function callCloudPush(body) {
+    if (!cloudCfg.url || !cloudCfg.key) return null;
+    const res = await fetch(cloudCfg.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify(Object.assign({ key: cloudCfg.key }, body))
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  function swLocalNotif(payload) {
+    try {
+      if (navigator.serviceWorker) {
+        if (navigator.serviceWorker.controller) {
+          navigator.serviceWorker.controller.postMessage({ type: 'show-notification', payload });
+        } else {
+          navigator.serviceWorker.ready
+            .then((reg) => {
+              if (reg && reg.showNotification) {
+                reg.showNotification(payload.title || 'THEO Workbench', {
+                  body: payload.body || '',
+                  icon: './icon-192.png',
+                  badge: './icon-192.png',
+                  tag: payload.tag || 'theo-local',
+                  renotify: true,
+                  data: {
+                    url: payload.url || './',
+                    tab: payload.tab || 'pulse',
+                    threadId: payload.threadId || '',
+                    provider: payload.provider || ''
+                  }
+                });
+              }
+            })
+            .catch(() => {});
+        }
+      }
+    } catch {}
+  }
+
+  async function checkExistingPushSub() {
+    if (!pushSupported()) return null;
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (!reg || !reg.pushManager) return null;
+      const sub = await reg.pushManager.getSubscription();
+      pushSub = sub ? sub.toJSON() : null;
+      if (pushSub && prefs.notif && prefs.notif.enabled) {
+        schedulePushSync();
+      }
+      renderAll();
+      return pushSub;
+    } catch {
+      return null;
+    }
+  }
+
+  async function scheduleExactReminderPush(item) {
+    const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
+    if (!nf.enabled || nf.paymentHolds === false || !pushSub || !pushSub.endpoint || !item) return;
+    const targetMs = Number(item.matureAt || item.dueAt || 0);
+    if (!targetMs) return;
+    const delaySec = Math.round((targetMs - Date.now()) / 1000);
+    if (delaySec < 5 || delaySec > 7 * 86400) return;
+
+    const isPayment = item.kind === 'payment';
+    const isWait = item.kind === 'wait';
+    const amtTxt = item.amount > 0 ? ` ($${fmtInt(item.amount)})` : '';
+    const title = isPayment
+      ? `💸 Payment Hold Matured${amtTxt}`
+      : isWait
+        ? `⏳ Cooling-Off Complete · Ready to Act`
+        : `⏰ THEO Reminder Due`;
+    const body = isPayment
+      ? `${item.title}${amtTxt} — ${item.waitDays || 3}d wait period is over. Tap to review or release.`
+      : `${item.title} — Tap to open THEO Reminders & Daily 100%.`;
+
+    try {
+      const exp = Math.floor(targetMs / 1000) + 43200;
+      const [vapid, bodyB64] = await Promise.all([
+        signVapid(pushSub.endpoint, exp),
+        encryptWebPush(pushSub, {
+          title,
+          body,
+          tag: `theo-rem-${item.id}`,
+          url: './?tab=discipline',
+          tab: 'discipline'
+        })
+      ]);
+      await callCloudPush({
+        op: 'push_delay',
+        timerKey: `timer/rem_${item.id}`,
+        timerId: String(item.updatedAt || Date.now()),
+        delaySec,
+        endpoint: pushSub.endpoint,
+        vapid,
+        bodyB64
+      });
+    } catch {}
+  }
+
+  async function cancelExactReminderPush(itemId) {
+    if (!cloudCfg.url || !cloudCfg.key || !itemId) return;
+    try {
+      await callCloudPush({
+        op: 'patch',
+        patch: {
+          [`timer/rem_${itemId}`]: { id: 'cancelled' }
+        }
+      });
+    } catch {}
+  }
+
+  function checkDueRemindersTick() {
+    const nowMs = Date.now();
+    const activeItems = (personalLedger.reminders || []).filter(
+      (r) => r && !r.deleted && !r.completed
+    );
+    let anyChanged = false;
+    for (const item of activeItems) {
+      const targetMs = Number(item.matureAt || item.dueAt || 0);
+      if (!targetMs) continue;
+      if (nowMs >= targetMs && nowMs - targetMs < 3600 * 1000 && !alertedReminderIds.has(item.id)) {
+        alertedReminderIds.add(item.id);
+        anyChanged = true;
+        playChime('approve');
+        const amtTxt = item.amount > 0 ? ` ($${fmtInt(item.amount)})` : '';
+        const msgTitle =
+          item.kind === 'payment'
+            ? `💸 Payment Hold Matured${amtTxt}`
+            : item.kind === 'wait'
+              ? `⏳ Wait Timer Complete`
+              : `⏰ Reminder Due`;
+        showToast(`${msgTitle}: ${item.title}`);
+        if (notifPerm() === 'granted' && document.hidden) {
+          swLocalNotif({
+            title: msgTitle,
+            body: `${item.title}${amtTxt} is ready for your action.`,
+            tag: `theo-rem-${item.id}`,
+            tab: 'discipline',
+            url: './?tab=discipline'
+          });
+        }
+      }
+    }
+    if (anyChanged || prefs.activeTab === 'discipline' || prefs.activeTab === 'pulse') {
+      if (prefs.activeTab === 'discipline') renderDisciplineView(true);
+      if (prefs.activeTab === 'pulse') renderPulseView();
+    }
+  }
+
+  async function buildPushSlots(subJson, daysCount = 14) {
+    const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
+    if (!nf.enabled || !subJson || !subJson.endpoint) return {};
+    const slots = {};
+    const now = new Date();
+    const nowMs = now.getTime();
+    const rows = (appState?.rows || []).filter((r) => r.id && !r.archived);
+    const approvals = appState?.approvals || [];
+    const workspaces = appState?.workspaces || [];
+    const dirtyRepos = workspaces.filter((w) => Number(w.dirtyCount || 0) > 0);
+    const openTabs = rows.filter((r) => r.open);
+    const todayTok = Number(appState?.summary?.today?.tokens || 0);
+    const activeRems = (personalLedger.reminders || []).filter(
+      (r) => r && !r.deleted && !r.completed
+    );
+
+    for (let d = 0; d < daysCount; d++) {
+      const baseDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + d);
+      const dayStartMs = baseDate.getTime();
+      const dayEndMs = dayStartMs + 86400 * 1000;
+      const iso = `${baseDate.getFullYear()}-${String(baseDate.getMonth() + 1).padStart(2, '0')}-${String(baseDate.getDate()).padStart(2, '0')}`;
+      const dayDisc = computeDayDiscipline(iso);
+
+      const maturingToday = activeRems.filter((r) => {
+        const t = Number(r.matureAt || r.dueAt || 0);
+        return t > 0 && t <= dayEndMs && (d === 0 || t >= dayStartMs);
+      });
+      const paymentHoldsMaturing = maturingToday.filter((r) => r.kind === 'payment');
+
+      if (nf.morning !== false) {
+        const dtAm = new Date(
+          baseDate.getFullYear(),
+          baseDate.getMonth(),
+          baseDate.getDate(),
+          Number(nf.morningHour || 8),
+          0,
+          0
+        );
+        if (dtAm.getTime() > nowMs - 1800000) {
+          const slotKey = dtAm.toISOString().slice(0, 13);
+          const holdTxt =
+            paymentHoldsMaturing.length > 0
+              ? `💸 ${paymentHoldsMaturing.length} payment hold${paymentHoldsMaturing.length === 1 ? '' : 's'} ready · `
+              : maturingToday.length > 0
+                ? `⏰ ${maturingToday.length} task${maturingToday.length === 1 ? '' : 's'} due today · `
+                : '';
+          const waitTxt =
+            approvals.length > 0
+              ? `${approvals.length} approval${approvals.length === 1 ? '' : 's'} · `
+              : '';
+          const title =
+            paymentHoldsMaturing.length > 0
+              ? `THEO Morning · ${paymentHoldsMaturing.length} Payment Hold${paymentHoldsMaturing.length === 1 ? '' : 's'} Ready 💸`
+              : `THEO Morning Brief · Day Starts at 50% ☀️`;
+          const body = `${holdTxt}${waitTxt}Daily Ledger at 50% (5/5 Don'ts intact — earn +50% across Wake, Work, Skills, Fitness & Social). ${rows.length} active sessions (${openTabs.length} open).`;
+          const exp = Math.floor(dtAm.getTime() / 1000) + 57600;
+          const [vapid, bodyB64] = await Promise.all([
+            signVapid(subJson.endpoint, exp),
+            encryptWebPush(subJson, {
+              title,
+              body,
+              tag: `theo-am-${iso}`,
+              url: './?tab=discipline',
+              tab: 'discipline'
+            })
+          ]);
+          slots[slotKey] = { vapid, bodyB64 };
+        }
+      }
+
+      if (nf.evening !== false) {
+        const dtPm = new Date(
+          baseDate.getFullYear(),
+          baseDate.getMonth(),
+          baseDate.getDate(),
+          Number(nf.eveningHour || 21),
+          0,
+          0
+        );
+        if (dtPm.getTime() > nowMs - 1800000) {
+          const slotKey = dtPm.toISOString().slice(0, 13);
+          const dirtyTxt =
+            dirtyRepos.length > 0
+              ? ` · ${dirtyRepos.length} dirty repo${dirtyRepos.length === 1 ? '' : 's'}`
+              : '';
+          const tokTxt = todayTok > 0 && d === 0 ? ` · ${fmtCompact(todayTok)} tok` : '';
+          const title =
+            d === 0 && dayDisc.hasInteracted
+              ? `THEO Evening Scorecard · ${dayDisc.score}% Today 🎯`
+              : `THEO Evening Check-In · Score Today's 5 Do's & Don'ts 🎯`;
+          const body =
+            d === 0 && dayDisc.hasInteracted
+              ? `Today's score is ${dayDisc.score}% (${dayDisc.doFullCount + dayDisc.doHalfCount}/5 Do's, ${dayDisc.dontCleanCount}/5 Don'ts clean)${dirtyTxt}${tokTxt}. Tap to finalize today's ledger.`
+              : `Started at 50% — check off Waking Early, Work, Skills, Fitness & Socializing (+10% full / +5% partial) and verify your 5 Don'ts${dirtyTxt}.`;
+          const exp = Math.floor(dtPm.getTime() / 1000) + 57600;
+          const [vapid, bodyB64] = await Promise.all([
+            signVapid(subJson.endpoint, exp),
+            encryptWebPush(subJson, {
+              title,
+              body,
+              tag: `theo-pm-${iso}`,
+              url: './?tab=discipline',
+              tab: 'discipline'
+            })
+          ]);
+          slots[slotKey] = { vapid, bodyB64 };
+        }
+      }
+    }
+
+    // Also populate hourly slot entries for any Payment Holds or Timed Reminders maturing in the next 14 days
+    if (nf.paymentHolds !== false) {
+      for (const item of activeRems) {
+        const targetMs = Number(item.matureAt || item.dueAt || 0);
+        if (!targetMs || targetMs <= nowMs - 1800000 || targetMs > nowMs + daysCount * 86400 * 1000) {
+          continue;
+        }
+        const dtTarget = new Date(targetMs);
+        const slotKey = dtTarget.toISOString().slice(0, 13);
+        const amtTxt = item.amount > 0 ? ` ($${fmtInt(item.amount)})` : '';
+        const title =
+          item.kind === 'payment'
+            ? `💸 Payment Hold Matured${amtTxt}`
+            : item.kind === 'wait'
+              ? `⏳ Wait Period Complete · ${item.title}`
+              : `⏰ THEO Reminder · ${item.title}`;
+        const body =
+          item.kind === 'payment'
+            ? `${item.title}${amtTxt} — ${item.waitDays || 3}d cooling-off finished. Ready to review or release.`
+            : `${item.title} is due now. Tap to open THEO Reminders.`;
+        const exp = Math.floor(targetMs / 1000) + 57600;
+        const [vapid, bodyB64] = await Promise.all([
+          signVapid(subJson.endpoint, exp),
+          encryptWebPush(subJson, {
+            title,
+            body,
+            tag: `theo-rem-slot-${item.id}`,
+            url: './?tab=discipline',
+            tab: 'discipline'
+          })
+        ]);
+        slots[slotKey] = { vapid, bodyB64 };
+      }
+    }
+
+    return slots;
+  }
+
+  function schedulePushSync() {
+    if (!pushSub) return;
+    clearTimeout(pushSyncTimer);
+    pushSyncTimer = setTimeout(() => {
+      syncPushSchedule().catch(() => {});
+    }, 600);
+  }
+
+  async function syncPushSchedule() {
+    if (!pushSub || !pushSub.endpoint) return;
+    const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
+    const devId = getDeviceId();
+    const slots = nf.enabled ? await buildPushSlots(pushSub, 14) : {};
+    const entry = {
+      id: devId,
+      endpoint: pushSub.endpoint,
+      p256dh: (pushSub.keys && pushSub.keys.p256dh) || '',
+      auth: (pushSub.keys && pushSub.keys.auth) || '',
+      prefs: nf,
+      updatedAt: new Date().toISOString(),
+      slots
+    };
+
+    // 1. Register with Direct Local Bridge (:4318) if available
+    if (localBridgeBase) {
+      fetch(`${localBridgeBase}/api/push-register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device: entry, enabled: Boolean(nf.enabled) })
+      }).catch(() => {});
+    }
+
+    // 2. Register with Dataverse Cloud Relay (for Personal - THEO Remote Daily Push & remote bridge sync)
+    if (cloudCfg.url && cloudCfg.key) {
+      try {
+        const curRes = await callCloudPush({ op: 'get' });
+        const curDocs = (curRes && curRes.docs) || curRes || {};
+        const existing = Array.isArray(curDocs?.push_registry?.items)
+          ? curDocs.push_registry.items
+          : [];
+        const others = existing.filter(
+          (x) => x && x.id && x.id !== devId && x.endpoint !== pushSub.endpoint
+        );
+        const nextItems = nf.enabled ? others.concat([entry]) : others;
+        await callCloudPush({
+          op: 'patch',
+          patch: {
+            push_registry: {
+              items: nextItems,
+              updatedAt: new Date().toISOString()
+            }
+          }
+        });
+      } catch {}
+    }
+  }
+
+  async function enablePush() {
+    if (pushBusy) return;
+    const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
+    const ios = /iPhone|iPad|iPod/.test(ua);
+    if (ios && !isStandalone()) {
+      showToast(
+        'On iPhone, open THEO from your Home Screen icon to enable Web Push notifications.'
+      );
+      return;
+    }
+    if (!pushSupported()) {
+      showToast(
+        'Push notifications are not supported in this browser tab. Open the installed Home Screen app.'
+      );
+      return;
+    }
+    pushBusy = true;
+    renderAll();
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') {
+        showToast(
+          'Notification permission was not granted. Enable notifications in Settings -> THEO.'
+        );
+        return;
+      }
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: b64ToBytes(_VAPID.pub)
+        });
+      }
+      pushSub = sub.toJSON();
+      prefs.notif = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {}, { enabled: true });
+      saveJson(STORAGE_KEYS.PREFS, prefs);
+      saveJson(STORAGE_KEYS.PUSH_HINT, 1);
+      await syncPushSchedule();
+      showToast('Push notifications enabled! Sending confirmation banner…');
+      await sendTestPush(true);
+    } catch (e) {
+      showToast(`Could not enable push: ${(e && e.message) || e}`);
+    } finally {
+      pushBusy = false;
+      renderAll();
+    }
+  }
+
+  async function disablePush() {
+    pushBusy = true;
+    renderAll();
+    try {
+      if (pushSupported()) {
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (reg && reg.pushManager) {
+          const sub = await reg.pushManager.getSubscription();
+          if (sub) await sub.unsubscribe().catch(() => {});
+        }
+      }
+      prefs.notif = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {}, { enabled: false });
+      saveJson(STORAGE_KEYS.PREFS, prefs);
+      await syncPushSchedule();
+      pushSub = null;
+      showToast('Push notifications turned off on this device.');
+    } finally {
+      pushBusy = false;
+      renderAll();
+    }
+  }
+
+  async function sendTestPush(isWelcome = false) {
+    const msg = {
+      title: isWelcome ? 'THEO Notifications Active 🔔' : 'THEO Remote Workbench ⚡',
+      body: isWelcome
+        ? 'Lock-screen 1-tap approvals, session turn completions & daily briefings are now active.'
+        : 'Test Web Push delivered from THEO Cloud! Lock-screen alerts are working.',
+      tag: `theo-test-${Date.now()}`,
+      url: './?tab=pulse',
+      tab: 'pulse'
+    };
+    if (!pushSub || !pushSub.endpoint) {
+      if (notifPerm() === 'granted') {
+        swLocalNotif(msg);
+        showToast('Local notification sent (enable Push to receive alerts while THEO is closed).');
+        return;
+      }
+      await enablePush();
+      return;
+    }
+    try {
+      if (!isWelcome) showToast('Sending push notification…');
+      const vapid = await signVapid(pushSub.endpoint, Math.floor(Date.now() / 1000) + 43200);
+      const bodyB64 = await encryptWebPush(pushSub, msg);
+      const res = await callCloudPush({
+        op: 'push',
+        endpoint: pushSub.endpoint,
+        vapid,
+        bodyB64,
+        ttl: 3600
+      });
+      if (res && res.pushStatus >= 200 && res.pushStatus < 300) {
+        if (!isWelcome) {
+          showToast(`Push delivered (HTTP ${res.pushStatus})! Check your lock-screen banner.`);
+        }
+      } else if (res && res.pushStatus === 410) {
+        pushSub = null;
+        showToast('Subscription expired on device — re-subscribing…');
+        await enablePush();
+      } else {
+        swLocalNotif(msg);
+        if (!isWelcome) showToast('Notification displayed.');
+      }
+    } catch {
+      swLocalNotif(msg);
+      if (!isWelcome) showToast('Offline fallback notification shown.');
+    }
+  }
+
+  function checkLiveStateNotifications(nextState) {
+    if (!nextState) return;
+    const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
+    const approvals = Array.isArray(nextState.approvals) ? nextState.approvals : [];
+    const rows = Array.isArray(nextState.rows) ? nextState.rows : [];
+
+    if (!statePrimed) {
+      statePrimed = true;
+      for (const a of approvals) {
+        if (a && a.id) seenApprovalIds.add(a.id);
+      }
+      for (const r of rows) {
+        if (r && r.id) prevRowStatuses.set(r.id, r.status || 'idle');
+      }
+      return;
+    }
+
+    // 1. New pending approval / waiting session
+    for (const a of approvals) {
+      if (!a || !a.id || seenApprovalIds.has(a.id)) continue;
+      seenApprovalIds.add(a.id);
+      playChime('approve');
+      if (nf.enabled && nf.approvals !== false && document.hidden && notifPerm() === 'granted') {
+        swLocalNotif({
+          title: `⚡ Approval Needed · ${a.provider === 'claude' ? 'Claude Code' : 'Antigravity'}`,
+          body: `${a.title || 'Session'}: ${a.toolName || 'Permission'} — ${a.detail || 'Waiting for confirmation'}`,
+          tag: `theo-app-${a.id}`,
+          tab: 'pulse',
+          threadId: a.sessionId || ''
+        });
+      }
+    }
+
+    // 2. Session transitioned from working -> idle/done
+    for (const r of rows) {
+      if (!r || !r.id) continue;
+      const prevStatus = prevRowStatuses.get(r.id);
+      const curStatus = r.status || 'idle';
+      prevRowStatuses.set(r.id, curStatus);
+      if (prevStatus === 'working' && (curStatus === 'idle' || curStatus === 'done')) {
+        playChime('confirm');
+        if (nf.enabled && nf.completed !== false && document.hidden && notifPerm() === 'granted') {
+          swLocalNotif({
+            title: `✓ Turn Complete · ${r.provider === 'claude' ? 'Claude Code' : 'Antigravity'}`,
+            body: `${r.title || 'Session'} (${r.folder || 'Workspace'}) finished running. Tap to inspect.`,
+            tag: `theo-done-${r.id}`,
+            tab: 'chat',
+            threadId: r.id,
+            provider: r.provider || 'antigravity'
+          });
+        }
+      }
+    }
+  }
 
   // Web Audio Synthesizer for subtle executive chimes
   function playChime(kind = 'confirm') {
@@ -217,6 +1381,7 @@
         try {
           const st = JSON.parse(ev.data);
           if (st) {
+            checkLiveStateNotifications(st);
             appState = st;
             persistCache();
             renderAll();
@@ -276,6 +1441,7 @@
           const payload = await res.json();
           if (payload?.state) {
             connMode = 'local';
+            checkLiveStateNotifications(payload.state);
             appState = payload.state;
             if (!sseSource) connectSse(bridgeBase);
             persistCache();
@@ -309,6 +1475,7 @@
             rawStore?.docs && typeof rawStore.docs === 'object' ? rawStore.docs : rawStore || {};
           connMode = 'cloud';
           if (store?.state?.snapshot) {
+            checkLiveStateNotifications(store.state.snapshot);
             appState = store.state.snapshot;
           }
           if (store?.threads && typeof store.threads === 'object') {
@@ -567,6 +1734,8 @@
     const activeCount = (appState?.rows || []).filter((r) => !r.archived).length;
     const threadCount = Object.keys(threadsCache || {}).length;
     const snapTime = appState?.generatedAt ? timeAgo(appState.generatedAt) : '—';
+    const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
+    const pushActive = Boolean(nf.enabled && pushSub && notifPerm() === 'granted');
 
     if (dotEl) {
       dotEl.className = `conn-dot ${connMode === 'local' ? 'live' : connMode === 'cloud' ? 'cloud' : ''}`;
@@ -595,8 +1764,8 @@
           <span class="conn-stat-val">${activeCount} active / ${rowCount} total</span>
         </div>
         <div class="conn-stat-box">
-          <span class="conn-stat-lbl">Live Transcripts</span>
-          <span class="conn-stat-val">${threadCount} cached</span>
+          <span class="conn-stat-lbl">Web Push Alerts</span>
+          <span class="conn-stat-val" style="color:${pushActive ? 'var(--emerald)' : 'var(--amber)'}">${pushActive ? '🔔 Active' : 'Off'}</span>
         </div>
       </div>
       <div class="meta-timestamp" style="line-height:1.45">
@@ -609,10 +1778,168 @@
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
         <button type="button" class="btn-brass-sm" id="conn-modal-sync-btn" style="flex:1">↻ Sync Now with VS Code</button>
         ${
+          pushActive
+            ? `<button type="button" class="btn-ghost-sm" data-push-act="test">🔔 Test Push</button>`
+            : `<button type="button" class="btn-ghost-sm" data-push-act="enable">${pushBusy ? 'Enabling…' : '🔔 Enable Push'}</button>`
+        }
+        ${
           lanUrl && connMode !== 'local'
             ? `<a href="${esc(lanUrl)}" class="btn-ghost-sm" style="text-decoration:none;display:inline-flex;align-items:center">Open Wi-Fi Direct (${esc(lanUrl.replace(/^https?:\/\//, '').replace(/\/$/, ''))})</a>`
             : ''
         }
+      </div>
+    `;
+  }
+
+  function renderPulseNotifBannerHtml() {
+    const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
+    const perm = notifPerm();
+    const active = Boolean(nf.enabled && pushSub && perm === 'granted');
+    if (active || loadJson(STORAGE_KEYS.PUSH_HINT, 0)) return '';
+    const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
+    const ios = /iPhone|iPad|iPod/.test(ua);
+    if (!pushSupported() && !ios) return '';
+    return `
+      <div class="push-banner-card">
+        <div class="push-banner-top">
+          <span class="eyebrow">HOME SCREEN PUSH NOTIFICATIONS</span>
+          <span class="pill-count amber">NEW</span>
+        </div>
+        <div class="meta-timestamp" style="color:var(--text-secondary);font-size:12.5px">
+          Get native lock-screen alerts when Antigravity or Claude Code needs 1-tap tool approval, finishes a background turn, or hits a quota window, plus daily workbench briefings.
+        </div>
+        <div class="push-banner-actions">
+          <button type="button" class="btn-brass-sm" data-push-act="enable">
+            ${pushBusy ? 'Enabling…' : '🔔 Enable Push Notifications'}
+          </button>
+          <button type="button" class="btn-ghost-sm" data-push-act="dismiss-hint">Not now</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderHourOptions(hoursMap, selectedVal) {
+    return Object.entries(hoursMap)
+      .map(
+        ([k, lbl]) =>
+          `<option value="${esc(k)}" ${String(k) === String(selectedVal) ? 'selected' : ''}>${esc(lbl)}</option>`
+      )
+      .join('');
+  }
+
+  function renderPushSettingsCardHtml() {
+    const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
+    const perm = notifPerm();
+    const active = Boolean(nf.enabled && pushSub && perm === 'granted');
+    const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
+    const iosNeedsInstall = /iPhone|iPad|iPod/.test(ua) && !isStandalone();
+    const statusChip = active
+      ? '<span class="pill-count emerald">🔔 Active on this device</span>'
+      : perm === 'denied'
+        ? '<span class="pill-count crimson">Blocked in browser settings</span>'
+        : iosNeedsInstall
+          ? '<span class="pill-count amber">Open from Home Screen</span>'
+          : '<span class="pill-count steel">Off</span>';
+    const amHours = {
+      6: '06:00',
+      7: '07:00',
+      8: '08:00',
+      9: '09:00',
+      10: '10:00',
+      11: '11:00',
+      12: '12:00'
+    };
+    const pmHours = {
+      18: '18:00',
+      19: '19:00',
+      20: '20:00',
+      21: '21:00',
+      22: '22:00'
+    };
+    const descText = iosNeedsInstall
+      ? 'On iPhone, open THEO from your Home Screen icon to enable Web Push notifications.'
+      : perm === 'denied'
+        ? 'Notifications are blocked for this app. Open your phone Settings -> THEO -> Notifications and allow notifications.'
+        : 'Works even when THEO is closed or your phone is locked. Encrypted RFC 8291 (aes128gcm) + VAPID ES256 alerts dispatch directly from VS Code & Power Automate Cloud Relay to Apple Push / FCM.';
+
+    return `
+      <div class="push-settings-card">
+        <div class="section-head" style="margin-bottom:0">
+          <div>
+            <div class="eyebrow">WEB PUSH NOTIFICATIONS</div>
+            <h2 class="section-title" style="font-size:17px;margin-top:2px">Lock-Screen Alerts &amp; Daily Briefings</h2>
+            <div class="brass-rule-single"></div>
+          </div>
+          ${statusChip}
+        </div>
+        <div class="meta-timestamp" style="line-height:1.45">${esc(descText)}</div>
+        <div class="push-pref-list">
+          <div class="push-pref-row">
+            <label class="push-pref-label">
+              <input type="checkbox" data-nf="approvals" ${nf.approvals !== false ? 'checked' : ''}>
+              <div class="push-pref-text">
+                <strong>1-Tap tool approvals &amp; waiting-for-input alerts</strong>
+                <span>Instant lock-screen ping when Antigravity or Claude Code pauses for permission or input</span>
+              </div>
+            </label>
+          </div>
+          <div class="push-pref-row">
+            <label class="push-pref-label">
+              <input type="checkbox" data-nf="completed" ${nf.completed !== false ? 'checked' : ''}>
+              <div class="push-pref-text">
+                <strong>Session turn &amp; background task completion alerts</strong>
+                <span>Pings when a running cascade or Claude Code session finishes its turn while you are away</span>
+              </div>
+            </label>
+          </div>
+          <div class="push-pref-row">
+            <label class="push-pref-label">
+              <input type="checkbox" data-nf="quota" ${nf.quota !== false ? 'checked' : ''}>
+              <div class="push-pref-text">
+                <strong>Quota threshold (≥90%) &amp; stalled-task watchdog alerts</strong>
+                <span>Alerts if a 5-hour/weekly quota window reaches 90% or if a background task stalls</span>
+              </div>
+            </label>
+          </div>
+          <div class="push-pref-row">
+            <label class="push-pref-label">
+              <input type="checkbox" data-nf="morning" ${nf.morning !== false ? 'checked' : ''}>
+              <div class="push-pref-text">
+                <strong>Morning Executive Command Pulse briefing</strong>
+                <span>Daily morning summary of active sessions, pending approvals, and quota readiness</span>
+              </div>
+            </label>
+            <select class="push-hour-select tabular" data-nf="morningHour" aria-label="Morning briefing time">
+              ${renderHourOptions(amHours, nf.morningHour || 9)}
+            </select>
+          </div>
+          <div class="push-pref-row">
+            <label class="push-pref-label">
+              <input type="checkbox" data-nf="evening" ${nf.evening !== false ? 'checked' : ''}>
+              <div class="push-pref-text">
+                <strong>Evening Uncommitted Git &amp; Open Workbench digest</strong>
+                <span>Daily evening summary of modified repositories, open tabs, and daily token burn</span>
+              </div>
+            </label>
+            <select class="push-hour-select tabular" data-nf="eveningHour" aria-label="Evening digest time">
+              ${renderHourOptions(pmHours, nf.eveningHour || 20)}
+            </select>
+          </div>
+        </div>
+        <div class="push-banner-actions" style="margin-top:2px">
+          ${
+            active
+              ? `
+                <button type="button" class="btn-brass-sm" data-push-act="test">🔔 Send Test Push</button>
+                <button type="button" class="btn-ghost-sm" data-push-act="sync">↻ Refresh Schedule</button>
+                <button type="button" class="btn-ghost-sm" data-push-act="disable">Turn Off</button>
+              `
+              : `
+                <button type="button" class="btn-brass-sm" data-push-act="enable">${pushBusy ? 'Enabling…' : '🔔 Enable Push Notifications'}</button>
+                ${perm === 'granted' ? `<button type="button" class="btn-ghost-sm" data-push-act="test">Send Test Push</button>` : ''}
+              `
+          }
+        </div>
       </div>
     `;
   }
@@ -659,6 +1986,10 @@
 
   // VIEW 1: Render Pulse
   function renderPulseView() {
+    const bannerEl = $('pulse-notif-banner');
+    if (bannerEl) {
+      bannerEl.innerHTML = renderPulseNotifBannerHtml();
+    }
     const rows = appState?.rows || [];
     const approvals = appState?.approvals || [];
     const activeTotal = rows.filter((r) => r.id && !r.archived).length;
@@ -1586,6 +2917,12 @@
       `;
     }
 
+    // Web Push Notifications Settings Card
+    const pushPanel = $('push-settings-panel');
+    if (pushPanel) {
+      pushPanel.innerHTML = renderPushSettingsCardHtml();
+    }
+
     // Pairing & Security Configuration
     const pairingGrid = $('pairing-grid');
     if (pairingGrid) {
@@ -1655,6 +2992,7 @@
       { title: '+ New Google Antigravity Session', sub: 'Action', act: 'new-agy' },
       { title: '+ New Claude Code Session', sub: 'Action', act: 'new-claude' },
       { title: 'Sync with VS Code & Cloud Relay Now', sub: 'Connectivity', act: 'sync' },
+      { title: 'Enable / Test Web Push Notifications', sub: 'Notifications', act: 'push-test' },
       { title: 'Run /compact on Active Session', sub: 'Context Window', act: 'compact' },
       { title: 'Switch Obsidian Dark / Warm Paper Light Theme', sub: 'Appearance', act: 'theme' }
     ];
@@ -1722,7 +3060,41 @@
 
   // Event Wiring
   function bindEvents() {
+    document.addEventListener('change', (e) => {
+      const nfEl = e.target.closest('[data-nf]');
+      if (nfEl) {
+        prefs.notif = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
+        const k = nfEl.dataset.nf;
+        prefs.notif[k] = nfEl.type === 'checkbox' ? nfEl.checked : Number(nfEl.value);
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        schedulePushSync();
+        renderAll();
+        showToast('Notification preferences saved');
+      }
+    });
+
     document.addEventListener('click', async (e) => {
+      const pushBtn = e.target.closest('[data-push-act]');
+      if (pushBtn) {
+        haptic(10);
+        const act = pushBtn.dataset.pushAct;
+        if (act === 'enable') {
+          await enablePush();
+        } else if (act === 'disable') {
+          await disablePush();
+        } else if (act === 'test') {
+          await sendTestPush(false);
+        } else if (act === 'sync') {
+          showToast('Refreshing 14-day notification schedule…');
+          await syncPushSchedule();
+          showToast('Notification schedule synced to cloud!');
+        } else if (act === 'dismiss-hint') {
+          saveJson(STORAGE_KEYS.PUSH_HINT, 1);
+          renderPulseView();
+        }
+        return;
+      }
+
       const tabBtn = e.target.closest('[data-tab]');
       if (tabBtn) {
         haptic(8);
@@ -1979,6 +3351,8 @@
           updateComposerModePills();
         } else if (act === 'sync') {
           syncData({ toast: true });
+        } else if (act === 'push-test') {
+          await sendTestPush(false);
         } else if (act === 'compact') {
           dispatchRemoteCommand({ type: 'sessionAction', action: 'compact', subAction: 'compact', id: prefs.selectedThreadId });
           showToast('Dispatched /compact');
@@ -2152,10 +3526,32 @@
     );
   }
 
-  // Register Service Worker
+  // Register Service Worker & Push Navigation Listener
   function registerServiceWorker() {
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-      navigator.serviceWorker.register('sw.js').catch(() => {});
+      navigator.serviceWorker
+        .register('sw.js')
+        .then(() => checkExistingPushSub())
+        .catch(() => {});
+
+      navigator.serviceWorker.addEventListener('message', (e) => {
+        const m = e && e.data;
+        if (!m) return;
+        if (m.type === 'theo-nav') {
+          if (m.threadId) {
+            prefs.selectedThreadId = m.threadId;
+            prefs.composerMode = 'reply';
+            saveJson(STORAGE_KEYS.PREFS, prefs);
+            switchTab('chat');
+            fetchThreadDetail(m.threadId, m.provider || '');
+          } else if (m.tab) {
+            switchTab(m.tab);
+          }
+          syncData();
+        } else if (m.type === 'theo-push') {
+          syncData();
+        }
+      });
     }
   }
 
@@ -2168,12 +3564,22 @@
 
     const urlParams = new URLSearchParams(location.search);
     const tabParam = urlParams.get('tab');
+    const threadParam = urlParams.get('thread');
+    const provParam = urlParams.get('provider');
     const newParam = urlParams.get('new');
     if (newParam === 'antigravity' || newParam === 'claude') {
       prefs.composerMode = `new-${newParam}`;
       updateComposerModePills();
     }
-    switchTab(tabParam || prefs.activeTab || 'pulse');
+    if (threadParam) {
+      prefs.selectedThreadId = threadParam;
+      prefs.composerMode = 'reply';
+      saveJson(STORAGE_KEYS.PREFS, prefs);
+      switchTab('chat');
+      fetchThreadDetail(threadParam, provParam || '');
+    } else {
+      switchTab(tabParam || prefs.activeTab || 'pulse');
+    }
     renderAll();
     syncData();
     setInterval(() => {
