@@ -808,6 +808,7 @@
     const label = key === 'claude' ? 'Claude Code' : 'Google Antigravity';
     const plan = provInfo?.account?.plan || (key === 'claude' ? 'Claude Max' : 'Google AI Pro');
     const email = provInfo?.account?.email || '';
+    const isCollapsed = Boolean(prefs.collapsedQuotaCards && prefs.collapsedQuotaCards[key]);
     let limits = provInfo?.usage?.allLimits?.length
       ? provInfo.usage.allLimits
       : provInfo?.usage?.limits || [];
@@ -830,6 +831,11 @@
           label: 'Weekly (7 day) Ledger',
           pct: pct7d,
           resetText: `${fmtCompact(tok7d)} tokens · ${fmtInt(turns7d)} turns (7d)`
+        },
+        {
+          label: 'Fable limit',
+          pct: 0,
+          resetText: 'Window idle'
         }
       ];
     }
@@ -861,18 +867,19 @@
       : `<div class="meta-timestamp">${esc(provInfo?.usageMessage || 'Quota telemetry ready.')}</div>`;
 
     return `
-      <div class="quota-card">
-        <div class="quota-card-head">
+      <div class="quota-card${isCollapsed ? ' collapsed' : ''}">
+        <button type="button" class="quota-card-head quota-card-toggle" data-quota-collapse="${key}" aria-expanded="${!isCollapsed}" title="${isCollapsed ? 'Show' : 'Hide'} ${esc(label)} usage">
           <div class="quota-prov-title">
+            <svg class="quota-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg>
             <span class="prov-glyph">${PROVIDER_ICONS[key]}</span>
             <div>
               <div>${esc(label)}</div>
-              ${email ? `<div class="meta-timestamp">${esc(email)}</div>` : ''}
+              ${!isCollapsed && email ? `<div class="meta-timestamp">${esc(email)}</div>` : ''}
             </div>
           </div>
           <span class="plan-pill">${esc(plan)}</span>
-        </div>
-        <div class="quota-bars-stack">${barsHtml}</div>
+        </button>
+        ${isCollapsed ? '' : `<div class="quota-bars-stack">${barsHtml}</div>`}
       </div>
     `;
   }
@@ -1524,6 +1531,18 @@
       const gotoBtn = e.target.closest('[data-goto-tab]');
       if (gotoBtn) {
         switchTab(gotoBtn.dataset.gotoTab);
+        return;
+      }
+
+      const quotaToggle = e.target.closest('[data-quota-collapse]');
+      if (quotaToggle) {
+        const provKey = quotaToggle.dataset.quotaCollapse;
+        if (!prefs.collapsedQuotaCards || typeof prefs.collapsedQuotaCards !== 'object') {
+          prefs.collapsedQuotaCards = {};
+        }
+        prefs.collapsedQuotaCards[provKey] = !prefs.collapsedQuotaCards[provKey];
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        renderPulseView();
         return;
       }
 

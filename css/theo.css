@@ -754,11 +754,42 @@ html[data-theme="light"] .kpi-tile {
   box-shadow: var(--shadow-sm);
 }
 
+.quota-card.collapsed {
+  padding: 13px 18px;
+}
+
 .quota-card-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 14px;
+}
+
+.quota-card.collapsed .quota-card-head {
+  margin-bottom: 0;
+}
+
+.quota-card-toggle {
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.quota-chevron {
+  width: 15px;
+  height: 15px;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.quota-card-toggle[aria-expanded="true"] .quota-chevron {
+  transform: rotate(90deg);
 }
 
 .quota-prov-title {
