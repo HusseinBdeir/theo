@@ -667,12 +667,16 @@
       ];
     }
 
+    const nowMs = Date.now();
     const barsHtml = limits.length
       ? limits
           .map((l) => {
-            const pct = Math.min(100, Math.max(0, Math.round(Number(l.pct || 0))));
+            const passed = Boolean(l.expired || (l.reset && l.reset <= nowMs));
+            const pct = passed ? 0 : Math.min(100, Math.max(0, Math.round(Number(l.pct || 0))));
             const cls = pct >= 90 ? 'crit' : pct >= 78 ? 'warn' : key === 'claude' ? 'claude' : '';
-            const resetTxt = l.resetText || (l.reset ? `Resets ${timeUntil(l.reset)}` : '');
+            const resetTxt = passed
+              ? 'Window idle'
+              : l.resetText || (l.reset ? `Resets ${timeUntil(l.reset)}` : '');
             return `
               <div class="q-bar-row tabular">
                 <div class="q-bar-labels">
