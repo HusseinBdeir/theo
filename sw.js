@@ -1,10 +1,10 @@
-const CACHE_NAME = 'theo-remote-v5';
+const CACHE_NAME = 'theo-remote-v6';
 const APP_SHELL = [
   './',
   './index.html',
-  './css/theo.css?v=5',
-  './js/endpoints.js?v=5',
-  './js/app.js?v=5',
+  './css/theo.css?v=6',
+  './js/endpoints.js?v=6',
+  './js/app.js?v=6',
   './manifest.json',
   './icon.svg',
   './icon-180.png',

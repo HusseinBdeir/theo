@@ -358,8 +358,11 @@
     } else if (connMode === 'cloud' && cloudCfg.url && cloudCfg.key) {
       const cached = threadsCache[threadId];
       const hasMessages = Array.isArray(cached?.messages) && cached.messages.length > 0;
+      const hasTruncated =
+        hasMessages &&
+        cached.messages.some((m) => String(m.text || '').includes('<truncated '));
       const lastReq = pendingThreadRequests.get(threadId) || 0;
-      if (!hasMessages && Date.now() - lastReq > 15000) {
+      if ((!hasMessages || hasTruncated) && Date.now() - lastReq > 15000) {
         pendingThreadRequests.set(threadId, Date.now());
         if (prefs.activeTab === 'chat' && prefs.selectedThreadId === threadId) {
           renderChatView();
@@ -809,9 +812,9 @@
     const plan = provInfo?.account?.plan || (key === 'claude' ? 'Claude Max' : 'Google AI Pro');
     const email = provInfo?.account?.email || '';
     const isCollapsed = Boolean(prefs.collapsedQuotaCards && prefs.collapsedQuotaCards[key]);
-    let limits = provInfo?.usage?.allLimits?.length
-      ? provInfo.usage.allLimits
-      : provInfo?.usage?.limits || [];
+    let limits = provInfo?.usage?.limits?.length
+      ? provInfo.usage.limits
+      : provInfo?.usage?.allLimits || [];
 
     if (!limits.length && key === 'claude') {
       const claudeSum = appState?.summaryByProvider?.claude || appState?.summary || {};
@@ -1007,14 +1010,42 @@
     container.innerHTML = filtered.map((r) => renderSessionCardHtml(r)).join('');
   }
 
+  function coalesceThreadMessages(rawMessages) {
+    if (!Array.isArray(rawMessages) || rawMessages.length === 0) return [];
+    const merged = [];
+    for (const m of rawMessages) {
+      if (!m) continue;
+      const prev = merged[merged.length - 1];
+      if (prev && prev.role === 'assistant' && m.role === 'assistant') {
+        if (m.text) {
+          prev.text = prev.text ? `${prev.text}\n\n${m.text}` : m.text;
+        }
+        if (m.thinking) {
+          prev.thinking = prev.thinking ? `${prev.thinking}\n\n${m.thinking}` : m.thinking;
+        }
+        if (Array.isArray(m.toolCalls) && m.toolCalls.length) {
+          prev.toolCalls = [...(prev.toolCalls || []), ...m.toolCalls].slice(-24);
+        }
+        if (m.createdAt) prev.createdAt = m.createdAt;
+      } else {
+        merged.push({
+          ...m,
+          toolCalls: Array.isArray(m.toolCalls) ? [...m.toolCalls] : []
+        });
+      }
+    }
+    return merged;
+  }
+
   // VIEW 3: Render Live Chat Workbench
   function renderChatView(forceScroll = false) {
     ensureSelectedThread();
+    updateComposerModePills();
     const rows = (appState?.rows || []).filter((r) => r.id && !r.draft);
     const selectEl = $('chat-session-select');
     if (selectEl) {
       selectEl.innerHTML = rows
-        .slice(0, 65)
+        .slice(0, 80)
         .map(
           (r) =>
             `<option value="${esc(r.id)}" ${r.id === prefs.selectedThreadId ? 'selected' : ''}>[${r.provider === 'claude' ? 'Claude' : 'AGY'}] ${esc(r.title)} (${timeAgo(r.at)})</option>`
@@ -1035,13 +1066,18 @@
       folderEl.textContent =
         threadDetail?.folder || activeRow?.folder || (prefs.composerRepoPrefix ? `Scope: ${prefs.composerRepoPrefix}` : 'BHFIRMS Workspace');
     }
+    const rawCtx = threadDetail?.contextWindow || {};
+    const resolvedModelLabel =
+      rawCtx.modelLabel ||
+      (threadDetail?.model && threadDetail.model !== 'Antigravity' ? threadDetail.model : '') ||
+      (activeRow?.model && activeRow.model !== 'Antigravity' ? activeRow.model : '') ||
+      (provKey === 'claude' ? 'Claude Opus 4.7' : 'Gemini 4 Argon High');
     const modelEl = $('chat-model-pill');
     if (modelEl) {
-      modelEl.textContent = threadDetail?.model || activeRow?.model || (provKey === 'claude' ? 'Claude Opus 4.7' : 'Gemini 2.5 Pro');
+      modelEl.textContent = resolvedModelLabel;
     }
 
     // Context Window Pill & Popover
-    const rawCtx = threadDetail?.contextWindow || {};
     const usedTokens = Number(rawCtx.usedTokens || 16400);
     const limitTokens = Number(rawCtx.limitTokens || rawCtx.maxContextTokens || (provKey === 'claude' ? 200000 : 1000000));
     const pct = Number(rawCtx.pct ?? Math.min(100, Math.max(1, Math.round((usedTokens / Math.max(1, limitTokens)) * 100))));
@@ -1057,7 +1093,7 @@
       limitTokens,
       pct,
       remainingTokens: Math.max(0, limitTokens - usedTokens),
-      modelLabel: modelEl?.textContent || 'Model',
+      modelLabel: resolvedModelLabel,
       breakdown: breakdownArr
     };
     const pillLbl = $('ctx-pill-label');
@@ -1078,7 +1114,7 @@
     if (!streamEl) return;
     const wasNearBottom =
       streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight < 100;
-    const messages = threadDetail?.messages || [];
+    const messages = coalesceThreadMessages(threadDetail?.messages || []);
     const isSyncingThread =
       connMode === 'cloud' &&
       prefs.selectedThreadId &&
@@ -1106,15 +1142,20 @@
       streamEl.innerHTML = messages
         .map((m) => {
           const isUser = m.role === 'user';
-          const toolsHtml =
-            Array.isArray(m.toolCalls) && m.toolCalls.length
-              ? `<div class="tool-calls-grid">${m.toolCalls
-                  .map(
-                    (tc) =>
-                      `<span class="tool-pill mono"><strong>${esc(tc.name)}</strong><span>${esc(String(tc.summary || '').slice(0, 70))}</span></span>`
-                  )
-                  .join('')}</div>`
-              : '';
+          const toolCount = Array.isArray(m.toolCalls) ? m.toolCalls.length : 0;
+          const toolPillsInner = toolCount
+            ? `<div class="tool-calls-grid">${m.toolCalls
+                .map(
+                  (tc) =>
+                    `<span class="tool-pill mono"><strong>${esc(tc.name)}</strong><span>${esc(String(tc.summary || '').slice(0, 70))}</span></span>`
+                )
+                .join('')}</div>`
+            : '';
+          const toolsHtml = toolCount
+            ? m.text
+              ? `<details class="tools-details"><summary>⚡ ${toolCount} tool ${toolCount === 1 ? 'step' : 'steps'} executed</summary>${toolPillsInner}</details>`
+              : toolPillsInner
+            : '';
           const thinkHtml = m.thinking
             ? `<details class="thinking-details"><summary>Reasoning &amp; Internal Thought</summary><div class="turn-text mono" style="margin-top:6px">${esc(m.thinking)}</div></details>`
             : '';
@@ -1125,7 +1166,7 @@
                 <span class="tabular">${m.createdAt ? timeAgo(Date.parse(m.createdAt)) : ''}</span>
               </div>
               ${thinkHtml}
-              ${m.text ? `<div class="turn-text">${formatTurnMarkdown(m.text)}</div>` : ''}
+              ${m.text ? `<div class="turn-text md-rich">${formatTurnMarkdown(m.text)}</div>` : ''}
               ${toolsHtml}
             </div>
           `;
@@ -1145,12 +1186,173 @@
     }
   }
 
+  function renderFileChipHtml(rawLabel) {
+    const clean = String(rawLabel || '')
+      .trim()
+      .replace(/^`+|`+$/g, '');
+    let ico = '📄';
+    if (/\.md(#|$)/i.test(clean)) ico = 'M↓';
+    else if (/\.py(#|$)/i.test(clean)) ico = 'py';
+    else if (/\.(js|ts|cjs|mjs)(#|$)/i.test(clean)) ico = 'JS';
+    else if (/\.(sh|ps1|bat|cmd)(#|$)/i.test(clean)) ico = '>_';
+    else if (/\.json(#|$)/i.test(clean)) ico = '{}';
+    else if (/\.(css|html)(#|$)/i.test(clean)) ico = '<>';
+    return `<span class="md-file-chip"><span class="md-chip-ico">${ico}</span><span>${esc(clean)}</span></span>`;
+  }
+
   function formatTurnMarkdown(rawText) {
-    let safe = esc(rawText);
-    safe = safe.replace(/```(\w*)\n([\s\S]*?)```/g, (_, _lang, code) => `<pre><code>${code}</code></pre>`);
-    safe = safe.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-    safe = safe.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-    return safe;
+    if (!rawText) return '';
+    let src = String(rawText)
+      .replace(/\r\n/g, '\n')
+      .replace(/<truncated\s+\d+\s+bytes>/gi, '…');
+
+    const codeBlocks = [];
+    src = src.replace(/```(\w*)\n([\s\S]*?)```/g, (_, _lang, code) => {
+      const idx = codeBlocks.length;
+      codeBlocks.push(`<pre><code>${esc(code.replace(/\n$/, ''))}</code></pre>`);
+      return `\n\x00CODEBLOCK_${idx}\x00\n`;
+    });
+
+    const chips = [];
+    const pushChip = (label) => {
+      const idx = chips.length;
+      chips.push(renderFileChipHtml(label));
+      return `\x00CHIP_${idx}\x00`;
+    };
+
+    // Convert [label](file:///...) or [`label`](file:///...) or [label](conversation://...) (even if truncated mid-URL) into VS Code file chips
+    src = src.replace(
+      /\[`?([^`\]\n]+)`?\]\((?:file|conversation):\/\/[^)\s]*\)?/gi,
+      (_, label) => pushChip(label)
+    );
+    // Convert any bare file:/// URLs into compact basename chips
+    src = src.replace(/(^|[\s(])file:\/\/\/([^\s)]+)/gi, (_, prefix, rawPath) => {
+      let base = rawPath;
+      try {
+        base = decodeURIComponent(rawPath).split(/[\\/]/).pop() || rawPath;
+      } catch {
+        base = rawPath.split(/[\\/]/).pop() || rawPath;
+      }
+      return `${prefix}${pushChip(base)}`;
+    });
+
+    const inlineCodes = [];
+    src = src.replace(/`([^`\n]+)`/g, (_, code) => {
+      const idx = inlineCodes.length;
+      inlineCodes.push(`<code>${esc(code)}</code>`);
+      return `\x00INLINECODE_${idx}\x00`;
+    });
+
+    const formatInline = (lineStr) => {
+      let s = esc(lineStr);
+      s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+      s = s.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s.,;:!?)]|$)/g, '$1<em>$2</em>');
+      s = s.replace(
+        /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+        '<a href="$2" target="_blank" rel="noopener">$1</a>'
+      );
+      s = s.replace(/\x00INLINECODE_(\d+)\x00/g, (_, i) => inlineCodes[Number(i)] || '');
+      s = s.replace(/\x00CHIP_(\d+)\x00/g, (_, i) => chips[Number(i)] || '');
+      return s;
+    };
+
+    const lines = src.split('\n');
+    const out = [];
+    let paraBuf = [];
+    const flushPara = () => {
+      if (!paraBuf.length) return;
+      out.push(`<p class="md-p">${paraBuf.join('<br>')}</p>`);
+      paraBuf = [];
+    };
+
+    const splitTableRow = (rowLine) =>
+      rowLine
+        .trim()
+        .replace(/^\||\|$/g, '')
+        .split('|')
+        .map((c) => formatInline(c.trim()));
+
+    for (let i = 0; i < lines.length; i++) {
+      const rawLine = lines[i];
+      const trimmed = rawLine.trim();
+
+      if (!trimmed) {
+        flushPara();
+        continue;
+      }
+
+      const cbMatch = trimmed.match(/^\x00CODEBLOCK_(\d+)\x00$/);
+      if (cbMatch) {
+        flushPara();
+        out.push(codeBlocks[Number(cbMatch[1])] || '');
+        continue;
+      }
+
+      if (/^(?:---|\*\*\*|___)$/.test(trimmed)) {
+        flushPara();
+        out.push('<hr class="md-hr">');
+        continue;
+      }
+
+      const hMatch = trimmed.match(/^(#{1,4})\s+(.+)$/);
+      if (hMatch) {
+        flushPara();
+        const lvl = hMatch[1].length;
+        const cls = lvl <= 3 ? 'md-h3' : 'md-h4';
+        const tag = lvl <= 3 ? 'h3' : 'h4';
+        out.push(`<${tag} class="${cls}">${formatInline(hMatch[2])}</${tag}>`);
+        continue;
+      }
+
+      // Markdown table detection
+      if (
+        trimmed.includes('|') &&
+        i + 1 < lines.length &&
+        /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1]) &&
+        lines[i + 1].includes('-')
+      ) {
+        flushPara();
+        const headers = splitTableRow(trimmed);
+        i += 2; // skip header + separator
+        const bodyRows = [];
+        while (i < lines.length && lines[i].trim().includes('|')) {
+          bodyRows.push(splitTableRow(lines[i]));
+          i++;
+        }
+        i--; // step back so outer loop increments properly
+        const thHtml = headers.map((h) => `<th>${h}</th>`).join('');
+        const tbHtml = bodyRows
+          .map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`)
+          .join('');
+        out.push(
+          `<div class="md-table-wrap"><table class="md-table"><thead><tr>${thHtml}</tr></thead><tbody>${tbHtml}</tbody></table></div>`
+        );
+        continue;
+      }
+
+      const ulMatch = rawLine.match(/^\s*[-*•]\s+(.+)$/);
+      if (ulMatch) {
+        flushPara();
+        out.push(
+          `<div class="md-list-item"><span class="md-bullet">•</span><div>${formatInline(ulMatch[1])}</div></div>`
+        );
+        continue;
+      }
+
+      const olMatch = rawLine.match(/^\s*(\d+\.)\s+(.+)$/);
+      if (olMatch) {
+        flushPara();
+        out.push(
+          `<div class="md-list-item"><span class="md-bullet tabular">${esc(olMatch[1])}</span><div>${formatInline(olMatch[2])}</div></div>`
+        );
+        continue;
+      }
+
+      paraBuf.push(formatInline(trimmed));
+    }
+    flushPara();
+
+    return out.join('');
   }
 
   function renderContextPopover(ctx) {
@@ -1763,6 +1965,8 @@
         const tid = cmdItem.dataset.cmdThread;
         if (tid) {
           prefs.selectedThreadId = tid;
+          prefs.composerMode = 'reply';
+          saveJson(STORAGE_KEYS.PREFS, prefs);
           switchTab('chat');
           fetchThreadDetail(tid);
         } else if (act === 'new-agy') {
@@ -1838,6 +2042,7 @@
     // Session select change in Chat
     $('chat-session-select')?.addEventListener('change', (e) => {
       prefs.selectedThreadId = e.target.value;
+      prefs.composerMode = 'reply';
       saveJson(STORAGE_KEYS.PREFS, prefs);
       renderChatView(true);
       fetchThreadDetail(prefs.selectedThreadId);
@@ -1926,6 +2131,12 @@
       prompt: text,
       newSession: Boolean(isNewAgy || isNewClaude || !targetId)
     });
+
+    if (isNewAgy || isNewClaude) {
+      prefs.composerMode = 'reply';
+      saveJson(STORAGE_KEYS.PREFS, prefs);
+      updateComposerModePills();
+    }
 
     if (res.mode === 'cloud') {
       setTimeout(() => syncData(), 3500);
