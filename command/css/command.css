@@ -484,17 +484,24 @@ button {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 10px 12px;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding: 8px 10px;
   display: flex;
   flex-direction: column;
 }
 
 .cmd-view {
-  flex: 1;
+  flex: 1 0 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
+}
+
+#view-radar.cmd-view {
+  flex: 1 1 0%;
+  height: 100%;
 }
 
 .cmd-view[hidden] {
@@ -506,11 +513,11 @@ button {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   overflow-x: auto;
   scrollbar-width: none;
-  padding: 6px 9px;
-  border-radius: 10px;
+  padding: 5px 8px;
+  border-radius: 9px;
   background: linear-gradient(90deg, rgba(16, 185, 129, 0.16), rgba(217, 165, 74, 0.12));
   border: 1px solid rgba(16, 185, 129, 0.42);
 }
@@ -523,12 +530,12 @@ button {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 8px;
-  border-radius: 7px;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 6px;
   background: var(--bg-ink);
   border: 1px solid var(--border-subtle);
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 600;
 }
 
@@ -538,14 +545,14 @@ button {
   min-height: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-rows: repeat(4, minmax(84px, 1fr));
+  gap: 6px;
 }
 
 @media (min-width: 1024px) {
   .bento-radar-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    grid-template-rows: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(2, minmax(120px, 1fr));
     gap: 10px;
   }
 }
@@ -553,13 +560,13 @@ button {
 .bento-tile {
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
-  border-radius: 12px;
-  padding: 8px 10px;
+  border-radius: 11px;
+  padding: 7px 8px;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-start;
   min-width: 0;
-  min-height: 0;
+  min-height: 84px;
   overflow: hidden;
   cursor: pointer;
   transition: border-color 0.14s ease, transform 0.12s ease;
@@ -588,7 +595,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: 4px;
   margin-bottom: 4px;
   flex-shrink: 0;
 }
@@ -596,17 +603,17 @@ button {
 .bento-title-wrap {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
 }
 
 .bento-icon {
-  font-size: 14px;
+  font-size: 13px;
   flex-shrink: 0;
 }
 
 .bento-title {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 800;
   color: var(--text-primary);
   white-space: nowrap;
@@ -617,16 +624,16 @@ button {
 .bento-count-wrap {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   flex-shrink: 0;
 }
 
 .bento-count {
-  padding: 1px 6px;
+  padding: 1px 5px;
   border-radius: 999px;
   background: var(--bg-ink);
   border: 1px solid var(--border-subtle);
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 700;
   color: var(--text-secondary);
 }
@@ -653,25 +660,27 @@ button {
 }
 
 .bento-micro-row {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   padding: 2.5px 5px;
   border-radius: 6px;
   background: var(--bg-ink);
-  font-size: 11.5px;
+  font-size: 11px;
+  line-height: 1.25;
   min-width: 0;
 }
 
 .bento-micro-check {
-  width: 15px;
-  height: 15px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   border: 1.5px solid var(--text-muted);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 9px;
+  font-size: 8.5px;
   color: transparent;
   flex-shrink: 0;
   transition: all 0.12s ease;
@@ -694,7 +703,7 @@ button {
 
 .bento-micro-tag {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 600;
   padding: 1px 4px;
   border-radius: 4px;
@@ -712,7 +721,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--text-muted);
   padding: 2px 2px;
 }
@@ -722,12 +731,18 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 4px;
-  margin-top: 3px;
+  margin-top: auto;
   padding-top: 3px;
   border-top: 1px solid rgba(148, 163, 184, 0.08);
   font-size: 10px;
   color: var(--text-muted);
   flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .bento-foot {
+    display: none;
+  }
 }
 
 /* ============================================================================
@@ -739,18 +754,19 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
 .horiz-pill-strip {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 6px;
   overflow-x: auto;
   scrollbar-width: none;
   padding: 2px 0;
-  flex: 1;
+  width: 100%;
   min-width: 0;
 }
 
@@ -767,7 +783,7 @@ button {
   border-radius: 999px;
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
   color: var(--text-secondary);
 }
@@ -780,27 +796,30 @@ button {
 }
 
 .ticker-list {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  overflow-y: auto;
-  padding-bottom: 12px;
+  padding-bottom: 18px;
 }
 
 .ticker-group-header {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 6px 4px 2px 4px;
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.04em;
   color: var(--brass);
 }
 
-/* 44px Compact Single-Line Ticker Row */
+/* 44px Compact Single-Line Ticker Row — NEVER flex-shrink! */
 .ticker-row-card {
+  flex: 0 0 auto;
   border-radius: 10px;
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
@@ -826,7 +845,7 @@ button {
 
 .ticker-main-line {
   min-height: 44px;
-  padding: 6px 10px;
+  padding: 7px 10px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -859,6 +878,7 @@ button {
   flex: 1;
   min-width: 0;
   font-size: 13.5px;
+  line-height: 1.3;
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
@@ -878,7 +898,7 @@ button {
 .ticker-pills {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   flex-shrink: 0;
 }
 
@@ -886,9 +906,10 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 2px 7px;
+  padding: 2.5px 6.5px;
   border-radius: 6px;
-  font-size: 11px;
+  font-size: 10.5px;
+  line-height: 1.2;
   font-weight: 600;
   background: var(--bg-ink);
   border: 1px solid var(--border-subtle);
@@ -989,6 +1010,7 @@ button {
    ============================================================================ */
 
 .score-summary-card {
+  flex: 0 0 auto;
   padding: 12px 14px;
   border-radius: 12px;
   background: var(--bg-card);
@@ -1048,9 +1070,11 @@ button {
 }
 
 .score-two-col {
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+  padding-bottom: 16px;
 }
 
 @media (max-width: 640px) {
@@ -1060,6 +1084,7 @@ button {
 }
 
 .habit-col-box {
+  flex: 0 0 auto;
   padding: 10px 12px;
   border-radius: 12px;
   background: var(--bg-card);
@@ -1070,6 +1095,7 @@ button {
 }
 
 .habit-compact-row {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;

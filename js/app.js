@@ -3756,10 +3756,7 @@
     ).size;
 
     const delegatedCount = remSum.active.filter((r) => r.isDelegated || r.assigneeName).length;
-    const cmdUrl =
-      location.hostname === '127.0.0.1' || location.hostname === 'localhost'
-        ? './command/'
-        : 'https://husseinbdeir.github.io/command/';
+    const cmdUrl = './command/';
 
     return `
       <div class="pulse-disc-grid">
@@ -4299,10 +4296,7 @@
     const remSum = getActiveRemindersSummary();
     const groupMode = prefs.remGroupMode || 'clusters';
 
-    const cmdUrl =
-      location.hostname === '127.0.0.1' || location.hostname === 'localhost'
-        ? './command/'
-        : 'https://husseinbdeir.github.io/command/';
+    const cmdUrl = './command/';
 
     root.innerHTML = `
       ${renderPulseNotifBannerHtml()}

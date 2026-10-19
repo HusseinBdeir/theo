@@ -608,16 +608,15 @@
     if (/\b(next week)\b/.test(s)) {
       return { targetAt: now + 7 * 86400000, label: 'In 7d', isHold: true, recur: 'none' };
     }
+    // Smart cluster defaults: Ideas & Want-To-Do stay Parked (no noisy alarm) unless an explicit countdown above was given
+    if (clusterId === 'ideas' || clusterId === 'want_to_do') {
+      return { targetAt: 0, label: 'Parked (No Alarm)', isHold: false, recur: 'none' };
+    }
     if (/\b(every day|daily)\b/.test(s)) {
       return { targetAt: now + 86400000, label: 'Daily', isHold: false, recur: 'daily' };
     }
     if (/\b(every week|weekly)\b/.test(s)) {
       return { targetAt: now + 7 * 86400000, label: 'Weekly', isHold: false, recur: 'weekly' };
-    }
-
-    // Smart cluster defaults
-    if (clusterId === 'ideas' || clusterId === 'want_to_do') {
-      return { targetAt: 0, label: 'Parked (No Alarm)', isHold: false, recur: 'none' };
     }
     if (clusterId === 'verify') {
       return { targetAt: now + 24 * 3600000, label: '24h Verify Wait', isHold: true, recur: 'none' };
@@ -1508,6 +1507,9 @@
     `
       : '';
 
+    const isMobileViewport = typeof window !== 'undefined' && window.innerWidth <= 640;
+    const maxPreviewRows = isMobileViewport ? 2 : 3;
+
     const tilesHtml = CLUSTERS.map((c) => {
       const items = active.filter((r) => (r.category || 'work') === c.id);
       const maturedCount = items.filter((r) => {
@@ -1522,7 +1524,7 @@
         .filter(Boolean)
         .join(' ');
 
-      const topRows = items.slice(0, 3).map((it) => {
+      const topRows = items.slice(0, maxPreviewRows).map((it) => {
         const t = Number(it.matureAt || it.dueAt || 0);
         const isReady = (t > 0 && now >= t) || it.delegationStatus === 'done';
         const tagTxt = it.assigneeName
@@ -1556,7 +1558,7 @@
           <div class="bento-head">
             <div class="bento-title-wrap">
               <span class="bento-icon">${c.icon}</span>
-              <span class="bento-title">${esc(c.label)}</span>
+              <span class="bento-title">${esc(isMobileViewport ? c.shortLabel : c.label)}</span>
             </div>
             <div class="bento-count-wrap">
               ${
@@ -1577,7 +1579,7 @@
           </div>
 
           <div class="bento-foot">
-            <span>${items.length > 3 ? `+${items.length - 3} more · Tap to expand` : 'Tap to open or + add'}</span>
+            <span>${items.length > maxPreviewRows ? `+${items.length - maxPreviewRows} more · Tap to expand` : 'Tap to open or + add'}</span>
             <span>↗</span>
           </div>
         </div>
@@ -1595,19 +1597,29 @@
   /* ============================================================================
      TAB 2: TIMERS & HOLDS (VERIFY APP SYNC, SHIPPING, PAYMENT HOLDS)
      ============================================================================ */
+  function isTimerItem(r) {
+    if (!r || r.completed) return false;
+    if (r.category === 'ideas' || r.category === 'want_to_do') return Boolean(r.matureAt > 0);
+    return Boolean(
+      r.matureAt > 0 ||
+        r.dueAt > 0 ||
+        r.category === 'verify' ||
+        r.category === 'shipping' ||
+        r.category === 'payments'
+    );
+  }
+
+  function isDelegatedItem(r) {
+    if (!r || r.completed) return false;
+    if (r.category === 'ideas' || r.category === 'want_to_do') return Boolean(r.isDelegated || r.assigneeName);
+    return Boolean(r.isDelegated || r.assigneeName || r.category === 'people');
+  }
+
   function renderTimersView() {
     const root = document.getElementById('view-timers');
     if (!root) return;
     const now = Date.now();
-    const allTimed = state.reminders.filter(
-      (r) =>
-        !r.completed &&
-        (r.matureAt > 0 ||
-          r.dueAt > 0 ||
-          r.category === 'verify' ||
-          r.category === 'shipping' ||
-          r.category === 'payments')
-    );
+    const allTimed = state.reminders.filter(isTimerItem);
 
     const filters = [
       { id: 'all', lbl: `All Timers (${allTimed.length})` },
@@ -1662,9 +1674,7 @@
     const root = document.getElementById('view-delegated');
     if (!root) return;
     const now = Date.now();
-    const delegated = state.reminders.filter(
-      (r) => !r.completed && (r.isDelegated || r.assigneeName || r.category === 'people')
-    );
+    const delegated = state.reminders.filter(isDelegatedItem);
 
     const statusCounts = {
       all: delegated.length,
@@ -2032,12 +2042,9 @@
   }
 
   function updateDockBadges() {
-    const now = Date.now();
     const active = state.reminders.filter((r) => !r.completed);
-    const timersCnt = active.filter(
-      (r) => r.matureAt > 0 || r.category === 'verify' || r.category === 'shipping' || r.category === 'payments'
-    ).length;
-    const delCnt = active.filter((r) => r.isDelegated || r.assigneeName).length;
+    const timersCnt = state.reminders.filter(isTimerItem).length;
+    const delCnt = state.reminders.filter(isDelegatedItem).length;
 
     const setBadge = (id, count) => {
       const el = document.getElementById(id);
@@ -2606,6 +2613,13 @@
     }
 
     loadLocalState();
+    const theoLink = document.querySelector('.hud-theo-link');
+    if (theoLink && window.location.pathname.includes('/theo/command')) {
+      theoLink.setAttribute('href', '../');
+    }
+    window.addEventListener('resize', () => {
+      if (state.activeTab === 'radar') renderRadarView();
+    });
     if (getSavedPushSub()) {
       const pDot = document.getElementById('push-dot');
       if (pDot) pDot.hidden = false;
