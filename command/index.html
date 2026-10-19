@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="theme-color" content="#071022" id="meta-theme-color">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Command">
+  <meta name="description" content="THEO Command — Zero-Scroll Executive Radar, Wait Timers, BHFIRMS Task Delegation & Daily 100-Point Discipline.">
+  <title>THEO Command — Executive Planner &amp; 100%</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/command.css?v=1">
+</head>
+<body>
+  <!-- ISOLATED STAFF DELEGATION PORTAL (Only shown when opened with ?task=...&token=...) -->
+  <div id="staff-portal-root" class="staff-portal-root" hidden></div>
+
+  <!-- EXECUTIVE OWNER APP SHELL -->
+  <div id="owner-app-shell" class="cmd-shell">
+    <!-- Pinned 52px Top Discipline HUD Ribbon -->
+    <header class="hud-ribbon" id="hud-ribbon">
+      <div class="hud-left">
+        <img src="icon.svg" alt="Command" class="hud-logo">
+        <button type="button" class="hud-score-pill" id="hud-score-btn" title="Tap to open full 100-Point Discipline Scorecard">
+          <span class="hud-shield">🛡️</span>
+          <strong class="hud-score-val tabular" id="hud-score-val">50%</strong>
+          <span class="hud-score-delta tabular" id="hud-score-delta">Base 50%</span>
+        </button>
+      </div>
+
+      <!-- 10-Chip Horizontal Quick-Toggle Habit Strip (5 Do's + 5 Don'ts) -->
+      <div class="hud-habit-strip" id="hud-habit-strip" aria-label="Quick 1-Tap Daily Do's and Don'ts"></div>
+
+      <div class="hud-right">
+        <button type="button" class="hud-sync-pill" id="btn-sync-now" title="Sync with Cloud Relay &amp; Workstation Bridge">
+          <span class="sync-dot" id="sync-dot"></span>
+          <span id="sync-label">Sync</span>
+        </button>
+        <button type="button" class="hud-icon-btn" id="btn-push-toggle" title="Enable / Configure Lock-Screen Web Push Notifications" aria-label="Push Notifications">
+          <svg viewBox="0 0 20 20"><path d="M10 2.5a5 5 0 0 0-5 5v2.8l-1.6 2.4a.6.6 0 0 0 .5.9h12.2a.6.6 0 0 0 .5-.9L15 10.3V7.5a5 5 0 0 0-5-5zm-1.8 13a1.8 1.8 0 0 0 3.6 0" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="push-dot" id="push-dot" hidden></span>
+        </button>
+        <button type="button" class="hud-icon-btn" id="btn-theme-toggle" title="Toggle Dark / Light Theme" aria-label="Toggle Theme">
+          <svg viewBox="0 0 20 20"><path d="M10 3a7 7 0 1 0 7 7c0-.4-.04-.8-.1-1.2A5.5 5.5 0 0 1 11.2 3.1C10.8 3.04 10.4 3 10 3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        </button>
+        <a href="https://husseinbdeir.github.io/theo/" class="hud-theo-link" id="link-theo-workbench" title="Open THEO AI Coding Workbench">
+          <span>THEO</span>
+          <svg viewBox="0 0 14 14"><path d="M4 10l6-6M5 4h5v5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+      </div>
+    </header>
+
+    <!-- Pinned Single-Line Universal Brain-Dump & @Delegate Bar -->
+    <section class="capture-bar-wrap" id="capture-bar-wrap">
+      <form class="capture-form" id="capture-form" autocomplete="off">
+        <div class="capture-input-shell">
+          <span class="capture-spark">✨</span>
+          <input
+            type="text"
+            id="capture-input"
+            class="capture-input"
+            placeholder="Drop anything: @Rami check WTC filter press, Paid $120 on Whish didn't show up, Shipping 5d…"
+          >
+          <button type="button" class="capture-delegate-btn" id="btn-pick-assignee" title="Assign / Delegate to someone in BHFIRMS (@Person)">
+            <span>👥</span>
+            <span id="capture-assignee-label">@Delegate</span>
+          </button>
+        </div>
+        <button type="submit" class="capture-submit-btn" id="capture-submit-btn">+ Add</button>
+      </form>
+
+      <!-- Collapsible Live AI Auto-Classifier Drawer (Zero height when input is empty) -->
+      <div class="live-advisor-drawer" id="live-advisor-drawer" hidden></div>
+    </section>
+
+    <!-- Main Zero-Scroll Viewport Stage -->
+    <main class="cmd-stage" id="cmd-stage">
+      <!-- TAB 1: RADAR (2x4 Zero-Scroll Bento Grid) -->
+      <section class="cmd-view active" id="view-radar" data-view="radar"></section>
+
+      <!-- TAB 2: TIMERS (Verify App Sync, Shipping Countdowns & Payment Cooling-Off Holds) -->
+      <section class="cmd-view" id="view-timers" data-view="timers" hidden></section>
+
+      <!-- TAB 3: DELEGATED (BHFIRMS Organization Delegation & Team Matrix) -->
+      <section class="cmd-view" id="view-delegated" data-view="delegated" hidden></section>
+
+      <!-- TAB 4: BOARD (Horizontal Swipeable Clusters & Sub-Topics with 44px Ticker Rows) -->
+      <section class="cmd-view" id="view-board" data-view="board" hidden></section>
+
+      <!-- TAB 5: 100% SCORE (Full Daily 100-Point Personal Discipline Ledger & 7-Day Trend) -->
+      <section class="cmd-view" id="view-score" data-view="score" hidden></section>
+    </main>
+  </div>
+
+  <!-- Dedicated 5-Tab Bottom Navigation Dock -->
+  <nav class="cmd-bottom-dock" id="cmd-bottom-dock" aria-label="Primary Planner Navigation">
+    <button type="button" class="cmd-dock-btn active" data-tab="radar">
+      <svg viewBox="0 0 20 20"><rect x="2.5" y="2.5" width="6.5" height="6.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.65"/><rect x="11" y="2.5" width="6.5" height="6.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.65"/><rect x="2.5" y="11" width="6.5" height="6.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.65"/><rect x="11" y="11" width="6.5" height="6.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.65"/></svg>
+      <span>Radar</span>
+      <span class="dock-pill brass tabular" id="dock-badge-radar" hidden>0</span>
+    </button>
+    <button type="button" class="cmd-dock-btn" data-tab="timers">
+      <svg viewBox="0 0 20 20"><circle cx="10" cy="10.5" r="6.8" fill="none" stroke="currentColor" stroke-width="1.65"/><path d="M10 6.8v3.9l2.6 1.8M7.5 2.2h5" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round"/></svg>
+      <span>Timers</span>
+      <span class="dock-pill amber tabular" id="dock-badge-timers" hidden>0</span>
+    </button>
+    <button type="button" class="cmd-dock-btn" data-tab="delegated">
+      <svg viewBox="0 0 20 20"><circle cx="7.5" cy="6.5" r="2.8" fill="none" stroke="currentColor" stroke-width="1.65"/><path d="M2.5 16c0-2.6 2.2-4.5 5-4.5s5 1.9 5 4.5" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round"/><circle cx="14.2" cy="7.2" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M13.5 11.8c2.2.3 4 1.8 4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      <span>Delegated</span>
+      <span class="dock-pill emerald tabular" id="dock-badge-delegated" hidden>0</span>
+    </button>
+    <button type="button" class="cmd-dock-btn" data-tab="board">
+      <svg viewBox="0 0 20 20"><path d="M3 5h14M3 10h14M3 15h10" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg>
+      <span>Board</span>
+      <span class="dock-pill steel tabular" id="dock-badge-board" hidden>0</span>
+    </button>
+    <button type="button" class="cmd-dock-btn" data-tab="score">
+      <svg viewBox="0 0 20 20"><path d="M10 2.5l6 2.5v4.8c0 4.2-2.6 6.9-6 8.2-3.4-1.3-6-4-6-8.2V5l6-2.5z" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linejoin="round"/><path d="M7.3 10.2l1.9 1.9 3.6-3.7" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>100% Score</span>
+      <span class="dock-pill brass tabular" id="dock-badge-score">50%</span>
+    </button>
+  </nav>
+
+  <!-- Slide-Up Sheet Modal (Cluster Drilldown, Team Roster Manager & Push Settings) -->
+  <div class="sheet-backdrop" id="sheet-backdrop" hidden>
+    <div class="sheet-dialog" id="sheet-dialog">
+      <div class="sheet-header">
+        <div class="sheet-title-wrap" id="sheet-title-wrap"></div>
+        <button type="button" class="sheet-close-btn" id="sheet-close-btn">✕</button>
+      </div>
+      <div class="sheet-body" id="sheet-body"></div>
+    </div>
+  </div>
+
+  <!-- Toast Stack -->
+  <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+
+  <script src="js/endpoints.js?v=1"></script>
+  <script src="js/app.js?v=1"></script>
+</body>
+</html>

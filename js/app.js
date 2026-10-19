@@ -3575,6 +3575,12 @@
       )
     ).size;
 
+    const delegatedCount = remSum.active.filter((r) => r.isDelegated || r.assigneeName).length;
+    const cmdUrl =
+      location.hostname === '127.0.0.1' || location.hostname === 'localhost'
+        ? './command/'
+        : 'https://husseinbdeir.github.io/command/';
+
     return `
       <div class="pulse-disc-grid">
         <div class="pulse-disc-card" data-goto-tab="discipline">
@@ -3597,13 +3603,13 @@
             </div>
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
-            <span class="chip-btn active" style="pointer-events:none">Score Today →</span>
+            <a href="${cmdUrl}" class="chip-btn active" onclick="event.stopPropagation()" style="text-decoration:none">🎯 Command PWA ↗</a>
           </div>
         </div>
 
         <div class="pulse-disc-card" data-goto-tab="discipline">
           <div style="min-width:0;flex:1">
-            <div class="eyebrow">SMART REMINDERS · AI AUTO-GROUPED</div>
+            <div class="eyebrow">THEO COMMAND · ZERO-SCROLL RADAR &amp; BHFIRMS DELEGATION</div>
             <div style="display:flex;gap:14px;align-items:baseline;margin-top:4px;flex-wrap:wrap">
               <div>
                 <span class="pulse-disc-big tabular" style="font-size:24px;color:${remSum.maturedCount > 0 ? 'var(--amber)' : 'var(--text-primary)'}">${remSum.maturedCount}</span>
@@ -3611,11 +3617,15 @@
               </div>
               <div>
                 <span class="pulse-disc-big tabular" style="font-size:24px;color:var(--brass)">${remSum.holdingCount}</span>
-                <span class="meta-timestamp"> waiting on timer</span>
+                <span class="meta-timestamp"> timers</span>
+              </div>
+              <div>
+                <span class="pulse-disc-big tabular" style="font-size:24px;color:var(--emerald)">${delegatedCount}</span>
+                <span class="meta-timestamp"> delegated</span>
               </div>
               <div>
                 <span class="pulse-disc-big tabular" style="font-size:24px;color:var(--steel)">${remSum.active.length}</span>
-                <span class="meta-timestamp"> across ${activeClusterCount || 0} group${activeClusterCount === 1 ? '' : 's'}</span>
+                <span class="meta-timestamp"> across ${activeClusterCount || 0} cluster${activeClusterCount === 1 ? '' : 's'}</span>
               </div>
             </div>
             <div class="meta-timestamp" style="margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
@@ -3624,12 +3634,12 @@
                   ? `🔥 Ready: <strong>${esc(maturedItems[0].title)}</strong>`
                   : holdingItems.length
                     ? `⏳ Waiting: <strong>${esc(holdingItems[0].title)}</strong> (${formatHoldCountdown(holdingItems[0].matureAt || holdingItems[0].dueAt)})`
-                    : `People, Verify/App Sync, Shipping, Work, Family, Payments & Ideas — tap to add.`
+                    : `2×4 Zero-Scroll Bento Radar, Wait Timers & @Person WhatsApp Delegation.`
               }
             </div>
           </div>
           <div>
-            <span class="chip-btn" style="pointer-events:none">+ Add / View →</span>
+            <a href="${cmdUrl}" class="chip-btn active" onclick="event.stopPropagation()" style="text-decoration:none">Open Radar ↗</a>
           </div>
         </div>
       </div>
@@ -4109,8 +4119,26 @@
     const remSum = getActiveRemindersSummary();
     const groupMode = prefs.remGroupMode || 'clusters';
 
+    const cmdUrl =
+      location.hostname === '127.0.0.1' || location.hostname === 'localhost'
+        ? './command/'
+        : 'https://husseinbdeir.github.io/command/';
+
     root.innerHTML = `
       ${renderPulseNotifBannerHtml()}
+
+      <div class="push-banner-card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-color:var(--brass)">
+        <div style="min-width:220px;flex:1">
+          <div class="eyebrow" style="color:var(--brass)">STANDALONE ZERO-SCROLL EXECUTIVE APP</div>
+          <div style="font-size:15px;font-weight:800;margin-top:2px">🎯 THEO Command — 2×4 Bento Radar, Wait Timers &amp; BHFIRMS Delegation</div>
+          <div class="meta-timestamp" style="margin-top:3px">
+            Zero-scroll 8-cluster Radar grid, 52px Top Discipline HUD, @Person WhatsApp delegation &amp; private 1-task staff status links.
+          </div>
+        </div>
+        <a href="${cmdUrl}" class="btn-brass-sm" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px">
+          🚀 Open THEO Command PWA ↗
+        </a>
+      </div>
 
       <!-- 1. Daily 100-Point Discipline Hero Banner -->
       <div class="disc-hero-card">
