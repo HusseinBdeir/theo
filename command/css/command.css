@@ -55,20 +55,38 @@ html[data-theme="light"] {
   -webkit-tap-highlight-color: transparent;
 }
 
-[hidden] {
+[hidden], .hidden {
   display: none !important;
 }
 
 html, body {
   width: 100%;
-  height: 100%;
+  height: 100vh;
+  min-height: 100vh;
   overflow: hidden;
-  background: var(--bg-deep);
+  background: var(--bg-ink);
   color: var(--text-primary);
   font-family: 'Instrument Sans', -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 14px;
   line-height: 1.35;
   -webkit-font-smoothing: antialiased;
+}
+
+@media not all and (display-mode: standalone) {
+  html:not(.ios-standalone),
+  html:not(.ios-standalone) body,
+  html:not(.ios-standalone) .cmd-shell {
+    height: 100dvh;
+    min-height: 100dvh;
+  }
+}
+
+html.ios-standalone,
+html.ios-standalone body,
+html.ios-standalone .cmd-shell {
+  height: 100vh !important;
+  min-height: 100vh !important;
+  max-height: 100vh !important;
 }
 
 button, input, select, textarea {
@@ -94,8 +112,12 @@ button {
 
 .cmd-shell {
   position: fixed;
-  inset: 0;
-  bottom: calc(var(--dock-h) + env(safe-area-inset-bottom, 0px));
+  top: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: 100vh;
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
   background: var(--bg-deep);
@@ -1144,12 +1166,11 @@ button {
    ============================================================================ */
 
 .cmd-bottom-dock {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: calc(var(--dock-h) + env(safe-area-inset-bottom, 0px));
-  padding: 5px 8px calc(5px + env(safe-area-inset-bottom, 0px)) 8px;
+  position: relative;
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: 0;
+  padding: 5px max(8px, env(safe-area-inset-left, 8px)) 10px max(8px, env(safe-area-inset-right, 8px));
   background: var(--bg-ink);
   border-top: 1px solid var(--border-subtle);
   display: grid;
@@ -1165,11 +1186,23 @@ button {
   align-items: center;
   justify-content: center;
   gap: 3px;
+  min-height: 48px;
   border-radius: 10px;
   color: var(--text-muted);
   font-size: 10.5px;
   font-weight: 600;
   transition: all 0.14s ease;
+}
+
+@media (max-width: 768px) {
+  input[type="text"],
+  input[type="search"],
+  input[type="tel"],
+  input[type="url"],
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
 }
 
 .cmd-dock-btn svg {

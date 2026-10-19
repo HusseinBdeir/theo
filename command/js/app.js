@@ -2064,6 +2064,10 @@
 
   function renderAll() {
     document.documentElement.setAttribute('data-theme', state.theme);
+    const metaTheme = document.getElementById('meta-theme-color');
+    if (metaTheme) {
+      metaTheme.setAttribute('content', state.theme === 'light' ? '#F8F6F1' : '#0B162C');
+    }
     renderHudRibbon();
     renderLiveAdvisorDrawer();
     updateDockBadges();
@@ -2594,9 +2598,49 @@
     });
   }
 
+  function isStandalone() {
+    return Boolean(
+      (window.navigator && window.navigator.standalone) ||
+        (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+    );
+  }
+
+  function isFormControlFocused() {
+    const el = document.activeElement;
+    if (!el) return false;
+    const tag = (el.tagName || '').toUpperCase();
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+  }
+
   async function init() {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).catch(() => {});
+    if (isStandalone()) {
+      document.documentElement.classList.add('ios-standalone');
+    }
+
+    if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+      let refreshingSw = false;
+      const hadController = Boolean(navigator.serviceWorker.controller);
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!hadController || refreshingSw) return;
+        refreshingSw = true;
+        location.reload();
+      });
+      navigator.serviceWorker
+        .register('./sw.js?v=3', { updateViaCache: 'none' })
+        .then((reg) => {
+          reg.update().catch(() => {});
+          if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+          reg.addEventListener('updatefound', () => {
+            const nw = reg.installing;
+            if (!nw) return;
+            nw.addEventListener('statechange', () => {
+              if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+                nw.postMessage({ type: 'SKIP_WAITING' });
+              }
+            });
+          });
+        })
+        .catch(() => {});
     }
 
     const params = new URLSearchParams(window.location.search);
@@ -2618,7 +2662,7 @@
       theoLink.setAttribute('href', '../');
     }
     window.addEventListener('resize', () => {
-      if (state.activeTab === 'radar') renderRadarView();
+      if (state.activeTab === 'radar' && !isFormControlFocused()) renderRadarView();
     });
     if (getSavedPushSub()) {
       const pDot = document.getElementById('push-dot');
@@ -2629,10 +2673,10 @@
 
     await syncAll();
     setInterval(() => {
-      renderAll();
+      if (!isFormControlFocused()) renderAll();
     }, 30000);
     setInterval(() => {
-      syncAll().catch(() => {});
+      if (!isFormControlFocused()) syncAll().catch(() => {});
     }, 18000);
   }
 

@@ -1,11 +1,11 @@
-/* THEO Command — Executive Planner, Wait-Timer, Org Delegation & 100% Discipline Service Worker v2 */
-const CACHE_NAME = 'theo-command-v2';
+/* THEO Command — Executive Planner, Wait-Timer, Org Delegation & 100% Discipline Service Worker v3 */
+const CACHE_NAME = 'theo-command-v3';
 const APP_SHELL = [
   './',
   './index.html',
-  './css/command.css?v=2',
-  './js/endpoints.js?v=2',
-  './js/app.js?v=2',
+  './css/command.css?v=3',
+  './js/endpoints.js?v=3',
+  './js/app.js?v=3',
   './manifest.json',
   './icon.svg',
   './icon-180.png',
@@ -17,7 +17,7 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) => cache.addAll(APP_SHELL))
+      .then((cache) => Promise.all(APP_SHELL.map((u) => cache.add(new Request(u, { cache: 'reload' })))))
       .then(() => self.skipWaiting())
   );
 });

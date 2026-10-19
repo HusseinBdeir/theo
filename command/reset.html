@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>THEO Command — Reset Cache</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #0B162C;
+      color: #F8FAFC;
+      font-family: system-ui, -apple-system, sans-serif;
+      text-align: center;
+      padding: 24px;
+    }
+    .card {
+      max-width: 380px;
+      padding: 28px;
+      border-radius: 16px;
+      background: #101F3C;
+      border: 1px solid rgba(217, 165, 74, 0.36);
+    }
+    h1 { font-size: 18px; margin: 0 0 8px; color: #D9A54A; }
+    p { font-size: 13px; color: #CBD5E1; margin: 0; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Resetting THEO Command Cache…</h1>
+    <p id="msg">Unregistering service workers and clearing local caches.</p>
+  </div>
+  <script>
+    (async () => {
+      try {
+        if ('serviceWorker' in navigator) {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          for (const r of regs) await r.unregister();
+        }
+        if ('caches' in window) {
+          const keys = await caches.keys();
+          for (const k of keys) await caches.delete(k);
+        }
+      } catch (e) {}
+      document.getElementById('msg').textContent = 'Cache cleared. Redirecting to THEO Command…';
+      setTimeout(() => location.replace('./?reset=' + Date.now()), 500);
+    })();
+  </script>
+</body>
+</html>
