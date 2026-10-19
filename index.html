@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="theme-color" content="#0B1730" id="meta-theme-color">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="THEO">
+  <meta name="description" content="THEO — Remote Command & AI Session Workbench for Google Antigravity and Claude Code.">
+  <title>THEO — Remote Command Workbench</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/theo.css">
+</head>
+<body>
+  <!-- Optional Security PIN Lock Overlay -->
+  <div id="pin-overlay" class="pin-overlay" hidden>
+    <div class="pin-card">
+      <div class="pin-brand">
+        <img src="icon.svg" alt="THEO" class="pin-logo">
+        <div class="pin-title">THEO REMOTE</div>
+        <div class="brass-double-rule"></div>
+      </div>
+      <p class="pin-subtitle" id="pin-prompt-label">Enter 4-digit security PIN</p>
+      <div class="pin-dots" id="pin-dots">
+        <span></span><span></span><span></span><span></span>
+      </div>
+      <div class="pin-pad" id="pin-pad">
+        <button type="button" data-digit="1">1</button>
+        <button type="button" data-digit="2">2</button>
+        <button type="button" data-digit="3">3</button>
+        <button type="button" data-digit="4">4</button>
+        <button type="button" data-digit="5">5</button>
+        <button type="button" data-digit="6">6</button>
+        <button type="button" data-digit="7">7</button>
+        <button type="button" data-digit="8">8</button>
+        <button type="button" data-digit="9">9</button>
+        <button type="button" data-digit="clear" class="pin-fn">CLR</button>
+        <button type="button" data-digit="0">0</button>
+        <button type="button" data-digit="back" class="pin-fn">⌫</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="app-shell" id="app-shell">
+    <!-- Desktop / Tablet Left Architectural Ink Rail -->
+    <aside class="ink-rail" aria-label="Primary Navigation">
+      <div class="rail-brand">
+        <div class="brand-lockup">
+          <img src="icon.svg" alt="THEO mark" class="brand-badge">
+          <div class="brand-text">
+            <div class="brand-name-row">
+              <span class="brand-wordmark">THEO</span>
+              <span class="brand-rev-pill">REV 10</span>
+            </div>
+            <span class="brand-sub">REMOTE WORKBENCH</span>
+          </div>
+        </div>
+        <div class="brass-double-rule"></div>
+      </div>
+
+      <!-- Live Connectivity Status Card -->
+      <button type="button" class="rail-conn-card" id="rail-conn-btn" title="Connection details &amp; Cloud Relay sync">
+        <span class="conn-dot" id="rail-conn-dot"></span>
+        <div class="conn-meta">
+          <span class="conn-title" id="rail-conn-title">Connecting…</span>
+          <span class="conn-sub tabular" id="rail-conn-sub">Probing :4318 &amp; Cloud Relay</span>
+        </div>
+        <svg class="icon-sm" viewBox="0 0 16 16"><path d="M13.5 8A5.5 5.5 0 1 1 8 2.5" stroke="currentColor" fill="none" stroke-width="1.5" stroke-linecap="round"/><path d="M13.5 2.5v3h-3" stroke="currentColor" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+
+      <!-- Quick New Session Launchers -->
+      <div class="rail-launchers">
+        <button type="button" class="launch-btn agy" data-quick-new="antigravity">
+          <span class="prov-glyph" data-prov-icon="antigravity"></span>
+          <span>+ Antigravity</span>
+        </button>
+        <button type="button" class="launch-btn claude" data-quick-new="claude">
+          <span class="prov-glyph" data-prov-icon="claude"></span>
+          <span>+ Claude</span>
+        </button>
+      </div>
+
+      <!-- Primary Navigation -->
+      <nav class="rail-nav" id="rail-nav">
+        <button type="button" class="nav-item active" data-tab="pulse">
+          <svg class="nav-icon" viewBox="0 0 20 20"><path d="M2 10h3.5l2-5.5 4 11 2.5-5.5H18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="nav-label">Pulse &amp; Approvals</span>
+          <span class="nav-badge amber tabular" id="badge-pulse" hidden>0</span>
+        </button>
+        <button type="button" class="nav-item" data-tab="sessions">
+          <svg class="nav-icon" viewBox="0 0 20 20"><rect x="2.5" y="3.5" width="15" height="4" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="2.5" y="10" width="15" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <span class="nav-label">Sessions</span>
+          <span class="nav-badge steel tabular" id="badge-sessions">0</span>
+        </button>
+        <button type="button" class="nav-item" data-tab="chat">
+          <svg class="nav-icon" viewBox="0 0 20 20"><path d="M3 4.5A1.5 1.5 0 0 1 4.5 3h11A1.5 1.5 0 0 1 17 4.5v8a1.5 1.5 0 0 1-1.5 1.5H8l-4 3v-3H4.5A1.5 1.5 0 0 1 3 12.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+          <span class="nav-label">Chat Workbench</span>
+          <span class="nav-badge brass tabular" id="badge-chat" hidden>LIVE</span>
+        </button>
+        <button type="button" class="nav-item" data-tab="workspaces">
+          <svg class="nav-icon" viewBox="0 0 20 20"><circle cx="6" cy="5.5" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="6" cy="14.5" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="14" cy="10" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6 7.5v5M8 5.5h3a3 3 0 0 1 3 2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <span class="nav-label">Workspaces &amp; Git</span>
+          <span class="nav-badge steel tabular" id="badge-workspaces">12</span>
+        </button>
+        <button type="button" class="nav-item" data-tab="analytics">
+          <svg class="nav-icon" viewBox="0 0 20 20"><path d="M3 16.5h14M5.5 14V9.5M10 14V5.5M14.5 14V7.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <span class="nav-label">Telemetry &amp; Link</span>
+        </button>
+      </nav>
+
+      <div class="rail-footer">
+        <button type="button" class="rail-cmd-btn" id="open-cmd-palette">
+          <span>Command Palette</span>
+          <kbd>⌘K</kbd>
+        </button>
+        <div class="rail-footer-actions">
+          <button type="button" class="icon-btn" id="btn-theme-toggle" title="Toggle Obsidian Dark / Warm Paper Light theme" aria-label="Toggle theme">
+            <svg viewBox="0 0 20 20"><path d="M10 3a7 7 0 1 0 7 7c0-.4-.04-.8-.1-1.2A5.5 5.5 0 0 1 11.2 3.1C10.8 3.04 10.4 3 10 3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+          </button>
+          <button type="button" class="icon-btn" id="btn-sound-toggle" title="Toggle notification chime" aria-label="Toggle notification chime">
+            <svg viewBox="0 0 20 20"><path d="M3.5 8h3l4-3.5v11L6.5 12h-3zM13.5 7.5a3.5 3.5 0 0 1 0 5M15.5 5.5a6.5 6.5 0 0 1 0 9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button type="button" class="icon-btn" id="btn-sync-now" title="Sync now with VS Code Bridge &amp; Cloud Relay" aria-label="Sync now">
+            <svg viewBox="0 0 20 20"><path d="M16.5 10a6.5 6.5 0 1 1-1.9-4.6M16.5 4v3.5H13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Viewport -->
+    <div class="main-stage">
+      <!-- Mobile & Compact Top Header -->
+      <header class="mobile-topbar">
+        <div class="mobile-brand">
+          <img src="icon.svg" alt="THEO" class="mobile-badge">
+          <div>
+            <div class="mobile-title-row">
+              <span class="mobile-wordmark">THEO</span>
+              <span class="conn-pill" id="mobile-conn-pill">
+                <span class="conn-dot" id="mobile-conn-dot"></span>
+                <span id="mobile-conn-text">Syncing</span>
+              </span>
+            </div>
+            <div class="brass-double-rule compact"></div>
+          </div>
+        </div>
+        <div class="mobile-actions">
+          <button type="button" class="icon-btn" id="mobile-cmd-btn" title="Command Palette (⌘K)" aria-label="Search &amp; Commands">
+            <svg viewBox="0 0 20 20"><circle cx="8.5" cy="8.5" r="5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12.5 12.5L16.5 16.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          </button>
+          <button type="button" class="icon-btn" id="mobile-sync-btn" title="Force Sync" aria-label="Sync Now">
+            <svg viewBox="0 0 20 20"><path d="M16.5 10a6.5 6.5 0 1 1-1.9-4.6M16.5 4v3.5H13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button type="button" class="icon-btn" id="mobile-theme-btn" title="Toggle Theme" aria-label="Toggle Theme">
+            <svg viewBox="0 0 20 20"><path d="M10 3a7 7 0 1 0 7 7c0-.4-.04-.8-.1-1.2A5.5 5.5 0 0 1 11.2 3.1C10.8 3.04 10.4 3 10 3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Scrollable View Container -->
+      <main class="view-container" id="view-container">
+        <!-- VIEW 1: PULSE & APPROVALS -->
+        <section class="view-pane active" id="view-pulse" data-view="pulse">
+          <div class="ledger-hero">
+            <div class="hero-left">
+              <div class="eyebrow">BHFIRMS EXECUTIVE AI WORKBENCH</div>
+              <h1 class="hero-headline">THEO Command Pulse</h1>
+              <p class="hero-desc" id="pulse-subtitle">Unified remote bridge to VS Code — Google Antigravity &amp; Claude Code.</p>
+            </div>
+            <div class="hero-kpis" id="pulse-kpis"></div>
+          </div>
+
+          <!-- 1-Tap Remote Approvals & Waiting Sessions -->
+          <div class="section-block" id="approvals-section">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">1-Tap Remote Approvals &amp; Input Queue</h2>
+                <div class="brass-rule-single"></div>
+              </div>
+              <span class="pill-count amber tabular" id="approvals-count-pill">0 Pending</span>
+            </div>
+            <div id="approvals-list" class="approvals-grid"></div>
+          </div>
+
+          <!-- Dual-Provider Quota & Rate Limits -->
+          <div class="section-block">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">Live Quota &amp; Rate-Limit Windows</h2>
+                <div class="brass-rule-single"></div>
+              </div>
+              <span class="meta-timestamp tabular" id="quota-updated-at">Updated just now</span>
+            </div>
+            <div class="quota-dual-grid" id="pulse-quota-grid"></div>
+          </div>
+
+          <!-- Quick Launch by BHFIRMS Workspace -->
+          <div class="section-block">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">Quick Launch by BHFIRMS Project</h2>
+                <div class="brass-rule-single"></div>
+              </div>
+              <span class="meta-timestamp">Tap to dispatch a remote task</span>
+            </div>
+            <div class="repo-launch-grid" id="pulse-repo-launchers"></div>
+          </div>
+
+          <!-- Active & Recent Sessions Snapshot -->
+          <div class="section-block">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">Active &amp; Recent Sessions</h2>
+                <div class="brass-rule-single"></div>
+              </div>
+              <button type="button" class="text-btn" data-goto-tab="sessions">View all sessions →</button>
+            </div>
+            <div class="sessions-compact-list" id="pulse-recent-sessions"></div>
+          </div>
+        </section>
+
+        <!-- VIEW 2: SESSIONS MANAGER -->
+        <section class="view-pane" id="view-sessions" data-view="sessions">
+          <div class="sessions-toolbar">
+            <div class="toolbar-top">
+              <div>
+                <div class="eyebrow">MULTI-TAB SESSION MANAGER</div>
+                <h1 class="page-title">Conversations &amp; Groups</h1>
+              </div>
+              <div class="toolbar-new-btns">
+                <button type="button" class="btn-primary agy" data-quick-new="antigravity">
+                  <span class="prov-glyph" data-prov-icon="antigravity"></span>
+                  <span>+ Antigravity</span>
+                </button>
+                <button type="button" class="btn-primary claude" data-quick-new="claude">
+                  <span class="prov-glyph" data-prov-icon="claude"></span>
+                  <span>+ Claude Code</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="filter-bar">
+              <div class="seg-control" id="sess-provider-seg">
+                <button type="button" class="seg-btn active" data-prov="all">All</button>
+                <button type="button" class="seg-btn" data-prov="antigravity">Antigravity</button>
+                <button type="button" class="seg-btn" data-prov="claude">Claude Code</button>
+              </div>
+              <div class="search-input-wrap">
+                <svg class="search-svg" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                <input type="search" id="sess-search-input" placeholder="Search title, workspace, branch, model…" autocomplete="off">
+              </div>
+            </div>
+
+            <div class="status-chips-row" id="sess-status-chips">
+              <button type="button" class="chip active" data-status-filter="all">All Active</button>
+              <button type="button" class="chip" data-status-filter="needs_input">Needs Input</button>
+              <button type="button" class="chip" data-status-filter="working">Working</button>
+              <button type="button" class="chip" data-status-filter="unread">Unread</button>
+              <button type="button" class="chip" data-status-filter="open">Open in VS Code</button>
+              <button type="button" class="chip" data-status-filter="archived">Archived</button>
+            </div>
+          </div>
+
+          <div id="sessions-full-list" class="sessions-grouped-container"></div>
+        </section>
+
+        <!-- VIEW 3: LIVE CHAT WORKBENCH -->
+        <section class="view-pane chat-pane-layout" id="view-chat" data-view="chat">
+          <div class="chat-header">
+            <div class="chat-header-main">
+              <span class="chat-prov-badge" id="chat-prov-badge"></span>
+              <div class="chat-title-stack">
+                <div class="chat-title-row">
+                  <select id="chat-session-select" class="chat-session-select" aria-label="Select active conversation"></select>
+                </div>
+                <div class="chat-meta-row" id="chat-meta-row">
+                  <span id="chat-folder-pill">Workspace</span>
+                  <span>·</span>
+                  <span id="chat-model-pill" class="tabular">Gemini / Claude</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="chat-header-actions">
+              <!-- Context Window Breakdown Trigger Pill -->
+              <button type="button" class="ctx-window-pill tabular" id="btn-ctx-window" title="Inspect Context Window Breakdown &amp; /compact">
+                <span class="ctx-ring-wrap">
+                  <svg class="ctx-ring" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="9" class="ctx-ring-bg"/>
+                    <circle cx="12" cy="12" r="9" class="ctx-ring-fill" id="ctx-ring-circle" stroke-dasharray="56.5" stroke-dashoffset="48"/>
+                  </svg>
+                </span>
+                <span id="ctx-pill-label">14k · 7%</span>
+              </button>
+              <button type="button" class="btn-ghost-sm" id="btn-chat-open-vscode" title="Reveal this session tab in VS Code on laptop">
+                Open on Laptop
+              </button>
+            </div>
+          </div>
+
+          <!-- Context Window Popover Drawer -->
+          <div class="ctx-Popover" id="ctx-popover" hidden>
+            <div class="ctx-popover-head">
+              <div>
+                <div class="eyebrow">CONTEXT WINDOW TELEMETRY</div>
+                <h3 id="ctx-popover-title">Session Token Allocation</h3>
+              </div>
+              <button type="button" class="icon-btn-sm" id="btn-close-ctx">✕</button>
+            </div>
+            <div class="ctx-meter-summary tabular" id="ctx-meter-summary"></div>
+            <div class="ctx-stacked-bar" id="ctx-stacked-bar"></div>
+            <div class="ctx-breakdown-list tabular" id="ctx-breakdown-list"></div>
+            <div class="ctx-popover-actions">
+              <button type="button" class="btn-brass-sm" id="btn-ctx-compact">
+                ⚡ Run <code>/compact</code> to Summarize &amp; Free Context
+              </button>
+            </div>
+          </div>
+
+          <!-- Conversation Stream -->
+          <div class="chat-stream" id="chat-stream"></div>
+
+          <!-- Floating Prompt Composer -->
+          <form class="chat-composer" id="chat-composer-form">
+            <div class="composer-quick-chips" id="composer-quick-chips">
+              <button type="button" class="slash-chip" data-insert-prompt="Continue with the next priority item in NEXT THREAD and verify live.">▶ Next Thread</button>
+              <button type="button" class="slash-chip" data-insert-prompt="Run the test suite and verify everything passes with zero errors.">✓ Run Tests</button>
+              <button type="button" class="slash-chip" data-insert-prompt="Check git status and summarize any uncommitted changes.">⎇ Git Status</button>
+              <button type="button" class="slash-chip" data-insert-prompt="/compact">⚡ /compact</button>
+              <button type="button" class="slash-chip" data-insert-prompt="/plan">📐 /plan</button>
+            </div>
+            <div class="composer-box">
+              <div class="composer-target-bar">
+                <div class="composer-mode-pills">
+                  <button type="button" class="target-pill active" id="comp-mode-reply" data-comp-mode="reply">Reply to Current</button>
+                  <button type="button" class="target-pill" id="comp-mode-new-agy" data-comp-mode="new-antigravity">+ New Antigravity</button>
+                  <button type="button" class="target-pill" id="comp-mode-new-claude" data-comp-mode="new-claude">+ New Claude</button>
+                </div>
+                <span class="outbox-indicator tabular" id="outbox-indicator" hidden>0 queued</span>
+              </div>
+              <div class="composer-input-row">
+                <textarea id="composer-input" rows="2" placeholder="Send a prompt or instruction to THEO in VS Code… (Enter to send, Shift+Enter for newline)"></textarea>
+                <button type="submit" class="composer-send-btn" id="composer-send-btn" title="Dispatch Prompt">
+                  <svg viewBox="0 0 20 20"><path d="M3 10l14-6.5-4.5 13-2.5-4.5L3 10z" fill="currentColor"/></svg>
+                </button>
+              </div>
+            </div>
+          </form>
+        </section>
+
+        <!-- VIEW 4: WORKSPACES & GIT INSPECTOR -->
+        <section class="view-pane" id="view-workspaces" data-view="workspaces">
+          <div class="section-head">
+            <div>
+              <div class="eyebrow">BHFIRMS REPOSITORY FLEET</div>
+              <h1 class="page-title">Workspaces, Live Git Status &amp; Diffs</h1>
+              <div class="brass-rule-single"></div>
+            </div>
+            <button type="button" class="btn-ghost-sm" id="btn-refresh-git">↻ Refresh Git</button>
+          </div>
+
+          <div class="workspaces-layout">
+            <div class="repo-selector-list" id="repo-selector-list"></div>
+            <div class="repo-detail-panel" id="repo-detail-panel"></div>
+          </div>
+        </section>
+
+        <!-- VIEW 5: TELEMETRY & REMOTE LINK -->
+        <section class="view-pane" id="view-analytics" data-view="analytics">
+          <div class="section-head">
+            <div>
+              <div class="eyebrow">TOKEN ACCOUNTING &amp; BRIDGE PAIRING</div>
+              <h1 class="page-title">Ledger Telemetry &amp; Remote Link</h1>
+              <div class="brass-rule-single"></div>
+            </div>
+            <div class="seg-control" id="telemetry-prov-seg">
+              <button type="button" class="seg-btn active" data-tel-prov="all">Combined</button>
+              <button type="button" class="seg-btn" data-tel-prov="antigravity">Antigravity</button>
+              <button type="button" class="seg-btn" data-tel-prov="claude">Claude Code</button>
+            </div>
+          </div>
+
+          <!-- Token Burn Summary Cards -->
+          <div class="telemetry-kpi-grid tabular" id="telemetry-kpi-grid"></div>
+
+          <!-- 7-Day Token Burn Chart -->
+          <div class="section-block ledger-panel">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">7-Day Token Velocity &amp; Turn Cadence</h2>
+                <div class="brass-rule-single"></div>
+              </div>
+              <span class="meta-timestamp tabular" id="chart-total-label"></span>
+            </div>
+            <div class="chart-stage" id="telemetry-chart-stage"></div>
+          </div>
+
+          <!-- Top Sessions Ledger Table -->
+          <div class="section-block ledger-panel">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">Top Sessions by Token Consumption (7-Day)</h2>
+                <div class="brass-rule-single"></div>
+              </div>
+            </div>
+            <div class="ledger-table-wrap tabular" id="telemetry-top-table"></div>
+            <div class="brass-double-rule"></div>
+          </div>
+
+          <!-- Remote Connectivity, QR Pairing & Security -->
+          <div class="section-block ledger-panel">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">Hybrid Bridge &amp; Cloud Relay Configuration</h2>
+                <div class="brass-rule-single"></div>
+              </div>
+            </div>
+            <div class="pairing-grid" id="pairing-grid"></div>
+          </div>
+        </section>
+      </main>
+
+      <!-- Mobile Floating Glassmorphic Bottom Dock -->
+      <nav class="mobile-bottom-dock" id="mobile-bottom-dock" aria-label="Mobile Navigation">
+        <button type="button" class="dock-btn active" data-tab="pulse">
+          <svg viewBox="0 0 20 20"><path d="M2 10h3.5l2-5.5 4 11 2.5-5.5H18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>Pulse</span>
+          <em class="dock-dot amber" id="dock-badge-pulse" hidden></em>
+        </button>
+        <button type="button" class="dock-btn" data-tab="sessions">
+          <svg viewBox="0 0 20 20"><rect x="2.5" y="3.5" width="15" height="4" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="2.5" y="10" width="15" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <span>Sessions</span>
+        </button>
+        <button type="button" class="dock-btn dock-center" data-tab="chat">
+          <div class="dock-center-orb">
+            <svg viewBox="0 0 20 20"><path d="M3 4.5A1.5 1.5 0 0 1 4.5 3h11A1.5 1.5 0 0 1 17 4.5v8a1.5 1.5 0 0 1-1.5 1.5H8l-4 3v-3H4.5A1.5 1.5 0 0 1 3 12.5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+          </div>
+          <span>Workbench</span>
+        </button>
+        <button type="button" class="dock-btn" data-tab="workspaces">
+          <svg viewBox="0 0 20 20"><circle cx="6" cy="5.5" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="6" cy="14.5" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="14" cy="10" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6 7.5v5M8 5.5h3a3 3 0 0 1 3 2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <span>Repos</span>
+        </button>
+        <button type="button" class="dock-btn" data-tab="analytics">
+          <svg viewBox="0 0 20 20"><path d="M3 16.5h14M5.5 14V9.5M10 14V5.5M14.5 14V7.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <span>Ledger</span>
+        </button>
+      </nav>
+    </div>
+  </div>
+
+  <!-- ⌘K Command Palette Modal -->
+  <div class="cmd-modal" id="cmd-modal" hidden>
+    <div class="cmd-dialog">
+      <div class="cmd-input-row">
+        <svg class="cmd-search-icon" viewBox="0 0 20 20"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M13 13l4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        <input type="text" id="cmd-input" placeholder="Jump to session, repo, or run a remote THEO command…" autocomplete="off">
+        <button type="button" class="cmd-esc" id="cmd-close">ESC</button>
+      </div>
+      <div class="brass-rule-single"></div>
+      <div class="cmd-results" id="cmd-results"></div>
+    </div>
+  </div>
+
+  <!-- Toast Stack -->
+  <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+
+  <script src="js/endpoints.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
