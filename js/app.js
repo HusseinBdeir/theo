@@ -26,31 +26,89 @@
 
   // ---------- Daily 100-Point Discipline Ledger (5 Do's & 5 Don'ts · Starts at 50%) ----------
   const DAILY_DOS = [
-    { id: 'wake', label: 'Waking up early', icon: '☀️', hint: 'Up on time & morning routine' },
-    { id: 'work', label: 'Work', icon: '💼', hint: 'Focused executive & ops output' },
-    { id: 'skills', label: 'Skills', icon: '🧠', hint: 'Deliberate learning & craft' },
-    { id: 'fitness', label: 'Fitness', icon: '💪', hint: 'Gym, calisthenics, football or padel' },
-    { id: 'social', label: 'Socializing', icon: '🤝', hint: 'Meaningful connection & presence' }
+    { id: 'wake', label: 'Waking up early', icon: '☀️', sub: 'Up on time & morning routine', hint: 'Up on time & morning routine' },
+    { id: 'work', label: 'Work', icon: '💼', sub: 'Focused executive & ops output', hint: 'Focused executive & ops output' },
+    { id: 'skills', label: 'Skills', icon: '🧠', sub: 'Deliberate learning & craft', hint: 'Deliberate learning & craft' },
+    { id: 'fitness', label: 'Fitness', icon: '💪', sub: 'Gym, calisthenics, football or padel', hint: 'Gym, calisthenics, football or padel' },
+    { id: 'social', label: 'Socializing', icon: '🤝', sub: 'Meaningful connection & presence', hint: 'Meaningful connection & presence' }
   ];
 
   const DAILY_DONTS = [
-    { id: 'games', label: 'Video games', icon: '🎮', hint: '10% held intact when avoided' },
-    { id: 'series', label: 'Series', icon: '📺', hint: '10% held intact when avoided' },
-    { id: 'music', label: 'Music', icon: '🎧', hint: '10% held intact when avoided' },
-    { id: 'socialmedia', label: 'Social media', icon: '📱', hint: '10% held intact when avoided' },
-    { id: 'nsfw', label: '18+ things', icon: '🚫', hint: '10% held intact when avoided' }
+    { id: 'games', label: 'Video games', icon: '🎮', sub: '10% held intact when avoided', hint: '10% held intact when avoided' },
+    { id: 'series', label: 'Series', icon: '📺', sub: '10% held intact when avoided', hint: '10% held intact when avoided' },
+    { id: 'music', label: 'Music', icon: '🎧', sub: '10% held intact when avoided', hint: '10% held intact when avoided' },
+    { id: 'socialmedia', label: 'Social media', icon: '📱', sub: '10% held intact when avoided', hint: '10% held intact when avoided' },
+    { id: 'nsfw', label: '18+ things', icon: '🚫', sub: '10% held intact when avoided', hint: '10% held intact when avoided' }
   ];
 
-  // ---------- Automated Relevance / Domain Classifier ----------
+  // ---------- Universal Smart Clusters (Life, People, Verification, Shipping, Work, Family, Payments, Ideas) ----------
   const REM_CATEGORIES = {
-    payments: { id: 'payments', label: 'Payments & Treasury', icon: '💸', color: 'brass' },
-    hospitality: { id: 'hospitality', label: 'Hospitality · Resorts', icon: '🏖️', color: 'emerald' },
-    trading: { id: 'trading', label: 'Trading · Korri / Shacman', icon: '🚛', color: 'amber' },
-    manufacturing: { id: 'manufacturing', label: 'Manufacturing · WTC / BBC / Lions', icon: '🏗️', color: 'steel' },
-    realestate_ins: { id: 'realestate_ins', label: 'Real Estate & Insurance', icon: '🏢', color: 'steel' },
-    holding: { id: 'holding', label: 'Bdeir Holding & Finance', icon: '🏛️', color: 'brass' },
-    personal: { id: 'personal', label: 'Personal & Growth', icon: '🎯', color: 'emerald' }
+    people: {
+      id: 'people',
+      label: 'People to Talk To & Follow-Ups',
+      shortLabel: 'People',
+      icon: '🗣️',
+      color: 'emerald',
+      desc: 'Calls, check-ins, and reminders to talk to specific people'
+    },
+    verify: {
+      id: 'verify',
+      label: 'Verify & App Sync ("Did It Show Up?")',
+      shortLabel: 'Verify / App',
+      icon: '🔍',
+      color: 'amber',
+      desc: 'Paid for something & waiting for it to show up on an app, bank, or statement'
+    },
+    shipping: {
+      id: 'shipping',
+      label: 'Shipping, Orders & Deliveries',
+      shortLabel: 'Shipping',
+      icon: '📦',
+      color: 'steel',
+      desc: 'Shipping time countdowns, packages, spare parts & order arrivals'
+    },
+    work: {
+      id: 'work',
+      label: 'Work & Specific Projects',
+      shortLabel: 'Work',
+      icon: '💼',
+      color: 'brass',
+      desc: 'Operational tasks across Resorts, WTC/Manufacturing, Trading, Holding & Tech'
+    },
+    family: {
+      id: 'family',
+      label: 'Family & Home',
+      shortLabel: 'Family',
+      icon: '👨‍👩‍👧',
+      color: 'emerald',
+      desc: 'Family commitments, parents, home errands & personal life'
+    },
+    payments: {
+      id: 'payments',
+      label: 'Payments & Wait-to-Pay Holds',
+      shortLabel: 'Payments',
+      icon: '💸',
+      color: 'brass',
+      desc: 'Cooling-off wait timers when someone asks for a payment or wire'
+    },
+    want_to_do: {
+      id: 'want_to_do',
+      label: 'Things I Want To Do',
+      shortLabel: 'Want to Do',
+      icon: '🌟',
+      color: 'emerald',
+      desc: 'Personal goals, places to try, activities, weekend plans & bucket list'
+    },
+    ideas: {
+      id: 'ideas',
+      label: 'Ideas for Later',
+      shortLabel: 'Ideas',
+      icon: '💡',
+      color: 'steel',
+      desc: 'Brainstorms, product concepts, automations & future ideas'
+    }
   };
+
 
   const _VAPID = {
     pub: 'BKAC6gWORFSoi6Yf7XuS3voZnBgflXmG1GzW0K1pt4hcNoY7FNYPK-Jn-gAghKvphbSM_-ieA6U8w0E9yEgKB68',
@@ -209,12 +267,13 @@
 
   let selectedScoreDate = localIsoDate();
   const remDraft = {
-    kind: 'payment', // 'payment' | 'task' | 'wait' | 'recurring'
+    kind: 'auto', // 'auto' | 'wait' | 'task' | 'recurring' | 'parked' | 'payment'
     title: '',
     amount: '',
-    waitChoice: 'auto', // 'auto' | '1h' | '3h' | 'tonight' | '1d' | '2d' | '3d' | '4d' | '7d' | '10d' | 'nextmon'
+    waitChoice: 'auto', // 'auto' | 'none' | '1h' | '3h' | 'tonight' | '1d' | '2d' | '3d' | '4d' | '5d' | '7d' | '10d' | '14d' | 'nextmon'
     recur: 'daily', // 'daily' | 'weekdays' | 'weekly' | 'monthly'
-    categoryOverride: ''
+    categoryOverride: '',
+    customGroup: ''
   };
 
   function getDayRecord(iso = localIsoDate()) {
@@ -317,7 +376,7 @@
     const m =
       s.match(/\$\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*(k)?/i) ||
       s.match(/\b(\d+(?:,\d{3})*(?:\.\d+)?)\s*(k)?\s*(?:usd|dollars|\$)\b/i) ||
-      s.match(/\b(\d+(?:\.\d+)?)\s*k\b/i);
+      s.match(/\b(\d+(?:\.\d+)?)\s*k\s*(?:usd|payment|wire|invoice)?\b/i);
     if (!m) return 0;
     const num = Number(String(m[1]).replace(/,/g, ''));
     if (Number.isNaN(num)) return 0;
@@ -325,106 +384,527 @@
     return hasK ? num * 1000 : num;
   }
 
-  function detectRelevanceCategory(text, kind = 'task', override = '') {
-    if (override && REM_CATEGORIES[override]) return REM_CATEGORIES[override];
+  function extractContextTags(text) {
+    const raw = String(text || '').trim();
+    const s = raw.toLowerCase();
+    const tags = [];
+    let personTag = '';
+    let appTag = '';
+    let workSubTag = '';
+
+    // 1. Explicit @person or natural "talk to / call / ask / message / meet [Name]"
+    const atMatch = raw.match(/@([A-Za-z][A-Za-z0-9_-]{1,20})/);
+    const personMatch = raw.match(
+      /\b(?:talk\s+to|speak\s+(?:to|with)|call|message|text|whatsapp|ask|remind\s+me\s+to\s+tell|check\s+with|follow\s+up\s+with|meet\s+with|meet)\s+([A-Z][a-z]{1,18}|mom|dad|mama|baba|brother|sister|lawyer|accountant|auditor|broker)\b/i
+    );
+    if (atMatch) {
+      personTag = atMatch[1];
+    } else if (personMatch) {
+      const p = personMatch[1];
+      if (!/^(the|a|an|my|our|him|her|them|someone|about|on|for|at|in|to)$/i.test(p)) {
+        personTag = p.charAt(0).toUpperCase() + p.slice(1);
+      }
+    }
+    if (personTag) tags.push(`👤 ${personTag}`);
+
+    // 2. App / Bank / Platform name for "paid and didn't show up on app"
+    const appMatch = raw.match(
+      /\b(?:on|in|via|from)\s+(whish|omt|bob|bank\s*audi|audi|blom|byblos|neo|revolut|wise|stripe|paypal|apple\s*pay|binance|brains|dataverse|power\s*bi|tally|meta|instagram|whatsapp|amazon|dhl|aramex|fedex|aliexpress|shein)\b/i
+    );
+    if (appMatch) {
+      const a = appMatch[1];
+      appTag = a.charAt(0).toUpperCase() + a.slice(1);
+      tags.push(`📱 ${appTag}`);
+    } else if (/\b(didn'?t\s+show\s+up|not\s+showing|pending\s+on\s+app|on\s+the\s+app|app\s+balance)\b/i.test(s)) {
+      appTag = 'App Sync';
+      tags.push('📱 App Sync');
+    }
+
+    // 3. Specific Work Area sub-tags ("certain things at work")
+    if (/\b(blanca|la\s*una|launa|palms|voile|platinum|resort|hotel|cabana|pos|kitchen|guest|beach|hospitality)\b/i.test(s)) {
+      workSubTag = '🏖️ Resorts';
+    } else if (/\b(wtc|bbc|bbconstruction|lions|quarry|crusher|asphalt|concrete|filter\s*press|plant|diesel|mixer|manufacturing)\b/i.test(s)) {
+      workSubTag = '🏗️ WTC · Mfg';
+    } else if (/\b(korri|shacman|truck|trucks|spare\s*parts|workshop|vin|trading)\b/i.test(s)) {
+      workSubTag = '🚛 Korri · Trading';
+    } else if (/\b(property|properties|tenant|lease|rent|villa|apartment|real\s*estate|insurance|policy|claim|broker|underwriter)\b/i.test(s)) {
+      workSubTag = '🏢 Real Estate · Ins';
+    } else if (/\b(holding|brains|vat|tax|audit|kyc|payroll|salary|lawyer|contract|soa|board)\b/i.test(s)) {
+      workSubTag = '🏛️ Holding · Finance';
+    } else if (/\b(theo|claude|antigravity|pwa|power\s*bi|flow|dataverse|github|script|automation)\b/i.test(s)) {
+      workSubTag = '⚡ Tech · THEO';
+    }
+    if (workSubTag) tags.push(workSubTag);
+
+    // 4. Explicit #hashtag
+    const hashMatch = raw.match(/#([A-Za-z0-9_-]{2,24})/);
+    if (hashMatch) {
+      tags.push(`#${hashMatch[1]}`);
+    }
+
+    return {
+      personTag,
+      appTag,
+      workSubTag,
+      subTag: tags[0] || '',
+      allTags: tags
+    };
+  }
+
+  function getCategoryMeta(catId, customGroup = '') {
+    if (customGroup) {
+      return {
+        id: `custom:${customGroup}`,
+        label: customGroup,
+        shortLabel: customGroup,
+        icon: '🏷️',
+        color: 'brass',
+        desc: 'Custom smart group'
+      };
+    }
+    if (catId && String(catId).startsWith('custom:')) {
+      const name = String(catId).slice(7);
+      return {
+        id: catId,
+        label: name,
+        shortLabel: name,
+        icon: '🏷️',
+        color: 'brass',
+        desc: 'Custom smart group'
+      };
+    }
+    // Map legacy company categories seamlessly to the new universal clusters
+    const legacyMap = {
+      hospitality: REM_CATEGORIES.work,
+      trading: REM_CATEGORIES.work,
+      manufacturing: REM_CATEGORIES.work,
+      realestate_ins: REM_CATEGORIES.work,
+      holding: REM_CATEGORIES.work,
+      personal: REM_CATEGORIES.want_to_do
+    };
+    return REM_CATEGORIES[catId] || legacyMap[catId] || REM_CATEGORIES.work;
+  }
+
+  function detectRelevanceCategory(text, kind = 'auto', override = '', customGroup = '') {
+    if (customGroup) return getCategoryMeta('', customGroup);
+    if (override) return getCategoryMeta(override);
+
     const s = String(text || '').toLowerCase();
+
+    // 1. "Paid for something and it didn't show up on an app" / pending verification / refund / statement check
+    if (
+      /\b(didn'?t\s+show|not\s+showing|show\s+up|showed\s+up|reflect|reflected|pending|still\s+pending|didn'?t\s+go\s+through|didn'?t\s+arrive\s+on|verify|reconcil|refund|chargeback|receipt\s+missing|balance\s+update|app\s+sync|check\s+if.*paid|paid.*app)\b/i.test(
+        s
+      )
+    ) {
+      return REM_CATEGORIES.verify;
+    }
+
+    // 2. Shipping time / packages / orders / tracking / delivery / customs
+    if (
+      /\b(ship|shipping|shipment|delivery|deliver|delivered|package|parcel|order|ordered|tracking|dhl|fedex|aramex|ups|container|cargo|freight|customs\s+clearance|arrives?\s+in|transit|aliexpress|amazon)\b/i.test(
+        s
+      )
+    ) {
+      return REM_CATEGORIES.shipping;
+    }
+
+    // 3. Ideas for later / brainstorms / future concepts
+    if (
+      /\b(idea|ideas|idea\s+for\s+later|brainstorm|concept|maybe\s+build|could\s+build|what\s+if\s+we|future\s+feature|feature\s+idea|someday\s+build|automation\s+idea)\b/i.test(
+        s
+      )
+    ) {
+      return REM_CATEGORIES.ideas;
+    }
+
+    // 4. Things I want to do / bucket list / personal plans / try out
+    if (
+      /\b(want\s+to\s+do|things\s+i\s+want|i\s+want\s+to|wanna|bucket\s+list|try\s+out|place\s+to\s+visit|watch|read\s+book|learn\s+how|trip\s+to|hobby|weekend\s+plan|someday)\b/i.test(
+        s
+      )
+    ) {
+      return REM_CATEGORIES.want_to_do;
+    }
+
+    // 5. Family & Home
+    if (
+      /\b(family|mom|mother|dad|father|mama|baba|parents|brother|sister|wife|kids|home|house|apartment\s+repair|groceries|dinner\s+with\s+family|lunch\s+with\s+family|doctor|dentist|gift\s+for)\b/i.test(
+        s
+      )
+    ) {
+      return REM_CATEGORIES.family;
+    }
+
+    // 6. Reminders to talk to certain people / call / message / follow up with someone
+    if (
+      /\b(talk\s+to|speak\s+to|speak\s+with|call|phone|text|whatsapp|message|reach\s+out|check\s+in\s+with|check\s+with|follow\s+up\s+with|ask\s+[a-z]+|tell\s+[a-z]+|meet\s+with|catch\s+up\s+with)\b/i.test(
+        s
+      )
+    ) {
+      return REM_CATEGORIES.people;
+    }
+
+    // 7. Payments & Wait-to-Pay (when they ask for payments and you want to wait a bit)
     if (
       kind === 'payment' ||
-      /\b(pay|payment|invoice|wire|transfer|cheque|check|supplier|advance|deposit|disburse|remit|\$|usd)\b/i.test(s)
+      /\b(pay|payment|payments|asked\s+for\s+payment|invoice|wire|transfer|cheque|supplier\s+payout|advance|deposit|disburse|remit|bill|\$\s*\d+)\b/i.test(
+        s
+      )
     ) {
       return REM_CATEGORIES.payments;
     }
-    if (/\b(blanca|la\s*una|launa|palms|voile|platinum|resort|hotel|cabana|pos|kitchen|guest|beach)\b/i.test(s)) {
-      return REM_CATEGORIES.hospitality;
+
+    // 8. Default to Work & Specific Projects (or Personal if no work signal)
+    const ctx = extractContextTags(text);
+    if (
+      ctx.workSubTag ||
+      /\b(work|office|team|project|report|client|staff|manager|approve|review|check|audit|meeting|schedule|ops|operations)\b/i.test(
+        s
+      )
+    ) {
+      return REM_CATEGORIES.work;
     }
-    if (/\b(korri|shacman|truck|trucks|spare|parts|workshop|vin|trading|customs|shipment)\b/i.test(s)) {
-      return REM_CATEGORIES.trading;
+
+    return REM_CATEGORIES.want_to_do;
+  }
+
+  function parseNaturalWaitFromText(text) {
+    const s = String(text || '').toLowerCase();
+    const now = new Date();
+    const nowMs = now.getTime();
+
+    // Check recurring keywords first
+    if (/\b(every\s*day|daily)\b/i.test(s)) {
+      return {
+        matched: true,
+        isRecurring: true,
+        recur: 'daily',
+        waitDays: 1,
+        waitMs: 24 * 3600 * 1000,
+        label: '🔁 Daily Routine'
+      };
     }
-    if (/\b(wtc|bbc|bbconstruction|lions|quarry|crusher|asphalt|concrete|filter\s*press|plant|diesel|mixer)\b/i.test(s)) {
-      return REM_CATEGORIES.manufacturing;
+    if (/\b(every\s*weekday|weekdays|mon-fri)\b/i.test(s)) {
+      return {
+        matched: true,
+        isRecurring: true,
+        recur: 'weekdays',
+        waitDays: 1,
+        waitMs: 24 * 3600 * 1000,
+        label: '🔁 Weekdays (Mon–Fri)'
+      };
     }
-    if (/\b(property|properties|tenant|lease|rent|villa|apartment|real\s*estate|insurance|policy|claim|broker|underwriter)\b/i.test(s)) {
-      return REM_CATEGORIES.realestate_ins;
+    if (/\b(every\s*week|weekly)\b/i.test(s)) {
+      return {
+        matched: true,
+        isRecurring: true,
+        recur: 'weekly',
+        waitDays: 7,
+        waitMs: 7 * 24 * 3600 * 1000,
+        label: '🔁 Weekly Routine'
+      };
     }
-    if (/\b(holding|brains|vat|tax|audit|bank|audi|kyc|payroll|salary|lawyer|contract|soa|board)\b/i.test(s)) {
-      return REM_CATEGORIES.holding;
+    if (/\b(every\s*month|monthly)\b/i.test(s)) {
+      return {
+        matched: true,
+        isRecurring: true,
+        recur: 'monthly',
+        waitDays: 30,
+        waitMs: 30 * 24 * 3600 * 1000,
+        label: '🔁 Monthly Routine'
+      };
     }
-    return REM_CATEGORIES.personal;
+
+    // Explicit "in X min/hours/days/weeks" or "wait X days" or "shipping X days" or "for X days"
+    const minMatch = s.match(/\b(?:in|wait|after)\s+(\d+)\s*(?:m|min|mins|minutes)\b/i);
+    if (minMatch) {
+      const mins = Math.max(1, Number(minMatch[1]));
+      return {
+        matched: true,
+        waitDays: +(mins / 1440).toFixed(2),
+        waitMs: mins * 60 * 1000,
+        label: `In ${mins}m (parsed from text)`
+      };
+    }
+
+    const hrMatch = s.match(/\b(?:in|wait|after|for)\s+(\d+)\s*(?:h|hr|hrs|hour|hours)\b/i);
+    if (hrMatch) {
+      const hrs = Math.max(1, Number(hrMatch[1]));
+      return {
+        matched: true,
+        waitDays: +(hrs / 24).toFixed(2),
+        waitMs: hrs * 3600 * 1000,
+        label: `Wait ${hrs}h (parsed from text)`
+      };
+    }
+
+    const dayMatch = s.match(
+      /\b(?:in|wait|after|for|shipping|takes|within)\s+(\d+)\s*(?:d|day|days)\b/i
+    );
+    if (dayMatch) {
+      const days = Math.max(1, Number(dayMatch[1]));
+      return {
+        matched: true,
+        waitDays: days,
+        waitMs: days * 24 * 3600 * 1000,
+        label: `Wait ${days}d (parsed from text)`
+      };
+    }
+
+    const wkMatch = s.match(/\b(?:in|wait|after|for)\s+(\d+)\s*(?:w|wk|wks|week|weeks)\b/i);
+    if (wkMatch) {
+      const wks = Math.max(1, Number(wkMatch[1]));
+      const days = wks * 7;
+      return {
+        matched: true,
+        waitDays: days,
+        waitMs: days * 24 * 3600 * 1000,
+        label: `Wait ${wks}w / ${days}d (parsed from text)`
+      };
+    }
+
+    if (/\b(tonight|this\s+evening)\b/i.test(s)) {
+      const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 20, 0, 0);
+      const waitMs = Math.max(3600 * 1000, dt.getTime() - nowMs);
+      return {
+        matched: true,
+        waitDays: 0.4,
+        waitMs,
+        label: 'Tonight 20:00 (parsed from text)'
+      };
+    }
+
+    if (/\btomorrow\b/i.test(s)) {
+      const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 10, 0, 0);
+      return {
+        matched: true,
+        waitDays: 1,
+        waitMs: Math.max(3600 * 1000, dt.getTime() - nowMs),
+        label: 'Tomorrow 10:00 (parsed from text)'
+      };
+    }
+
+    if (/\bnext\s+week\b/i.test(s)) {
+      return {
+        matched: true,
+        waitDays: 7,
+        waitMs: 7 * 24 * 3600 * 1000,
+        label: 'In 7 days (parsed from text)'
+      };
+    }
+
+    return { matched: false };
   }
 
   function suggestPaymentWait(text, rawAmount = '') {
     const s = String(text || '').toLowerCase();
     const amt = parseAmountFromText(text, rawAmount);
+    const cat = detectRelevanceCategory(text, remDraft.kind, remDraft.categoryOverride, remDraft.customGroup);
+    const nat = parseNaturalWaitFromText(text);
 
-    if (/\b(salary|payroll|wage|electricity|edl|water|tax|vat|customs|urgent|emergency)\b/i.test(s)) {
+    // If user typed a natural duration ("in 3 days", "wait 48 hours", "shipping 6 days", "tomorrow"), honor it!
+    if (nat.matched) {
       return {
-        waitDays: 1,
-        waitMs: 24 * 3600 * 1000,
-        tier: 'Urgent / Statutory (24h)',
+        waitDays: nat.waitDays,
+        waitMs: nat.waitMs,
+        isRecurring: Boolean(nat.isRecurring),
+        recur: nat.recur || '',
+        isParked: false,
+        inferredKind: nat.isRecurring ? 'recurring' : 'wait',
+        tier: nat.label,
         amt,
-        reason: 'Statutory, payroll, or utility item — 24h verification hold so operations never stall.'
+        reason: `Automatically extracted timing (${nat.label}) directly from your note.`
       };
     }
-    if (/\b(deposit|advance|retainer|down\s*payment)\b/i.test(s) && amt <= 5000) {
+
+    // 1. Verify / "Paid for something and it didn't show up on an app"
+    if (cat.id === 'verify') {
+      const days = /\b(bank|wire|swift|international)\b/i.test(s) ? 2 : 1;
+      return {
+        waitDays: days,
+        waitMs: days * 24 * 3600 * 1000,
+        isParked: false,
+        inferredKind: 'wait',
+        tier: `Verify in ${days === 1 ? '24h' : '48h'} · App / Settlement Check`,
+        amt,
+        reason:
+          days === 1
+            ? '24-hour wait timer — reminds you tomorrow to verify if the payment or update showed up on the app.'
+            : '48-hour settlement timer — reminds you in 2 days to verify bank/app reflection.'
+      };
+    }
+
+    // 2. Shipping time / package / order delivery
+    if (cat.id === 'shipping') {
+      const isLocal = /\b(local|beirut|lebanon|aramex\s+local|today|tomorrow)\b/i.test(s);
+      const isSea = /\b(container|sea|vessel|freight|china)\b/i.test(s);
+      const days = isSea ? 14 : isLocal ? 2 : 5;
+      return {
+        waitDays: days,
+        waitMs: days * 24 * 3600 * 1000,
+        isParked: false,
+        inferredKind: 'wait',
+        tier: `Shipping Timer (${days}d)`,
+        amt,
+        reason: `Auto-set ${days}-day shipping countdown — you'll get a push when it's time to check tracking/arrival.`
+      };
+    }
+
+    // 3. Ideas for later OR Things I want to do -> Parked (no noisy alarm unless chosen)
+    if (cat.id === 'ideas' || cat.id === 'want_to_do') {
+      return {
+        waitDays: 0,
+        waitMs: 0,
+        isParked: true,
+        inferredKind: 'parked',
+        tier: cat.id === 'ideas' ? '💡 Parked in Ideas (No Alarm)' : '🌟 Saved in Want-to-Do (No Alarm)',
+        amt,
+        reason:
+          'Kept cleanly in your organized cluster without a noisy timer (tap any timer chip below if you want a reminder).'
+      };
+    }
+
+    // 4. People to talk to / follow-ups
+    if (cat.id === 'people') {
+      const now = new Date();
+      const tom = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 10, 0, 0);
+      const waitMs = Math.max(2 * 3600 * 1000, tom.getTime() - now.getTime());
+      return {
+        waitDays: 1,
+        waitMs,
+        isParked: false,
+        inferredKind: 'task',
+        tier: '🗣️ People Follow-Up (Tomorrow 10:00)',
+        amt,
+        reason: 'Grouped under People to Talk To — nudges you tomorrow morning at 10:00.'
+      };
+    }
+
+    // 5. Family & Home
+    if (cat.id === 'family') {
+      const now = new Date();
+      const eve = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 19, 30, 0);
+      const waitMs =
+        eve.getTime() > now.getTime() + 1800 * 1000
+          ? eve.getTime() - now.getTime()
+          : 20 * 3600 * 1000;
+      return {
+        waitDays: 1,
+        waitMs,
+        isParked: false,
+        inferredKind: 'task',
+        tier: '👨‍👩‍👧 Family & Home (Evening / 24h)',
+        amt,
+        reason: 'Grouped under Family & Home — reminds you this evening after work hours.'
+      };
+    }
+
+    // 6. Payments & Wait-to-Pay Holds
+    if (cat.id === 'payments' || remDraft.kind === 'payment') {
+      if (/\b(salary|payroll|wage|electricity|edl|water|tax|vat|customs|urgent|emergency)\b/i.test(s)) {
+        return {
+          waitDays: 1,
+          waitMs: 24 * 3600 * 1000,
+          isParked: false,
+          inferredKind: 'payment',
+          tier: 'Urgent / Statutory (24h)',
+          amt,
+          reason: 'Statutory, payroll, or utility item — 24h verification hold.'
+        };
+      }
+      if (amt > 15000) {
+        return {
+          waitDays: 10,
+          waitMs: 10 * 24 * 3600 * 1000,
+          isParked: false,
+          inferredKind: 'payment',
+          tier: `Strategic Payment Hold · $${fmtInt(amt)} (10d)`,
+          amt,
+          reason: 'High-value payout (>$15k) — 10-day cooling-off hold.'
+        };
+      }
+      if (amt > 5000) {
+        return {
+          waitDays: 7,
+          waitMs: 7 * 24 * 3600 * 1000,
+          isParked: false,
+          inferredKind: 'payment',
+          tier: `Major Payment Hold · $${fmtInt(amt)} (7d)`,
+          amt,
+          reason: 'Major payout ($5k–$15k) — 7-day cooling-off hold.'
+        };
+      }
+      if (amt >= 1000) {
+        return {
+          waitDays: 4,
+          waitMs: 4 * 24 * 3600 * 1000,
+          isParked: false,
+          inferredKind: 'payment',
+          tier: `Medium Payment Hold · $${fmtInt(amt)} (4d)`,
+          amt,
+          reason: 'Medium payout ($1k–$5k) — 4-day cooling-off hold.'
+        };
+      }
+      if (amt > 0) {
+        return {
+          waitDays: 2,
+          waitMs: 2 * 24 * 3600 * 1000,
+          isParked: false,
+          inferredKind: 'payment',
+          tier: `Routine Payment Hold · $${fmtInt(amt)} (2d)`,
+          amt,
+          reason: 'Routine payout (<$1k) — 48h cooling-off hold.'
+        };
+      }
       return {
         waitDays: 3,
         waitMs: 3 * 24 * 3600 * 1000,
-        tier: 'Advance / Deposit (3d)',
-        amt,
-        reason: 'Advance / deposit request — 3-day cooling-off to verify delivery schedule & terms.'
+        isParked: false,
+        inferredKind: 'payment',
+        tier: 'Payment Wait-Timer (3d)',
+        amt: 0,
+        reason: '3-day cooling-off hold before paying (type an amount like $800 or $6,000 in the note to auto-scale).'
       };
     }
-    if (amt > 15000) {
-      return {
-        waitDays: 10,
-        waitMs: 10 * 24 * 3600 * 1000,
-        tier: `Strategic · $${fmtInt(amt)} (10d)`,
-        amt,
-        reason: 'High-value disbursement (>$15k) — 10-day treasury hold + full Statement of Account check.'
-      };
-    }
-    if (amt > 5000) {
-      return {
-        waitDays: 7,
-        waitMs: 7 * 24 * 3600 * 1000,
-        tier: `Major · $${fmtInt(amt)} (7d)`,
-        amt,
-        reason: 'Major payout ($5k–$15k) — 7-day hold to confirm goods receipt & Brains/ERP reconciliation.'
-      };
-    }
-    if (amt >= 1000) {
-      return {
-        waitDays: 4,
-        waitMs: 4 * 24 * 3600 * 1000,
-        tier: `Medium · $${fmtInt(amt)} (4d)`,
-        amt,
-        reason: 'Medium operational invoice ($1k–$5k) — 4-day hold batches weekly supplier disbursements.'
-      };
-    }
-    if (amt > 0) {
-      return {
-        waitDays: 2,
-        waitMs: 2 * 24 * 3600 * 1000,
-        tier: `Routine · $${fmtInt(amt)} (2d)`,
-        amt,
-        reason: 'Routine payout (<$1k) — 48h cooling-off keeps cash-out discipline without friction.'
-      };
-    }
+
+    // 7. Work & Projects default
     return {
-      waitDays: 3,
-      waitMs: 3 * 24 * 3600 * 1000,
-      tier: 'Standard Cooling-Off (3d)',
-      amt: 0,
-      reason: 'Standard 3-day payment hold (enter an amount like $800, $2,500, or $8,000 to auto-scale wait time).'
+      waitDays: 1,
+      waitMs: 24 * 3600 * 1000,
+      isParked: false,
+      inferredKind: 'task',
+      tier: '💼 Work Follow-Up (+24h)',
+      amt,
+      reason: 'Auto-grouped under Work & Projects with a 24-hour reminder timer.'
     };
   }
 
   function computeTargetTimestampFromChoice(choice, text, rawAmount) {
     const now = new Date();
     const nowMs = now.getTime();
+    if (choice === 'none') {
+      return {
+        targetMs: 0,
+        waitDays: 0,
+        isParked: true,
+        inferredKind: 'parked',
+        label: 'No Timer (Parked)',
+        reason: 'Saved in its smart group with no timer.'
+      };
+    }
     if (choice === 'auto') {
       const sug = suggestPaymentWait(text, rawAmount);
-      return { targetMs: nowMs + sug.waitMs, waitDays: sug.waitDays, label: sug.tier, reason: sug.reason };
+      return {
+        targetMs: sug.isParked ? 0 : nowMs + sug.waitMs,
+        waitDays: sug.waitDays,
+        isParked: Boolean(sug.isParked),
+        isRecurring: Boolean(sug.isRecurring),
+        recur: sug.recur || '',
+        inferredKind: sug.inferredKind || 'task',
+        label: sug.tier,
+        reason: sug.reason
+      };
     }
     if (choice === '1h') {
       return { targetMs: nowMs + 3600 * 1000, waitDays: 0.04, label: 'In 1 hour', reason: '1-hour quick reminder.' };
@@ -445,7 +925,7 @@
         targetMs: dt.getTime(),
         waitDays: daysUntilMon,
         label: `Next Mon (${daysUntilMon}d)`,
-        reason: 'Held until Monday 09:00 weekly disbursement run.'
+        reason: 'Scheduled for Monday 09:00.'
       };
     }
     const dayMatch = String(choice || '').match(/^(\d+)d$/);
@@ -454,34 +934,48 @@
       targetMs: nowMs + dCount * 24 * 3600 * 1000,
       waitDays: dCount,
       label: `Wait ${dCount} day${dCount === 1 ? '' : 's'}`,
-      reason: `Manual ${dCount}-day hold timer.`
+      reason: `Manual ${dCount}-day wait timer.`
     };
   }
 
   function formatHoldCountdown(targetMs, nowMs = Date.now()) {
-    if (!targetMs) return 'No timer';
+    if (!targetMs) return 'Parked · No alarm';
     const diff = Number(targetMs) - nowMs;
     if (diff <= 0) {
       const agoMin = Math.floor(Math.abs(diff) / 60000);
-      if (agoMin < 60) return `Matured ${agoMin}m ago`;
+      if (agoMin < 60) return `Ready · ${agoMin}m ago`;
       const agoHrs = Math.floor(agoMin / 60);
-      if (agoHrs < 24) return `Matured ${agoHrs}h ago`;
-      return `Matured ${Math.floor(agoHrs / 24)}d ago`;
+      if (agoHrs < 24) return `Ready · ${agoHrs}h ago`;
+      return `Ready · ${Math.floor(agoHrs / 24)}d ago`;
     }
     const totalMin = Math.ceil(diff / 60000);
     if (totalMin < 60) return `${totalMin}m wait left`;
     const hrs = Math.floor(totalMin / 60);
     const mins = totalMin % 60;
-    if (hrs < 48) return `${hrs}h ${mins}m wait left`;
+    if (hrs < 48) return `${hrs}h ${mins}m left`;
     const days = Math.floor(hrs / 24);
     const remHrs = hrs % 24;
-    return `${days}d ${remHrs}h wait left`;
+    return `${days}d ${remHrs}h left`;
   }
 
   function classifyReminderBucket(item, nowMs = Date.now()) {
     if (item.completed) return 'completed';
-    const isHold = item.kind === 'payment' || item.kind === 'wait';
+    if (item.kind === 'recurring') {
+      const targetMs = Number(item.matureAt || item.dueAt || 0);
+      if (targetMs && nowMs >= targetMs) return 'urgent_matured';
+      return 'recurring';
+    }
     const targetMs = Number(item.matureAt || item.dueAt || 0);
+    if (!targetMs || item.kind === 'parked' || item.category === 'ideas' || item.category === 'want_to_do') {
+      if (targetMs && nowMs >= targetMs) return 'urgent_matured';
+      if (!targetMs) return 'parked';
+    }
+    const isHold =
+      item.kind === 'payment' ||
+      item.kind === 'wait' ||
+      item.category === 'verify' ||
+      item.category === 'shipping' ||
+      item.category === 'payments';
     if (isHold) {
       if (targetMs && nowMs >= targetMs) {
         return 'urgent_matured';
@@ -495,9 +989,6 @@
     endOfToday.setHours(23, 59, 59, 999);
     if (targetMs && targetMs <= endOfToday.getTime()) {
       return 'today';
-    }
-    if (item.kind === 'recurring') {
-      return 'recurring';
     }
     return 'upcoming';
   }
@@ -3076,6 +3567,13 @@
       .filter((r) => classifyReminderBucket(r) === 'holding')
       .sort((a, b) => Number(a.matureAt || a.dueAt || 0) - Number(b.matureAt || b.dueAt || 0))
       .slice(0, 2);
+    const activeClusterCount = new Set(
+      remSum.active.map(
+        (r) =>
+          r.customGroup ||
+          getCategoryMeta(r.category || detectRelevanceCategory(r.title, r.kind).id).id
+      )
+    ).size;
 
     return `
       <div class="pulse-disc-grid">
@@ -3105,33 +3603,33 @@
 
         <div class="pulse-disc-card" data-goto-tab="discipline">
           <div style="min-width:0;flex:1">
-            <div class="eyebrow">PAYMENT WAIT-TIMERS &amp; SMART REMINDERS</div>
+            <div class="eyebrow">SMART REMINDERS · AI AUTO-GROUPED</div>
             <div style="display:flex;gap:14px;align-items:baseline;margin-top:4px;flex-wrap:wrap">
               <div>
                 <span class="pulse-disc-big tabular" style="font-size:24px;color:${remSum.maturedCount > 0 ? 'var(--amber)' : 'var(--text-primary)'}">${remSum.maturedCount}</span>
-                <span class="meta-timestamp"> matured / ready</span>
+                <span class="meta-timestamp"> ready now</span>
               </div>
               <div>
                 <span class="pulse-disc-big tabular" style="font-size:24px;color:var(--brass)">${remSum.holdingCount}</span>
-                <span class="meta-timestamp"> cooling off</span>
+                <span class="meta-timestamp"> waiting on timer</span>
               </div>
               <div>
                 <span class="pulse-disc-big tabular" style="font-size:24px;color:var(--steel)">${remSum.active.length}</span>
-                <span class="meta-timestamp"> active total</span>
+                <span class="meta-timestamp"> across ${activeClusterCount || 0} group${activeClusterCount === 1 ? '' : 's'}</span>
               </div>
             </div>
             <div class="meta-timestamp" style="margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
               ${
                 maturedItems.length
-                  ? `🔥 Ready: <strong>${esc(maturedItems[0].title)}</strong>${maturedItems[0].amount ? ` ($${fmtInt(maturedItems[0].amount)})` : ''}`
+                  ? `🔥 Ready: <strong>${esc(maturedItems[0].title)}</strong>`
                   : holdingItems.length
-                    ? `⏳ Next hold: <strong>${esc(holdingItems[0].title)}</strong> (${formatHoldCountdown(holdingItems[0].matureAt || holdingItems[0].dueAt)})`
-                    : `No active payment holds — tap to add a payment wait-timer or task.`
+                    ? `⏳ Waiting: <strong>${esc(holdingItems[0].title)}</strong> (${formatHoldCountdown(holdingItems[0].matureAt || holdingItems[0].dueAt)})`
+                    : `People, Verify/App Sync, Shipping, Work, Family, Payments & Ideas — tap to add.`
               }
             </div>
           </div>
           <div>
-            <span class="chip-btn" style="pointer-events:none">+ Hold / Task →</span>
+            <span class="chip-btn" style="pointer-events:none">+ Add / View →</span>
           </div>
         </div>
       </div>
@@ -3139,45 +3637,50 @@
   }
 
   function renderWaitAdvisorInnerHtml() {
-    const cat = detectRelevanceCategory(remDraft.title, remDraft.kind, remDraft.categoryOverride);
+    const cat = detectRelevanceCategory(
+      remDraft.title,
+      remDraft.kind,
+      remDraft.categoryOverride,
+      remDraft.customGroup
+    );
+    const ctx = extractContextTags(remDraft.title);
     const sug = suggestPaymentWait(remDraft.title, remDraft.amount);
     const targetInfo = computeTargetTimestampFromChoice(
       remDraft.waitChoice,
       remDraft.title,
       remDraft.amount
     );
-    const targetDateStr = new Date(targetInfo.targetMs).toLocaleString([], {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    const targetDateStr = targetInfo.targetMs
+      ? new Date(targetInfo.targetMs).toLocaleString([], {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        })
+      : 'No alarm (Parked in cluster)';
 
-    const isPaymentOrWait = remDraft.kind === 'payment' || remDraft.kind === 'wait';
-    const isRecurring = remDraft.kind === 'recurring';
+    const isRecurring =
+      remDraft.kind === 'recurring' ||
+      (remDraft.kind === 'auto' && Boolean(targetInfo.isRecurring));
 
-    const waitChips = isPaymentOrWait
-      ? [
-          { k: 'auto', lbl: `✨ Auto (${sug.waitDays}d)` },
-          { k: '1d', lbl: '+24h' },
-          { k: '2d', lbl: '+2d' },
-          { k: '3d', lbl: '+3d' },
-          { k: '4d', lbl: '+4d' },
-          { k: '7d', lbl: '+7d' },
-          { k: '10d', lbl: '+10d' },
-          { k: 'nextmon', lbl: 'Next Mon' }
-        ]
-      : [
-          { k: '1h', lbl: 'In 1h' },
-          { k: '3h', lbl: 'In 3h' },
-          { k: 'tonight', lbl: 'Tonight 20:30' },
-          { k: '1d', lbl: 'Tomorrow' },
-          { k: '2d', lbl: '+2d' },
-          { k: '3d', lbl: '+3d' },
-          { k: '7d', lbl: '+7d' },
-          { k: 'nextmon', lbl: 'Next Mon' }
-        ];
+    const autoBtnLbl = sug.isParked
+      ? `✨ Auto (Park · No Alarm)`
+      : `✨ Auto (${sug.waitDays >= 1 ? `${sug.waitDays}d` : `${Math.max(1, Math.round(sug.waitDays * 24))}h`})`;
+
+    const waitChips = [
+      { k: 'auto', lbl: autoBtnLbl },
+      { k: 'none', lbl: '📌 Park (No Timer)' },
+      { k: '3h', lbl: 'In 3h' },
+      { k: 'tonight', lbl: 'Tonight 20:30' },
+      { k: '1d', lbl: '+24h / Tmrw' },
+      { k: '2d', lbl: '+2d' },
+      { k: '4d', lbl: '+4d' },
+      { k: '5d', lbl: '+5d (Ship)' },
+      { k: '7d', lbl: '+7d' },
+      { k: '14d', lbl: '+14d' },
+      { k: 'nextmon', lbl: 'Next Mon' }
+    ];
 
     const recurChips = [
       { k: 'daily', lbl: '🔁 Daily' },
@@ -3188,31 +3691,25 @@
 
     return `
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">
-        <div>
+        <div style="min-width:0;flex:1">
           <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--brass)">
-            ${
-              remDraft.kind === 'payment'
-                ? `💸 Payment Hold Advisor · ${esc(sug.tier)}`
-                : remDraft.kind === 'wait'
-                  ? `⏳ Cooling-Off Wait Timer · ${esc(targetInfo.label)}`
-                  : remDraft.kind === 'recurring'
-                    ? `🔁 Recurring Routine Cadence`
-                    : `⏰ Smart Task Timing · ${esc(targetInfo.label)}`
-            }
+            🧠 Smart Auto-Classifier · ${esc(targetInfo.label)}
           </div>
           <div class="meta-timestamp" style="margin-top:2px">
-            ${
-              remDraft.kind === 'payment'
-                ? esc(sug.reason)
-                : remDraft.kind === 'wait'
-                  ? 'Deliberate pause before committing or replying — you will get a push when the wait expires.'
-                  : remDraft.kind === 'recurring'
-                    ? 'Completing a recurring reminder automatically rolls it forward to the next cycle.'
-                    : 'Auto-grouped by urgency and BHFIRMS company relevance.'
-            }
+            ${esc(targetInfo.reason || sug.reason)}
           </div>
         </div>
-        <span class="rem-badge cat" id="rem-auto-cat-chip" title="Auto-detected relevance group">${cat.icon} ${esc(cat.label)}</span>
+        <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">
+          <span class="rem-badge cat" id="rem-auto-cat-chip" title="Auto-detected cluster">${cat.icon} ${esc(cat.label)}</span>
+          ${ctx.allTags
+            .map((t) => `<span class="rem-badge hold" title="Extracted context tag">${esc(t)}</span>`)
+            .join('')}
+          ${
+            sug.amt > 0
+              ? `<span class="rem-badge amt" title="Extracted amount">$${fmtInt(sug.amt)}</span>`
+              : ''
+          }
+        </div>
       </div>
 
       <div class="wait-chip-row">
@@ -3248,35 +3745,47 @@
 
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:6px;border-top:1px solid var(--border-subtle);flex-wrap:wrap;gap:6px">
         <span class="meta-timestamp">
-          🔔 Push &amp; Maturity Target: <strong class="mono" style="color:var(--text-primary)">${esc(targetDateStr)}</strong>
+          🔔 Reminder / Wait Target: <strong class="mono" style="color:var(--text-primary)">${esc(targetDateStr)}</strong>
         </span>
         <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
-          <span class="meta-timestamp" style="font-size:10.5px">Group:</span>
-          <button type="button" class="wait-chip ${!remDraft.categoryOverride ? 'active' : ''}" style="padding:2px 7px;font-size:10.5px" data-cat-override="">Auto</button>
+          <span class="meta-timestamp" style="font-size:10.5px">Cluster:</span>
+          <button type="button" class="wait-chip ${!remDraft.categoryOverride && !remDraft.customGroup ? 'active' : ''}" style="padding:2px 7px;font-size:10.5px" data-cat-override="">✨ Auto</button>
           ${Object.values(REM_CATEGORIES)
             .map(
               (c) => `
-            <button type="button" class="wait-chip ${remDraft.categoryOverride === c.id ? 'active' : ''}" style="padding:2px 7px;font-size:10.5px" data-cat-override="${c.id}" title="${esc(c.label)}">
-              ${c.icon}
+            <button type="button" class="wait-chip ${remDraft.categoryOverride === c.id && !remDraft.customGroup ? 'active' : ''}" style="padding:2px 7px;font-size:10.5px" data-cat-override="${c.id}" title="${esc(c.label)}">
+              ${c.icon} ${esc(c.shortLabel || c.label)}
             </button>
           `
             )
             .join('')}
+          <button type="button" class="wait-chip ${remDraft.customGroup ? 'active' : ''}" style="padding:2px 7px;font-size:10.5px" data-cat-custom="1" title="Create or assign a custom group">
+            ${remDraft.customGroup ? `🏷️ ${esc(remDraft.customGroup)}` : '+ Custom'}
+          </button>
         </div>
       </div>
     `;
   }
 
   function renderReminderCardHtml(item, nowMs = Date.now()) {
-    const bucket = classifyReminderBucket(item, nowMs);
-    const cat =
-      REM_CATEGORIES[item.category] ||
-      detectRelevanceCategory(item.title, item.kind, item.category);
+    const cat = getCategoryMeta(
+      item.category || detectRelevanceCategory(item.title, item.kind).id,
+      item.customGroup || ''
+    );
+    const ctx = extractContextTags(item.title);
+    const subTag = item.subTag || ctx.subTag || '';
     const targetMs = Number(item.matureAt || item.dueAt || 0);
-    const isHold = item.kind === 'payment' || item.kind === 'wait';
-    const isMatured = isHold && targetMs && nowMs >= targetMs && !item.completed;
-    const isHolding = isHold && targetMs && nowMs < targetMs && !item.completed;
-    const isOverdue = !isHold && targetMs && nowMs >= targetMs && !item.completed;
+    const isParked = !targetMs || item.kind === 'parked';
+    const isHold =
+      !isParked &&
+      (item.kind === 'payment' ||
+        item.kind === 'wait' ||
+        cat.id === 'verify' ||
+        cat.id === 'shipping' ||
+        cat.id === 'payments');
+    const isMatured = !isParked && isHold && targetMs && nowMs >= targetMs && !item.completed;
+    const isHolding = !isParked && isHold && targetMs && nowMs < targetMs && !item.completed;
+    const isOverdue = !isParked && !isHold && targetMs && nowMs >= targetMs && !item.completed;
 
     const cardStateClass = item.completed
       ? 'completed'
@@ -3308,14 +3817,35 @@
       progressPct = 100;
     }
 
-    const kindBadge =
-      item.kind === 'payment'
-        ? `<span class="rem-badge ${isMatured ? 'matured' : 'hold'}">${isMatured ? '🔓 Hold Matured · Ready to Pay' : `⏳ Payment Hold · ${countdownTxt}`}</span>`
-        : item.kind === 'wait'
-          ? `<span class="rem-badge ${isMatured ? 'matured' : 'hold'}">${isMatured ? '🔓 Wait Complete' : `⏳ Cooling Off · ${countdownTxt}`}</span>`
-          : item.kind === 'recurring'
-            ? `<span class="rem-badge recur">🔁 ${esc(item.recur || 'daily')}</span>`
-            : `<span class="rem-badge ${isOverdue ? 'matured' : 'cat'}">⏰ ${esc(countdownTxt)}</span>`;
+    let kindBadge = '';
+    if (isParked) {
+      kindBadge = `<span class="rem-badge cat">📌 Parked · No Alarm</span>`;
+    } else if (cat.id === 'verify') {
+      kindBadge = `<span class="rem-badge ${isMatured ? 'matured' : 'hold'}">${isMatured ? '🔍 Check Now · Did It Show Up?' : `⏳ Verify Wait · ${countdownTxt}`}</span>`;
+    } else if (cat.id === 'shipping') {
+      kindBadge = `<span class="rem-badge ${isMatured ? 'matured' : 'hold'}">${isMatured ? '📦 Check Delivery / Tracking' : `📦 Shipping Timer · ${countdownTxt}`}</span>`;
+    } else if (item.kind === 'payment' || cat.id === 'payments') {
+      kindBadge = `<span class="rem-badge ${isMatured ? 'matured' : 'hold'}">${isMatured ? '🔓 Wait Complete · Ready to Pay' : `⏳ Payment Wait · ${countdownTxt}`}</span>`;
+    } else if (item.kind === 'wait') {
+      kindBadge = `<span class="rem-badge ${isMatured ? 'matured' : 'hold'}">${isMatured ? '🔓 Wait Complete' : `⏳ Waiting · ${countdownTxt}`}</span>`;
+    } else if (item.kind === 'recurring') {
+      kindBadge = `<span class="rem-badge recur">🔁 ${esc(item.recur || 'daily')} · ${esc(countdownTxt)}</span>`;
+    } else {
+      kindBadge = `<span class="rem-badge ${isOverdue ? 'matured' : 'cat'}">⏰ ${esc(countdownTxt)}</span>`;
+    }
+
+    const doneLabel =
+      cat.id === 'verify'
+        ? '✓ Verified'
+        : cat.id === 'shipping'
+          ? '✓ Received'
+          : cat.id === 'people'
+            ? '✓ Spoke'
+            : item.kind === 'payment' || cat.id === 'payments'
+              ? '✓ Paid / Done'
+              : item.kind === 'recurring'
+                ? '✓ Done & Roll'
+                : '✓ Done';
 
     return `
       <div class="rem-card ${cardStateClass}" data-rem-id="${esc(item.id)}">
@@ -3323,9 +3853,10 @@
           <div style="min-width:0;flex:1">
             <div class="rem-card-title">${esc(item.title)}</div>
             <div class="rem-card-meta">
+              <span class="rem-badge cat">${cat.icon} ${esc(cat.shortLabel || cat.label)}</span>
+              ${subTag ? `<span class="rem-badge hold">${esc(subTag)}</span>` : ''}
               ${item.amount > 0 ? `<span class="rem-badge amt">$${fmtInt(item.amount)}</span>` : ''}
               ${kindBadge}
-              <span class="rem-badge cat">${cat.icon} ${esc(cat.label)}</span>
               ${targetFormatted ? `<span class="meta-timestamp">Target: ${esc(targetFormatted)}</span>` : ''}
             </div>
           </div>
@@ -3334,23 +3865,16 @@
               !item.completed
                 ? `
               <button type="button" class="rem-act-btn done" data-rem-act="done" data-rem-id="${esc(item.id)}">
-                ${item.kind === 'payment' ? '✓ Paid / Done' : item.kind === 'recurring' ? '✓ Complete & Roll' : '✓ Done'}
+                ${doneLabel}
               </button>
+              <button type="button" class="rem-act-btn" data-rem-act="wait1d" data-rem-id="${esc(item.id)}" title="Wait / Snooze +24 hours">+24h</button>
+              <button type="button" class="rem-act-btn" data-rem-act="wait3d" data-rem-id="${esc(item.id)}" title="Wait +3 days">+3d</button>
               ${
-                isHold
-                  ? `
-                <button type="button" class="rem-act-btn" data-rem-act="wait2d" data-rem-id="${esc(item.id)}" title="Add 2 more days of cooling-off">+2d Hold</button>
-                <button type="button" class="rem-act-btn" data-rem-act="wait7d" data-rem-id="${esc(item.id)}" title="Add 7 more days of cooling-off">+7d</button>
-                ${
-                  isHolding
-                    ? `<button type="button" class="rem-act-btn" data-rem-act="release" data-rem-id="${esc(item.id)}" title="Release hold immediately">Release Now</button>`
-                    : ''
-                }
-              `
-                  : `
-                <button type="button" class="rem-act-btn" data-rem-act="wait1d" data-rem-id="${esc(item.id)}" title="Snooze 24 hours">+24h</button>
-              `
+                isHolding
+                  ? `<button type="button" class="rem-act-btn" data-rem-act="release" data-rem-id="${esc(item.id)}" title="Mark ready right now">Ready Now</button>`
+                  : ''
               }
+              <button type="button" class="rem-act-btn" data-rem-act="move-group" data-rem-id="${esc(item.id)}" title="Change group / sub-topic">🏷️</button>
             `
                 : `
               <button type="button" class="rem-act-btn" data-rem-act="reopen" data-rem-id="${esc(item.id)}">↺ Reopen</button>
@@ -3362,7 +3886,7 @@
         ${
           isHold && !item.completed
             ? `
-          <div class="hold-progress-track" title="Hold elapsed: ${progressPct}%">
+          <div class="hold-progress-track" title="Wait elapsed: ${progressPct}%">
             <div class="hold-progress-fill" style="width:${progressPct}%;background:${isMatured ? 'var(--emerald)' : 'var(--brass)'}"></div>
           </div>
         `
@@ -3375,15 +3899,15 @@
   function renderRemindersListHtml() {
     const nowMs = Date.now();
     const remSum = getActiveRemindersSummary(nowMs);
-    const groupMode = prefs.remGroupMode || 'urgency'; // 'urgency' | 'relevance'
+    const groupMode = prefs.remGroupMode || 'clusters'; // 'clusters' | 'subtopics' | 'urgency'
     const showDone = Boolean(prefs.remShowCompleted);
 
     if (!remSum.active.length && (!showDone || !remSum.completed.length)) {
       return `
         <div class="empty-card" style="padding:28px;text-align:center">
-          <div style="font-size:15px;font-weight:700;color:var(--text-primary)">No Active Holds or Reminders</div>
-          <p class="meta-timestamp" style="max-width:460px;margin:6px auto 0">
-            When someone asks for a payment or action, drop it above. THEO calculates how long to hold based on amount &amp; urgency, groups it automatically, and pushes your phone when the wait matures.
+          <div style="font-size:15px;font-weight:700;color:var(--text-primary)">Your Smart Reminder &amp; Idea Clusters Are Clear</div>
+          <p class="meta-timestamp" style="max-width:540px;margin:6px auto 0">
+            Drop anything above — people to talk to, something you paid for that hasn't shown up on an app yet, shipping times, family tasks, specific work items, payments to hold, things you want to do, or ideas for later. THEO groups and times them automatically.
           </p>
         </div>
       `;
@@ -3394,28 +3918,33 @@
       const buckets = [
         {
           id: 'urgent_matured',
-          title: '🔥 Action Required & Matured Payment Holds',
-          sub: 'Wait timer expired or due right now — ready to release or execute'
+          title: '🔥 Action Ready & Matured Wait Timers',
+          sub: 'Wait timer expired or due right now — ready to check, talk, or act'
         },
         {
           id: 'holding',
-          title: '⏳ Active Cooling-Off & Payment Holds (Wait Now)',
-          sub: 'Do not pay yet — let the timer run until maturity'
+          title: '⏳ Active Wait Timers (App Verify, Shipping & Payment Holds)',
+          sub: 'Cooling off or in transit — THEO will push your phone when the timer matures'
         },
         {
           id: 'today',
-          title: '⚡ Due Today',
-          sub: 'Scheduled for completion before midnight'
+          title: '⚡ Today & Due Soon',
+          sub: 'Scheduled for today'
         },
         {
           id: 'recurring',
           title: '🔁 Recurring Routines',
-          sub: 'Auto-advances to next cycle when marked done'
+          sub: 'Automatically rolls forward to the next cycle when marked done'
         },
         {
           id: 'upcoming',
-          title: '📅 Upcoming & Backlog',
-          sub: 'Future scheduled tasks'
+          title: '📅 Upcoming Scheduled',
+          sub: 'Future scheduled reminders'
+        },
+        {
+          id: 'parked',
+          title: '💡 Ideas for Later & Things I Want To Do (Parked)',
+          sub: 'Saved cleanly in your clusters without a noisy alarm'
         }
       ];
 
@@ -3427,23 +3956,67 @@
           groups.push({ ...b, items });
         }
       }
+    } else if (groupMode === 'subtopics') {
+      // Dynamic Sub-Topics grouping: splits Work into Resorts / WTC / Trading / Holding, People by person, Verify by app, etc.
+      const subMap = new Map();
+      for (const item of remSum.active) {
+        const cat = getCategoryMeta(
+          item.category || detectRelevanceCategory(item.title, item.kind).id,
+          item.customGroup || ''
+        );
+        const ctx = extractContextTags(item.title);
+        const sub = item.subTag || ctx.subTag || '';
+        const key = sub ? `${cat.icon} ${cat.shortLabel} · ${sub}` : `${cat.icon} ${cat.label}`;
+        if (!subMap.has(key)) {
+          subMap.set(key, {
+            id: key,
+            title: key,
+            sub: cat.desc || 'Auto-detected sub-topic cluster',
+            items: []
+          });
+        }
+        subMap.get(key).items.push(item);
+      }
+      for (const g of subMap.values()) {
+        g.items.sort(
+          (x, y) =>
+            Number(x.matureAt || x.dueAt || Infinity) - Number(y.matureAt || y.dueAt || Infinity)
+        );
+        groups.push(g);
+      }
     } else {
+      // Default: 'clusters' — Smart Life & Work Clusters (People, Verify/App, Shipping, Work, Family, Payments, Want-to-Do, Ideas + Custom)
+      const bucketMap = new Map();
       for (const cat of Object.values(REM_CATEGORIES)) {
-        const items = remSum.active
-          .filter((r) => {
-            const c =
-              REM_CATEGORIES[r.category] ||
-              detectRelevanceCategory(r.title, r.kind, r.category);
-            return c.id === cat.id;
-          })
-          .sort((x, y) => Number(x.matureAt || x.dueAt || 0) - Number(y.matureAt || y.dueAt || 0));
-        if (items.length) {
-          groups.push({
+        bucketMap.set(cat.id, {
+          id: cat.id,
+          title: `${cat.icon} ${cat.label}`,
+          sub: cat.desc,
+          items: []
+        });
+      }
+      for (const item of remSum.active) {
+        const cat = getCategoryMeta(
+          item.category || detectRelevanceCategory(item.title, item.kind).id,
+          item.customGroup || ''
+        );
+        if (!bucketMap.has(cat.id)) {
+          bucketMap.set(cat.id, {
             id: cat.id,
             title: `${cat.icon} ${cat.label}`,
-            sub: `${items.length} active item${items.length === 1 ? '' : 's'}`,
-            items
+            sub: 'Custom smart cluster',
+            items: []
           });
+        }
+        bucketMap.get(cat.id).items.push(item);
+      }
+      for (const g of bucketMap.values()) {
+        if (g.items.length) {
+          g.items.sort(
+            (x, y) =>
+              Number(x.matureAt || x.dueAt || Infinity) - Number(y.matureAt || y.dueAt || Infinity)
+          );
+          groups.push(g);
         }
       }
     }
@@ -3534,7 +4107,7 @@
     }
     const sevenDayAvg = Math.round(sevenDaySum / 7);
     const remSum = getActiveRemindersSummary();
-    const groupMode = prefs.remGroupMode || 'urgency';
+    const groupMode = prefs.remGroupMode || 'clusters';
 
     root.innerHTML = `
       ${renderPulseNotifBannerHtml()}
@@ -3624,7 +4197,7 @@
                     <span class="habit-icon">${item.icon}</span>
                     <div style="min-width:0">
                       <div class="habit-name">${esc(item.label)}</div>
-                      <div class="habit-sub">${esc(item.sub)}</div>
+                      <div class="habit-sub">${esc(item.sub || item.hint || '')}</div>
                     </div>
                   </div>
                   <div class="habit-btn-group">
@@ -3659,7 +4232,7 @@
                     <span class="habit-icon">${item.icon}</span>
                     <div style="min-width:0">
                       <div class="habit-name">${esc(item.label)}</div>
-                      <div class="habit-sub">${esc(item.sub)}</div>
+                      <div class="habit-sub">${esc(item.sub || item.hint || '')}</div>
                     </div>
                   </div>
                   <div class="habit-btn-group">
@@ -3674,18 +4247,19 @@
         </div>
       </div>
 
-      <!-- 3. Smart Reminders & Payment Hold Wait-Timer Composer -->
+      <!-- 3. Universal Brain-Dump & Smart Auto-Grouping Composer -->
       <div class="rem-composer-card">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
           <div>
-            <div class="eyebrow">SMART REMINDERS &amp; PAYMENT WAIT-TIMER</div>
-            <h3 style="font-size:15px;font-weight:700;margin:2px 0 0">Add Payment Hold, Cooling-Off Wait, or Recurring Task</h3>
+            <div class="eyebrow">SMART REMINDERS · AI AUTO-GROUPING &amp; WAIT TIMERS</div>
+            <h3 style="font-size:15px;font-weight:700;margin:2px 0 0">Drop Anything — Auto-Grouped by Context, Topic &amp; Wait Time</h3>
           </div>
           <div class="rem-type-seg">
-            <button type="button" class="${remDraft.kind === 'payment' ? 'active' : ''}" data-rem-kind="payment">💸 Payment Hold</button>
-            <button type="button" class="${remDraft.kind === 'wait' ? 'active' : ''}" data-rem-kind="wait">⏳ Wait / Cool-Off</button>
-            <button type="button" class="${remDraft.kind === 'task' ? 'active' : ''}" data-rem-kind="task">⚡ One-Off Task</button>
+            <button type="button" class="${remDraft.kind === 'auto' ? 'active' : ''}" data-rem-kind="auto">✨ Smart Auto</button>
+            <button type="button" class="${remDraft.kind === 'wait' ? 'active' : ''}" data-rem-kind="wait">⏳ Wait / Verify</button>
+            <button type="button" class="${remDraft.kind === 'task' ? 'active' : ''}" data-rem-kind="task">⚡ Task / Reach Out</button>
             <button type="button" class="${remDraft.kind === 'recurring' ? 'active' : ''}" data-rem-kind="recurring">🔁 Recurring</button>
+            <button type="button" class="${remDraft.kind === 'parked' ? 'active' : ''}" data-rem-kind="parked">💡 Idea / Later</button>
           </div>
         </div>
 
@@ -3696,40 +4270,11 @@
               class="rem-input"
               id="rem-title-input"
               value="${esc(remDraft.title)}"
-              placeholder="${
-                remDraft.kind === 'payment'
-                  ? 'e.g., Supplier concrete invoice for WTC / Resort kitchen advance…'
-                  : remDraft.kind === 'wait'
-                    ? 'e.g., Wait before replying to contractor quote / equipment offer…'
-                    : remDraft.kind === 'recurring'
-                      ? 'e.g., Review Resorts & Trading cash position / Check Brains sync…'
-                      : 'e.g., Call bank manager / Approve Blanca weekend roster…'
-              }"
+              placeholder="e.g., Talk to Rami about WTC · Paid $45 on Whish &amp; didn't show up · Shipping 6 days for parts · Family dinner · Idea for later…"
               autocomplete="off"
             >
-            ${
-              remDraft.kind === 'payment'
-                ? `
-              <input
-                type="text"
-                inputmode="decimal"
-                class="rem-input rem-amt-input mono"
-                id="rem-amt-input"
-                value="${esc(remDraft.amount)}"
-                placeholder="$ Amount (optional)"
-                autocomplete="off"
-              >
-            `
-                : ''
-            }
-            <button type="submit" class="btn-brass-sm" style="padding:10px 16px;font-size:13px;white-space:nowrap">
-              ${
-                remDraft.kind === 'payment'
-                  ? '+ Start Payment Hold'
-                  : remDraft.kind === 'wait'
-                    ? '+ Start Wait Timer'
-                    : '+ Add Reminder'
-              }
+            <button type="submit" class="btn-brass-sm" style="padding:10px 18px;font-size:13px;white-space:nowrap">
+              + Add &amp; Auto-Group
             </button>
           </div>
 
@@ -3742,18 +4287,24 @@
       <!-- 4. Auto-Grouping Controls & Active Reminders Stream -->
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <span class="eyebrow">AUTO-GROUPED BY:</span>
+          <span class="eyebrow">VIEW GROUPS BY:</span>
           <div class="seg-control">
-            <button type="button" class="seg-btn ${groupMode === 'urgency' ? 'active' : ''}" data-rem-group-mode="urgency">
-              🔥 Urgency &amp; Hold Maturity (${remSum.active.length})
+            <button type="button" class="seg-btn ${groupMode === 'clusters' ? 'active' : ''}" data-rem-group-mode="clusters">
+              🧠 Smart Clusters (${remSum.active.length})
             </button>
-            <button type="button" class="seg-btn ${groupMode === 'relevance' ? 'active' : ''}" data-rem-group-mode="relevance">
-              🏢 Relevance / Company
+            <button type="button" class="seg-btn ${groupMode === 'subtopics' ? 'active' : ''}" data-rem-group-mode="subtopics">
+              🏷️ Sub-Topics &amp; People
+            </button>
+            <button type="button" class="seg-btn ${groupMode === 'urgency' ? 'active' : ''}" data-rem-group-mode="urgency">
+              🔥 Urgency &amp; Timers
             </button>
           </div>
         </div>
 
-        <div style="display:flex;align-items:center;gap:8px">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <button type="button" class="chip-btn active" data-rem-act="ai-regroup" title="Re-analyze and organize all active tasks into smart clusters &amp; sub-topics">
+            ✨ AI Auto-Group All
+          </button>
           <button type="button" class="chip-btn ${prefs.remShowCompleted ? 'active' : ''}" data-rem-toggle-done="1">
             ${prefs.remShowCompleted ? 'Hide' : 'Show'} Completed (${remSum.completed.length})
           </button>
@@ -3777,34 +4328,63 @@
     if (amtEl) remDraft.amount = amtEl.value.trim();
 
     if (!remDraft.title) {
-      showToast('Enter a payment request or reminder title first');
+      showToast('Type any reminder, wait check, person to talk to, or idea first');
       titleEl?.focus();
       return;
     }
 
     const nowMs = Date.now();
     const amount = parseAmountFromText(remDraft.title, remDraft.amount);
-    const cat = detectRelevanceCategory(remDraft.title, remDraft.kind, remDraft.categoryOverride);
+    const cat = detectRelevanceCategory(
+      remDraft.title,
+      remDraft.kind,
+      remDraft.categoryOverride,
+      remDraft.customGroup
+    );
+    const ctx = extractContextTags(remDraft.title);
     const targetInfo = computeTargetTimestampFromChoice(
       remDraft.waitChoice,
       remDraft.title,
       remDraft.amount
     );
 
+    const resolvedKind =
+      remDraft.kind === 'auto'
+        ? targetInfo.inferredKind ||
+          (cat.id === 'verify' || cat.id === 'shipping'
+            ? 'wait'
+            : cat.id === 'payments'
+              ? 'payment'
+              : cat.id === 'ideas' || cat.id === 'want_to_do'
+                ? 'parked'
+                : 'task')
+        : remDraft.kind;
+
+    const isHoldType =
+      resolvedKind === 'payment' ||
+      resolvedKind === 'wait' ||
+      cat.id === 'verify' ||
+      cat.id === 'shipping' ||
+      cat.id === 'payments';
+
     const newItem = {
       id: `rem_${nowMs.toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
       title: remDraft.title,
-      kind: remDraft.kind || 'payment',
+      kind: resolvedKind,
       amount: amount > 0 ? amount : 0,
       category: cat.id,
+      customGroup: remDraft.customGroup || '',
+      subTag: ctx.subTag || '',
       waitDays: targetInfo.waitDays,
       waitLabel: targetInfo.label,
-      recur: remDraft.kind === 'recurring' ? remDraft.recur || 'daily' : '',
+      recur:
+        resolvedKind === 'recurring'
+          ? targetInfo.recur || remDraft.recur || 'daily'
+          : '',
       createdAt: nowMs,
       updatedAt: nowMs,
-      matureAt:
-        remDraft.kind === 'payment' || remDraft.kind === 'wait' ? targetInfo.targetMs : 0,
-      dueAt: targetInfo.targetMs,
+      matureAt: isHoldType && targetInfo.targetMs ? targetInfo.targetMs : 0,
+      dueAt: targetInfo.targetMs || 0,
       completed: false,
       completedAt: 0
     };
@@ -3816,20 +4396,92 @@
     remDraft.title = '';
     remDraft.amount = '';
     remDraft.waitChoice = 'auto';
+    remDraft.categoryOverride = '';
+    remDraft.customGroup = '';
 
     haptic(15);
     playChime('send');
     persistAndSyncPersonalLedger();
-    scheduleExactReminderPush(newItem);
+    if (newItem.dueAt || newItem.matureAt) {
+      scheduleExactReminderPush(newItem);
+    }
     renderAll();
 
+    showToast(`${cat.icon} Grouped in "${cat.shortLabel || cat.label}" · ${targetInfo.label}`);
+  }
+
+  async function runAiSmartGrouping() {
+    const nowMs = Date.now();
+    let updatedCount = 0;
+    for (const r of personalLedger.reminders || []) {
+      if (!r || r.deleted) continue;
+      const cat = detectRelevanceCategory(r.title, r.kind, '', r.customGroup || '');
+      const ctx = extractContextTags(r.title);
+      if (r.category !== cat.id || r.subTag !== (ctx.subTag || '')) {
+        r.category = cat.id;
+        r.subTag = ctx.subTag || '';
+        r.updatedAt = nowMs;
+        updatedCount++;
+      }
+      if (!r.amount) {
+        const amt = parseAmountFromText(r.title);
+        if (amt > 0) {
+          r.amount = amt;
+          r.updatedAt = nowMs;
+        }
+      }
+    }
+
+    // Also invoke local bridge AI cluster refinement if connected
+    if (localBridgeBase) {
+      try {
+        const res = await fetch(`${localBridgeBase}/api/ai-group-reminders`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reminders: personalLedger.reminders })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.personalLedger) {
+            mergePersonalLedger(data.personalLedger);
+          }
+        }
+      } catch {}
+    }
+
+    personalLedger.updatedAt = nowMs;
+    persistAndSyncPersonalLedger();
+    renderAll();
     showToast(
-      newItem.kind === 'payment'
-        ? `💸 Payment Hold started (${targetInfo.label}) — Push scheduled`
-        : newItem.kind === 'wait'
-          ? `⏳ Cooling-off timer started (${targetInfo.label})`
-          : `⏰ Reminder added (${cat.label})`
+      `✨ Smart Auto-Grouping complete (${updatedCount} item${updatedCount === 1 ? '' : 's'} refined)`
     );
+  }
+
+  function promptMoveReminderGroup(id) {
+    const item = (personalLedger.reminders || []).find((r) => r && r.id === id);
+    if (!item) return;
+    const next = prompt(
+      'Enter group name (or people, verify, shipping, work, family, payments, want_to_do, ideas):',
+      item.customGroup || item.category || ''
+    );
+    if (next === null) return;
+    const clean = next.trim();
+    const key = clean.toLowerCase().replace(/\s+/g, '_');
+    if (!clean) {
+      item.customGroup = '';
+      item.category = detectRelevanceCategory(item.title, item.kind).id;
+    } else if (REM_CATEGORIES[key]) {
+      item.category = key;
+      item.customGroup = '';
+    } else {
+      item.customGroup = clean;
+      item.category = `custom:${clean}`;
+    }
+    item.updatedAt = Date.now();
+    personalLedger.updatedAt = Date.now();
+    persistAndSyncPersonalLedger();
+    renderAll();
+    showToast(`🏷️ Moved to ${item.customGroup || REM_CATEGORIES[item.category]?.label || clean}`);
   }
 
   function completeReminder(id) {
@@ -3871,7 +4523,7 @@
     cancelExactReminderPush(item.id);
     persistAndSyncPersonalLedger();
     renderAll();
-    showToast(item.kind === 'payment' ? '✓ Payment hold marked complete' : '✓ Reminder completed');
+    showToast('✓ Marked complete');
   }
 
   function reopenReminder(id) {
@@ -3894,6 +4546,7 @@
     const nextMs = baseMs + extraDays * 24 * 3600 * 1000;
     item.matureAt = nextMs;
     item.dueAt = nextMs;
+    if (item.kind === 'parked') item.kind = 'wait';
     item.waitDays = Number(item.waitDays || 0) + extraDays;
     item.updatedAt = nowMs;
     personalLedger.updatedAt = nowMs;
@@ -3902,7 +4555,7 @@
     persistAndSyncPersonalLedger();
     scheduleExactReminderPush(item);
     renderAll();
-    showToast(`⏳ Extended wait by +${extraDays}d`);
+    showToast(`⏳ Extended timer by +${extraDays}d`);
   }
 
   function releaseReminderHoldNow(id) {
@@ -3917,7 +4570,7 @@
     cancelExactReminderPush(item.id);
     persistAndSyncPersonalLedger();
     renderAll();
-    showToast('🔓 Hold released — moved to Action Required');
+    showToast('🔓 Marked ready now');
   }
 
   function deleteReminder(id) {
@@ -3990,8 +4643,8 @@
     const q = query.trim().toLowerCase();
     const todayDisc = computeDayDiscipline(localIsoDate());
     const items = [
-      { title: `🎯 Open Daily 100% Discipline & Payment Holds (${todayDisc.score}% Today)`, sub: 'Personal Ledger', act: 'open-discipline' },
-      { title: '💸 New Payment Hold Wait-Timer', sub: 'Treasury Cooling-Off', act: 'new-payment-hold' },
+      { title: `🎯 Open Daily 100% Discipline & Smart Reminders (${todayDisc.score}% Today)`, sub: 'Personal Ledger', act: 'open-discipline' },
+      { title: '✨ Add Smart Reminder / Wait Timer / Idea', sub: 'AI Auto-Grouped', act: 'new-payment-hold' },
       { title: '+ New Google Antigravity Session', sub: 'Action', act: 'new-agy' },
       { title: '+ New Claude Code Session', sub: 'Action', act: 'new-claude' },
       { title: 'Sync with VS Code & Cloud Relay Now', sub: 'Connectivity', act: 'sync' },
@@ -4145,10 +4798,10 @@
       const kindBtn = e.target.closest('[data-rem-kind]');
       if (kindBtn) {
         remDraft.kind = kindBtn.dataset.remKind;
-        if (remDraft.kind === 'payment' || remDraft.kind === 'wait') {
+        if (remDraft.kind === 'parked') {
+          remDraft.waitChoice = 'none';
+        } else {
           remDraft.waitChoice = 'auto';
-        } else if (remDraft.waitChoice === 'auto') {
-          remDraft.waitChoice = '1d';
         }
         renderDisciplineView();
         $('rem-title-input')?.focus();
@@ -4171,9 +4824,22 @@
         return;
       }
 
+      const customCatBtn = e.target.closest('[data-cat-custom]');
+      if (customCatBtn) {
+        const nextGrp = prompt('Enter a custom group name (e.g., Travel, Shopping, Cars, Quarry):', remDraft.customGroup || '');
+        if (nextGrp !== null) {
+          remDraft.customGroup = nextGrp.trim();
+          if (remDraft.customGroup) remDraft.categoryOverride = '';
+          const adv = $('wait-advisor-live');
+          if (adv) adv.innerHTML = renderWaitAdvisorInnerHtml();
+        }
+        return;
+      }
+
       const catChip = e.target.closest('[data-cat-override]');
       if (catChip) {
         remDraft.categoryOverride = catChip.dataset.catOverride || '';
+        remDraft.customGroup = '';
         const adv = $('wait-advisor-live');
         if (adv) adv.innerHTML = renderWaitAdvisorInnerHtml();
         return;
@@ -4203,8 +4869,11 @@
         else if (act === 'reopen') reopenReminder(id);
         else if (act === 'wait1d') extendReminderHold(id, 1);
         else if (act === 'wait2d') extendReminderHold(id, 2);
+        else if (act === 'wait3d') extendReminderHold(id, 3);
         else if (act === 'wait7d') extendReminderHold(id, 7);
         else if (act === 'release') releaseReminderHoldNow(id);
+        else if (act === 'move-group') promptMoveReminderGroup(id);
+        else if (act === 'ai-regroup') await runAiSmartGrouping();
         else if (act === 'delete') deleteReminder(id);
         else if (act === 'clear-done') clearCompletedReminders();
         return;
