@@ -1709,6 +1709,21 @@
       if (textMob) textMob.textContent = 'Cached';
     }
 
+    const pushDot = $('mobile-push-dot');
+    const pushBtn = $('mobile-push-btn');
+    const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
+    const pushActive = Boolean(nf.enabled && pushSub && notifPerm() === 'granted');
+    if (pushDot) {
+      pushDot.className = `conn-dot ${pushActive ? 'live' : ''}`;
+    }
+    if (pushBtn) {
+      pushBtn.style.borderColor = pushActive ? 'var(--emerald)' : 'var(--brass)';
+      pushBtn.style.color = pushActive ? 'var(--emerald)' : 'var(--brass)';
+      pushBtn.title = pushActive
+        ? 'Web Push Notifications Active (Tap to test / configure)'
+        : 'Tap to Enable Web Push Notifications';
+    }
+
     const connModal = $('conn-modal');
     if (connModal && !connModal.hidden) {
       renderConnModal();
@@ -3522,6 +3537,8 @@
     const groupMode = prefs.remGroupMode || 'urgency';
 
     root.innerHTML = `
+      ${renderPulseNotifBannerHtml()}
+
       <!-- 1. Daily 100-Point Discipline Hero Banner -->
       <div class="disc-hero-card">
         <div class="disc-score-head">
@@ -3745,6 +3762,10 @@
 
       <div id="rem-list-live">
         ${renderRemindersListHtml()}
+      </div>
+
+      <div style="margin-top:16px">
+        ${renderPushSettingsCardHtml()}
       </div>
     `;
   }
@@ -4193,6 +4214,17 @@
       if (pushBtn) {
         haptic(10);
         const act = pushBtn.dataset.pushAct;
+        if (act === 'header-bell') {
+          const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
+          const active = Boolean(nf.enabled && pushSub && notifPerm() === 'granted');
+          if (!active) {
+            saveJson(STORAGE_KEYS.PUSH_HINT, 0);
+            await enablePush();
+          } else {
+            await sendTestPush(false);
+          }
+          return;
+        }
         if (act === 'enable') {
           await enablePush();
         } else if (act === 'disable') {
@@ -4205,7 +4237,7 @@
           showToast('Notification schedule synced to cloud!');
         } else if (act === 'dismiss-hint') {
           saveJson(STORAGE_KEYS.PUSH_HINT, 1);
-          renderPulseView();
+          renderAll();
         }
         return;
       }
@@ -4650,9 +4682,38 @@
   // Register Service Worker & Push Navigation Listener
   function registerServiceWorker() {
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+      let refreshingSw = false;
+      const hadController = Boolean(navigator.serviceWorker.controller);
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!hadController || refreshingSw) return;
+        refreshingSw = true;
+        location.reload();
+      });
+
       navigator.serviceWorker
-        .register('sw.js')
-        .then(() => checkExistingPushSub())
+        .register('sw.js?v=9', { updateViaCache: 'none' })
+        .then((reg) => {
+          reg.update().catch(() => {});
+          if (reg.waiting) {
+            reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+          }
+          reg.addEventListener('updatefound', () => {
+            const nw = reg.installing;
+            if (!nw) return;
+            nw.addEventListener('statechange', () => {
+              if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+                nw.postMessage({ type: 'SKIP_WAITING' });
+              }
+            });
+          });
+          document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+              reg.update().catch(() => {});
+              syncData();
+            }
+          });
+          return checkExistingPushSub();
+        })
         .catch(() => {});
 
       navigator.serviceWorker.addEventListener('message', (e) => {

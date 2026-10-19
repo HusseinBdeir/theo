@@ -59,7 +59,10 @@ html[data-theme="light"] {
 html, body {
   margin: 0;
   padding: 0;
+  width: 100%;
   height: 100%;
+  min-height: 100vh;
+  min-height: -webkit-fill-available;
   background: var(--bg-obsidian);
   color: var(--text-primary);
   font-family: 'Instrument Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -108,10 +111,12 @@ button {
 
 /* App Shell */
 .app-shell {
+  position: fixed;
+  inset: 0;
   display: grid;
   grid-template-columns: 268px 1fr;
-  height: 100dvh;
-  width: 100vw;
+  height: 100%;
+  width: 100%;
   background:
     radial-gradient(circle at 12% 0%, rgba(79, 143, 214, 0.12), transparent 38%),
     radial-gradient(circle at 88% 8%, rgba(217, 165, 74, 0.1), transparent 36%),
@@ -409,7 +414,8 @@ button {
 .main-stage {
   display: flex;
   flex-direction: column;
-  height: 100dvh;
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
   position: relative;
 }
@@ -1787,17 +1793,17 @@ html[data-theme="light"] .kpi-tile {
   bottom: 0;
   left: 0;
   right: 0;
-  min-height: calc(58px + env(safe-area-inset-bottom, 0px));
-  padding: 5px max(8px, env(safe-area-inset-left, 8px)) max(6px, env(safe-area-inset-bottom, 6px)) max(8px, env(safe-area-inset-right, 8px));
-  background: rgba(9, 19, 40, 0.94);
+  min-height: calc(56px + env(safe-area-inset-bottom, 0px));
+  padding: 6px max(6px, env(safe-area-inset-left, 6px)) max(10px, env(safe-area-inset-bottom, 10px)) max(6px, env(safe-area-inset-right, 6px));
+  background: rgba(9, 19, 40, 0.96);
   backdrop-filter: blur(22px);
   -webkit-backdrop-filter: blur(22px);
   border-top: 1px solid var(--border-strong);
   box-shadow: 0 -10px 30px rgba(2, 6, 18, 0.45);
   justify-content: space-around;
   align-items: stretch;
-  gap: 4px;
-  z-index: 40;
+  gap: 2px;
+  z-index: 60;
 }
 
 html[data-theme="light"] .mobile-bottom-dock {
@@ -2128,10 +2134,14 @@ html[data-theme="light"] .mobile-bottom-dock {
   }
   .view-container.chat-active {
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
     padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px));
   }
   .view-pane.chat-pane-layout.active {
-    height: calc(100dvh - 132px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    flex: 1;
+    height: 100%;
+    min-height: 0;
   }
   /* Prevent iOS Safari auto-zoom on input focus */
   input[type="text"],

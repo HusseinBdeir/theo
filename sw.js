@@ -1,13 +1,13 @@
-/* THEO Remote PWA Service Worker, v8 (2026-10-19).
-   App shell: network-first for HTML/JS/CSS, cache-first for static assets.
+/* THEO Remote PWA Service Worker, v9 (2026-10-19).
+   App shell: network-first (cache: no-cache) for HTML/JS/CSS, cache-first for static assets.
    Web Push: RFC 8291 aes128gcm push listener + notificationclick focus/open + local SW notification fallback. */
-const CACHE_NAME = 'theo-remote-v8';
+const CACHE_NAME = 'theo-remote-v9';
 const APP_SHELL = [
   './',
   './index.html',
-  './css/theo.css?v=8',
-  './js/endpoints.js?v=8',
-  './js/app.js?v=8',
+  './css/theo.css?v=9',
+  './js/endpoints.js?v=9',
+  './js/app.js?v=9',
   './manifest.json',
   './icon.svg',
   './icon-180.png',
@@ -151,7 +151,7 @@ self.addEventListener('fetch', (event) => {
     url.pathname.endsWith('.css')
   ) {
     event.respondWith(
-      fetch(req)
+      fetch(req.url, { cache: 'no-cache' })
         .then((res) => {
           if (res && res.ok) {
             const clone = res.clone();
