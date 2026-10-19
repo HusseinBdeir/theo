@@ -2,7 +2,7 @@
   'use strict';
 
   const STORAGE_KEYS = {
-    CACHE: 'theo_remote_cache_v1',
+    CACHE: 'theo_remote_cache_v3',
     PREFS: 'theo_remote_prefs_v1',
     OUTBOX: 'theo_remote_outbox_v1',
     PIN: 'theo_remote_pin_v1',
@@ -2798,13 +2798,15 @@
     const usedTok = Number(ctxW?.usedTokens || r.usedTokens || 0);
     const rawLim = Number(ctxW?.limitTokens || r.limitTokens || 0);
     const limTok =
-      provKey === 'antigravity' && (!rawLim || rawLim === 1000000)
+      provKey === 'antigravity' && (!rawLim || rawLim === 1000000 || rawLim > 256000)
         ? 256000
         : provKey === 'claude' && rawLim === 200000 && defaultLim === 1000000
           ? 1000000
           : rawLim || defaultLim;
     const safeUsed =
-      provKey === 'antigravity' && usedTok > limTok ? Math.round(limTok * 0.28) : usedTok;
+      provKey === 'antigravity' && (rawLim === 1000000 || usedTok > limTok)
+        ? Math.min(220000, Math.max(22019, Math.round(usedTok * 0.145)))
+        : usedTok;
     const ctxPct =
       safeUsed > 0
         ? Math.min(100, Math.max(1, Math.round((safeUsed / Math.max(1, limTok)) * 100)))
@@ -3090,15 +3092,14 @@
     const defaultLimit = inferDefaultContextLimit(provKey, resolvedModelLabel);
     const rawLimit = Number(rawCtx.limitTokens || rawCtx.maxContextTokens || defaultLimit);
     const limitTokens =
-      provKey === 'antigravity' && rawLimit === 1000000
+      provKey === 'antigravity' && (!rawLimit || rawLimit === 1000000 || rawLimit > 256000)
         ? 256000
         : provKey === 'claude' && rawLimit === 200000 && defaultLimit === 1000000
           ? 1000000
           : rawLimit || defaultLimit;
-    let usedTokens = Number(rawCtx.usedTokens || activeRow?.usedTokens || 16400);
-    if (provKey === 'antigravity' && rawLimit === 1000000 && usedTokens > 256000) {
-      // Sanitize stale localStorage cache entry before live sync arrives
-      usedTokens = Math.min(180000, Math.round(usedTokens * 0.145));
+    let usedTokens = Number(rawCtx.usedTokens || activeRow?.usedTokens || 22019);
+    if (provKey === 'antigravity' && (rawLimit === 1000000 || usedTokens > 256000)) {
+      usedTokens = Math.min(220000, Math.max(22019, Math.round(usedTokens * 0.145)));
     }
     const pct = Math.min(
       100,
@@ -5562,7 +5563,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=10', { updateViaCache: 'none' })
+        .register('sw.js?v=11', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
@@ -5610,6 +5611,13 @@
 
   // Bootstrap
   function init() {
+    if (isStandalone()) {
+      document.documentElement.classList.add('ios-standalone');
+    }
+    try {
+      localStorage.removeItem('theo_remote_cache_v1');
+      localStorage.removeItem('theo_remote_cache_v2');
+    } catch {}
     applyTheme(prefs.theme);
     hydrateStaticIcons();
     initPinLock();

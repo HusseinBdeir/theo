@@ -60,9 +60,8 @@ html, body {
   margin: 0;
   padding: 0;
   width: 100%;
-  height: 100%;
+  height: 100vh;
   min-height: 100vh;
-  min-height: -webkit-fill-available;
   background: var(--bg-obsidian);
   color: var(--text-primary);
   font-family: 'Instrument Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -70,6 +69,24 @@ html, body {
   line-height: 1.48;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
+}
+
+@media not all and (display-mode: standalone) {
+  html:not(.ios-standalone),
+  html:not(.ios-standalone) body,
+  html:not(.ios-standalone) .app-shell {
+    height: 100dvh;
+    min-height: 100dvh;
+  }
+}
+
+html.ios-standalone,
+html.ios-standalone body,
+html.ios-standalone .app-shell,
+html.ios-standalone .main-stage {
+  height: 100vh !important;
+  min-height: 100vh !important;
+  max-height: 100vh !important;
 }
 
 .tabular, code, pre, kbd, .mono {
@@ -112,10 +129,13 @@ button {
 /* App Shell */
 .app-shell {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
   display: grid;
   grid-template-columns: 268px 1fr;
-  height: 100%;
+  height: 100vh;
+  min-height: 100vh;
   width: 100%;
   background:
     radial-gradient(circle at 12% 0%, rgba(79, 143, 214, 0.12), transparent 38%),
@@ -1923,17 +1943,16 @@ html[data-theme="light"] .kpi-tile {
 /* Mobile Docked Bottom Tab Bar */
 .mobile-bottom-dock {
   display: none;
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  min-height: calc(56px + env(safe-area-inset-bottom, 0px));
-  padding: 6px max(6px, env(safe-area-inset-left, 6px)) max(10px, env(safe-area-inset-bottom, 10px)) max(6px, env(safe-area-inset-right, 6px));
-  background: rgba(9, 19, 40, 0.96);
+  position: relative;
+  flex-shrink: 0;
+  width: 100%;
+  min-height: 0;
+  padding: 5px max(6px, env(safe-area-inset-left, 6px)) 10px max(6px, env(safe-area-inset-right, 6px));
+  background: rgba(9, 19, 40, 0.98);
   backdrop-filter: blur(22px);
   -webkit-backdrop-filter: blur(22px);
   border-top: 1px solid var(--border-strong);
-  box-shadow: 0 -10px 30px rgba(2, 6, 18, 0.45);
+  box-shadow: 0 -8px 24px rgba(2, 6, 18, 0.45);
   justify-content: space-around;
   align-items: stretch;
   gap: 2px;
@@ -2263,14 +2282,14 @@ html[data-theme="light"] .mobile-bottom-dock {
     display: flex;
   }
   .view-container {
-    padding: 16px max(16px, env(safe-area-inset-right, 16px)) calc(84px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 16px));
+    padding: 16px max(16px, env(safe-area-inset-right, 16px)) 16px max(16px, env(safe-area-inset-left, 16px));
     -webkit-overflow-scrolling: touch;
   }
   .view-container.chat-active {
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: 6px;
   }
   .view-pane.chat-pane-layout.active {
     flex: 1;
@@ -2316,7 +2335,10 @@ html[data-theme="light"] .mobile-bottom-dock {
 /* Phone Specific Layout (<= 640px) */
 @media (max-width: 640px) {
   .view-container {
-    padding: 12px max(12px, env(safe-area-inset-right, 12px)) calc(80px + env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 12px));
+    padding: 12px max(12px, env(safe-area-inset-right, 12px)) 14px max(12px, env(safe-area-inset-left, 12px));
+  }
+  .view-container.chat-active {
+    padding-bottom: 6px;
   }
   .ledger-hero {
     flex-direction: column;
