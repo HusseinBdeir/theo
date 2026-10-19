@@ -97,6 +97,9 @@
   let connMode = 'probing'; // 'local' | 'cloud' | 'offline'
   let localBridgeBase = '';
   let sseSource = null;
+  let lastRenderedThreadId = '';
+  let lastRenderedMsgCount = 0;
+  const pendingThreadRequests = new Map();
 
   // Web Audio Synthesizer for subtle executive chimes
   function playChime(kind = 'confirm') {
@@ -162,18 +165,28 @@
   // Connectivity Engine: Probes Direct Local Bridge (:4318) first, then Cloud Relay fallback
   async function probeLocalBridge() {
     const candidates = [];
+    // If opened directly from the VS Code LAN/local bridge (e.g. http://192.168.3.129:4318), use location.origin first
+    if (
+      location.port === String(cloudCfg.port) ||
+      (location.protocol === 'http:' && !location.hostname.endsWith('.github.io'))
+    ) {
+      candidates.push(location.origin.replace(/\/+$/, ''));
+    }
     if (prefs.customBridgeUrl) {
       candidates.push(prefs.customBridgeUrl.replace(/\/+$/, ''));
     }
-    if (location.port === String(cloudCfg.port) || location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+    if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
       candidates.push(`http://localhost:${cloudCfg.port}`);
     }
     candidates.push(`http://127.0.0.1:${cloudCfg.port}`);
 
+    const seen = new Set();
     for (const base of candidates) {
+      if (!base || seen.has(base)) continue;
+      seen.add(base);
       try {
         const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 1400);
+        const timer = setTimeout(() => ctrl.abort(), 900);
         const res = await fetch(`${base}/api/ping`, { signal: ctrl.signal });
         clearTimeout(timer);
         if (res.ok) {
@@ -223,6 +236,34 @@
     });
   }
 
+  function mergeRemoteThreads(incomingThreads) {
+    if (!incomingThreads || typeof incomingThreads !== 'object') return;
+    const now = Date.now();
+    for (const [tid, remoteThread] of Object.entries(incomingThreads)) {
+      if (!remoteThread || typeof remoteThread !== 'object') continue;
+      const existing = threadsCache[tid];
+      const remoteMsgs = Array.isArray(remoteThread.messages) ? [...remoteThread.messages] : [];
+      if (existing && Array.isArray(existing.messages)) {
+        const optimisticMsgs = existing.messages.filter(
+          (m) =>
+            m.optimistic &&
+            now - Number(m.optimisticAt || 0) < 45000 &&
+            !remoteMsgs.some((rm) => rm.role === 'user' && String(rm.text || '').trim() === String(m.text || '').trim())
+        );
+        if (optimisticMsgs.length) {
+          remoteMsgs.push(...optimisticMsgs);
+        }
+      }
+      threadsCache[tid] = {
+        ...remoteThread,
+        messages: remoteMsgs
+      };
+      if (remoteMsgs.length > 0) {
+        pendingThreadRequests.delete(tid);
+      }
+    }
+  }
+
   async function syncData(options = {}) {
     updateConnectionBanner('syncing');
 
@@ -243,6 +284,9 @@
             if (prefs.selectedThreadId) {
               fetchThreadDetail(prefs.selectedThreadId).catch(() => {});
             }
+            if (options.toast) {
+              showToast(`Connected to VS Code Direct Bridge (${(appState.rows || []).length} sessions)`);
+            }
             return true;
           }
         }
@@ -260,13 +304,15 @@
           body: JSON.stringify({ key: cloudCfg.key, op: 'get' })
         });
         if (res.ok) {
-          const store = await res.json();
+          const rawStore = await res.json();
+          const store =
+            rawStore?.docs && typeof rawStore.docs === 'object' ? rawStore.docs : rawStore || {};
           connMode = 'cloud';
           if (store?.state?.snapshot) {
             appState = store.state.snapshot;
           }
           if (store?.threads && typeof store.threads === 'object') {
-            threadsCache = { ...threadsCache, ...store.threads };
+            mergeRemoteThreads(store.threads);
           }
           if (store?.state?.workspacesDetail && typeof store.state.workspacesDetail === 'object') {
             workspacesDetailCache = { ...workspacesDetailCache, ...store.state.workspacesDetail };
@@ -275,7 +321,7 @@
           renderAll();
           flushOutbox().catch(() => {});
           if (options.toast) {
-            showToast('Synced with THEO Cloud Relay');
+            showToast(`Synced with VS Code Cloud Relay (${(appState?.rows || []).length} sessions)`);
           }
           return true;
         }
@@ -284,6 +330,9 @@
 
     connMode = 'offline';
     renderAll();
+    if (options.toast) {
+      showToast('Offline — showing cached snapshot');
+    }
     return false;
   }
 
@@ -297,15 +346,35 @@
         if (res.ok) {
           const data = await res.json();
           if (data?.thread) {
-            threadsCache[threadId] = data.thread;
+            mergeRemoteThreads({ [threadId]: data.thread });
             persistCache();
             if (prefs.activeTab === 'chat' && prefs.selectedThreadId === threadId) {
               renderChatView();
             }
-            return data.thread;
+            return threadsCache[threadId];
           }
         }
       } catch {}
+    } else if (connMode === 'cloud' && cloudCfg.url && cloudCfg.key) {
+      const cached = threadsCache[threadId];
+      const hasMessages = Array.isArray(cached?.messages) && cached.messages.length > 0;
+      const lastReq = pendingThreadRequests.get(threadId) || 0;
+      if (!hasMessages && Date.now() - lastReq > 15000) {
+        pendingThreadRequests.set(threadId, Date.now());
+        if (prefs.activeTab === 'chat' && prefs.selectedThreadId === threadId) {
+          renderChatView();
+        }
+        dispatchRemoteCommand({
+          type: 'requestThread',
+          id: threadId,
+          provider: providerHint
+        })
+          .then(() => {
+            setTimeout(() => syncData(), 2500);
+            setTimeout(() => syncData(), 6000);
+          })
+          .catch(() => {});
+      }
     }
     return threadsCache[threadId] || null;
   }
@@ -366,11 +435,21 @@
           headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
           body: JSON.stringify({ key: cloudCfg.key, op: 'get' })
         });
-        const curStore = curRes.ok ? await curRes.json() : {};
+        const rawCur = curRes.ok ? await curRes.json() : {};
+        const curStore =
+          rawCur?.docs && typeof rawCur.docs === 'object' ? rawCur.docs : rawCur || {};
         const existingCmds = Array.isArray(curStore?.queue?.commands)
           ? curStore.queue.commands.slice(-18)
           : [];
         existingCmds.push(cmd);
+
+        const nextQueue = {
+          ...(curStore.queue || {}),
+          commands: existingCmds
+        };
+        if (cmd.type === 'requestThread' && cmd.id) {
+          nextQueue.activeThreadId = cmd.id;
+        }
 
         const postRes = await fetch(cloudCfg.url, {
           method: 'POST',
@@ -379,10 +458,7 @@
             key: cloudCfg.key,
             op: 'patch',
             patch: {
-              queue: {
-                ...(curStore.queue || {}),
-                commands: existingCmds
-              }
+              queue: nextQueue
             }
           })
         });
@@ -434,25 +510,108 @@
       return;
     }
 
+    const rowCount = (appState?.rows || []).length;
+    const snapAge = appState?.generatedAt ? timeAgo(appState.generatedAt) : '';
+
     if (connMode === 'local') {
       if (dotRail) dotRail.className = 'conn-dot live';
       if (titleRail) titleRail.textContent = 'Direct Bridge · Live SSE';
-      if (subRail) subRail.textContent = localBridgeBase.replace(/^https?:\/\//, '');
+      if (subRail) subRail.textContent = `${localBridgeBase.replace(/^https?:\/\//, '')} · ${rowCount} sess`;
       if (dotMob) dotMob.className = 'conn-dot live';
       if (textMob) textMob.textContent = 'Direct SSE';
     } else if (connMode === 'cloud') {
       if (dotRail) dotRail.className = 'conn-dot cloud';
-      if (titleRail) titleRail.textContent = 'Cloud Relay · Active';
-      if (subRail) subRail.textContent = `Dataverse Sync · ${timeAgo(appState?.generatedAt)}`;
+      if (titleRail) titleRail.textContent = 'Cloud Relay · Connected';
+      if (subRail) subRail.textContent = `VS Code Sync ${snapAge || 'live'} · ${rowCount} sess`;
       if (dotMob) dotMob.className = 'conn-dot cloud';
-      if (textMob) textMob.textContent = 'Cloud Relay';
+      if (textMob) textMob.textContent = snapAge ? `VS Code · ${snapAge}` : 'Cloud Live';
     } else {
       if (dotRail) dotRail.className = 'conn-dot';
       if (titleRail) titleRail.textContent = 'Offline Snapshot';
-      if (subRail) subRail.textContent = appState?.generatedAt ? `Cached ${timeAgo(appState.generatedAt)}` : 'Waiting for connection';
+      if (subRail) subRail.textContent = snapAge ? `Cached ${snapAge}` : 'Waiting for connection';
       if (dotMob) dotMob.className = 'conn-dot';
       if (textMob) textMob.textContent = 'Cached';
     }
+
+    const connModal = $('conn-modal');
+    if (connModal && !connModal.hidden) {
+      renderConnModal();
+    }
+  }
+
+  function openConnModal() {
+    const modal = $('conn-modal');
+    if (!modal) return;
+    renderConnModal();
+    modal.hidden = false;
+  }
+
+  function closeConnModal() {
+    const modal = $('conn-modal');
+    if (modal) modal.hidden = true;
+  }
+
+  function renderConnModal() {
+    const dotEl = $('conn-modal-dot');
+    const titleEl = $('conn-modal-title');
+    const bodyEl = $('conn-modal-body');
+    if (!bodyEl) return;
+
+    const conn = appState?.connection || {};
+    const lanUrl = conn.lanUrl || '';
+    const hostName = conn.hostname || 'Hussein-Laptop';
+    const rowCount = (appState?.rows || []).length;
+    const activeCount = (appState?.rows || []).filter((r) => !r.archived).length;
+    const threadCount = Object.keys(threadsCache || {}).length;
+    const snapTime = appState?.generatedAt ? timeAgo(appState.generatedAt) : '—';
+
+    if (dotEl) {
+      dotEl.className = `conn-dot ${connMode === 'local' ? 'live' : connMode === 'cloud' ? 'cloud' : ''}`;
+    }
+    if (titleEl) {
+      titleEl.textContent =
+        connMode === 'local'
+          ? 'Connected · Direct Wi-Fi Bridge (SSE)'
+          : connMode === 'cloud'
+            ? 'Connected · Dataverse Cloud Relay'
+            : 'Offline · Local Snapshot Cache';
+    }
+
+    bodyEl.innerHTML = `
+      <div class="conn-stat-grid tabular">
+        <div class="conn-stat-box">
+          <span class="conn-stat-lbl">VS Code Host</span>
+          <span class="conn-stat-val">${esc(hostName)}</span>
+        </div>
+        <div class="conn-stat-box">
+          <span class="conn-stat-lbl">Last VS Code Sync</span>
+          <span class="conn-stat-val">${esc(snapTime)}</span>
+        </div>
+        <div class="conn-stat-box">
+          <span class="conn-stat-lbl">Synced Sessions</span>
+          <span class="conn-stat-val">${activeCount} active / ${rowCount} total</span>
+        </div>
+        <div class="conn-stat-box">
+          <span class="conn-stat-lbl">Live Transcripts</span>
+          <span class="conn-stat-val">${threadCount} cached</span>
+        </div>
+      </div>
+      <div class="meta-timestamp" style="line-height:1.45">
+        ${
+          connMode === 'local'
+            ? `Streaming real-time SSE directly from VS Code on <code>${esc(localBridgeBase)}</code>.`
+            : `Synced worldwide via <strong>Personal - THEO Remote Cloud Relay</strong> (Dataverse annotation backing store). Prompts, approvals, and session actions dispatch directly to VS Code.`
+        }
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+        <button type="button" class="btn-brass-sm" id="conn-modal-sync-btn" style="flex:1">↻ Sync Now with VS Code</button>
+        ${
+          lanUrl && connMode !== 'local'
+            ? `<a href="${esc(lanUrl)}" class="btn-ghost-sm" style="text-decoration:none;display:inline-flex;align-items:center">Open Wi-Fi Direct (${esc(lanUrl.replace(/^https?:\/\//, '').replace(/\/$/, ''))})</a>`
+            : ''
+        }
+      </div>
+    `;
   }
 
   // Navigation switching
@@ -462,6 +621,7 @@
     prefs.activeTab = target;
     saveJson(STORAGE_KEYS.PREFS, prefs);
 
+    $('view-container')?.classList.toggle('chat-active', target === 'chat');
     document.querySelectorAll('.view-pane').forEach((pane) => {
       pane.classList.toggle('active', pane.dataset.view === target);
     });
@@ -475,6 +635,7 @@
     if (target === 'chat') {
       ensureSelectedThread();
       renderChatView();
+      fetchThreadDetail(prefs.selectedThreadId);
     } else if (target === 'workspaces') {
       renderWorkspacesView();
     } else if (target === 'analytics') {
@@ -497,6 +658,7 @@
   function renderPulseView() {
     const rows = appState?.rows || [];
     const approvals = appState?.approvals || [];
+    const activeTotal = rows.filter((r) => r.id && !r.archived).length;
     const workingCount = rows.filter((r) => r.status === 'working' && !r.archived).length;
     const waitingCount = approvals.length;
     const unreadCount = rows.filter((r) => r.unread && !r.archived).length;
@@ -514,7 +676,12 @@
     }
     const badgeSessions = $('badge-sessions');
     if (badgeSessions) {
-      badgeSessions.textContent = String(rows.filter((r) => !r.archived).length);
+      badgeSessions.textContent = String(activeTotal);
+    }
+    const dockSessions = $('dock-badge-sessions');
+    if (dockSessions) {
+      dockSessions.hidden = activeTotal === 0;
+      dockSessions.textContent = String(activeTotal);
     }
 
     const kpisEl = $('pulse-kpis');
@@ -754,12 +921,42 @@
   function renderSessionsView() {
     const container = $('sessions-full-list');
     if (!container) return;
-    const rows = appState?.rows || [];
+    const rows = (appState?.rows || []).filter((r) => r.id);
     const q = ($('sess-search-input')?.value || '').trim().toLowerCase();
 
-    const filtered = rows.filter((r) => {
-      if (!r.id) return false;
-      if (prefs.sessProvider !== 'all' && r.provider !== prefs.sessProvider) return false;
+    // Sync active state on provider & status filter buttons
+    document.querySelectorAll('#sess-provider-seg .seg-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.prov === prefs.sessProvider);
+    });
+
+    const provRows = rows.filter(
+      (r) => prefs.sessProvider === 'all' || r.provider === prefs.sessProvider
+    );
+    const chipCounts = {
+      all: provRows.filter((r) => !r.archived).length,
+      needs_input: provRows.filter((r) => !r.archived && r.status === 'waiting').length,
+      working: provRows.filter((r) => !r.archived && r.status === 'working').length,
+      unread: provRows.filter((r) => !r.archived && r.unread).length,
+      open: provRows.filter((r) => !r.archived && r.open).length,
+      archived: provRows.filter((r) => r.archived).length
+    };
+    const chipLabels = {
+      all: 'All Active',
+      needs_input: 'Needs Input',
+      working: 'Working',
+      unread: 'Unread',
+      open: 'Open in VS Code',
+      archived: 'Archived'
+    };
+    document.querySelectorAll('#sess-status-chips .chip').forEach((c) => {
+      const k = c.dataset.statusFilter;
+      c.classList.toggle('active', k === prefs.sessStatus);
+      if (chipLabels[k] !== undefined) {
+        c.innerHTML = `${esc(chipLabels[k])} <span class="chip-count tabular">${chipCounts[k] ?? 0}</span>`;
+      }
+    });
+
+    const filtered = provRows.filter((r) => {
       if (prefs.sessStatus === 'archived') {
         if (!r.archived) return false;
       } else {
@@ -777,7 +974,26 @@
     });
 
     if (filtered.length === 0) {
-      container.innerHTML = `<div class="ledger-panel meta-timestamp">No sessions match the current filter.</div>`;
+      const hasActiveFilters = prefs.sessProvider !== 'all' || prefs.sessStatus !== 'all' || Boolean(q);
+      container.innerHTML = `
+        <div class="ledger-panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <div class="meta-timestamp">
+            ${
+              rows.length === 0
+                ? 'Syncing live sessions from VS Code…'
+                : 'No sessions match the current filter.'
+            }
+          </div>
+          <div style="display:flex;gap:8px">
+            ${
+              hasActiveFilters
+                ? `<button type="button" class="btn-ghost-sm" id="btn-reset-sess-filters">Reset Filters (${rows.filter((r) => !r.archived).length} Active)</button>`
+                : ''
+            }
+            <button type="button" class="btn-brass-sm" id="btn-empty-sync-now">↻ Sync VS Code</button>
+          </div>
+        </div>
+      `;
       return;
     }
 
@@ -785,13 +1001,13 @@
   }
 
   // VIEW 3: Render Live Chat Workbench
-  function renderChatView() {
+  function renderChatView(forceScroll = false) {
     ensureSelectedThread();
     const rows = (appState?.rows || []).filter((r) => r.id && !r.draft);
     const selectEl = $('chat-session-select');
     if (selectEl) {
       selectEl.innerHTML = rows
-        .slice(0, 45)
+        .slice(0, 65)
         .map(
           (r) =>
             `<option value="${esc(r.id)}" ${r.id === prefs.selectedThreadId ? 'selected' : ''}>[${r.provider === 'claude' ? 'Claude' : 'AGY'}] ${esc(r.title)} (${timeAgo(r.at)})</option>`
@@ -810,7 +1026,7 @@
     const folderEl = $('chat-folder-pill');
     if (folderEl) {
       folderEl.textContent =
-        threadDetail?.folder || activeRow?.folder || ( prefs.composerRepoPrefix ? `Scope: ${prefs.composerRepoPrefix}` : 'BHFIRMS Workspace');
+        threadDetail?.folder || activeRow?.folder || (prefs.composerRepoPrefix ? `Scope: ${prefs.composerRepoPrefix}` : 'BHFIRMS Workspace');
     }
     const modelEl = $('chat-model-pill');
     if (modelEl) {
@@ -818,16 +1034,24 @@
     }
 
     // Context Window Pill & Popover
-    const ctx = threadDetail?.contextWindow || {
-      usedTokens: 16400,
-      limitTokens: provKey === 'claude' ? 200000 : 1000000,
-      pct: provKey === 'claude' ? 8 : 2,
+    const rawCtx = threadDetail?.contextWindow || {};
+    const usedTokens = Number(rawCtx.usedTokens || 16400);
+    const limitTokens = Number(rawCtx.limitTokens || rawCtx.maxContextTokens || (provKey === 'claude' ? 200000 : 1000000));
+    const pct = Number(rawCtx.pct ?? Math.min(100, Math.max(1, Math.round((usedTokens / Math.max(1, limitTokens)) * 100))));
+    const breakdownArr = Array.isArray(rawCtx.breakdown)
+      ? rawCtx.breakdown
+      : [
+          { label: 'THEO.md & System Rules', tokens: 12400, color: '#D9A54A' },
+          { label: 'Conversation Turns', tokens: 2400, color: '#4F8FD6' },
+          { label: 'Tool I/O & File Reads', tokens: 1600, color: '#3186FF' }
+        ];
+    const ctx = {
+      usedTokens,
+      limitTokens,
+      pct,
+      remainingTokens: Math.max(0, limitTokens - usedTokens),
       modelLabel: modelEl?.textContent || 'Model',
-      breakdown: [
-        { label: 'THEO.md & System Rules', tokens: 12400, color: '#D9A54A' },
-        { label: 'Conversation Turns', tokens: 2400, color: '#4F8FD6' },
-        { label: 'Tool I/O & File Reads', tokens: 1600, color: '#3186FF' }
-      ]
+      breakdown: breakdownArr
     };
     const pillLbl = $('ctx-pill-label');
     if (pillLbl) {
@@ -845,14 +1069,32 @@
     // Conversation Stream
     const streamEl = $('chat-stream');
     if (!streamEl) return;
+    const wasNearBottom =
+      streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight < 100;
     const messages = threadDetail?.messages || [];
+    const isSyncingThread =
+      connMode === 'cloud' &&
+      prefs.selectedThreadId &&
+      pendingThreadRequests.has(prefs.selectedThreadId);
+
     if (messages.length === 0) {
       streamEl.innerHTML = `
         <div class="turn-bubble">
-          <div class="turn-head"><span class="turn-role">THEO Remote Bridge</span><span>Ready</span></div>
-          <div class="turn-text">Select any session above or send a prompt below to start or continue working remotely in <strong>${esc(activeRow?.title || 'VS Code')}</strong>.</div>
+          <div class="turn-head">
+            <span class="turn-role">${isSyncingThread ? 'Syncing Transcript…' : 'THEO Remote Bridge'}</span>
+            <span>${isSyncingThread ? 'Cloud Relay' : 'Ready'}</span>
+          </div>
+          <div class="turn-text">
+            ${
+              isSyncingThread
+                ? `Requesting live transcript for <strong>${esc(activeRow?.title || 'Session')}</strong> from VS Code… You can also send a prompt below immediately.`
+                : `Select any session above or send a prompt below to start or continue working remotely in <strong>${esc(activeRow?.title || 'VS Code')}</strong>.`
+            }
+          </div>
         </div>
       `;
+      lastRenderedThreadId = prefs.selectedThreadId;
+      lastRenderedMsgCount = 0;
     } else {
       streamEl.innerHTML = messages
         .map((m) => {
@@ -882,7 +1124,17 @@
           `;
         })
         .join('');
-      streamEl.scrollTop = streamEl.scrollHeight;
+
+      if (
+        forceScroll ||
+        prefs.selectedThreadId !== lastRenderedThreadId ||
+        messages.length > lastRenderedMsgCount ||
+        wasNearBottom
+      ) {
+        streamEl.scrollTop = streamEl.scrollHeight;
+      }
+      lastRenderedThreadId = prefs.selectedThreadId;
+      lastRenderedMsgCount = messages.length;
     }
   }
 
@@ -1316,10 +1568,19 @@
         const action = sessAct.dataset.sessAct;
         const id = sessAct.dataset.id;
         const val = sessAct.dataset.val === 'true';
+        const targetRow = (appState?.rows || []).find((r) => r.id === id);
+        if (targetRow) {
+          if (action === 'archive') targetRow.archived = val;
+          if (action === 'unread') targetRow.unread = val;
+          persistCache();
+          renderAll();
+        }
         await dispatchRemoteCommand({
           type: 'sessionAction',
           action,
+          subAction: action,
           id,
+          provider: targetRow?.provider || 'antigravity',
           value: val
         });
         showToast(action === 'archive' ? (val ? 'Session archived' : 'Session restored') : 'Updated session state');
@@ -1339,13 +1600,22 @@
       const approveBtn = e.target.closest('[data-approve-act]');
       if (approveBtn) {
         const decision = approveBtn.dataset.approveAct;
+        const appId = approveBtn.dataset.appId;
+        const sessId = approveBtn.dataset.sessId;
         haptic(20);
         playChime('approve');
+        if (Array.isArray(appState?.approvals)) {
+          appState.approvals = appState.approvals.filter(
+            (a) => a.approvalId !== appId && a.sessionId !== sessId
+          );
+          persistCache();
+          renderPulseView();
+        }
         await dispatchRemoteCommand({
           type: 'approve',
           decision,
-          approvalId: approveBtn.dataset.appId,
-          sessionId: approveBtn.dataset.sessId,
+          approvalId: appId,
+          sessionId: sessId,
           provider: approveBtn.dataset.prov,
           selector: approveBtn.dataset.sel,
           label: approveBtn.dataset.lbl
@@ -1354,12 +1624,41 @@
         return;
       }
 
+      if (e.target.closest('#btn-reset-sess-filters')) {
+        prefs.sessProvider = 'all';
+        prefs.sessStatus = 'all';
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        const sInput = $('sess-search-input');
+        if (sInput) sInput.value = '';
+        renderSessionsView();
+        return;
+      }
+
+      if (e.target.closest('#btn-empty-sync-now') || e.target.closest('#conn-modal-sync-btn')) {
+        await syncData({ toast: true });
+        return;
+      }
+
+      if (e.target.closest('#mobile-conn-pill') || e.target.closest('#rail-conn-btn')) {
+        openConnModal();
+        syncData().catch(() => {});
+        return;
+      }
+
+      if (e.target.closest('#conn-modal-close') || e.target === $('conn-modal')) {
+        closeConnModal();
+        return;
+      }
+
+      if (e.target === $('cmd-modal')) {
+        closeCommandPalette();
+        return;
+      }
+
       const provSeg = e.target.closest('#sess-provider-seg [data-prov]');
       if (provSeg) {
         prefs.sessProvider = provSeg.dataset.prov;
-        document.querySelectorAll('#sess-provider-seg .seg-btn').forEach((b) =>
-          b.classList.toggle('active', b === provSeg)
-        );
+        saveJson(STORAGE_KEYS.PREFS, prefs);
         renderSessionsView();
         return;
       }
@@ -1367,9 +1666,7 @@
       const statusChip = e.target.closest('#sess-status-chips [data-status-filter]');
       if (statusChip) {
         prefs.sessStatus = statusChip.dataset.statusFilter;
-        document.querySelectorAll('#sess-status-chips .chip').forEach((c) =>
-          c.classList.toggle('active', c === statusChip)
-        );
+        saveJson(STORAGE_KEYS.PREFS, prefs);
         renderSessionsView();
         return;
       }
@@ -1460,7 +1757,7 @@
         } else if (act === 'sync') {
           syncData({ toast: true });
         } else if (act === 'compact') {
-          dispatchRemoteCommand({ type: 'sessionAction', action: 'compact', id: prefs.selectedThreadId });
+          dispatchRemoteCommand({ type: 'sessionAction', action: 'compact', subAction: 'compact', id: prefs.selectedThreadId });
           showToast('Dispatched /compact');
         } else if (act === 'theme') {
           applyTheme(prefs.theme === 'dark' ? 'light' : 'dark');
@@ -1482,7 +1779,6 @@
     });
     $('btn-sync-now')?.addEventListener('click', () => syncData({ toast: true }));
     $('mobile-sync-btn')?.addEventListener('click', () => syncData({ toast: true }));
-    $('rail-conn-btn')?.addEventListener('click', () => syncData({ toast: true }));
     $('btn-refresh-git')?.addEventListener('click', () => renderWorkspacesView());
 
     // Context Window Popover
@@ -1499,6 +1795,7 @@
       await dispatchRemoteCommand({
         type: 'sessionAction',
         action: 'compact',
+        subAction: 'compact',
         id: prefs.selectedThreadId,
         provider: activeRow?.provider || 'antigravity'
       });
@@ -1512,6 +1809,7 @@
       await dispatchRemoteCommand({
         type: 'sessionAction',
         action: 'open',
+        subAction: 'open',
         id: prefs.selectedThreadId,
         provider: activeRow?.provider || 'antigravity'
       });
@@ -1522,7 +1820,7 @@
     $('chat-session-select')?.addEventListener('change', (e) => {
       prefs.selectedThreadId = e.target.value;
       saveJson(STORAGE_KEYS.PREFS, prefs);
-      renderChatView();
+      renderChatView(true);
       fetchThreadDetail(prefs.selectedThreadId);
     });
 
@@ -1553,6 +1851,7 @@
         openCommandPalette();
       } else if (e.key === 'Escape') {
         closeCommandPalette();
+        closeConnModal();
       }
     });
   }
@@ -1593,9 +1892,12 @@
         role: 'user',
         createdAt: new Date().toISOString(),
         text,
-        toolCalls: []
+        toolCalls: [],
+        optimistic: true,
+        optimisticAt: Date.now()
       });
-      renderChatView();
+      persistCache();
+      renderChatView(true);
     }
 
     const res = await dispatchRemoteCommand({
@@ -1605,6 +1907,11 @@
       prompt: text,
       newSession: Boolean(isNewAgy || isNewClaude || !targetId)
     });
+
+    if (res.mode === 'cloud') {
+      setTimeout(() => syncData(), 3500);
+      setTimeout(() => syncData(), 8000);
+    }
 
     showToast(
       res.mode === 'local'
