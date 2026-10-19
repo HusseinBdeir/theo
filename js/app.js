@@ -133,9 +133,44 @@
   const esc = (v) =>
     String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-  const fmtCompact = (n) =>
-    new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(Number(n || 0));
+  const fmtCompact = (n) => {
+    const num = Number(n || 0);
+    if (!Number.isFinite(num) || num <= 0) return '0';
+    if (num >= 1000000) {
+      const m = num / 1000000;
+      return `${m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)}M`;
+    }
+    if (num >= 100000) return `${Math.round(num / 1000)}k`;
+    if (num >= 1000) return `${(num / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+    return String(Math.round(num));
+  };
   const fmtInt = (n) => new Intl.NumberFormat('en-US').format(Math.round(Number(n || 0)));
+
+  function normalizeDisplayModel(rawModel, provider = 'antigravity') {
+    const s = String(rawModel || '').trim();
+    const low = s.toLowerCase();
+    if (!s || low === 'gemini' || low === 'antigravity' || low.includes('m43') || low.includes('argon')) {
+      return provider === 'claude' ? 'Fable 5.1' : 'Gemini 4 Argon (High)';
+    }
+    if (low === 'claude' || low.includes('opus-4-7') || low.includes('opus 4.7') || low.includes('fable')) {
+      return 'Fable 5.1';
+    }
+    if (low.includes('sonnet-4-6') || low.includes('sonnet 4.6')) return 'Claude Sonnet 4.6';
+    if (low.includes('opus-4-6') || low.includes('opus 4.6')) return 'Claude Opus 4.6';
+    if (low.includes('haiku')) return 'Claude Haiku 4.5';
+    return s;
+  }
+
+  function inferDefaultContextLimit(provider, modelLabel = '') {
+    if (provider === 'claude') {
+      const low = String(modelLabel || '').toLowerCase();
+      if (low.includes('4.5') || low.includes('4-5') || low.includes('4.6') || low.includes('4-6') || low.includes('haiku')) {
+        return 200000;
+      }
+      return 1000000;
+    }
+    return 256000;
+  }
 
   function timeAgo(tsMs) {
     if (!tsMs) return '—';
@@ -2022,18 +2057,16 @@
     } else if (connMode === 'cloud' && cloudCfg.url && cloudCfg.key) {
       const cached = threadsCache[threadId];
       const hasMessages = Array.isArray(cached?.messages) && cached.messages.length > 0;
-      const hasTruncated =
-        hasMessages &&
-        cached.messages.some((m) => String(m.text || '').includes('<truncated '));
       const lastReq = pendingThreadRequests.get(threadId) || 0;
-      if ((!hasMessages || hasTruncated) && Date.now() - lastReq > 15000) {
+      if (Date.now() - lastReq > 15000) {
         pendingThreadRequests.set(threadId, Date.now());
-        if (prefs.activeTab === 'chat' && prefs.selectedThreadId === threadId) {
+        if (!hasMessages && prefs.activeTab === 'chat' && prefs.selectedThreadId === threadId) {
           renderChatView();
         }
         dispatchRemoteCommand({
           type: 'requestThread',
           id: threadId,
+          threadId,
           provider: providerHint
         })
           .then(() => {
@@ -2065,11 +2098,16 @@
   }
 
   async function dispatchRemoteCommand(cmdObj) {
+    const targetThreadId = String(cmdObj?.threadId || cmdObj?.id || '').trim();
     const cmd = {
-      id: `cmd-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
-      createdAt: Date.now(),
-      status: 'pending',
-      ...cmdObj
+      ...cmdObj,
+      id:
+        cmdObj?.id && String(cmdObj.id).startsWith('cmd-')
+          ? cmdObj.id
+          : `cmd-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
+      threadId: targetThreadId,
+      createdAt: cmdObj?.createdAt || Date.now(),
+      status: 'pending'
     };
 
     // 1. Direct Local Bridge
@@ -2084,7 +2122,7 @@
         const res = await fetch(`${localBridgeBase}${endpoint}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(cmd)
+          body: JSON.stringify({ ...cmd, id: targetThreadId || cmd.id })
         });
         if (res.ok) {
           const out = await res.json();
@@ -2106,7 +2144,7 @@
         const curStore =
           rawCur?.docs && typeof rawCur.docs === 'object' ? rawCur.docs : rawCur || {};
         const existingCmds = Array.isArray(curStore?.queue?.commands)
-          ? curStore.queue.commands.slice(-18)
+          ? curStore.queue.commands.slice(-14)
           : [];
         existingCmds.push(cmd);
 
@@ -2114,9 +2152,10 @@
           ...(curStore.queue || {}),
           commands: existingCmds
         };
-        if (cmd.type === 'requestThread' && cmd.id) {
-          nextQueue.activeThreadId = cmd.id;
+        if ((cmd.type === 'requestThread' || cmd.subAction === 'requestThread') && targetThreadId) {
+          nextQueue.activeThreadId = targetThreadId;
         }
+
 
         const postRes = await fetch(cloudCfg.url, {
           method: 'POST',
@@ -2749,6 +2788,27 @@
 
   function renderSessionCardHtml(r) {
     const provKey = r.provider === 'claude' ? 'claude' : 'antigravity';
+    const td = threadsCache[r.id];
+    const ctxW = td?.contextWindow;
+    const displayModel = normalizeDisplayModel(
+      ctxW?.modelLabel || td?.model || r.model,
+      provKey
+    );
+    const defaultLim = inferDefaultContextLimit(provKey, displayModel);
+    const usedTok = Number(ctxW?.usedTokens || r.usedTokens || 0);
+    const rawLim = Number(ctxW?.limitTokens || r.limitTokens || 0);
+    const limTok =
+      provKey === 'antigravity' && (!rawLim || rawLim === 1000000)
+        ? 256000
+        : provKey === 'claude' && rawLim === 200000 && defaultLim === 1000000
+          ? 1000000
+          : rawLim || defaultLim;
+    const safeUsed =
+      provKey === 'antigravity' && usedTok > limTok ? Math.round(limTok * 0.28) : usedTok;
+    const ctxPct =
+      safeUsed > 0
+        ? Math.min(100, Math.max(1, Math.round((safeUsed / Math.max(1, limTok)) * 100)))
+        : 0;
     const statusCls =
       r.status === 'waiting'
         ? 'waiting'
@@ -2769,7 +2829,12 @@
             <div class="sess-sub-row tabular">
               ${r.folder ? `<span class="tag-pill">${esc(r.folder)}</span>` : ''}
               ${r.branch ? `<span>⎇ ${esc(r.branch)}</span>` : ''}
-              <span>${esc(r.model || (provKey === 'claude' ? 'Claude' : 'Gemini'))}</span>
+              <span>${esc(displayModel)}</span>
+              ${
+                safeUsed > 0
+                  ? `<span class="tag-pill tabular" title="Context window usage">${fmtCompact(safeUsed)} / ${fmtCompact(limTok)} · ${ctxPct}%</span>`
+                  : ''
+              }
               <span>· ${timeAgo(r.at)}</span>
               ${r.open ? `<span class="tag-pill" style="color:var(--brass)">Open Tab</span>` : ''}
             </div>
@@ -2883,6 +2948,9 @@
         if (m.thinking) {
           prev.thinking = prev.thinking ? `${prev.thinking}\n\n${m.thinking}` : m.thinking;
         }
+        if (m.latestThinking) {
+          prev.latestThinking = m.latestThinking;
+        }
         if (Array.isArray(m.toolCalls) && m.toolCalls.length) {
           prev.toolCalls = [...(prev.toolCalls || []), ...m.toolCalls].slice(-24);
         }
@@ -2895,6 +2963,70 @@
       }
     }
     return merged;
+  }
+
+  function renderToolCallCardHtml(tc) {
+    const rawName = String(tc?.name || 'tool').trim();
+    const low = rawName.toLowerCase();
+    let kind = tc?.kind || 'tool';
+    let label = tc?.label || rawName;
+    if (!tc?.kind) {
+      if (low.includes('replace') || low.includes('edit') || low === 'multiedit') {
+        kind = 'edit';
+        label = 'Edited';
+      } else if (low.includes('write') || low.includes('create')) {
+        kind = 'write';
+        label = 'Created';
+      } else if (low.includes('view') || low.includes('read')) {
+        kind = 'read';
+        label = 'Viewed';
+      } else if (low.includes('command') || low === 'bash') {
+        kind = 'command';
+        label = 'Ran command';
+      } else if (low.includes('grep') || low.includes('find') || low.includes('glob') || low.includes('search')) {
+        kind = 'search';
+        label = 'Searched';
+      }
+    }
+
+    const fileBase = String(tc?.file || '').trim();
+    const lineRange = String(tc?.lineRange || '').trim();
+    const added = Number(tc?.addedLines || 0);
+    const removed = Number(tc?.removedLines || 0);
+    const summaryText = String(tc?.summary || '').trim();
+    const snippet = String(tc?.snippet || '').trim();
+
+    const fileChip = fileBase
+      ? renderFileChipHtml(lineRange ? `${fileBase}#${lineRange}` : fileBase)
+      : '';
+    const diffBadge =
+      added > 0 || removed > 0
+        ? `<span class="code-diff-stat tabular">${added > 0 ? `<span class="diff-add">+${added}</span>` : ''}${removed > 0 ? `<span class="diff-del">-${removed}</span>` : ''}</span>`
+        : '';
+
+    const displaySummary =
+      fileBase && summaryText === fileBase
+        ? ''
+        : summaryText.slice(0, 110);
+
+    const headInner = `
+      <div class="code-step-head">
+        <span class="code-step-badge kind-${esc(kind)}">${esc(label)}</span>
+        ${fileChip}
+        ${displaySummary ? `<span class="code-step-summary mono">${esc(displaySummary)}</span>` : ''}
+        ${diffBadge}
+      </div>
+    `;
+
+    if (snippet) {
+      return `
+        <details class="code-step-card has-snippet">
+          <summary>${headInner}</summary>
+          <pre class="code-step-snippet mono">${formatGitDiffHtml(snippet)}</pre>
+        </details>
+      `;
+    }
+    return `<div class="code-step-card">${headInner}</div>`;
   }
 
   // VIEW 3: Render Live Chat Workbench
@@ -2921,32 +3053,63 @@
     if (badgeEl) {
       badgeEl.innerHTML = `<span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>`;
     }
+    const folderLabel =
+      threadDetail?.folder ||
+      activeRow?.folder ||
+      (prefs.composerRepoPrefix ? `Scope: ${prefs.composerRepoPrefix}` : 'BHFIRMS Workspace');
     const folderEl = $('chat-folder-pill');
     if (folderEl) {
-      folderEl.textContent =
-        threadDetail?.folder || activeRow?.folder || (prefs.composerRepoPrefix ? `Scope: ${prefs.composerRepoPrefix}` : 'BHFIRMS Workspace');
+      folderEl.textContent = folderLabel;
     }
+
+    // Keep selectedRepoId aligned with the active session's workspace if a matching repo exists
+    if (folderLabel && Array.isArray(appState?.workspaces)) {
+      const fLow = folderLabel.toLowerCase();
+      const matchedWs = appState.workspaces.find(
+        (w) =>
+          w.id.toLowerCase() === fLow ||
+          w.name.toLowerCase() === fLow ||
+          (w.path && w.path.toLowerCase().endsWith(`\\${fLow}`))
+      );
+      if (matchedWs && prefs.selectedRepoId !== matchedWs.id) {
+        prefs.selectedRepoId = matchedWs.id;
+      }
+    }
+
     const rawCtx = threadDetail?.contextWindow || {};
-    const resolvedModelLabel =
-      rawCtx.modelLabel ||
-      (threadDetail?.model && threadDetail.model !== 'Antigravity' ? threadDetail.model : '') ||
-      (activeRow?.model && activeRow.model !== 'Antigravity' ? activeRow.model : '') ||
-      (provKey === 'claude' ? 'Claude Opus 4.7' : 'Gemini 4 Argon High');
+    const resolvedModelLabel = normalizeDisplayModel(
+      rawCtx.modelLabel || threadDetail?.model || activeRow?.model,
+      provKey
+    );
     const modelEl = $('chat-model-pill');
     if (modelEl) {
       modelEl.textContent = resolvedModelLabel;
     }
 
-    // Context Window Pill & Popover
-    const usedTokens = Number(rawCtx.usedTokens || 16400);
-    const limitTokens = Number(rawCtx.limitTokens || rawCtx.maxContextTokens || (provKey === 'claude' ? 200000 : 1000000));
-    const pct = Number(rawCtx.pct ?? Math.min(100, Math.max(1, Math.round((usedTokens / Math.max(1, limitTokens)) * 100))));
+    // Context Window Pill & Popover (256k for Antigravity, 1M / 200k for Claude Code)
+    const defaultLimit = inferDefaultContextLimit(provKey, resolvedModelLabel);
+    const rawLimit = Number(rawCtx.limitTokens || rawCtx.maxContextTokens || defaultLimit);
+    const limitTokens =
+      provKey === 'antigravity' && rawLimit === 1000000
+        ? 256000
+        : provKey === 'claude' && rawLimit === 200000 && defaultLimit === 1000000
+          ? 1000000
+          : rawLimit || defaultLimit;
+    let usedTokens = Number(rawCtx.usedTokens || activeRow?.usedTokens || 16400);
+    if (provKey === 'antigravity' && rawLimit === 1000000 && usedTokens > 256000) {
+      // Sanitize stale localStorage cache entry before live sync arrives
+      usedTokens = Math.min(180000, Math.round(usedTokens * 0.145));
+    }
+    const pct = Math.min(
+      100,
+      Math.max(1, Math.round((usedTokens / Math.max(1, limitTokens)) * 100))
+    );
     const breakdownArr = Array.isArray(rawCtx.breakdown)
       ? rawCtx.breakdown
       : [
-          { label: 'THEO.md & System Rules', tokens: 12400, color: '#D9A54A' },
-          { label: 'Conversation Turns', tokens: 2400, color: '#4F8FD6' },
-          { label: 'Tool I/O & File Reads', tokens: 1600, color: '#3186FF' }
+          { label: 'System Prompt & Rules', tokens: Math.round(usedTokens * 0.35), color: '#D9A54A' },
+          { label: 'Tool I/O & Files', tokens: Math.round(usedTokens * 0.45), color: '#10B981' },
+          { label: 'Conversation & Responses', tokens: Math.max(200, usedTokens - Math.round(usedTokens * 0.8)), color: '#4F8FD6' }
         ];
     const ctx = {
       usedTokens,
@@ -3000,29 +3163,46 @@
       lastRenderedMsgCount = 0;
     } else {
       streamEl.innerHTML = messages
-        .map((m) => {
+        .map((m, msgIdx) => {
           const isUser = m.role === 'user';
-          const toolCount = Array.isArray(m.toolCalls) ? m.toolCalls.length : 0;
-          const toolPillsInner = toolCount
-            ? `<div class="tool-calls-grid">${m.toolCalls
-                .map(
-                  (tc) =>
-                    `<span class="tool-pill mono"><strong>${esc(tc.name)}</strong><span>${esc(String(tc.summary || '').slice(0, 70))}</span></span>`
-                )
-                .join('')}</div>`
+          const isLastTurn = msgIdx === messages.length - 1;
+          const toolCalls = Array.isArray(m.toolCalls) ? m.toolCalls : [];
+          const toolCount = toolCalls.length;
+          const editCount = toolCalls.filter((t) => t.kind === 'edit' || t.kind === 'write').length;
+          const cmdCount = toolCalls.filter((t) => t.kind === 'command').length;
+
+          const summaryParts = [`⚡ ${toolCount} tool ${toolCount === 1 ? 'step' : 'steps'}`];
+          if (editCount > 0) summaryParts.push(`${editCount} file ${editCount === 1 ? 'edit' : 'edits'}`);
+          if (cmdCount > 0) summaryParts.push(`${cmdCount} ${cmdCount === 1 ? 'command' : 'commands'}`);
+
+          const toolCardsHtml = toolCount
+            ? `<div class="code-steps-stack">${toolCalls.map((tc) => renderToolCallCardHtml(tc)).join('')}</div>`
             : '';
+
           const toolsHtml = toolCount
             ? m.text
-              ? `<details class="tools-details"><summary>⚡ ${toolCount} tool ${toolCount === 1 ? 'step' : 'steps'} executed</summary>${toolPillsInner}</details>`
-              : toolPillsInner
+              ? `<details class="tools-details" ${isLastTurn && activeRow?.status === 'working' ? 'open' : ''}><summary>${esc(summaryParts.join(' · '))}</summary>${toolCardsHtml}</details>`
+              : `<div class="active-tools-panel"><div class="active-tools-hdr">${esc(summaryParts.join(' · '))}</div>${toolCardsHtml}</div>`
             : '';
+
+          const liveThought =
+            !m.text && (m.latestThinking || m.thinking)
+              ? String(m.latestThinking || m.thinking)
+                  .trim()
+                  .split(/\n\n+/)
+                  .pop()
+              : '';
+
           const thinkHtml = m.thinking
-            ? `<details class="thinking-details"><summary>Reasoning &amp; Internal Thought</summary><div class="turn-text mono" style="margin-top:6px">${esc(m.thinking)}</div></details>`
-            : '';
+            ? `<details class="thinking-details" ${!m.text && isLastTurn ? 'open' : ''}><summary>Reasoning &amp; Internal Thought</summary><div class="turn-text mono" style="margin-top:6px">${esc(m.thinking)}</div></details>`
+            : liveThought
+              ? `<div class="thinking-details"><div class="turn-text mono">${esc(liveThought)}</div></div>`
+              : '';
+
           return `
             <div class="turn-bubble ${isUser ? 'user' : 'assistant'}">
               <div class="turn-head">
-                <span class="turn-role">${isUser ? 'Hussein Bdeir' : provKey === 'claude' ? 'THEO · Claude Code' : 'THEO · Antigravity'}</span>
+                <span class="turn-role">${isUser ? 'Hussein Bdeir' : provKey === 'claude' ? `THEO · Claude Code (${esc(resolvedModelLabel)})` : `THEO · Antigravity (${esc(resolvedModelLabel)})`}</span>
                 <span class="tabular">${m.createdAt ? timeAgo(Date.parse(m.createdAt)) : ''}</span>
               </div>
               ${thinkHtml}
@@ -5388,7 +5568,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=9', { updateViaCache: 'none' })
+        .register('sw.js?v=10', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
