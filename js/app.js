@@ -3850,7 +3850,7 @@
     return `
       <div class="rem-card ${cardStateClass}" data-rem-id="${esc(item.id)}">
         <div class="rem-card-top">
-          <div style="min-width:0;flex:1">
+          <div class="rem-card-body" style="flex:1 1 240px;min-width:0">
             <div class="rem-card-title">${esc(item.title)}</div>
             <div class="rem-card-meta">
               <span class="rem-badge cat">${cat.icon} ${esc(cat.shortLabel || cat.label)}</span>
