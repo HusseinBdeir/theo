@@ -6496,7 +6496,7 @@
           switchTab('chat');
           openRepoFilePicker();
         } else if (act === 'open-command-pwa' || act === 'open-discipline' || act === 'new-payment-hold') {
-          window.open('https://husseinbdeir.github.io/command/', '_blank', 'noopener');
+          window.open('https://husseinbdeir.github.io/planner/', '_blank', 'noopener');
         } else if (act === 'new-agy') {
           prefs.composerMode = 'new-antigravity';
           switchTab('chat');
@@ -6783,7 +6783,7 @@
       renderAll();
       fetchThreadDetail(threadId, nav.provider || pinnedNavProvider || '').catch(() => {});
     } else if (reminderId || tab === 'discipline') {
-      window.location.href = `https://husseinbdeir.github.io/command/${reminderId ? `?tab=tasks&taskId=${encodeURIComponent(reminderId)}` : ''}`;
+      window.location.href = `https://husseinbdeir.github.io/planner/${reminderId ? `?tab=tasks&taskId=${encodeURIComponent(reminderId)}` : ''}`;
       return true;
     } else if (tab) {
       prefs.activeTab = tab;
@@ -6852,7 +6852,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=22', { updateViaCache: 'none' })
+        .register('sw.js?v=23', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
@@ -6973,7 +6973,7 @@
       });
     } else if (remParam || tabParam === 'discipline') {
       window.location.replace(
-        `https://husseinbdeir.github.io/command/${remParam ? `?tab=tasks&taskId=${encodeURIComponent(remParam)}` : ''}`
+        `https://husseinbdeir.github.io/planner/${remParam ? `?tab=tasks&taskId=${encodeURIComponent(remParam)}` : ''}`
       );
       return;
     } else if (pinnedNavThreadId && Date.now() < pinnedNavUntil) {
