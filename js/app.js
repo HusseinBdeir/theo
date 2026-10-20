@@ -302,12 +302,22 @@
     return keys.some((k) => k && set.has(String(k)));
   }
 
-  function setPinnedNav(threadId, provider = '', title = '', durationMs = 60000) {
-    if (!threadId) return;
-    pinnedNavThreadId = String(threadId);
-    if (provider) pinnedNavProvider = String(provider);
-    if (title) pinnedNavTitle = String(title);
-    pinnedNavUntil = Date.now() + durationMs;
+  function setPinnedNav(threadIdOrObj, provider = '', title = '', durationMs = 60000) {
+    let tid = threadIdOrObj;
+    let prov = provider;
+    let ttl = title;
+    let dur = durationMs;
+    if (threadIdOrObj && typeof threadIdOrObj === 'object') {
+      tid = threadIdOrObj.threadId || threadIdOrObj.sessionId || '';
+      prov = threadIdOrObj.provider || '';
+      ttl = threadIdOrObj.title || threadIdOrObj.sessionTitle || '';
+      if (threadIdOrObj.durationMs) dur = Number(threadIdOrObj.durationMs);
+    }
+    if (!tid) return;
+    pinnedNavThreadId = String(tid);
+    if (prov) pinnedNavProvider = String(prov);
+    if (ttl) pinnedNavTitle = String(ttl);
+    pinnedNavUntil = Date.now() + dur;
     try {
       sessionStorage.setItem(
         PINNED_NAV_SESSION_KEY,
@@ -1994,6 +2004,12 @@
       return;
     }
 
+    // If the user explicitly navigated via ?thread= URL param or notification tap, do not hijack their target
+    if (pinnedNavThreadId && Date.now() < pinnedNavUntil) {
+      markNotifConsumed(notifId, notifTag);
+      return;
+    }
+
     // If the user just launched or resumed the PWA from background after a task notification fired, jump to that task
     if (Date.now() < recentResumeUntil && (ln.threadId || ln.reminderId)) {
       applyNotificationNav({
@@ -2283,8 +2299,10 @@
     return '';
   }
 
+  const initialNoSse = location.search.includes('nosse=1');
+
   function connectSse(base) {
-    if (location.search.includes('nosse=1')) {
+    if (initialNoSse || location.search.includes('nosse=1')) {
       return;
     }
     if (sseSource) {
@@ -2628,7 +2646,7 @@
       if (titleRail) titleRail.textContent = 'Cloud Relay · Connected';
       if (subRail) subRail.textContent = `VS Code Sync ${snapAge || 'live'} · ${rowCount} sess`;
       if (dotMob) dotMob.className = 'conn-dot cloud';
-      if (textMob) textMob.textContent = snapAge ? `VS Code · ${snapAge}` : 'Cloud Live';
+      if (textMob) textMob.textContent = snapAge ? `Live · ${snapAge.replace(' ago', '')}` : 'Cloud Live';
     } else {
       if (dotRail) dotRail.className = 'conn-dot';
       if (titleRail) titleRail.textContent = 'Offline Snapshot';
@@ -3425,7 +3443,7 @@
         const isCollapsed =
           q || prefs.sessStatus !== 'all'
             ? false
-            : isSessionGroupCollapsed(g.id, Boolean(g.collapsed));
+            : isSessionGroupCollapsed(g.id, gItems.length === 0 ? true : Boolean(g.collapsed));
         sectionsHtml += renderSessionGroupSectionHtml({
           id: g.id,
           name: g.name || 'Group',
@@ -6553,6 +6571,7 @@
 
   // Register Service Worker & Push Navigation Listener
   function registerServiceWorker() {
+    if (initialNoSse || location.search.includes('nosse=1')) return;
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
       let refreshingSw = false;
       const hadController = Boolean(navigator.serviceWorker.controller);
@@ -6703,9 +6722,11 @@
     renderAll();
     consumePendingNotificationNav({ allowUnseenPush: true });
     syncData();
-    setInterval(() => {
-      if (!document.hidden) syncData();
-    }, 12000);
+    if (!initialNoSse) {
+      setInterval(() => {
+        if (!document.hidden) syncData();
+      }, 12000);
+    }
     registerServiceWorker();
   }
 
