@@ -144,7 +144,7 @@
   }
 
   const state = {
-    theme: localStorage.getItem('theo_cmd_theme') || 'dark',
+    theme: localStorage.getItem('theo_cmd_theme_v2') === 'dark' ? 'dark' : 'light',
     activeTab: 'radar',
     scoreDate: todayIso(),
     boardFilter: 'all',
@@ -2417,7 +2417,7 @@
 
     document.getElementById('btn-theme-toggle')?.addEventListener('click', () => {
       state.theme = state.theme === 'dark' ? 'light' : 'dark';
-      localStorage.setItem('theo_cmd_theme', state.theme);
+      localStorage.setItem('theo_cmd_theme_v2', state.theme);
       renderAll();
     });
 
@@ -2759,7 +2759,7 @@
         location.reload();
       });
       navigator.serviceWorker
-        .register('./sw.js?v=4', { updateViaCache: 'none' })
+        .register('./sw.js?v=5', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });

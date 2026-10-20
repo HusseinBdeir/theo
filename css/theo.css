@@ -1,36 +1,4 @@
 :root,
-html[data-theme="dark"] {
-  --bg-obsidian: #071022;
-  --bg-plate: #0B1730;
-  --bg-ink: #0F1E38;
-  --bg-elevated: #142747;
-  --bg-card: rgba(16, 32, 60, 0.82);
-  --bg-card-hover: rgba(23, 44, 80, 0.92);
-  --bg-glass: rgba(11, 23, 48, 0.84);
-  --border-subtle: rgba(148, 163, 184, 0.14);
-  --border-strong: rgba(217, 165, 74, 0.32);
-  --text-primary: #F4F2EE;
-  --text-secondary: #CBD5E1;
-  --text-muted: #7E92B2;
-  --brass: #D9A54A;
-  --brass-deep: #C0892F;
-  --brass-glow: rgba(217, 165, 74, 0.18);
-  --steel: #4F8FD6;
-  --steel-deep: #2A6DB5;
-  --agy: #3186FF;
-  --agy-soft: rgba(49, 134, 255, 0.15);
-  --claude: #D97757;
-  --claude-soft: rgba(217, 119, 87, 0.16);
-  --emerald: #10B981;
-  --emerald-soft: rgba(16, 185, 129, 0.16);
-  --amber: #F59E0B;
-  --amber-soft: rgba(245, 158, 11, 0.16);
-  --crimson: #EF4444;
-  --crimson-soft: rgba(239, 68, 68, 0.16);
-  --shadow-lg: 0 20px 50px rgba(2, 6, 18, 0.55);
-  --shadow-sm: 0 6px 20px rgba(2, 6, 18, 0.28);
-}
-
 html[data-theme="light"] {
   --bg-obsidian: #ECE9E2;
   --bg-plate: #F4F2EE;
@@ -47,8 +15,40 @@ html[data-theme="light"] {
   --brass: #B77D22;
   --brass-deep: #966315;
   --brass-glow: rgba(192, 137, 47, 0.14);
+  --steel: #4F8FD6;
+  --steel-deep: #2A6DB5;
+  --agy: #3186FF;
+  --agy-soft: rgba(49, 134, 255, 0.15);
+  --claude: #D97757;
+  --claude-soft: rgba(217, 119, 87, 0.16);
+  --emerald: #10B981;
+  --emerald-soft: rgba(16, 185, 129, 0.16);
+  --amber: #F59E0B;
+  --amber-soft: rgba(245, 158, 11, 0.16);
+  --crimson: #EF4444;
+  --crimson-soft: rgba(239, 68, 68, 0.16);
   --shadow-lg: 0 18px 42px rgba(11, 23, 48, 0.12);
   --shadow-sm: 0 4px 14px rgba(11, 23, 48, 0.06);
+}
+
+html[data-theme="dark"] {
+  --bg-obsidian: #071022;
+  --bg-plate: #0B1730;
+  --bg-ink: #0F1E38;
+  --bg-elevated: #142747;
+  --bg-card: rgba(16, 32, 60, 0.82);
+  --bg-card-hover: rgba(23, 44, 80, 0.92);
+  --bg-glass: rgba(11, 23, 48, 0.84);
+  --border-subtle: rgba(148, 163, 184, 0.14);
+  --border-strong: rgba(217, 165, 74, 0.32);
+  --text-primary: #F4F2EE;
+  --text-secondary: #CBD5E1;
+  --text-muted: #7E92B2;
+  --brass: #D9A54A;
+  --brass-deep: #C0892F;
+  --brass-glow: rgba(217, 165, 74, 0.18);
+  --shadow-lg: 0 20px 50px rgba(2, 6, 18, 0.55);
+  --shadow-sm: 0 6px 20px rgba(2, 6, 18, 0.28);
 }
 
 *, *::before, *::after {
@@ -725,7 +725,8 @@ html[data-theme="light"] .kpi-tile {
 .approval-detail {
   font-size: 12px;
   color: var(--text-muted);
-  background: rgba(0, 0, 0, 0.22);
+  background: var(--bg-ink);
+  border: 1px solid var(--border-subtle);
   padding: 7px 10px;
   border-radius: 8px;
   overflow-x: auto;
@@ -1475,7 +1476,7 @@ html[data-theme="light"] .kpi-tile {
   overflow-x: auto;
   border-radius: 9px;
   border: 1px solid var(--border-subtle);
-  background: rgba(7, 16, 34, 0.4);
+  background: var(--bg-ink);
   margin: 4px 0;
 }
 
@@ -1502,7 +1503,8 @@ html[data-theme="light"] .kpi-tile {
 }
 
 .turn-text pre {
-  background: rgba(5, 10, 22, 0.65);
+  background: var(--bg-plate);
+  color: var(--text-primary);
   padding: 10px 12px;
   border-radius: 9px;
   overflow-x: auto;
@@ -1685,7 +1687,8 @@ html[data-theme="light"] .kpi-tile {
   margin: 7px 0 2px;
   padding: 8px 10px;
   border-radius: 7px;
-  background: rgba(5, 10, 22, 0.78);
+  background: #071022;
+  color: #E2E8F0;
   border: 1px solid var(--border-subtle);
   font-size: 11px;
   line-height: 1.45;

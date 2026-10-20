@@ -222,7 +222,8 @@
 
   const cloudCfg = getCloudConfig();
   const prefs = loadJson(STORAGE_KEYS.PREFS, {
-    theme: 'dark',
+    theme: 'light',
+    themeUserSet: false,
     sound: true,
     activeTab: 'pulse',
     sessProvider: 'all',
@@ -237,6 +238,9 @@
     remShowDone: false,
     notif: { ...DEFAULT_NOTIF }
   });
+  if (!prefs.themeUserSet) {
+    prefs.theme = 'light';
+  }
   prefs.notif = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
 
   const cachedStore = loadJson(STORAGE_KEYS.CACHE, {
@@ -2097,8 +2101,11 @@
   }
 
   // Theme management
-  function applyTheme(theme) {
-    prefs.theme = theme === 'light' ? 'light' : 'dark';
+  function applyTheme(theme, userExplicit = false) {
+    prefs.theme = theme === 'dark' ? 'dark' : 'light';
+    if (userExplicit) {
+      prefs.themeUserSet = true;
+    }
     document.documentElement.setAttribute('data-theme', prefs.theme);
     const meta = $('meta-theme-color');
     if (meta) {
@@ -5692,17 +5699,17 @@
           dispatchRemoteCommand({ type: 'sessionAction', action: 'compact', subAction: 'compact', id: prefs.selectedThreadId });
           showToast('Dispatched /compact');
         } else if (act === 'theme') {
-          applyTheme(prefs.theme === 'dark' ? 'light' : 'dark');
+          applyTheme(prefs.theme === 'dark' ? 'light' : 'dark', true);
         }
       }
     });
 
     // Theme, Sound, Sync buttons
     $('btn-theme-toggle')?.addEventListener('click', () =>
-      applyTheme(prefs.theme === 'dark' ? 'light' : 'dark')
+      applyTheme(prefs.theme === 'dark' ? 'light' : 'dark', true)
     );
     $('mobile-theme-btn')?.addEventListener('click', () =>
-      applyTheme(prefs.theme === 'dark' ? 'light' : 'dark')
+      applyTheme(prefs.theme === 'dark' ? 'light' : 'dark', true)
     );
     $('btn-sound-toggle')?.addEventListener('click', () => {
       prefs.sound = !prefs.sound;
@@ -5873,7 +5880,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=13', { updateViaCache: 'none' })
+        .register('sw.js?v=14', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

@@ -2,34 +2,7 @@
    THEO COMMAND — ZERO-SCROLL EXECUTIVE RADAR, DELEGATION & 100% DISCIPLINE
    ============================================================================ */
 
-:root {
-  --bg-deep: #060D1C;
-  --bg-ink: #0B162C;
-  --bg-card: #101F3C;
-  --bg-elevated: #16294D;
-  --bg-glass: rgba(16, 31, 60, 0.92);
-  --text-primary: #F8FAFC;
-  --text-secondary: #CBD5E1;
-  --text-muted: #7E92B2;
-  --brass: #D9A54A;
-  --brass-bright: #F2C46D;
-  --brass-glow: rgba(217, 165, 74, 0.16);
-  --emerald: #10B981;
-  --emerald-soft: rgba(16, 185, 129, 0.16);
-  --amber: #F59E0B;
-  --amber-soft: rgba(245, 158, 11, 0.16);
-  --crimson: #EF4444;
-  --crimson-soft: rgba(239, 68, 68, 0.16);
-  --steel: #4F8FD6;
-  --steel-soft: rgba(79, 143, 214, 0.16);
-  --purple: #A855F7;
-  --border-subtle: rgba(148, 163, 184, 0.14);
-  --border-strong: rgba(217, 165, 74, 0.36);
-  --shadow-sm: 0 4px 14px rgba(0, 0, 0, 0.28);
-  --shadow-lg: 0 14px 38px rgba(0, 0, 0, 0.48);
-  --dock-h: 62px;
-}
-
+:root,
 html[data-theme="light"] {
   --bg-deep: #F1EFEA;
   --bg-ink: #F8F6F1;
@@ -42,10 +15,38 @@ html[data-theme="light"] {
   --brass: #B57B1E;
   --brass-bright: #986412;
   --brass-glow: rgba(181, 123, 30, 0.12);
+  --emerald: #10B981;
+  --emerald-soft: rgba(16, 185, 129, 0.16);
+  --amber: #F59E0B;
+  --amber-soft: rgba(245, 158, 11, 0.16);
+  --crimson: #EF4444;
+  --crimson-soft: rgba(239, 68, 68, 0.16);
+  --steel: #4F8FD6;
+  --steel-soft: rgba(79, 143, 214, 0.16);
+  --purple: #A855F7;
   --border-subtle: rgba(15, 23, 42, 0.11);
   --border-strong: rgba(181, 123, 30, 0.35);
   --shadow-sm: 0 2px 10px rgba(15, 23, 42, 0.06);
   --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.15);
+  --dock-h: 62px;
+}
+
+html[data-theme="dark"] {
+  --bg-deep: #060D1C;
+  --bg-ink: #0B162C;
+  --bg-card: #101F3C;
+  --bg-elevated: #16294D;
+  --bg-glass: rgba(16, 31, 60, 0.92);
+  --text-primary: #F8FAFC;
+  --text-secondary: #CBD5E1;
+  --text-muted: #7E92B2;
+  --brass: #D9A54A;
+  --brass-bright: #F2C46D;
+  --brass-glow: rgba(217, 165, 74, 0.16);
+  --border-subtle: rgba(148, 163, 184, 0.14);
+  --border-strong: rgba(217, 165, 74, 0.36);
+  --shadow-sm: 0 4px 14px rgba(0, 0, 0, 0.28);
+  --shadow-lg: 0 14px 38px rgba(0, 0, 0, 0.48);
 }
 
 *, *::before, *::after {
