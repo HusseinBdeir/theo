@@ -5560,7 +5560,7 @@
     if (!resEl) return;
     const q = query.trim().toLowerCase();
     const items = [
-      { title: '🎯 Open THEO Command PWA (Planning, Tasks, Delegation, Score, Prayers)', sub: 'Standalone PWA ↗', act: 'open-command-pwa' },
+      { title: '🎯 Open Planner PWA (Planning, Tasks, Delegation, Score, Prayers)', sub: 'Standalone PWA ↗', act: 'open-command-pwa' },
       { title: '+ New Google Antigravity Session', sub: 'Action', act: 'new-agy' },
       { title: '+ New Claude Code Session', sub: 'Action', act: 'new-claude' },
       { title: 'Sync with VS Code & Cloud Relay Now', sub: 'Connectivity', act: 'sync' },
@@ -6582,7 +6582,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=19', { updateViaCache: 'none' })
+        .register('sw.js?v=20', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
