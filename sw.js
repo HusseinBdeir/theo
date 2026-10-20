@@ -1,13 +1,13 @@
-/* THEO Remote PWA Service Worker, v12 (2026-10-20).
+/* THEO Remote PWA Service Worker, v13 (2026-10-20).
    App shell: network-first (cache: no-cache) for HTML/JS/CSS, cache-first for static assets.
    Web Push: RFC 8291 aes128gcm push listener + notificationclick focus/open + local SW notification fallback. */
-const CACHE_NAME = 'theo-remote-v12';
+const CACHE_NAME = 'theo-remote-v13';
 const APP_SHELL = [
   './',
   './index.html',
-  './css/theo.css?v=12',
-  './js/endpoints.js?v=12',
-  './js/app.js?v=12',
+  './css/theo.css?v=13',
+  './js/endpoints.js?v=13',
+  './js/app.js?v=13',
   './manifest.json',
   './icon.svg',
   './icon-180.png',

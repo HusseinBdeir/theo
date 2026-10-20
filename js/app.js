@@ -261,6 +261,8 @@
   let statePrimed = false;
   const seenApprovalIds = new Set();
   const prevRowStatuses = new Map();
+  const prevRowSteps = new Map();
+  const prevRowAts = new Map();
   const pendingThreadRequests = new Map();
   const alertedReminderIds = new Set();
 
@@ -1772,11 +1774,14 @@
     const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
     const devId = getDeviceId();
     const slots = nf.enabled ? await buildPushSlots(pushSub, 14) : {};
+    const p256dh = (pushSub.keys && pushSub.keys.p256dh) || '';
+    const auth = (pushSub.keys && pushSub.keys.auth) || '';
     const entry = {
       id: devId,
       endpoint: pushSub.endpoint,
-      p256dh: (pushSub.keys && pushSub.keys.p256dh) || '',
-      auth: (pushSub.keys && pushSub.keys.auth) || '',
+      p256dh,
+      auth,
+      keys: { p256dh, auth },
       prefs: nf,
       updatedAt: new Date().toISOString(),
       slots
@@ -1947,40 +1952,99 @@
         if (a && a.id) seenApprovalIds.add(a.id);
       }
       for (const r of rows) {
-        if (r && r.id) prevRowStatuses.set(r.id, r.status || 'idle');
+        if (r && r.id) {
+          prevRowStatuses.set(r.id, r.status || 'idle');
+          if (Number(r.stepCount || 0) > 0) prevRowSteps.set(r.id, Number(r.stepCount));
+          if (Number(r.at || 0) > 0) prevRowAts.set(r.id, Number(r.at));
+        }
       }
       return;
     }
 
-    // 1. New pending approval / waiting session
+    const newlyNotifiedSessions = new Set();
+
+    // 1. New pending approval / question / waiting session
     for (const a of approvals) {
       if (!a || !a.id || seenApprovalIds.has(a.id)) continue;
       seenApprovalIds.add(a.id);
+      if (a.sessionId) newlyNotifiedSessions.add(a.sessionId);
+      const isQ = a.kind === 'question' || /question/i.test(String(a.toolName || ''));
       playChime('approve');
-      if (nf.enabled && nf.approvals !== false && document.hidden && notifPerm() === 'granted') {
+      showToast(
+        isQ
+          ? `❓ Question (${a.title || 'THEO'}): ${String(a.detail || 'Waiting for your answer').slice(0, 100)}`
+          : `⚡ Approval Needed (${a.title || 'THEO'}): ${a.toolName || 'Permission'}`
+      );
+      if (
+        nf.enabled &&
+        nf.approvals !== false &&
+        (document.hidden || !document.hasFocus()) &&
+        notifPerm() === 'granted'
+      ) {
         swLocalNotif({
-          title: `⚡ Approval Needed · ${a.provider === 'claude' ? 'Claude Code' : 'Antigravity'}`,
-          body: `${a.title || 'Session'}: ${a.toolName || 'Permission'} — ${a.detail || 'Waiting for confirmation'}`,
+          title: isQ
+            ? `❓ Question from THEO — ${a.title || 'Session'}`
+            : `⚡ Approval Needed · ${a.provider === 'claude' ? 'Claude Code' : 'Antigravity'}`,
+          body: isQ
+            ? `${a.detail || 'THEO is waiting for your answer.'}`
+            : `${a.title || 'Session'}: ${a.toolName || 'Permission'} — ${a.detail || 'Waiting for confirmation'}`,
           tag: `theo-app-${a.id}`,
-          tab: 'pulse',
-          threadId: a.sessionId || ''
+          tab: isQ ? 'chat' : 'pulse',
+          threadId: a.sessionId || '',
+          provider: a.provider || 'antigravity'
         });
       }
     }
 
-    // 2. Session transitioned from working -> idle/done
+    // 2. Session transitioned to completed/idle/done (or fast turn completed between polls)
     for (const r of rows) {
       if (!r || !r.id) continue;
       const prevStatus = prevRowStatuses.get(r.id);
+      const prevStep = Number(prevRowSteps.get(r.id) || 0);
+      const prevAt = Number(prevRowAts.get(r.id) || 0);
       const curStatus = r.status || 'idle';
+      const curStep = Number(r.stepCount || 0);
+      const curAt = Number(r.at || 0);
       prevRowStatuses.set(r.id, curStatus);
-      if (prevStatus === 'working' && (curStatus === 'idle' || curStatus === 'done')) {
-        playChime('confirm');
-        if (nf.enabled && nf.completed !== false && document.hidden && notifPerm() === 'granted') {
+      if (curStep > 0) prevRowSteps.set(r.id, curStep);
+      if (curAt > 0) prevRowAts.set(r.id, curAt);
+
+      const isDone =
+        curStatus === 'completed' || curStatus === 'idle' || curStatus === 'done';
+      const transitionedFromWorking = prevStatus === 'working' && isDone;
+      const fastTurnCompleted =
+        Boolean(prevStatus) &&
+        prevStatus !== 'working' &&
+        isDone &&
+        prevStep > 0 &&
+        curStep > prevStep &&
+        curAt > prevAt &&
+        Date.now() - curAt < 90000 &&
+        Boolean(r.lastAssistantText);
+
+      if ((transitionedFromWorking || fastTurnCompleted) && !newlyNotifiedSessions.has(r.id)) {
+        const lastText = String(r.lastAssistantText || '').trim();
+        const endsWithQ = /\?\s*["')*\]]*\s*$/.test(lastText);
+        playChime(endsWithQ ? 'approve' : 'confirm');
+        showToast(
+          endsWithQ
+            ? `❓ Question (${r.title || 'Session'}): ${lastText.slice(0, 95)}`
+            : `✓ Task Complete (${r.title || 'Session'})${lastText ? ': ' + lastText.slice(0, 80) : ''}`
+        );
+        if (
+          nf.enabled &&
+          nf.completed !== false &&
+          (document.hidden || !document.hasFocus()) &&
+          notifPerm() === 'granted'
+        ) {
           swLocalNotif({
-            title: `✓ Turn Complete · ${r.provider === 'claude' ? 'Claude Code' : 'Antigravity'}`,
-            body: `${r.title || 'Session'} (${r.folder || 'Workspace'}) finished running. Tap to inspect.`,
-            tag: `theo-done-${r.id}`,
+            title: endsWithQ
+              ? `❓ Question from THEO — ${r.title || 'Session'}`
+              : `✓ Task Complete — ${r.title || 'Session'}`,
+            body: lastText
+              ? lastText.slice(0, 160)
+              : `${r.title || 'Session'} (${r.folder || 'Workspace'}) finished running. Tap to inspect.`,
+            tag: `theo-done-${r.id}-${curStep || Date.now()}`,
             tab: 'chat',
             threadId: r.id,
             provider: r.provider || 'antigravity'
@@ -5809,7 +5873,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=12', { updateViaCache: 'none' })
+        .register('sw.js?v=13', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
@@ -5849,6 +5913,12 @@
           }
           syncData();
         } else if (m.type === 'theo-push') {
+          if (m.payload && m.payload.title) {
+            playChime(m.payload.requireInteraction ? 'approve' : 'confirm');
+            showToast(
+              `${m.payload.title}${m.payload.body ? ': ' + String(m.payload.body).slice(0, 95) : ''}`
+            );
+          }
           syncData();
         }
       });
