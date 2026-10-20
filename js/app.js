@@ -8,7 +8,8 @@
     PIN: 'theo_remote_pin_v1',
     DEVID: 'theo_remote_devid_v1',
     PUSH_HINT: 'theo_remote_pushhint_v1',
-    PERSONAL: 'theo_personal_ledger_v1'
+    PERSONAL: 'theo_personal_ledger_v1',
+    COMMAND: 'theo_command_state_v1'
   };
 
   const DEFAULT_NOTIF = {
@@ -115,8 +116,8 @@
     jwk: {
       kty: 'EC',
       crv: 'P-256',
-      x: 'oALqBY5EVKiLph_te5Le-hmcGB-VeYbUbNbQrWm3iFw',
-      y: 'NoY7FNYPK-Jn-gAghKvphbSM_-ieA6U8w0E9yEgKB68',
+      x: 'oALqBY5EVKiLph_te5Pe-hmcGB-VeYbUbNbQrWm3iFw',
+      y: '2hjsU1g8r4mf6ACCEq-mFtIz_6J4DpTzDQT3ISAoHrw',
       d: 'MS5ta1KAESpycusDW8d1NMaj3fxc_oNO_F0V23oh5aA',
       ext: true
     },
@@ -289,15 +290,125 @@
 
   let personalLedger = loadJson(STORAGE_KEYS.PERSONAL, {
     reminders: [],
+    deletedIds: [],
     dailyScores: {},
+    teamRoster: [],
     updatedAt: 0
   });
   if (!personalLedger || typeof personalLedger !== 'object') {
-    personalLedger = { reminders: [], dailyScores: {}, updatedAt: 0 };
+    personalLedger = { reminders: [], deletedIds: [], dailyScores: {}, teamRoster: [], updatedAt: 0 };
   }
   if (!Array.isArray(personalLedger.reminders)) personalLedger.reminders = [];
+  if (!Array.isArray(personalLedger.deletedIds)) personalLedger.deletedIds = [];
   if (!personalLedger.dailyScores || typeof personalLedger.dailyScores !== 'object') {
     personalLedger.dailyScores = {};
+  }
+  if (!Array.isArray(personalLedger.teamRoster)) personalLedger.teamRoster = [];
+
+  function normalizeDayScoreRecord(rec, iso = '') {
+    if (!rec || typeof rec !== 'object') {
+      return { iso, date: iso, dos: {}, donts: {}, updatedAt: 0 };
+    }
+    const rawDos = rec.dos && typeof rec.dos === 'object' ? rec.dos : {};
+    const rawDonts = rec.donts && typeof rec.donts === 'object' ? rec.donts : {};
+
+    const normDo = (v) => (v === 'full' || v === 'half' ? v : 'none');
+    const normDontTheo = (v) => {
+      if (v === 'broken' || v === 'slip') return 'broken';
+      if (v === 'half') return 'half';
+      return 'clean';
+    };
+    const toCmdDont = (theoVal) =>
+      theoVal === 'broken' ? 'slip' : theoVal === 'half' ? 'half' : 'intact';
+
+    const socialVal = normDo(
+      rawDos.social && rawDos.social !== 'none' ? rawDos.social : rawDos.socializing
+    );
+    const dos = {
+      ...rawDos,
+      wake: normDo(rawDos.wake),
+      work: normDo(rawDos.work),
+      skills: normDo(rawDos.skills),
+      fitness: normDo(rawDos.fitness),
+      social: socialVal,
+      socializing: socialVal
+    };
+
+    const gamesTheo = normDontTheo(
+      rawDonts.games && rawDonts.games !== 'clean' && rawDonts.games !== 'intact'
+        ? rawDonts.games
+        : rawDonts.videogames || rawDonts.games
+    );
+    const seriesTheo = normDontTheo(rawDonts.series);
+    const musicTheo = normDontTheo(rawDonts.music);
+    const socialmediaTheo = normDontTheo(rawDonts.socialmedia);
+    const nsfwTheo = normDontTheo(
+      rawDonts.nsfw && rawDonts.nsfw !== 'clean' && rawDonts.nsfw !== 'intact'
+        ? rawDonts.nsfw
+        : rawDonts.adult18 || rawDonts.nsfw
+    );
+
+    const donts = {
+      ...rawDonts,
+      games: gamesTheo,
+      videogames: toCmdDont(gamesTheo),
+      series: seriesTheo,
+      music: musicTheo,
+      socialmedia: socialmediaTheo,
+      nsfw: nsfwTheo,
+      adult18: toCmdDont(nsfwTheo)
+    };
+
+    return {
+      ...rec,
+      iso: rec.iso || rec.date || iso,
+      date: rec.date || rec.iso || iso,
+      dos,
+      donts,
+      updatedAt: Number(rec.updatedAt || 0)
+    };
+  }
+
+  function normalizeReminderItem(rem) {
+    if (!rem || typeof rem !== 'object') return rem;
+    const completed = Boolean(rem.completed || rem.status === 'done');
+    const subTag =
+      rem.subTag ||
+      rem.subGroup ||
+      rem.customGroup ||
+      (rem.assigneeName ? `👤 ${rem.assigneeName}` : '');
+    const isParkedIdea =
+      (rem.category === 'ideas' || rem.category === 'want_to_do') &&
+      !rem.matureAt &&
+      rem.kind !== 'wait';
+    return {
+      ...rem,
+      completed,
+      status: completed ? 'done' : 'open',
+      subTag,
+      subGroup: rem.subGroup || subTag,
+      kind: isParkedIdea ? 'parked' : rem.kind || 'task',
+      dueAt: isParkedIdea ? 0 : Number(rem.dueAt || 0),
+      matureAt: Number(rem.matureAt || 0),
+      recur: isParkedIdea ? 'none' : rem.recur || 'none'
+    };
+  }
+
+  function savePersonalLedgerToLocal() {
+    for (const [iso, rec] of Object.entries(personalLedger.dailyScores || {})) {
+      personalLedger.dailyScores[iso] = normalizeDayScoreRecord(rec, iso);
+    }
+    personalLedger.deletedIds = Array.from(new Set(personalLedger.deletedIds || [])).slice(-400);
+    saveJson(STORAGE_KEYS.PERSONAL, personalLedger);
+    saveJson(STORAGE_KEYS.COMMAND, personalLedger);
+  }
+
+  function loadPersonalLedgerFromLocal() {
+    const p1 = loadJson(STORAGE_KEYS.PERSONAL, null);
+    if (p1 && typeof p1 === 'object') mergePersonalLedger(p1, { skipSave: true });
+    const p2 = loadJson(STORAGE_KEYS.COMMAND, null);
+    if (p2 && typeof p2 === 'object') mergePersonalLedger(p2, { skipSave: true });
+    savePersonalLedgerToLocal();
   }
 
   let selectedScoreDate = localIsoDate();
@@ -312,27 +423,11 @@
   };
 
   function getDayRecord(iso = localIsoDate()) {
-    const rec = personalLedger.dailyScores?.[iso] || {};
-    const dos = {};
-    const donts = {};
-    for (const item of DAILY_DOS) {
-      const v = rec?.dos?.[item.id];
-      dos[item.id] = v === 'full' || v === 'half' ? v : 'none';
-    }
-    for (const item of DAILY_DONTS) {
-      const v = rec?.donts?.[item.id];
-      donts[item.id] = v === 'broken' || v === 'half' ? v : 'clean';
-    }
-    return {
-      iso,
-      dos,
-      donts,
-      updatedAt: Number(rec.updatedAt || 0)
-    };
+    return normalizeDayScoreRecord(personalLedger.dailyScores?.[iso], iso);
   }
 
   function computeDayDiscipline(isoOrRec = localIsoDate()) {
-    const rec = typeof isoOrRec === 'string' ? getDayRecord(isoOrRec) : isoOrRec;
+    const rec = typeof isoOrRec === 'string' ? getDayRecord(isoOrRec) : normalizeDayScoreRecord(isoOrRec, isoOrRec?.iso || localIsoDate());
     let doEarned = 0;
     let doFullCount = 0;
     let doHalfCount = 0;
@@ -352,7 +447,7 @@
     let dontSlipCount = 0;
     for (const item of DAILY_DONTS) {
       const st = rec.donts?.[item.id] || 'clean';
-      if (st === 'broken') {
+      if (st === 'broken' || st === 'slip') {
         dontLost += 10;
         dontSlipCount++;
       } else if (st === 'half') {
@@ -391,12 +486,25 @@
   function setHabitState(iso, group, habitId, nextVal) {
     const cur = getDayRecord(iso);
     if (group === 'do') {
-      cur.dos[habitId] = nextVal === 'full' || nextVal === 'half' ? nextVal : 'none';
+      const val = nextVal === 'full' || nextVal === 'half' ? nextVal : 'none';
+      cur.dos[habitId] = val;
+      if (habitId === 'social' || habitId === 'socializing') {
+        cur.dos.social = val;
+        cur.dos.socializing = val;
+      }
     } else {
-      cur.donts[habitId] = nextVal === 'broken' || nextVal === 'half' ? nextVal : 'clean';
+      const val = nextVal === 'broken' || nextVal === 'slip' ? 'broken' : nextVal === 'half' ? 'half' : 'clean';
+      cur.donts[habitId] = val;
+      if (habitId === 'games' || habitId === 'videogames') {
+        cur.donts.games = val;
+        cur.donts.videogames = val === 'broken' ? 'slip' : val === 'half' ? 'half' : 'intact';
+      } else if (habitId === 'nsfw' || habitId === 'adult18') {
+        cur.donts.nsfw = val;
+        cur.donts.adult18 = val === 'broken' ? 'slip' : val === 'half' ? 'half' : 'intact';
+      }
     }
     cur.updatedAt = Date.now();
-    personalLedger.dailyScores[iso] = cur;
+    personalLedger.dailyScores[iso] = normalizeDayScoreRecord(cur, iso);
     personalLedger.updatedAt = Date.now();
     persistAndSyncPersonalLedger();
     renderAll();
@@ -993,8 +1101,28 @@
     return `${days}d ${remHrs}h left`;
   }
 
+  function isTimerItem(r) {
+    if (!r || r.completed || r.deleted) return false;
+    if (r.category === 'ideas' || r.category === 'want_to_do') return Boolean(r.matureAt > 0);
+    return Boolean(
+      r.matureAt > 0 ||
+        r.kind === 'wait' ||
+        r.kind === 'payment' ||
+        r.category === 'verify' ||
+        r.category === 'shipping' ||
+        r.category === 'payments'
+    );
+  }
+
+  function isDelegatedItem(r) {
+    if (!r || r.completed || r.deleted) return false;
+    if (r.category === 'ideas' || r.category === 'want_to_do') return Boolean(r.isDelegated || r.assigneeName);
+    return Boolean(r.isDelegated || r.assigneeName || r.category === 'people');
+  }
+
   function classifyReminderBucket(item, nowMs = Date.now()) {
     if (item.completed) return 'completed';
+    if (item.delegationStatus === 'done') return 'urgent_matured';
     if (item.kind === 'recurring') {
       const targetMs = Number(item.matureAt || item.dueAt || 0);
       if (targetMs && nowMs >= targetMs) return 'urgent_matured';
@@ -1005,19 +1133,14 @@
       if (targetMs && nowMs >= targetMs) return 'urgent_matured';
       if (!targetMs) return 'parked';
     }
-    const isHold =
-      item.kind === 'payment' ||
-      item.kind === 'wait' ||
-      item.category === 'verify' ||
-      item.category === 'shipping' ||
-      item.category === 'payments';
+    const isHold = isTimerItem(item);
     if (isHold) {
       if (targetMs && nowMs >= targetMs) {
         return 'urgent_matured';
       }
       return 'holding';
     }
-    if (targetMs && targetMs <= nowMs + 2 * 3600 * 1000) {
+    if (targetMs && nowMs >= targetMs) {
       return 'urgent_matured';
     }
     const endOfToday = new Date();
@@ -1028,54 +1151,117 @@
     return 'upcoming';
   }
 
-  function mergePersonalLedger(incoming) {
+  function mergePersonalLedger(incoming, opts = {}) {
     if (!incoming || typeof incoming !== 'object') return false;
     let changed = false;
+
+    const delSet = new Set(personalLedger.deletedIds || []);
+    if (Array.isArray(incoming.deletedIds)) {
+      for (const dId of incoming.deletedIds) {
+        if (dId && !delSet.has(dId)) {
+          delSet.add(dId);
+          changed = true;
+        }
+      }
+    }
+
+    for (const r of personalLedger.reminders || []) {
+      if (r && r.id && r.deleted && !delSet.has(r.id)) {
+        delSet.add(r.id);
+        changed = true;
+      }
+    }
+    if (Array.isArray(incoming.reminders)) {
+      for (const r of incoming.reminders) {
+        if (r && r.id && r.deleted && !delSet.has(r.id)) {
+          delSet.add(r.id);
+          changed = true;
+        }
+      }
+    }
+
+    const beforeCount = (personalLedger.reminders || []).length;
+    personalLedger.reminders = (personalLedger.reminders || [])
+      .filter((r) => r && r.id && !r.deleted && !delSet.has(r.id))
+      .map((r) => normalizeReminderItem(r));
+    if (personalLedger.reminders.length !== beforeCount) changed = true;
 
     // 1. Merge reminders by id using updatedAt
     if (Array.isArray(incoming.reminders)) {
       const map = new Map();
       for (const r of personalLedger.reminders || []) {
-        if (r && r.id) map.set(r.id, r);
+        if (r && r.id && !delSet.has(r.id)) map.set(r.id, r);
       }
-      for (const rem of incoming.reminders) {
-        if (!rem || !rem.id) continue;
+      for (const rawRem of incoming.reminders) {
+        if (!rawRem || !rawRem.id || rawRem.deleted || delSet.has(rawRem.id)) continue;
+        const rem = normalizeReminderItem(rawRem);
         const cur = map.get(rem.id);
-        if (!cur || Number(rem.updatedAt || 0) > Number(cur.updatedAt || 0)) {
+        if (!cur || Number(rem.updatedAt || 0) >= Number(cur.updatedAt || 0)) {
           map.set(rem.id, rem);
           changed = true;
         }
       }
-      personalLedger.reminders = Array.from(map.values()).sort(
+      const seenActiveTitle = new Map();
+      const deduped = [];
+      const sorted = Array.from(map.values()).sort(
+        (a, b) => Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0)
+      );
+      for (const item of sorted) {
+        if (!item.completed) {
+          const normTitle = String(item.title || '').trim().toLowerCase();
+          if (seenActiveTitle.has(normTitle)) {
+            delSet.add(item.id);
+            changed = true;
+            continue;
+          }
+          seenActiveTitle.set(normTitle, item.id);
+        }
+        deduped.push(item);
+      }
+      personalLedger.reminders = deduped.sort(
         (a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0)
       );
+    }
+
+    personalLedger.deletedIds = Array.from(delSet).slice(-400);
+
+    for (const [iso, curRec] of Object.entries(personalLedger.dailyScores || {})) {
+      personalLedger.dailyScores[iso] = normalizeDayScoreRecord(curRec, iso);
     }
 
     // 2. Merge dailyScores by date key using updatedAt
     if (incoming.dailyScores && typeof incoming.dailyScores === 'object') {
       for (const [iso, rec] of Object.entries(incoming.dailyScores)) {
         if (!rec || typeof rec !== 'object') continue;
+        const normInc = normalizeDayScoreRecord(rec, iso);
         const cur = personalLedger.dailyScores[iso];
-        if (!cur || Number(rec.updatedAt || 0) > Number(cur.updatedAt || 0)) {
-          personalLedger.dailyScores[iso] = rec;
+        if (!cur || Number(normInc.updatedAt || 0) >= Number(cur.updatedAt || 0)) {
+          personalLedger.dailyScores[iso] = normInc;
           changed = true;
         }
       }
     }
 
-    if (changed) {
+    if (Array.isArray(incoming.teamRoster) && incoming.teamRoster.length) {
+      personalLedger.teamRoster = incoming.teamRoster;
+      changed = true;
+    }
+
+    if (changed && !opts.skipSave) {
       personalLedger.updatedAt = Math.max(
         Number(personalLedger.updatedAt || 0),
         Number(incoming.updatedAt || Date.now())
       );
-      saveJson(STORAGE_KEYS.PERSONAL, personalLedger);
+      savePersonalLedgerToLocal();
+    } else if (!opts.skipSave) {
+      savePersonalLedgerToLocal();
     }
     return changed;
   }
 
   let personalSyncTimer = null;
   function persistAndSyncPersonalLedger() {
-    saveJson(STORAGE_KEYS.PERSONAL, personalLedger);
+    savePersonalLedgerToLocal();
     schedulePushSync();
     clearTimeout(personalSyncTimer);
     personalSyncTimer = setTimeout(() => {
@@ -1086,15 +1272,28 @@
   async function pushPersonalLedgerToCloud() {
     // 1. Sync with Direct Local Bridge (:4318) if connected
     if (localBridgeBase) {
-      fetch(`${localBridgeBase}/api/personal-ledger`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ personalLedger })
-      }).catch(() => {});
+      try {
+        const bRes = await fetch(`${localBridgeBase}/api/personal-ledger`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ personalLedger })
+        });
+        if (bRes.ok) {
+          const bData = await bRes.json();
+          if (bData?.personalLedger) {
+            mergePersonalLedger(bData.personalLedger);
+          }
+        }
+      } catch {}
     }
-    // 2. Sync with Dataverse Cloud Relay
+    // 2. Sync with Dataverse Cloud Relay (fetch & merge first so we never clobber Command edits)
     if (cloudCfg.url && cloudCfg.key) {
       try {
+        const getRes = await callCloudPush({ op: 'get' }).catch(() => null);
+        const getDocs = getRes?.docs && typeof getRes.docs === 'object' ? getRes.docs : getRes || {};
+        if (getDocs?.personal_ledger && typeof getDocs.personal_ledger === 'object') {
+          mergePersonalLedger(getDocs.personal_ledger);
+        }
         const res = await callCloudPush({
           op: 'patch',
           patch: {
@@ -1909,6 +2108,9 @@
           if (st) {
             checkLiveStateNotifications(st);
             appState = st;
+            if (st.personalLedger) {
+              mergePersonalLedger(st.personalLedger);
+            }
             persistCache();
             renderAll();
           }
@@ -3670,7 +3872,8 @@
 
   // ---------- Daily 100-Point Discipline & Smart Reminders Views ----------
   function getActiveRemindersSummary(nowMs = Date.now()) {
-    const all = (personalLedger.reminders || []).filter((r) => r && !r.deleted);
+    const delSet = new Set(personalLedger.deletedIds || []);
+    const all = (personalLedger.reminders || []).filter((r) => r && r.id && !r.deleted && !delSet.has(r.id));
     const active = all.filter((r) => !r.completed);
     const completed = all.filter((r) => r.completed);
     let maturedCount = 0;
@@ -3697,12 +3900,17 @@
       }
     }
 
+    const timersCount = active.filter(isTimerItem).length;
+    const delegatedCount = active.filter(isDelegatedItem).length;
+
     return {
       all,
       active,
       completed,
       maturedCount,
       holdingCount,
+      timersCount,
+      delegatedCount,
       dueTodayCount,
       urgentTotal: maturedCount + dueTodayCount,
       nextHoldItem
@@ -3756,7 +3964,7 @@
       )
     ).size;
 
-    const delegatedCount = remSum.active.filter((r) => r.isDelegated || r.assigneeName).length;
+    const delegatedCount = remSum.delegatedCount;
     const cmdUrl = './command/';
 
     return `
@@ -3794,7 +4002,7 @@
                 <span class="meta-timestamp"> ready now</span>
               </div>
               <div>
-                <span class="pulse-disc-big tabular" style="font-size:24px;color:var(--brass)">${remSum.holdingCount}</span>
+                <span class="pulse-disc-big tabular" style="font-size:24px;color:var(--brass)">${remSum.timersCount}</span>
                 <span class="meta-timestamp"> timers</span>
               </div>
               <div>
@@ -4035,6 +4243,25 @@
                 ? '✓ Done & Roll'
                 : '✓ Done';
 
+    let delBadge = '';
+    if (item.isDelegated || item.assigneeName) {
+      const st = item.delegationStatus || 'assigned';
+      const who = item.assigneeName || 'Team';
+      const stLbl =
+        st === 'done'
+          ? `✅ ${who} · Done (Verify)`
+          : st === 'working'
+            ? `⚙️ ${who} · Working`
+            : st === 'seen'
+              ? `👀 ${who} · Seen`
+              : st === 'sent'
+                ? `📨 ${who} · Sent`
+                : `👤 ${who}`;
+      delBadge = `<span class="rem-badge ${st === 'done' ? 'matured' : 'hold'}">${esc(stLbl)}</span>`;
+    } else if (subTag) {
+      delBadge = `<span class="rem-badge hold">${esc(subTag)}</span>`;
+    }
+
     return `
       <div class="rem-card ${cardStateClass}" data-rem-id="${esc(item.id)}">
         <div class="rem-card-top">
@@ -4042,11 +4269,16 @@
             <div class="rem-card-title">${esc(item.title)}</div>
             <div class="rem-card-meta">
               <span class="rem-badge cat">${cat.icon} ${esc(cat.shortLabel || cat.label)}</span>
-              ${subTag ? `<span class="rem-badge hold">${esc(subTag)}</span>` : ''}
+              ${delBadge}
               ${item.amount > 0 ? `<span class="rem-badge amt">$${fmtInt(item.amount)}</span>` : ''}
               ${kindBadge}
               ${targetFormatted ? `<span class="meta-timestamp">Target: ${esc(targetFormatted)}</span>` : ''}
             </div>
+            ${
+              item.staffNote
+                ? `<div class="meta-timestamp" style="margin-top:4px;color:var(--emerald)">💬 <strong>${esc(item.assigneeName || 'Staff')}:</strong> ${esc(item.staffNote)}</div>`
+                : ''
+            }
           </div>
           <div class="rem-actions">
             ${
@@ -4570,6 +4802,7 @@
       cat.id === 'shipping' ||
       cat.id === 'payments';
 
+    const isDelegated = Boolean(ctx.personTag);
     const newItem = {
       id: `rem_${nowMs.toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
       title: remDraft.title,
@@ -4578,18 +4811,23 @@
       category: cat.id,
       customGroup: remDraft.customGroup || '',
       subTag: ctx.subTag || '',
+      subGroup: ctx.subTag || '',
       waitDays: targetInfo.waitDays,
       waitLabel: targetInfo.label,
       recur:
         resolvedKind === 'recurring'
           ? targetInfo.recur || remDraft.recur || 'daily'
-          : '',
+          : 'none',
       createdAt: nowMs,
       updatedAt: nowMs,
       matureAt: isHoldType && targetInfo.targetMs ? targetInfo.targetMs : 0,
       dueAt: targetInfo.targetMs || 0,
       completed: false,
-      completedAt: 0
+      status: 'open',
+      completedAt: 0,
+      isDelegated,
+      assigneeName: ctx.personTag || '',
+      delegationStatus: isDelegated ? 'assigned' : ''
     };
 
     personalLedger.reminders.unshift(newItem);
@@ -4778,11 +5016,14 @@
 
   function deleteReminder(id) {
     const item = (personalLedger.reminders || []).find((r) => r && r.id === id);
-    if (!item) return;
-    item.deleted = true;
-    item.updatedAt = Date.now();
+    if (!item && !id) return;
+    if (!Array.isArray(personalLedger.deletedIds)) personalLedger.deletedIds = [];
+    if (id && !personalLedger.deletedIds.includes(id)) {
+      personalLedger.deletedIds.push(id);
+    }
+    personalLedger.reminders = (personalLedger.reminders || []).filter((r) => r && r.id !== id);
     personalLedger.updatedAt = Date.now();
-    cancelExactReminderPush(item.id);
+    cancelExactReminderPush(id);
     persistAndSyncPersonalLedger();
     renderAll();
     showToast('Reminder removed');
@@ -4790,12 +5031,17 @@
 
   function clearCompletedReminders() {
     const nowMs = Date.now();
+    if (!Array.isArray(personalLedger.deletedIds)) personalLedger.deletedIds = [];
     for (const r of personalLedger.reminders || []) {
       if (r && r.completed && !r.deleted) {
         r.deleted = true;
         r.updatedAt = nowMs;
+        if (r.id && !personalLedger.deletedIds.includes(r.id)) {
+          personalLedger.deletedIds.push(r.id);
+        }
       }
     }
+    personalLedger.reminders = (personalLedger.reminders || []).filter((r) => r && !r.deleted);
     personalLedger.updatedAt = nowMs;
     persistAndSyncPersonalLedger();
     renderAll();
@@ -5563,7 +5809,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=11', { updateViaCache: 'none' })
+        .register('sw.js?v=12', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
@@ -5621,7 +5867,20 @@
     applyTheme(prefs.theme);
     hydrateStaticIcons();
     initPinLock();
+    loadPersonalLedgerFromLocal();
     bindEvents();
+
+    window.addEventListener('storage', (e) => {
+      if (e.key === STORAGE_KEYS.PERSONAL || e.key === STORAGE_KEYS.COMMAND) {
+        loadPersonalLedgerFromLocal();
+        renderAll();
+      }
+    });
+    window.addEventListener('focus', () => {
+      loadPersonalLedgerFromLocal();
+      renderAll();
+      syncData().catch(() => {});
+    });
 
     const urlParams = new URLSearchParams(location.search);
     const tabParam = urlParams.get('tab');

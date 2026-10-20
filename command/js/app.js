@@ -13,9 +13,10 @@
   const VAPID_PRIVATE_JWK = {
     kty: 'EC',
     crv: 'P-256',
-    x: 'oALqBY5EVKjppp_de5Pe-gZ2B-VeadrYbLXTbWm3iFw',
-    y: '2gP8V1g8r4mf4ACCEq-mFsIz_6J4DpTzDQT3ISAoHrw',
-    d: 'rI4p2nB099C-x2Z_yU1c7-mN9vK3qW8zL5pX1dF6hJ0'
+    x: 'oALqBY5EVKiLph_te5Pe-hmcGB-VeYbUbNbQrWm3iFw',
+    y: '2hjsU1g8r4mf6ACCEq-mFtIz_6J4DpTzDQT3ISAoHrw',
+    d: 'MS5ta1KAESpycusDW8d1NMaj3fxc_oNO_F0V23oh5aA',
+    ext: true
   };
 
   const DAILY_DOS = [
@@ -176,15 +177,99 @@
   /* ============================================================================
      LOCAL PERSISTENCE & LEGACY MIGRATION
      ============================================================================ */
+  function normalizeDayScoreRecord(rec, iso = '') {
+    if (!rec || typeof rec !== 'object') {
+      return { date: iso, dos: {}, donts: {}, updatedAt: 0 };
+    }
+    const rawDos = rec.dos && typeof rec.dos === 'object' ? rec.dos : {};
+    const rawDonts = rec.donts && typeof rec.donts === 'object' ? rec.donts : {};
+
+    const normDo = (v) => (v === 'full' || v === 'half' ? v : 'none');
+    const normDontCmd = (v) => {
+      if (v === 'slip' || v === 'broken') return 'slip';
+      if (v === 'half') return 'half';
+      return 'intact';
+    };
+    const toTheoDont = (cmdVal) =>
+      cmdVal === 'slip' ? 'broken' : cmdVal === 'half' ? 'half' : 'clean';
+
+    const socialVal = normDo(
+      rawDos.socializing && rawDos.socializing !== 'none' ? rawDos.socializing : rawDos.social
+    );
+    const dos = {
+      ...rawDos,
+      wake: normDo(rawDos.wake),
+      work: normDo(rawDos.work),
+      skills: normDo(rawDos.skills),
+      fitness: normDo(rawDos.fitness),
+      social: socialVal,
+      socializing: socialVal
+    };
+
+    const gamesCmd = normDontCmd(
+      rawDonts.videogames && rawDonts.videogames !== 'intact' && rawDonts.videogames !== 'clean'
+        ? rawDonts.videogames
+        : rawDonts.games || rawDonts.videogames
+    );
+    const seriesCmd = normDontCmd(rawDonts.series);
+    const musicCmd = normDontCmd(rawDonts.music);
+    const socialmediaCmd = normDontCmd(rawDonts.socialmedia);
+    const adultCmd = normDontCmd(
+      rawDonts.adult18 && rawDonts.adult18 !== 'intact' && rawDonts.adult18 !== 'clean'
+        ? rawDonts.adult18
+        : rawDonts.nsfw || rawDonts.adult18
+    );
+
+    const donts = {
+      ...rawDonts,
+      videogames: gamesCmd,
+      games: toTheoDont(gamesCmd),
+      series: seriesCmd,
+      music: musicCmd,
+      socialmedia: socialmediaCmd,
+      adult18: adultCmd,
+      nsfw: toTheoDont(adultCmd)
+    };
+
+    return {
+      ...rec,
+      date: rec.date || iso,
+      dos,
+      donts,
+      updatedAt: Number(rec.updatedAt || 0)
+    };
+  }
+
+  function normalizeReminderItem(rem) {
+    if (!rem || typeof rem !== 'object') return rem;
+    const completed = Boolean(rem.completed || rem.status === 'done');
+    const subTag =
+      rem.subTag ||
+      rem.subGroup ||
+      rem.customGroup ||
+      (rem.assigneeName ? `👤 ${rem.assigneeName}` : '');
+    const isParkedIdea =
+      (rem.category === 'ideas' || rem.category === 'want_to_do') &&
+      !rem.matureAt &&
+      rem.kind !== 'wait';
+    return {
+      ...rem,
+      completed,
+      status: completed ? 'done' : 'open',
+      subTag,
+      subGroup: rem.subGroup || subTag,
+      kind: isParkedIdea ? 'parked' : rem.kind || 'task',
+      dueAt: isParkedIdea ? 0 : Number(rem.dueAt || 0),
+      matureAt: Number(rem.matureAt || 0),
+      recur: isParkedIdea ? 'none' : rem.recur || 'none'
+    };
+  }
+
   function loadLocalState() {
     try {
       const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
       if (raw && typeof raw === 'object') {
-        if (Array.isArray(raw.reminders)) state.reminders = raw.reminders;
-        if (Array.isArray(raw.deletedIds)) state.deletedIds = raw.deletedIds;
-        if (raw.dailyScores && typeof raw.dailyScores === 'object') state.dailyScores = raw.dailyScores;
-        if (Array.isArray(raw.teamRoster) && raw.teamRoster.length) state.teamRoster = raw.teamRoster;
-        state.updatedAt = Number(raw.updatedAt || 0);
+        mergeIncomingLedger(raw, false);
       }
       // Also merge any items saved in theo_personal_ledger_v1 on same origin
       const legacy = JSON.parse(localStorage.getItem(LEGACY_LEDGER_KEY) || 'null');
@@ -196,26 +281,19 @@
 
   function saveLocalState() {
     state.updatedAt = Date.now();
+    for (const [iso, rec] of Object.entries(state.dailyScores)) {
+      state.dailyScores[iso] = normalizeDayScoreRecord(rec, iso);
+    }
+    const payload = JSON.stringify({
+      reminders: state.reminders,
+      deletedIds: state.deletedIds.slice(-400),
+      dailyScores: state.dailyScores,
+      teamRoster: state.teamRoster,
+      updatedAt: state.updatedAt
+    });
     try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          reminders: state.reminders,
-          deletedIds: state.deletedIds.slice(-300),
-          dailyScores: state.dailyScores,
-          teamRoster: state.teamRoster,
-          updatedAt: state.updatedAt
-        })
-      );
-      localStorage.setItem(
-        LEGACY_LEDGER_KEY,
-        JSON.stringify({
-          reminders: state.reminders,
-          deletedIds: state.deletedIds.slice(-300),
-          dailyScores: state.dailyScores,
-          updatedAt: state.updatedAt
-        })
-      );
+      localStorage.setItem(STORAGE_KEY, payload);
+      localStorage.setItem(LEGACY_LEDGER_KEY, payload);
     } catch {}
   }
 
@@ -231,36 +309,58 @@
           changed = true;
         }
       }
-      state.deletedIds = Array.from(delSet).slice(-300);
     }
+
+    for (const r of state.reminders) {
+      if (r && r.id && r.deleted && !delSet.has(r.id)) {
+        delSet.add(r.id);
+        changed = true;
+      }
+    }
+    if (Array.isArray(incoming.reminders)) {
+      for (const r of incoming.reminders) {
+        if (r && r.id && r.deleted && !delSet.has(r.id)) {
+          delSet.add(r.id);
+          changed = true;
+        }
+      }
+    }
+
+    const beforeCount = state.reminders.length;
+    state.reminders = state.reminders
+      .filter((r) => r && r.id && !r.deleted && !delSet.has(r.id))
+      .map((r) => normalizeReminderItem(r));
+    if (state.reminders.length !== beforeCount) changed = true;
 
     if (Array.isArray(incoming.reminders)) {
       const map = new Map();
       for (const r of state.reminders) {
         if (r && r.id && !delSet.has(r.id)) map.set(r.id, r);
       }
-      for (const rem of incoming.reminders) {
-        if (!rem || !rem.id || delSet.has(rem.id)) continue;
+      for (const rawRem of incoming.reminders) {
+        if (!rawRem || !rawRem.id || rawRem.deleted || delSet.has(rawRem.id)) continue;
+        const rem = normalizeReminderItem(rawRem);
         const cur = map.get(rem.id);
-        if (!cur || Number(rem.updatedAt || 0) > Number(cur.updatedAt || 0)) {
+        if (!cur || Number(rem.updatedAt || 0) >= Number(cur.updatedAt || 0)) {
           map.set(rem.id, rem);
           changed = true;
         }
       }
-      // Deduplicate active items with identical normalized title + category + assignee
-      const seenActiveKey = new Map();
+      // Deduplicate active items with identical normalized title
+      const seenActiveTitle = new Map();
       const deduped = [];
       const sorted = Array.from(map.values()).sort(
         (a, b) => Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0)
       );
       for (const item of sorted) {
         if (!item.completed) {
-          const normKey = `${String(item.title || '').trim().toLowerCase()}|${item.category || ''}|${String(item.assigneeName || '').trim().toLowerCase()}`;
-          if (seenActiveKey.has(normKey)) {
+          const normTitle = String(item.title || '').trim().toLowerCase();
+          if (seenActiveTitle.has(normTitle)) {
+            delSet.add(item.id);
             changed = true;
             continue;
           }
-          seenActiveKey.set(normKey, item.id);
+          seenActiveTitle.set(normTitle, item.id);
         }
         deduped.push(item);
       }
@@ -269,12 +369,19 @@
       );
     }
 
+    state.deletedIds = Array.from(delSet).slice(-400);
+
+    for (const [iso, curRec] of Object.entries(state.dailyScores)) {
+      state.dailyScores[iso] = normalizeDayScoreRecord(curRec, iso);
+    }
+
     if (incoming.dailyScores && typeof incoming.dailyScores === 'object') {
       for (const [iso, rec] of Object.entries(incoming.dailyScores)) {
         if (!rec || typeof rec !== 'object') continue;
+        const normInc = normalizeDayScoreRecord(rec, iso);
         const cur = state.dailyScores[iso];
-        if (!cur || Number(rec.updatedAt || 0) > Number(cur.updatedAt || 0)) {
-          state.dailyScores[iso] = rec;
+        if (!cur || Number(normInc.updatedAt || 0) >= Number(cur.updatedAt || 0)) {
+          state.dailyScores[iso] = normInc;
           changed = true;
         }
       }
@@ -329,20 +436,19 @@
   /* ============================================================================
      DAILY 100-POINT PERSONAL DISCIPLINE ENGINE (50% BASELINE + 5 DO'S - 5 DON'TS)
      ============================================================================ */
-  function getDayRecord(iso = state.scoreDate) {
-    if (!state.dailyScores[iso]) {
-      state.dailyScores[iso] = {
-        date: iso,
-        dos: {},
-        donts: {},
-        updatedAt: 0
-      };
+  function getDayRecord(iso = state.scoreDate, createIfMissing = false) {
+    if (state.dailyScores[iso]) {
+      return normalizeDayScoreRecord(state.dailyScores[iso], iso);
     }
-    return state.dailyScores[iso];
+    const empty = normalizeDayScoreRecord({ date: iso, dos: {}, donts: {}, updatedAt: 0 }, iso);
+    if (createIfMissing) {
+      state.dailyScores[iso] = empty;
+    }
+    return empty;
   }
 
   function computeDayScore(iso = state.scoreDate) {
-    const rec = getDayRecord(iso);
+    const rec = getDayRecord(iso, false);
     let doEarned = 0;
     let dontLost = 0;
     for (const d of DAILY_DOS) {
@@ -352,7 +458,7 @@
     }
     for (const dn of DAILY_DONTS) {
       const v = rec.donts?.[dn.id] || 'intact';
-      if (v === 'slip') dontLost += 10;
+      if (v === 'slip' || v === 'broken') dontLost += 10;
       else if (v === 'half') dontLost += 5;
     }
     const total = Math.max(0, Math.min(100, 50 + doEarned - dontLost));
@@ -367,28 +473,54 @@
   }
 
   function cycleHabitQuick(group, habitId, iso = todayIso()) {
-    const rec = getDayRecord(iso);
+    const rec = getDayRecord(iso, true);
     if (group === 'do') {
       const cur = rec.dos[habitId] || 'none';
-      rec.dos[habitId] = cur === 'none' ? 'half' : cur === 'half' ? 'full' : 'none';
+      const next = cur === 'none' ? 'half' : cur === 'half' ? 'full' : 'none';
+      rec.dos[habitId] = next;
+      if (habitId === 'socializing' || habitId === 'social') {
+        rec.dos.socializing = next;
+        rec.dos.social = next;
+      }
     } else {
       const cur = rec.donts[habitId] || 'intact';
-      rec.donts[habitId] = cur === 'intact' ? 'half' : cur === 'half' ? 'slip' : 'intact';
+      const next = cur === 'intact' || cur === 'clean' ? 'half' : cur === 'half' ? 'slip' : 'intact';
+      rec.donts[habitId] = next;
+      if (habitId === 'videogames' || habitId === 'games') {
+        rec.donts.videogames = next;
+        rec.donts.games = next === 'slip' ? 'broken' : next === 'half' ? 'half' : 'clean';
+      } else if (habitId === 'adult18' || habitId === 'nsfw') {
+        rec.donts.adult18 = next;
+        rec.donts.nsfw = next === 'slip' ? 'broken' : next === 'half' ? 'half' : 'clean';
+      }
     }
     rec.updatedAt = Date.now();
+    state.dailyScores[iso] = normalizeDayScoreRecord(rec, iso);
     saveLocalState();
     renderAll();
     syncAll().catch(() => {});
   }
 
   function setHabitState(group, habitId, val, iso = state.scoreDate) {
-    const rec = getDayRecord(iso);
+    const rec = getDayRecord(iso, true);
     if (group === 'do') {
       rec.dos[habitId] = val;
+      if (habitId === 'socializing' || habitId === 'social') {
+        rec.dos.socializing = val;
+        rec.dos.social = val;
+      }
     } else {
       rec.donts[habitId] = val;
+      if (habitId === 'videogames' || habitId === 'games') {
+        rec.donts.videogames = val;
+        rec.donts.games = val === 'slip' ? 'broken' : val === 'half' ? 'half' : 'clean';
+      } else if (habitId === 'adult18' || habitId === 'nsfw') {
+        rec.donts.adult18 = val;
+        rec.donts.nsfw = val === 'slip' ? 'broken' : val === 'half' ? 'half' : 'clean';
+      }
     }
     rec.updatedAt = Date.now();
+    state.dailyScores[iso] = normalizeDayScoreRecord(rec, iso);
     saveLocalState();
     renderAll();
     syncAll().catch(() => {});
@@ -1598,11 +1730,12 @@
      TAB 2: TIMERS & HOLDS (VERIFY APP SYNC, SHIPPING, PAYMENT HOLDS)
      ============================================================================ */
   function isTimerItem(r) {
-    if (!r || r.completed) return false;
+    if (!r || r.completed || r.deleted) return false;
     if (r.category === 'ideas' || r.category === 'want_to_do') return Boolean(r.matureAt > 0);
     return Boolean(
       r.matureAt > 0 ||
-        r.dueAt > 0 ||
+        r.kind === 'wait' ||
+        r.kind === 'payment' ||
         r.category === 'verify' ||
         r.category === 'shipping' ||
         r.category === 'payments'
@@ -2626,7 +2759,7 @@
         location.reload();
       });
       navigator.serviceWorker
-        .register('./sw.js?v=3', { updateViaCache: 'none' })
+        .register('./sw.js?v=4', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
@@ -2663,6 +2796,24 @@
     }
     window.addEventListener('resize', () => {
       if (state.activeTab === 'radar' && !isFormControlFocused()) renderRadarView();
+    });
+    window.addEventListener('storage', (e) => {
+      if (e.key === STORAGE_KEY || e.key === LEGACY_LEDGER_KEY) {
+        loadLocalState();
+        renderAll();
+      }
+    });
+    window.addEventListener('focus', () => {
+      loadLocalState();
+      renderAll();
+      syncAll().catch(() => {});
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        loadLocalState();
+        renderAll();
+        syncAll().catch(() => {});
+      }
     });
     if (getSavedPushSub()) {
       const pDot = document.getElementById('push-dot');

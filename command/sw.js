@@ -1,11 +1,11 @@
-/* THEO Command — Executive Planner, Wait-Timer, Org Delegation & 100% Discipline Service Worker v3 */
-const CACHE_NAME = 'theo-command-v3';
+/* THEO Command — Executive Planner, Wait-Timer, Org Delegation & 100% Discipline Service Worker v4 */
+const CACHE_NAME = 'theo-command-v4';
 const APP_SHELL = [
   './',
   './index.html',
-  './css/command.css?v=3',
-  './js/endpoints.js?v=3',
-  './js/app.js?v=3',
+  './css/command.css?v=4',
+  './js/endpoints.js?v=4',
+  './js/app.js?v=4',
   './manifest.json',
   './icon.svg',
   './icon-180.png',
