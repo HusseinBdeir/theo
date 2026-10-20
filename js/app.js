@@ -1726,22 +1726,10 @@
     const dirtyRepos = workspaces.filter((w) => Number(w.dirtyCount || 0) > 0);
     const openTabs = rows.filter((r) => r.open);
     const todayTok = Number(appState?.summary?.today?.tokens || 0);
-    const activeRems = (personalLedger.reminders || []).filter(
-      (r) => r && !r.deleted && !r.completed
-    );
 
     for (let d = 0; d < daysCount; d++) {
       const baseDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + d);
-      const dayStartMs = baseDate.getTime();
-      const dayEndMs = dayStartMs + 86400 * 1000;
       const iso = `${baseDate.getFullYear()}-${String(baseDate.getMonth() + 1).padStart(2, '0')}-${String(baseDate.getDate()).padStart(2, '0')}`;
-      const dayDisc = computeDayDiscipline(iso);
-
-      const maturingToday = activeRems.filter((r) => {
-        const t = Number(r.matureAt || r.dueAt || 0);
-        return t > 0 && t <= dayEndMs && (d === 0 || t >= dayStartMs);
-      });
-      const paymentHoldsMaturing = maturingToday.filter((r) => r.kind === 'payment');
 
       if (nf.morning !== false) {
         const dtAm = new Date(
@@ -1754,21 +1742,12 @@
         );
         if (dtAm.getTime() > nowMs - 1800000) {
           const slotKey = dtAm.toISOString().slice(0, 13);
-          const holdTxt =
-            paymentHoldsMaturing.length > 0
-              ? `💸 ${paymentHoldsMaturing.length} payment hold${paymentHoldsMaturing.length === 1 ? '' : 's'} ready · `
-              : maturingToday.length > 0
-                ? `⏰ ${maturingToday.length} task${maturingToday.length === 1 ? '' : 's'} due today · `
-                : '';
           const waitTxt =
             approvals.length > 0
-              ? `${approvals.length} approval${approvals.length === 1 ? '' : 's'} · `
+              ? `${approvals.length} approval${approvals.length === 1 ? '' : 's'} waiting · `
               : '';
-          const title =
-            paymentHoldsMaturing.length > 0
-              ? `THEO Morning · ${paymentHoldsMaturing.length} Payment Hold${paymentHoldsMaturing.length === 1 ? '' : 's'} Ready 💸`
-              : `THEO Morning Brief · Day Starts at 50% ☀️`;
-          const body = `${holdTxt}${waitTxt}Daily Ledger at 50% (5/5 Don'ts intact — earn +50% across Wake, Work, Skills, Fitness & Social). ${rows.length} active sessions (${openTabs.length} open).`;
+          const title = `THEO AI Workbench Morning Brief ⚡`;
+          const body = `${waitTxt}${rows.length} active AI sessions (${openTabs.length} open in VS Code across Antigravity & Claude Code).`;
           const exp = Math.floor(dtAm.getTime() / 1000) + 57600;
           const [vapid, bodyB64] = await Promise.all([
             signVapid(subJson.endpoint, exp),
@@ -1776,8 +1755,8 @@
               title,
               body,
               tag: `theo-am-${iso}`,
-              url: './?tab=discipline',
-              tab: 'discipline'
+              url: './?tab=pulse',
+              tab: 'pulse'
             })
           ]);
           slots[slotKey] = { vapid, bodyB64 };
@@ -1797,17 +1776,11 @@
           const slotKey = dtPm.toISOString().slice(0, 13);
           const dirtyTxt =
             dirtyRepos.length > 0
-              ? ` · ${dirtyRepos.length} dirty repo${dirtyRepos.length === 1 ? '' : 's'}`
-              : '';
-          const tokTxt = todayTok > 0 && d === 0 ? ` · ${fmtCompact(todayTok)} tok` : '';
-          const title =
-            d === 0 && dayDisc.hasInteracted
-              ? `THEO Evening Scorecard · ${dayDisc.score}% Today 🎯`
-              : `THEO Evening Check-In · Score Today's 5 Do's & Don'ts 🎯`;
-          const body =
-            d === 0 && dayDisc.hasInteracted
-              ? `Today's score is ${dayDisc.score}% (${dayDisc.doFullCount + dayDisc.doHalfCount}/5 Do's, ${dayDisc.dontCleanCount}/5 Don'ts clean)${dirtyTxt}${tokTxt}. Tap to finalize today's ledger.`
-              : `Started at 50% — check off Waking Early, Work, Skills, Fitness & Socializing (+10% full / +5% partial) and verify your 5 Don'ts${dirtyTxt}.`;
+              ? `${dirtyRepos.length} repo${dirtyRepos.length === 1 ? '' : 's'} with uncommitted changes`
+              : 'All BHFIRMS git repos clean';
+          const tokTxt = todayTok > 0 && d === 0 ? ` · ${fmtCompact(todayTok)} tokens today` : '';
+          const title = `THEO Evening AI & Git Digest ⎇`;
+          const body = `${dirtyTxt}${tokTxt}. ${rows.length} active sessions (${openTabs.length} open).`;
           const exp = Math.floor(dtPm.getTime() / 1000) + 57600;
           const [vapid, bodyB64] = await Promise.all([
             signVapid(subJson.endpoint, exp),
@@ -1815,49 +1788,12 @@
               title,
               body,
               tag: `theo-pm-${iso}`,
-              url: './?tab=discipline',
-              tab: 'discipline'
+              url: './?tab=workspaces',
+              tab: 'workspaces'
             })
           ]);
           slots[slotKey] = { vapid, bodyB64 };
         }
-      }
-    }
-
-    // Also populate hourly slot entries for any Payment Holds or Timed Reminders maturing in the next 14 days
-    if (nf.paymentHolds !== false) {
-      for (const item of activeRems) {
-        const targetMs = Number(item.matureAt || item.dueAt || 0);
-        if (!targetMs || targetMs <= nowMs - 1800000 || targetMs > nowMs + daysCount * 86400 * 1000) {
-          continue;
-        }
-        const dtTarget = new Date(targetMs);
-        const slotKey = dtTarget.toISOString().slice(0, 13);
-        const amtTxt = item.amount > 0 ? ` ($${fmtInt(item.amount)})` : '';
-        const title =
-          item.kind === 'payment'
-            ? `💸 Payment Hold Matured${amtTxt}`
-            : item.kind === 'wait'
-              ? `⏳ Wait Period Complete · ${item.title}`
-              : `⏰ THEO Reminder · ${item.title}`;
-        const body =
-          item.kind === 'payment'
-            ? `${item.title}${amtTxt} — ${item.waitDays || 3}d cooling-off finished. Ready to review or release.`
-            : `${item.title} is due now. Tap to open THEO Reminders.`;
-        const exp = Math.floor(targetMs / 1000) + 57600;
-        const [vapid, bodyB64] = await Promise.all([
-          signVapid(subJson.endpoint, exp),
-          encryptWebPush(subJson, {
-            id: `rem-slot-${item.id}-${targetMs}`,
-            title,
-            body,
-            tag: `theo-rem-slot-${item.id}`,
-            url: `./?tab=discipline&rem=${encodeURIComponent(item.id)}`,
-            tab: 'discipline',
-            reminderId: item.id
-          })
-        ]);
-        slots[slotKey] = { vapid, bodyB64 };
       }
     }
 
@@ -1881,6 +1817,7 @@
     const auth = (pushSub.keys && pushSub.keys.auth) || '';
     const entry = {
       id: devId,
+      app: 'theo',
       endpoint: pushSub.endpoint,
       p256dh,
       auth,
@@ -2815,10 +2752,10 @@
       <div class="push-banner-card">
         <div class="push-banner-top">
           <span class="eyebrow">HOME SCREEN PUSH NOTIFICATIONS</span>
-          <span class="pill-count amber">NEW</span>
+          <span class="pill-count amber">AI WORKBENCH</span>
         </div>
         <div class="meta-timestamp" style="color:var(--text-secondary);font-size:12.5px">
-          Get native lock-screen alerts for maturing Payment Holds, timed reminders, Morning 50% baseline brief &amp; Evening 100-Point Scorecard check-in, plus 1-tap VS Code approvals.
+          Get native lock-screen alerts for 1-tap VS Code tool approvals, Antigravity &amp; Claude Code session turn completions, and quota threshold warnings.
         </div>
         <div class="push-banner-actions">
           <button type="button" class="btn-brass-sm" data-push-act="enable">
@@ -2878,23 +2815,14 @@
       <div class="push-settings-card">
         <div class="section-head" style="margin-bottom:0">
           <div>
-            <div class="eyebrow">WEB PUSH NOTIFICATIONS</div>
-            <h2 class="section-title" style="font-size:17px;margin-top:2px">Lock-Screen Alerts, Payment Holds &amp; Daily 100% Briefings</h2>
+            <div class="eyebrow">WEB PUSH NOTIFICATIONS · AI WORKBENCH</div>
+            <h2 class="section-title" style="font-size:17px;margin-top:2px">1-Tap Approvals, Session Completions &amp; Quota Alerts</h2>
             <div class="brass-rule-single"></div>
           </div>
           ${statusChip}
         </div>
         <div class="meta-timestamp" style="line-height:1.45">${esc(descText)}</div>
         <div class="push-pref-list">
-          <div class="push-pref-row">
-            <label class="push-pref-label">
-              <input type="checkbox" data-nf="paymentHolds" ${nf.paymentHolds !== false ? 'checked' : ''}>
-              <div class="push-pref-text">
-                <strong>Exact-time Payment Hold maturity &amp; timed reminder alerts</strong>
-                <span>Pings the moment a payment wait-timer matures or a scheduled reminder hits</span>
-              </div>
-            </label>
-          </div>
           <div class="push-pref-row">
             <label class="push-pref-label">
               <input type="checkbox" data-nf="approvals" ${nf.approvals !== false ? 'checked' : ''}>
@@ -2926,8 +2854,8 @@
             <label class="push-pref-label">
               <input type="checkbox" data-nf="morning" ${nf.morning !== false ? 'checked' : ''}>
               <div class="push-pref-text">
-                <strong>Morning Brief — Matured Payment Holds, Urgent Tasks &amp; 50% Starting Ledger</strong>
-                <span>Daily morning summary of matured payment holds, urgent tasks, and your 50% discipline baseline</span>
+                <strong>Morning AI Workbench Brief</strong>
+                <span>Daily morning summary of pending VS Code approvals and active Antigravity &amp; Claude sessions</span>
               </div>
             </label>
             <select class="push-hour-select tabular" data-nf="morningHour" aria-label="Morning briefing time">
@@ -2938,8 +2866,8 @@
             <label class="push-pref-label">
               <input type="checkbox" data-nf="evening" ${nf.evening !== false ? 'checked' : ''}>
               <div class="push-pref-text">
-                <strong>Evening 100-Point Scorecard Check-In &amp; Workbench Digest</strong>
-                <span>Evening reminder to score today's 5 Do's &amp; 5 Don'ts plus dirty git repo digest</span>
+                <strong>Evening AI &amp; Git Repository Digest</strong>
+                <span>Evening summary of daily token velocity and uncommitted BHFIRMS git repos</span>
               </div>
             </label>
             <select class="push-hour-select tabular" data-nf="eveningHour" aria-label="Evening digest time">
@@ -2967,7 +2895,11 @@
 
   // Navigation switching
   function switchTab(tabName) {
-    const valid = ['pulse', 'discipline', 'sessions', 'chat', 'workspaces', 'analytics'];
+    if (tabName === 'discipline') {
+      window.open('https://husseinbdeir.github.io/command/', '_blank', 'noopener');
+      return;
+    }
+    const valid = ['pulse', 'sessions', 'chat', 'workspaces', 'analytics'];
     const target = valid.includes(tabName) ? tabName : 'pulse';
     prefs.activeTab = target;
     saveJson(STORAGE_KEYS.PREFS, prefs);
@@ -2983,9 +2915,7 @@
       btn.classList.toggle('active', btn.dataset.tab === target);
     });
 
-    if (target === 'discipline') {
-      renderDisciplineView();
-    } else if (target === 'chat') {
+    if (target === 'chat') {
       ensureSelectedThread();
       renderChatView(true);
       fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '');
@@ -3021,11 +2951,6 @@
     if (bannerEl) {
       bannerEl.innerHTML = renderPulseNotifBannerHtml();
     }
-    const discPulseEl = $('pulse-discipline-section');
-    if (discPulseEl) {
-      discPulseEl.innerHTML = renderPulseDisciplineSectionHtml();
-    }
-    updateDisciplineBadges();
 
     const rows = appState?.rows || [];
     const approvals = appState?.approvals || [];
@@ -3257,6 +3182,8 @@
 
   function renderSessionCardHtml(r) {
     const provKey = r.provider === 'claude' ? 'claude' : 'antigravity';
+    const groups = Array.isArray(appState?.groups) ? appState.groups : [];
+    const grpObj = r.group ? groups.find((g) => g && g.id === r.group) : null;
     const td = threadsCache[r.id];
     const ctxW = td?.contextWindow;
     const displayModel = normalizeDisplayModel(
@@ -3312,6 +3239,9 @@
           </div>
         </div>
         <div class="sess-right">
+          <button type="button" class="sess-act-btn" data-sess-act="group" data-id="${esc(r.id || '')}" title="Assign or move session to a group">
+            📁 ${esc(grpObj ? grpObj.name : 'Group')}
+          </button>
           <button type="button" class="sess-act-btn" data-sess-act="unread" data-id="${esc(r.id || '')}" data-val="${!r.unread}" title="Toggle unread">
             ${r.unread ? '● Unread' : '○ Read'}
           </button>
@@ -3323,16 +3253,95 @@
     `;
   }
 
+  function isSessionGroupCollapsed(groupId, defaultCollapsed = false) {
+    if (
+      prefs.collapsedSessionGroups &&
+      typeof prefs.collapsedSessionGroups === 'object' &&
+      groupId in prefs.collapsedSessionGroups
+    ) {
+      return Boolean(prefs.collapsedSessionGroups[groupId]);
+    }
+    return Boolean(defaultCollapsed);
+  }
+
+  function renderSessionGroupSectionHtml({
+    id,
+    name,
+    color = 'brass',
+    items = [],
+    isCollapsed = false,
+    isCustomGroup = false,
+    archivableIds = []
+  }) {
+    const bodyHtml = items.length
+      ? items.map((r) => renderSessionCardHtml(r)).join('')
+      : `<div class="meta-timestamp" style="padding:8px 10px">No sessions in <strong>${esc(name)}</strong> yet — tap <strong>📁 Group</strong> on any session card to move it here.</div>`;
+
+    const actionsHtml = isCustomGroup
+      ? `
+        <button type="button" class="group-act-btn" data-group-act="new-in-group" data-group-id="${esc(id)}" title="Start new session">+ New</button>
+        <button type="button" class="group-act-btn" data-group-act="rename" data-group-id="${esc(id)}" data-group-name="${esc(name)}" title="Rename group">✎</button>
+        <button type="button" class="group-act-btn" data-group-act="delete" data-group-id="${esc(id)}" data-group-name="${esc(name)}" title="Delete group">✕</button>
+      `
+      : archivableIds.length > 0
+        ? `<button type="button" class="group-act-btn" data-group-act="archive-closed" title="Archive ${archivableIds.length} closed idle sessions">Archive closed (${archivableIds.length})</button>`
+        : '';
+
+    return `
+      <div class="session-group-block ${isCollapsed ? 'collapsed' : ''}" data-session-group="${esc(id)}">
+        <div class="session-group-header">
+          <button type="button" class="session-group-toggle" data-group-act="toggle" data-group-id="${esc(id)}" aria-expanded="${!isCollapsed}">
+            <svg class="group-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg>
+            <span class="group-color-dot ${esc(color)}"></span>
+            <span class="group-title">${esc(name)}</span>
+            <span class="group-count-pill tabular">${items.length}</span>
+          </button>
+          <div class="session-group-actions">
+            ${actionsHtml}
+          </div>
+        </div>
+        <div class="session-group-body">
+          ${bodyHtml}
+        </div>
+      </div>
+    `;
+  }
+
   // VIEW 2: Render Sessions List
   function renderSessionsView() {
     const container = $('sessions-full-list');
     if (!container) return;
     const rows = (appState?.rows || []).filter((r) => r.id);
+    const groups = Array.isArray(appState?.groups) ? appState.groups : [];
+    const groupIds = new Set(groups.map((g) => g.id));
     const q = ($('sess-search-input')?.value || '').trim().toLowerCase();
 
-    // Sync active state on provider & status filter buttons
+    const activeTotalAll = rows.filter((r) => !r.archived).length;
+    const sumPill = $('sess-header-summary-pill');
+    if (sumPill) {
+      sumPill.textContent =
+        groups.length > 0
+          ? `${activeTotalAll} Active · ${groups.length} Group${groups.length === 1 ? '' : 's'}`
+          : `${activeTotalAll} Active`;
+    }
+
+    // Sync active state & live counts on provider segmented buttons
+    const provCounts = {
+      all: rows.filter((r) => !r.archived).length,
+      antigravity: rows.filter((r) => !r.archived && r.provider !== 'claude').length,
+      claude: rows.filter((r) => !r.archived && r.provider === 'claude').length
+    };
     document.querySelectorAll('#sess-provider-seg .seg-btn').forEach((b) => {
-      b.classList.toggle('active', b.dataset.prov === prefs.sessProvider);
+      const p = b.dataset.prov;
+      b.classList.toggle('active', p === prefs.sessProvider);
+      const cnt = provCounts[p] ?? 0;
+      if (p === 'all') {
+        b.innerHTML = `<span>All</span><span class="seg-count tabular">${cnt}</span>`;
+      } else if (p === 'antigravity') {
+        b.innerHTML = `<span class="prov-glyph">${PROVIDER_ICONS.antigravity}</span><span>Antigravity</span><span class="seg-count tabular">${cnt}</span>`;
+      } else if (p === 'claude') {
+        b.innerHTML = `<span class="prov-glyph">${PROVIDER_ICONS.claude}</span><span>Claude</span><span class="seg-count tabular">${cnt}</span>`;
+      }
     });
 
     const provRows = rows.filter(
@@ -3351,14 +3360,14 @@
       needs_input: 'Needs Input',
       working: 'Working',
       unread: 'Unread',
-      open: 'Open in VS Code',
+      open: 'Open Tabs',
       archived: 'Archived'
     };
     document.querySelectorAll('#sess-status-chips .chip').forEach((c) => {
       const k = c.dataset.statusFilter;
       c.classList.toggle('active', k === prefs.sessStatus);
       if (chipLabels[k] !== undefined) {
-        c.innerHTML = `${esc(chipLabels[k])} <span class="chip-count tabular">${chipCounts[k] ?? 0}</span>`;
+        c.innerHTML = `<span class="chip-label">${esc(chipLabels[k])}</span><span class="chip-count tabular">${chipCounts[k] ?? 0}</span>`;
       }
     });
 
@@ -3373,13 +3382,14 @@
         if (prefs.sessStatus === 'open' && !r.open) return false;
       }
       if (q) {
-        const hay = `${r.title} ${r.folder} ${r.branch} ${r.model} ${r.provider}`.toLowerCase();
+        const grpName = r.group ? groups.find((g) => g.id === r.group)?.name || '' : '';
+        const hay = `${r.title} ${r.folder} ${r.branch} ${r.model} ${r.provider} ${grpName}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
 
-    if (filtered.length === 0) {
+    if (filtered.length === 0 && (q || prefs.sessStatus !== 'all' || groups.length === 0)) {
       const hasActiveFilters = prefs.sessProvider !== 'all' || prefs.sessStatus !== 'all' || Boolean(q);
       container.innerHTML = `
         <div class="ledger-panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
@@ -3403,6 +3413,60 @@
       return;
     }
 
+    // Render collapsible Group sections at top when groups exist and not in Archived-only mode
+    if (groups.length > 0 && prefs.sessStatus !== 'archived') {
+      const groupPalette = ['blue', 'green', 'amber', 'purple', 'steel'];
+      let sectionsHtml = '';
+      groups.forEach((g, idx) => {
+        const gItems = filtered.filter((r) => r.group === g.id);
+        if ((q || prefs.sessStatus !== 'all') && gItems.length === 0) {
+          return;
+        }
+        const isCollapsed =
+          q || prefs.sessStatus !== 'all'
+            ? false
+            : isSessionGroupCollapsed(g.id, Boolean(g.collapsed));
+        sectionsHtml += renderSessionGroupSectionHtml({
+          id: g.id,
+          name: g.name || 'Group',
+          color: g.color || groupPalette[idx % groupPalette.length],
+          items: gItems,
+          isCollapsed,
+          isCustomGroup: true
+        });
+      });
+
+      const ungroupedItems = filtered.filter((r) => !r.group || !groupIds.has(r.group));
+      if (ungroupedItems.length > 0) {
+        const archivableIds = ungroupedItems
+          .filter(
+            (r) =>
+              r.id &&
+              !r.open &&
+              r.status !== 'working' &&
+              r.status !== 'waiting' &&
+              !r.unread
+          )
+          .map((r) => r.id);
+        const isUngroupedCollapsed =
+          q || prefs.sessStatus !== 'all'
+            ? false
+            : isSessionGroupCollapsed('ungrouped', false);
+        sectionsHtml += renderSessionGroupSectionHtml({
+          id: 'ungrouped',
+          name: 'Ungrouped',
+          color: 'brass',
+          items: ungroupedItems,
+          isCollapsed: isUngroupedCollapsed,
+          isCustomGroup: false,
+          archivableIds
+        });
+      }
+
+      container.innerHTML = sectionsHtml;
+      return;
+    }
+
     container.innerHTML = filtered.map((r) => renderSessionCardHtml(r)).join('');
   }
 
@@ -3423,13 +3487,24 @@
           prev.latestThinking = m.latestThinking;
         }
         if (Array.isArray(m.toolCalls) && m.toolCalls.length) {
-          prev.toolCalls = [...(prev.toolCalls || []), ...m.toolCalls].slice(-24);
+          prev.toolCalls = [...(prev.toolCalls || []), ...m.toolCalls].slice(-28);
+        }
+        if (Array.isArray(m.artifacts) && m.artifacts.length) {
+          const nextArts = [...(prev.artifacts || [])];
+          for (const art of m.artifacts) {
+            if (!art) continue;
+            const idx = nextArts.findIndex((a) => a && a.file === art.file);
+            if (idx >= 0) nextArts[idx] = art;
+            else nextArts.push(art);
+          }
+          prev.artifacts = nextArts.slice(-6);
         }
         if (m.createdAt) prev.createdAt = m.createdAt;
       } else {
         merged.push({
           ...m,
-          toolCalls: Array.isArray(m.toolCalls) ? [...m.toolCalls] : []
+          toolCalls: Array.isArray(m.toolCalls) ? [...m.toolCalls] : [],
+          artifacts: Array.isArray(m.artifacts) ? [...m.artifacts] : []
         });
       }
     }
@@ -3671,8 +3746,8 @@
           <div class="turn-text">
             ${
               isSyncingThread
-                ? `Requesting live transcript for <strong>${esc(activeRow?.title || 'Session')}</strong> from VS Code… You can also send a prompt below immediately.`
-                : `Select any session above or send a prompt below to start or continue working remotely in <strong>${esc(activeRow?.title || 'VS Code')}</strong>.`
+                ? `Requesting live transcript for <strong>${esc(activeRow?.title || 'Session')}</strong> from VS Code…`
+                : `Select any session above to view the live transcript from <strong>${esc(activeRow?.title || 'VS Code')}</strong>.`
             }
           </div>
         </div>
@@ -3687,23 +3762,60 @@
             const isUser = m.role === 'user';
             const isLastTurn = msgIdx === messages.length - 1;
             const toolCalls = Array.isArray(m.toolCalls) ? m.toolCalls : [];
-            const toolCount = toolCalls.length;
-            const editCount = toolCalls.filter((t) => t.kind === 'edit' || t.kind === 'write').length;
-            const cmdCount = toolCalls.filter((t) => t.kind === 'command').length;
+            const toolCount = Number(m.totalTurnTools || toolCalls.length);
+            const editTools = toolCalls.filter((t) => t.kind === 'edit' || t.kind === 'write');
+            const changedFilesSet = new Set(
+              editTools.map((t) => t.relPath || t.file || t.summary).filter(Boolean)
+            );
+            const filesChangedCount = changedFilesSet.size || editTools.length;
+            const totalAdded = editTools.reduce((acc, t) => acc + Number(t.addedLines || 0), 0);
+            const totalRemoved = editTools.reduce((acc, t) => acc + Number(t.removedLines || 0), 0);
 
-            const summaryParts = [`⚡ ${toolCount} tool ${toolCount === 1 ? 'step' : 'steps'}`];
-            if (editCount > 0) summaryParts.push(`${editCount} file ${editCount === 1 ? 'edit' : 'edits'}`);
-            if (cmdCount > 0) summaryParts.push(`${cmdCount} ${cmdCount === 1 ? 'command' : 'commands'}`);
+            const summaryHtmlParts = [];
+            if (filesChangedCount > 0) {
+              const diffHtml =
+                totalAdded > 0 || totalRemoved > 0
+                  ? ` <span class="tabular"><span class="diff-add">+${totalAdded}</span> <span class="diff-del">-${totalRemoved}</span></span>`
+                  : '';
+              summaryHtmlParts.push(
+                `<span>${filesChangedCount} ${filesChangedCount === 1 ? 'file' : 'files'} changed${diffHtml}</span>`
+              );
+            }
+            summaryHtmlParts.push(
+              `<span>⚡ ${toolCount} tool ${toolCount === 1 ? 'step' : 'steps'}</span>`
+            );
+            const summaryLabelHtml = `<span class="tools-summary-left">${summaryHtmlParts.join(' <span style="opacity:0.5">·</span> ')}</span><span class="tools-summary-chevron">›</span>`;
 
-            const toolCardsHtml = toolCount
+            const toolCardsHtml = toolCalls.length
               ? `<div class="code-steps-stack">${toolCalls.map((tc) => renderToolCallCardHtml(tc)).join('')}</div>`
               : '';
 
-            const toolsHtml = toolCount
+            const toolsHtml = toolCalls.length
               ? m.text
-                ? `<details class="tools-details" ${isLastTurn && activeRow?.status === 'working' ? 'open' : ''}><summary>${esc(summaryParts.join(' · '))}</summary>${toolCardsHtml}</details>`
-                : `<div class="active-tools-panel"><div class="active-tools-hdr">${esc(summaryParts.join(' · '))}</div>${toolCardsHtml}</div>`
+                ? `<details class="tools-details" ${isLastTurn && activeRow?.status === 'working' ? 'open' : ''}><summary>${summaryLabelHtml}</summary>${toolCardsHtml}</details>`
+                : `<div class="active-tools-panel"><div class="active-tools-hdr">${summaryHtmlParts.join(' · ')}</div>${toolCardsHtml}</div>`
               : '';
+
+            const artifacts = Array.isArray(m.artifacts) ? m.artifacts : [];
+            const artifactsHtml = artifacts
+              .map(
+                (art) => `
+                  <details class="vs-artifact-card">
+                    <summary class="vs-artifact-summary">
+                      <div class="vs-artifact-head">
+                        <svg class="vs-artifact-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M2 3.5A1.5 1.5 0 0 1 3.5 2H7a1.5 1.5 0 0 1 1.5 1.5v10A1.5 1.5 0 0 0 7 12H3.5A1.5 1.5 0 0 1 2 10.5v-7z"/>
+                          <path d="M14 3.5A1.5 1.5 0 0 0 12.5 2H9a1.5 1.5 0 0 0-1.5 1.5v10A1.5 1.5 0 0 1 9 12h3.5a1.5 1.5 0 0 0 1.5-1.5v-7z"/>
+                        </svg>
+                        <span>${esc(art.title || 'Walkthrough')}</span>
+                      </div>
+                      ${art.summary ? `<div class="vs-artifact-desc">${formatTurnMarkdown(art.summary)}</div>` : ''}
+                    </summary>
+                    ${art.content ? `<div class="vs-artifact-body turn-text md-rich">${formatTurnMarkdown(art.content)}</div>` : ''}
+                  </details>
+                `
+              )
+              .join('');
 
             const liveThought =
               !m.text && (m.latestThinking || m.thinking)
@@ -3719,15 +3831,23 @@
                 ? `<div class="thinking-details"><div class="turn-text mono">${esc(liveThought)}</div></div>`
                 : '';
 
-            return `
-              <div class="turn-bubble ${isUser ? 'user' : 'assistant'}">
-                <div class="turn-head">
-                  <span class="turn-role">${isUser ? 'Hussein Bdeir' : provKey === 'claude' ? `THEO · Claude Code (${esc(resolvedModelLabel)})` : `THEO · Antigravity (${esc(resolvedModelLabel)})`}</span>
-                  <span class="tabular">${m.createdAt ? timeAgo(Date.parse(m.createdAt)) : ''}</span>
+            const timeLabel = m.createdAt ? timeAgo(Date.parse(m.createdAt)) : '';
+
+            if (isUser) {
+              return `
+                <div class="turn-bubble user">
+                  <div class="turn-text">${esc(m.text || '')}</div>
                 </div>
+              `;
+            }
+
+            return `
+              <div class="turn-bubble assistant">
                 ${thinkHtml}
                 ${m.text ? `<div class="turn-text md-rich">${formatTurnMarkdown(m.text)}</div>` : ''}
+                ${artifactsHtml}
                 ${toolsHtml}
+                ${timeLabel ? `<div class="turn-foot tabular">${esc(timeLabel)}</div>` : ''}
               </div>
             `;
           })
@@ -3799,7 +3919,7 @@
     const inlineCodes = [];
     src = src.replace(/`([^`\n]+)`/g, (_, code) => {
       const idx = inlineCodes.length;
-      inlineCodes.push(`<code>${esc(code)}</code>`);
+      inlineCodes.push(`<code class="md-inline-code">${esc(code)}</code>`);
       return `\x00INLINECODE_${idx}\x00`;
     });
 
@@ -3890,20 +4010,22 @@
         continue;
       }
 
-      const ulMatch = rawLine.match(/^\s*[-*•]\s+(.+)$/);
+      const ulMatch = rawLine.match(/^(\s*)[-*•]\s+(.+)$/);
       if (ulMatch) {
         flushPara();
+        const isNested = (ulMatch[1] || '').length >= 2;
         out.push(
-          `<div class="md-list-item"><span class="md-bullet">•</span><div>${formatInline(ulMatch[1])}</div></div>`
+          `<div class="md-list-item${isNested ? ' nested' : ''}"><span class="md-bullet">•</span><div class="md-list-body">${formatInline(ulMatch[2])}</div></div>`
         );
         continue;
       }
 
-      const olMatch = rawLine.match(/^\s*(\d+\.)\s+(.+)$/);
+      const olMatch = rawLine.match(/^(\s*)(\d+\.)\s+(.+)$/);
       if (olMatch) {
         flushPara();
+        const isNested = (olMatch[1] || '').length >= 2;
         out.push(
-          `<div class="md-list-item"><span class="md-bullet tabular">${esc(olMatch[1])}</span><div>${formatInline(olMatch[2])}</div></div>`
+          `<div class="md-list-item${isNested ? ' nested' : ''}"><span class="md-bullet tabular">${esc(olMatch[2])}</span><div class="md-list-body">${formatInline(olMatch[3])}</div></div>`
         );
         continue;
       }
@@ -5392,10 +5514,8 @@
   function renderAll() {
     updateConnectionBanner();
     renderOutboxBadge();
-    updateDisciplineBadges();
     renderPulseView();
     renderSessionsView();
-    if (prefs.activeTab === 'discipline') renderDisciplineView();
     if (prefs.activeTab === 'chat') renderChatView();
     if (prefs.activeTab === 'workspaces') renderWorkspacesView();
     if (prefs.activeTab === 'analytics') renderAnalyticsView();
@@ -5421,10 +5541,8 @@
     const resEl = $('cmd-results');
     if (!resEl) return;
     const q = query.trim().toLowerCase();
-    const todayDisc = computeDayDiscipline(localIsoDate());
     const items = [
-      { title: `🎯 Open Daily 100% Discipline & Smart Reminders (${todayDisc.score}% Today)`, sub: 'Personal Ledger', act: 'open-discipline' },
-      { title: '✨ Add Smart Reminder / Wait Timer / Idea', sub: 'AI Auto-Grouped', act: 'new-payment-hold' },
+      { title: '🎯 Open THEO Command PWA (Planning, Tasks, Delegation, Score, Prayers)', sub: 'Standalone PWA ↗', act: 'open-command-pwa' },
       { title: '+ New Google Antigravity Session', sub: 'Action', act: 'new-agy' },
       { title: '+ New Claude Code Session', sub: 'Action', act: 'new-claude' },
       { title: 'Sync with VS Code & Cloud Relay Now', sub: 'Connectivity', act: 'sync' },
@@ -5756,6 +5874,138 @@
         return;
       }
 
+      const groupAct = e.target.closest('[data-group-act]');
+      if (groupAct) {
+        e.stopPropagation();
+        const act = groupAct.dataset.groupAct;
+        const gId = groupAct.dataset.groupId || '';
+        const gName = groupAct.dataset.groupName || '';
+        if (!Array.isArray(appState?.groups)) {
+          if (appState) appState.groups = [];
+        }
+        if (act === 'toggle' && gId) {
+          if (!prefs.collapsedSessionGroups || typeof prefs.collapsedSessionGroups !== 'object') {
+            prefs.collapsedSessionGroups = {};
+          }
+          const grpObj = (appState?.groups || []).find((g) => g.id === gId);
+          const cur = isSessionGroupCollapsed(gId, Boolean(grpObj?.collapsed));
+          const next = !cur;
+          prefs.collapsedSessionGroups[gId] = next;
+          if (grpObj) grpObj.collapsed = next;
+          saveJson(STORAGE_KEYS.PREFS, prefs);
+          persistCache();
+          renderSessionsView();
+          if (gId !== 'ungrouped') {
+            dispatchRemoteCommand({
+              type: 'sessionAction',
+              action: 'groupToggle',
+              subAction: 'groupToggle',
+              group: gId,
+              value: next
+            }).catch(() => {});
+          }
+          return;
+        }
+        if (act === 'create') {
+          const name = prompt('Enter new session group name (e.g., Priority, Later, Resorts):', '');
+          if (!name || !name.trim()) return;
+          const cleanName = name.trim();
+          const newId = `grp-${Date.now().toString(36)}`;
+          if (appState) {
+            appState.groups = [...(appState.groups || []), { id: newId, name: cleanName, collapsed: false }];
+            persistCache();
+            renderSessionsView();
+          }
+          await dispatchRemoteCommand({
+            type: 'sessionAction',
+            action: 'groupCreate',
+            subAction: 'groupCreate',
+            group: newId,
+            name: cleanName
+          });
+          showToast(`📁 Created group "${cleanName}"`);
+          return;
+        }
+        if (act === 'rename' && gId) {
+          const nextName = prompt('Rename session group:', gName || '');
+          if (!nextName || !nextName.trim()) return;
+          const clean = nextName.trim();
+          const grpObj = (appState?.groups || []).find((g) => g.id === gId);
+          if (grpObj) {
+            grpObj.name = clean;
+            persistCache();
+            renderSessionsView();
+          }
+          await dispatchRemoteCommand({
+            type: 'sessionAction',
+            action: 'groupRename',
+            subAction: 'groupRename',
+            group: gId,
+            name: clean
+          });
+          showToast(`✎ Renamed group to "${clean}"`);
+          return;
+        }
+        if (act === 'delete' && gId) {
+          if (!confirm(`Delete group "${gName || 'Group'}"? (Sessions will move to Ungrouped)`)) return;
+          if (appState) {
+            appState.groups = (appState.groups || []).filter((g) => g.id !== gId);
+            for (const r of appState.rows || []) {
+              if (r.group === gId) r.group = '';
+            }
+            persistCache();
+            renderSessionsView();
+          }
+          await dispatchRemoteCommand({
+            type: 'sessionAction',
+            action: 'groupDelete',
+            subAction: 'groupDelete',
+            group: gId
+          });
+          showToast(`Removed group "${gName || 'Group'}"`);
+          return;
+        }
+        if (act === 'new-in-group') {
+          clearPinnedNav();
+          prefs.composerMode = 'new-antigravity';
+          switchTab('chat');
+          updateComposerModePills();
+          $('composer-input')?.focus();
+          return;
+        }
+        if (act === 'archive-closed') {
+          const groupIds = new Set((appState?.groups || []).map((g) => g.id));
+          const closedIds = (appState?.rows || [])
+            .filter(
+              (r) =>
+                r.id &&
+                !r.archived &&
+                (!r.group || !groupIds.has(r.group)) &&
+                !r.open &&
+                r.status !== 'working' &&
+                r.status !== 'waiting' &&
+                !r.unread
+            )
+            .map((r) => r.id);
+          if (!closedIds.length) return;
+          for (const r of appState?.rows || []) {
+            if (closedIds.includes(r.id)) r.archived = true;
+          }
+          persistCache();
+          renderAll();
+          await dispatchRemoteCommand({
+            type: 'sessionAction',
+            action: 'archive',
+            subAction: 'archive',
+            ids: closedIds,
+            value: true
+          });
+          showToast(`Archived ${closedIds.length} closed sessions`);
+          return;
+        }
+        return;
+      }
+
       const sessAct = e.target.closest('[data-sess-act]');
       if (sessAct) {
         e.stopPropagation();
@@ -5763,6 +6013,74 @@
         const id = sessAct.dataset.id;
         const val = sessAct.dataset.val === 'true';
         const targetRow = (appState?.rows || []).find((r) => r.id === id);
+        if (action === 'group' && targetRow) {
+          const groups = Array.isArray(appState?.groups) ? appState.groups : [];
+          const curGrp = groups.find((g) => g.id === targetRow.group);
+          const groupNames = groups.map((g, i) => `${i + 1}. ${g.name}`).join('\n');
+          const promptTxt = groups.length
+            ? `Move "${targetRow.title}" to group:\n${groupNames}\n0. Ungrouped (remove from group)\n\nEnter group number or type a new group name:`
+            : `Enter a group name for "${targetRow.title}" (e.g., Later, Work on later):`;
+          const rawChoice = prompt(promptTxt, curGrp ? curGrp.name : '');
+          if (rawChoice === null) return;
+          const clean = rawChoice.trim();
+          if (!clean || clean === '0' || clean.toLowerCase() === 'ungrouped' || clean.toLowerCase() === 'none') {
+            targetRow.group = '';
+            persistCache();
+            renderAll();
+            await dispatchRemoteCommand({
+              type: 'sessionAction',
+              action: 'groupRemove',
+              subAction: 'groupRemove',
+              id,
+              ids: [id]
+            });
+            showToast('Moved session to Ungrouped');
+            return;
+          }
+          const idxNum = Number(clean);
+          const matchedGrp =
+            (!Number.isNaN(idxNum) && idxNum >= 1 && idxNum <= groups.length
+              ? groups[idxNum - 1]
+              : null) ||
+            groups.find((g) => String(g.name || '').toLowerCase() === clean.toLowerCase());
+          if (matchedGrp) {
+            targetRow.group = matchedGrp.id;
+            if (prefs.collapsedSessionGroups) {
+              prefs.collapsedSessionGroups[matchedGrp.id] = false;
+              saveJson(STORAGE_KEYS.PREFS, prefs);
+            }
+            persistCache();
+            renderAll();
+            await dispatchRemoteCommand({
+              type: 'sessionAction',
+              action: 'groupAdd',
+              subAction: 'groupAdd',
+              id,
+              ids: [id],
+              group: matchedGrp.id
+            });
+            showToast(`📁 Moved to "${matchedGrp.name}"`);
+          } else {
+            const newId = `grp-${Date.now().toString(36)}`;
+            if (appState) {
+              appState.groups = [...groups, { id: newId, name: clean, collapsed: false }];
+            }
+            targetRow.group = newId;
+            persistCache();
+            renderAll();
+            await dispatchRemoteCommand({
+              type: 'sessionAction',
+              action: 'groupCreate',
+              subAction: 'groupCreate',
+              id,
+              ids: [id],
+              group: newId,
+              name: clean
+            });
+            showToast(`📁 Created "${clean}" & moved session`);
+          }
+          return;
+        }
         if (targetRow) {
           if (action === 'archive') targetRow.archived = val;
           if (action === 'unread') targetRow.unread = val;
@@ -5944,12 +6262,8 @@
           saveJson(STORAGE_KEYS.PREFS, prefs);
           switchTab('chat');
           fetchThreadDetail(tid);
-        } else if (act === 'open-discipline') {
-          switchTab('discipline');
-        } else if (act === 'new-payment-hold') {
-          remDraft.kind = 'payment';
-          switchTab('discipline');
-          setTimeout(() => $('rem-title-input')?.focus(), 40);
+        } else if (act === 'open-command-pwa' || act === 'open-discipline' || act === 'new-payment-hold') {
+          window.open('https://husseinbdeir.github.io/command/', '_blank', 'noopener');
         } else if (act === 'new-agy') {
           prefs.composerMode = 'new-antigravity';
           switchTab('chat');
@@ -6180,11 +6494,9 @@
       switchTab('chat');
       renderAll();
       fetchThreadDetail(threadId, nav.provider || pinnedNavProvider || '').catch(() => {});
-    } else if (reminderId) {
-      prefs.activeTab = 'discipline';
-      saveJson(STORAGE_KEYS.PREFS, prefs);
-      switchTab('discipline');
-      renderAll();
+    } else if (reminderId || tab === 'discipline') {
+      window.location.href = `https://husseinbdeir.github.io/command/${reminderId ? `?tab=tasks&taskId=${encodeURIComponent(reminderId)}` : ''}`;
+      return true;
     } else if (tab) {
       prefs.activeTab = tab;
       saveJson(STORAGE_KEYS.PREFS, prefs);
@@ -6251,7 +6563,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=16', { updateViaCache: 'none' })
+        .register('sw.js?v=18', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
@@ -6370,12 +6682,11 @@
         provider: provParam || '',
         clicked: true
       });
-    } else if (remParam) {
-      applyNotificationNav({
-        tab: 'discipline',
-        reminderId: remParam,
-        clicked: true
-      });
+    } else if (remParam || tabParam === 'discipline') {
+      window.location.replace(
+        `https://husseinbdeir.github.io/command/${remParam ? `?tab=tasks&taskId=${encodeURIComponent(remParam)}` : ''}`
+      );
+      return;
     } else if (pinnedNavThreadId && Date.now() < pinnedNavUntil) {
       prefs.selectedThreadId = pinnedNavThreadId;
       prefs.composerMode = 'reply';
@@ -6383,22 +6694,18 @@
       saveJson(STORAGE_KEYS.PREFS, prefs);
       switchTab('chat');
       fetchThreadDetail(pinnedNavThreadId, pinnedNavProvider || '');
-    } else if (pinnedNavReminderId && Date.now() < pinnedNavUntil) {
-      prefs.activeTab = 'discipline';
-      saveJson(STORAGE_KEYS.PREFS, prefs);
-      switchTab('discipline');
     } else {
-      switchTab(tabParam || prefs.activeTab || 'pulse');
+      const startTab =
+        tabParam || (prefs.activeTab === 'discipline' ? 'pulse' : prefs.activeTab) || 'pulse';
+      switchTab(startTab);
     }
 
     renderAll();
-    checkDueRemindersTick();
     consumePendingNotificationNav({ allowUnseenPush: true });
     syncData();
     setInterval(() => {
       if (!document.hidden) syncData();
     }, 12000);
-    setInterval(checkDueRemindersTick, 15000);
     registerServiceWorker();
   }
 

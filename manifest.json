@@ -1,7 +1,8 @@
 {
-  "name": "THEO — Remote Command & AI Workbench",
+  "id": "/theo/",
+  "name": "THEO — AI Session Workbench",
   "short_name": "THEO",
-  "description": "Remote Command & Session Workbench for Google Antigravity and Claude Code across BHFIRMS.",
+  "description": "AI Coding & Session Workbench for Google Antigravity and Claude Code across BHFIRMS.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
