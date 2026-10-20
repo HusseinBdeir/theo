@@ -9,8 +9,13 @@
     DEVID: 'theo_remote_devid_v1',
     PUSH_HINT: 'theo_remote_pushhint_v1',
     PERSONAL: 'theo_personal_ledger_v1',
-    COMMAND: 'theo_command_state_v1'
+    COMMAND: 'theo_command_state_v1',
+    CONSUMED_NOTIF: 'theo_remote_consumed_notif_v1'
   };
+  const PINNED_NAV_SESSION_KEY = 'theo_pinned_nav_v1';
+  const NAV_HANDOFF_CACHE = 'theo-nav-handoff-v1';
+  const PENDING_NAV_CACHE_URL = './__theo_pending_nav.json';
+  const LAST_PUSH_NAV_CACHE_URL = './__theo_last_push_nav.json';
 
   const DEFAULT_NOTIF = {
     enabled: false,
@@ -269,6 +274,80 @@
   const prevRowAts = new Map();
   const pendingThreadRequests = new Map();
   const alertedReminderIds = new Set();
+
+  let pinnedNavThreadId = '';
+  let pinnedNavProvider = '';
+  let pinnedNavTitle = '';
+  let pinnedNavUntil = 0;
+  let lastAppliedNavSig = '';
+  let lastAppliedNavAt = 0;
+  let wasAppHiddenAt = document.hidden ? Date.now() : 0;
+  let recentResumeUntil = Date.now() + 15000;
+
+  function loadConsumedNotifSet() {
+    const arr = loadJson(STORAGE_KEYS.CONSUMED_NOTIF, []);
+    return new Set(Array.isArray(arr) ? arr : []);
+  }
+
+  function markNotifConsumed(...keys) {
+    const set = loadConsumedNotifSet();
+    for (const k of keys) {
+      if (k) set.add(String(k));
+    }
+    saveJson(STORAGE_KEYS.CONSUMED_NOTIF, Array.from(set).slice(-80));
+  }
+
+  function isNotifConsumed(...keys) {
+    const set = loadConsumedNotifSet();
+    return keys.some((k) => k && set.has(String(k)));
+  }
+
+  function setPinnedNav(threadId, provider = '', title = '', durationMs = 60000) {
+    if (!threadId) return;
+    pinnedNavThreadId = String(threadId);
+    if (provider) pinnedNavProvider = String(provider);
+    if (title) pinnedNavTitle = String(title);
+    pinnedNavUntil = Date.now() + durationMs;
+    try {
+      sessionStorage.setItem(
+        PINNED_NAV_SESSION_KEY,
+        JSON.stringify({
+          threadId: pinnedNavThreadId,
+          provider: pinnedNavProvider,
+          title: pinnedNavTitle,
+          tab: 'chat',
+          until: pinnedNavUntil
+        })
+      );
+    } catch {}
+  }
+
+  function restorePinnedNavFromSession() {
+    try {
+      const raw = sessionStorage.getItem(PINNED_NAV_SESSION_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.threadId && Number(parsed.until || 0) > Date.now()) {
+        pinnedNavThreadId = String(parsed.threadId);
+        pinnedNavProvider = String(parsed.provider || '');
+        pinnedNavTitle = String(parsed.title || '');
+        pinnedNavUntil = Number(parsed.until);
+        return parsed;
+      }
+      sessionStorage.removeItem(PINNED_NAV_SESSION_KEY);
+    } catch {}
+    return null;
+  }
+
+  function clearPinnedNav() {
+    pinnedNavThreadId = '';
+    pinnedNavProvider = '';
+    pinnedNavTitle = '';
+    pinnedNavUntil = 0;
+    try {
+      sessionStorage.removeItem(PINNED_NAV_SESSION_KEY);
+    } catch {}
+  }
 
   // ---------- Personal Ledger State (Daily 100% Score + Smart Reminders / Payment Holds) ----------
   function localIsoDate(dt = new Date()) {
@@ -1492,10 +1571,13 @@
                   tag: payload.tag || 'theo-local',
                   renotify: true,
                   data: {
+                    id: payload.id || payload.tag || `local-${Date.now()}`,
                     url: payload.url || './',
                     tab: payload.tab || 'pulse',
                     threadId: payload.threadId || '',
-                    provider: payload.provider || ''
+                    provider: payload.provider || '',
+                    reminderId: payload.reminderId || '',
+                    sessionTitle: payload.sessionTitle || ''
                   }
                 });
               }
@@ -1548,11 +1630,13 @@
       const [vapid, bodyB64] = await Promise.all([
         signVapid(pushSub.endpoint, exp),
         encryptWebPush(pushSub, {
+          id: `rem-${item.id}-${targetMs}`,
           title,
           body,
           tag: `theo-rem-${item.id}`,
-          url: './?tab=discipline',
-          tab: 'discipline'
+          url: `./?tab=discipline&rem=${encodeURIComponent(item.id)}`,
+          tab: 'discipline',
+          reminderId: item.id
         })
       ]);
       await callCloudPush({
@@ -1599,14 +1683,16 @@
             : item.kind === 'wait'
               ? `⏳ Wait Timer Complete`
               : `⏰ Reminder Due`;
-        showToast(`${msgTitle}: ${item.title}`);
+        showToast(`${msgTitle}: ${item.title}`, { tab: 'discipline', reminderId: item.id });
         if (notifPerm() === 'granted' && document.hidden) {
           swLocalNotif({
+            id: `rem-due-${item.id}-${targetMs}`,
             title: msgTitle,
             body: `${item.title}${amtTxt} is ready for your action.`,
             tag: `theo-rem-${item.id}`,
             tab: 'discipline',
-            url: './?tab=discipline'
+            reminderId: item.id,
+            url: `./?tab=discipline&rem=${encodeURIComponent(item.id)}`
           });
         }
       }
@@ -1751,11 +1837,13 @@
         const [vapid, bodyB64] = await Promise.all([
           signVapid(subJson.endpoint, exp),
           encryptWebPush(subJson, {
+            id: `rem-slot-${item.id}-${targetMs}`,
             title,
             body,
             tag: `theo-rem-slot-${item.id}`,
-            url: './?tab=discipline',
-            tab: 'discipline'
+            url: `./?tab=discipline&rem=${encodeURIComponent(item.id)}`,
+            tab: 'discipline',
+            reminderId: item.id
           })
         ]);
         slots[slotKey] = { vapid, bodyB64 };
@@ -1944,11 +2032,49 @@
     }
   }
 
+  function checkServerLastNotificationOnResume(nextState) {
+    const ln = nextState && nextState.lastNotification;
+    if (!ln || typeof ln !== 'object') return;
+    const notifId = String(ln.id || ln.tag || '');
+    const notifTag = String(ln.tag || '');
+    if (!notifId && !ln.threadId) return;
+    if (isNotifConsumed(notifId, notifTag)) return;
+
+    const ageMs = Date.now() - Number(ln.at || ln.ts || 0);
+    if (ageMs < 0 || ageMs > 25 * 60 * 1000) {
+      markNotifConsumed(notifId, notifTag);
+      return;
+    }
+
+    // If the user just launched or resumed the PWA from background after a task notification fired, jump to that task
+    if (Date.now() < recentResumeUntil && (ln.threadId || ln.reminderId)) {
+      applyNotificationNav({
+        id: notifId,
+        tag: notifTag,
+        tab: ln.tab || (ln.threadId ? 'chat' : 'discipline'),
+        threadId: ln.threadId || '',
+        provider: ln.provider || '',
+        reminderId: ln.reminderId || '',
+        title: ln.title || '',
+        sessionTitle: ln.sessionTitle || ln.title || '',
+        ts: Number(ln.at || ln.ts || Date.now())
+      });
+      return;
+    }
+
+    // If the app is actively open in foreground (not a fresh resume), mark consumed so future resumes don't replay it
+    if (!document.hidden && Date.now() >= recentResumeUntil) {
+      markNotifConsumed(notifId, notifTag);
+    }
+  }
+
   function checkLiveStateNotifications(nextState) {
     if (!nextState) return;
     const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
     const approvals = Array.isArray(nextState.approvals) ? nextState.approvals : [];
     const rows = Array.isArray(nextState.rows) ? nextState.rows : [];
+
+    checkServerLastNotificationOnResume(nextState);
 
     if (!statePrimed) {
       statePrimed = true;
@@ -1973,11 +2099,25 @@
       seenApprovalIds.add(a.id);
       if (a.sessionId) newlyNotifiedSessions.add(a.sessionId);
       const isQ = a.kind === 'question' || /question/i.test(String(a.toolName || ''));
+      const tag = `theo-app-${a.id}`;
+      const targetTab = a.sessionId ? 'chat' : 'pulse';
+      const navTarget = {
+        id: tag,
+        tag,
+        tab: targetTab,
+        threadId: a.sessionId || '',
+        provider: a.provider || 'antigravity',
+        sessionTitle: a.title || 'Session',
+        url: a.sessionId
+          ? `./?tab=chat&thread=${encodeURIComponent(a.sessionId)}&provider=${encodeURIComponent(a.provider || 'antigravity')}`
+          : `./?tab=${targetTab}`
+      };
       playChime('approve');
       showToast(
         isQ
           ? `❓ Question (${a.title || 'THEO'}): ${String(a.detail || 'Waiting for your answer').slice(0, 100)}`
-          : `⚡ Approval Needed (${a.title || 'THEO'}): ${a.toolName || 'Permission'}`
+          : `⚡ Approval Needed (${a.title || 'THEO'}): ${a.toolName || 'Permission'}`,
+        navTarget
       );
       if (
         nf.enabled &&
@@ -1992,10 +2132,7 @@
           body: isQ
             ? `${a.detail || 'THEO is waiting for your answer.'}`
             : `${a.title || 'Session'}: ${a.toolName || 'Permission'} — ${a.detail || 'Waiting for confirmation'}`,
-          tag: `theo-app-${a.id}`,
-          tab: isQ ? 'chat' : 'pulse',
-          threadId: a.sessionId || '',
-          provider: a.provider || 'antigravity'
+          ...navTarget
         });
       }
     }
@@ -2029,11 +2166,23 @@
       if ((transitionedFromWorking || fastTurnCompleted) && !newlyNotifiedSessions.has(r.id)) {
         const lastText = String(r.lastAssistantText || '').trim();
         const endsWithQ = /\?\s*["')*\]]*\s*$/.test(lastText);
+        const doneId = `done-${r.id}-${curStep || curAt || Date.now()}`;
+        const tag = `theo-done-${r.id}-${curStep || Date.now()}`;
+        const navTarget = {
+          id: doneId,
+          tag,
+          tab: 'chat',
+          threadId: r.id,
+          provider: r.provider || 'antigravity',
+          sessionTitle: r.title || 'Session',
+          url: `./?tab=chat&thread=${encodeURIComponent(r.id)}&provider=${encodeURIComponent(r.provider || 'antigravity')}`
+        };
         playChime(endsWithQ ? 'approve' : 'confirm');
         showToast(
           endsWithQ
             ? `❓ Question (${r.title || 'Session'}): ${lastText.slice(0, 95)}`
-            : `✓ Task Complete (${r.title || 'Session'})${lastText ? ': ' + lastText.slice(0, 80) : ''}`
+            : `✓ Task Complete (${r.title || 'Session'})${lastText ? ': ' + lastText.slice(0, 80) : ''}`,
+          navTarget
         );
         if (
           nf.enabled &&
@@ -2048,10 +2197,7 @@
             body: lastText
               ? lastText.slice(0, 160)
               : `${r.title || 'Session'} (${r.folder || 'Workspace'}) finished running. Tap to inspect.`,
-            tag: `theo-done-${r.id}-${curStep || Date.now()}`,
-            tab: 'chat',
-            threadId: r.id,
-            provider: r.provider || 'antigravity'
+            ...navTarget
           });
         }
       }
@@ -2088,16 +2234,44 @@
     } catch {}
   }
 
-  function showToast(msg) {
+  function showToast(msg, navTarget = null) {
     const stack = $('toast-stack');
     if (!stack) return;
     const el = document.createElement('div');
     el.className = 'toast';
-    el.textContent = msg;
+    const hasNav =
+      navTarget &&
+      typeof navTarget === 'object' &&
+      (navTarget.threadId || navTarget.reminderId || navTarget.tab);
+    if (hasNav) {
+      el.style.cursor = 'pointer';
+      el.style.display = 'flex';
+      el.style.alignItems = 'center';
+      el.style.justifyContent = 'space-between';
+      el.style.gap = '10px';
+      const textSpan = document.createElement('span');
+      textSpan.textContent = msg;
+      const ctaSpan = document.createElement('span');
+      ctaSpan.style.fontWeight = '700';
+      ctaSpan.style.color = 'var(--brass)';
+      ctaSpan.style.whiteSpace = 'nowrap';
+      ctaSpan.textContent = 'Open Task →';
+      el.appendChild(textSpan);
+      el.appendChild(ctaSpan);
+      el.addEventListener('click', () => {
+        el.remove();
+        applyNotificationNav({ ...navTarget, clicked: true });
+      });
+    } else {
+      el.textContent = msg;
+    }
     stack.appendChild(el);
-    setTimeout(() => {
-      el.remove();
-    }, 3200);
+    setTimeout(
+      () => {
+        el.remove();
+      },
+      hasNav ? 5500 : 3200
+    );
   }
 
   // Theme management
@@ -2250,7 +2424,7 @@
             renderAll();
             flushOutbox().catch(() => {});
             if (prefs.selectedThreadId) {
-              fetchThreadDetail(prefs.selectedThreadId).catch(() => {});
+              fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
             }
             if (options.toast) {
               showToast(`Connected to VS Code Direct Bridge (${(appState.rows || []).length} sessions)`);
@@ -2292,6 +2466,9 @@
           persistCache();
           renderAll();
           flushOutbox().catch(() => {});
+          if (prefs.selectedThreadId) {
+            fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
+          }
           if (options.toast) {
             showToast(`Synced with VS Code Cloud Relay (${(appState?.rows || []).length} sessions)`);
           }
@@ -2321,7 +2498,7 @@
             mergeRemoteThreads({ [threadId]: data.thread });
             persistCache();
             if (prefs.activeTab === 'chat' && prefs.selectedThreadId === threadId) {
-              renderChatView();
+              renderChatView(true);
             }
             return threadsCache[threadId];
           }
@@ -2799,8 +2976,8 @@
       renderDisciplineView();
     } else if (target === 'chat') {
       ensureSelectedThread();
-      renderChatView();
-      fetchThreadDetail(prefs.selectedThreadId);
+      renderChatView(true);
+      fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '');
     } else if (target === 'workspaces') {
       renderWorkspacesView();
     } else if (target === 'analytics') {
@@ -2810,7 +2987,15 @@
 
   function ensureSelectedThread() {
     const rows = (appState?.rows || []).filter((r) => r.id && !r.draft);
-    if (!prefs.selectedThreadId || !rows.some((r) => r.id === prefs.selectedThreadId)) {
+    const hasPinned =
+      Boolean(pinnedNavThreadId) &&
+      prefs.selectedThreadId === pinnedNavThreadId &&
+      Date.now() < pinnedNavUntil;
+    const hasCachedThread = Boolean(prefs.selectedThreadId && threadsCache[prefs.selectedThreadId]);
+    if (hasPinned || hasCachedThread) {
+      return;
+    }
+    if (!prefs.selectedThreadId || (rows.length > 0 && !rows.some((r) => r.id === prefs.selectedThreadId))) {
       const openOrRecent = rows.find((r) => r.active) || rows.find((r) => r.open) || rows[0];
       if (openOrRecent) {
         prefs.selectedThreadId = openOrRecent.id;
@@ -3309,10 +3494,35 @@
     ensureSelectedThread();
     updateComposerModePills();
     const rows = (appState?.rows || []).filter((r) => r.id && !r.draft);
+    const threadDetail = threadsCache[prefs.selectedThreadId] || null;
+    const matchedRow = rows.find((r) => r.id === prefs.selectedThreadId);
+    const activeRow =
+      matchedRow ||
+      (prefs.selectedThreadId
+        ? {
+            id: prefs.selectedThreadId,
+            title:
+              threadDetail?.title ||
+              pinnedNavTitle ||
+              'Task Session',
+            provider:
+              threadDetail?.provider ||
+              pinnedNavProvider ||
+              'antigravity',
+            folder: threadDetail?.folder || '',
+            model: threadDetail?.model || '',
+            status: 'done',
+            at: Date.now()
+          }
+        : rows[0]);
+
     const selectEl = $('chat-session-select');
     if (selectEl) {
-      selectEl.innerHTML = rows
-        .slice(0, 80)
+      const topRows = rows.slice(0, 80);
+      if (prefs.selectedThreadId && activeRow && !topRows.some((r) => r.id === prefs.selectedThreadId)) {
+        topRows.unshift(activeRow);
+      }
+      selectEl.innerHTML = topRows
         .map(
           (r) =>
             `<option value="${esc(r.id)}" ${r.id === prefs.selectedThreadId ? 'selected' : ''}>[${r.provider === 'claude' ? 'Claude' : 'AGY'}] ${esc(r.title)} (${timeAgo(r.at)})</option>`
@@ -3320,8 +3530,6 @@
         .join('');
     }
 
-    const activeRow = rows.find((r) => r.id === prefs.selectedThreadId) || rows[0];
-    const threadDetail = threadsCache[prefs.selectedThreadId] || null;
     const provKey = (threadDetail?.provider || activeRow?.provider) === 'claude' ? 'claude' : 'antigravity';
 
     const badgeEl = $('chat-prov-badge');
@@ -3416,6 +3624,31 @@
       connMode === 'cloud' &&
       prefs.selectedThreadId &&
       pendingThreadRequests.has(prefs.selectedThreadId);
+    const sessionApprovals = (appState?.approvals || []).filter(
+      (a) => a && a.sessionId === prefs.selectedThreadId && a.kind !== 'waiting_session'
+    );
+    const sessionApprovalHtml = sessionApprovals
+      .map((a) => {
+        const aProv = a.provider === 'claude' ? 'claude' : 'antigravity';
+        return `
+          <div class="approval-card" data-approval-id="${esc(a.id)}" style="margin-top:8px">
+            <div class="approval-top">
+              <span class="approval-prov">
+                <span class="prov-glyph">${PROVIDER_ICONS[aProv]}</span>
+                <span>${aProv === 'claude' ? 'Claude Code' : 'Antigravity'} · Action Required</span>
+              </span>
+              <span class="approval-tool-badge tabular">${esc(a.toolName || 'Permission')}</span>
+            </div>
+            <div class="approval-title">${esc(a.title || activeRow?.title || 'Session')}</div>
+            <div class="approval-detail mono">${esc(a.detail || '')}</div>
+            <div class="approval-actions">
+              <button type="button" class="btn-approve" data-approve-act="approve" data-app-id="${esc(a.approvalId)}" data-sess-id="${esc(a.sessionId)}" data-prov="${aProv}" data-sel="${esc(a.selector || '')}" data-lbl="${esc(a.toolName || 'Accept')}">✓ Approve</button>
+              <button type="button" class="btn-reject" data-approve-act="reject" data-app-id="${esc(a.approvalId)}" data-sess-id="${esc(a.sessionId)}" data-prov="${aProv}" data-sel="${esc(a.selector || '')}">✕ Deny</button>
+            </div>
+          </div>
+        `;
+      })
+      .join('');
 
     if (messages.length === 0) {
       streamEl.innerHTML = `
@@ -3432,60 +3665,62 @@
             }
           </div>
         </div>
+        ${sessionApprovalHtml}
       `;
       lastRenderedThreadId = prefs.selectedThreadId;
       lastRenderedMsgCount = 0;
     } else {
-      streamEl.innerHTML = messages
-        .map((m, msgIdx) => {
-          const isUser = m.role === 'user';
-          const isLastTurn = msgIdx === messages.length - 1;
-          const toolCalls = Array.isArray(m.toolCalls) ? m.toolCalls : [];
-          const toolCount = toolCalls.length;
-          const editCount = toolCalls.filter((t) => t.kind === 'edit' || t.kind === 'write').length;
-          const cmdCount = toolCalls.filter((t) => t.kind === 'command').length;
+      streamEl.innerHTML =
+        messages
+          .map((m, msgIdx) => {
+            const isUser = m.role === 'user';
+            const isLastTurn = msgIdx === messages.length - 1;
+            const toolCalls = Array.isArray(m.toolCalls) ? m.toolCalls : [];
+            const toolCount = toolCalls.length;
+            const editCount = toolCalls.filter((t) => t.kind === 'edit' || t.kind === 'write').length;
+            const cmdCount = toolCalls.filter((t) => t.kind === 'command').length;
 
-          const summaryParts = [`⚡ ${toolCount} tool ${toolCount === 1 ? 'step' : 'steps'}`];
-          if (editCount > 0) summaryParts.push(`${editCount} file ${editCount === 1 ? 'edit' : 'edits'}`);
-          if (cmdCount > 0) summaryParts.push(`${cmdCount} ${cmdCount === 1 ? 'command' : 'commands'}`);
+            const summaryParts = [`⚡ ${toolCount} tool ${toolCount === 1 ? 'step' : 'steps'}`];
+            if (editCount > 0) summaryParts.push(`${editCount} file ${editCount === 1 ? 'edit' : 'edits'}`);
+            if (cmdCount > 0) summaryParts.push(`${cmdCount} ${cmdCount === 1 ? 'command' : 'commands'}`);
 
-          const toolCardsHtml = toolCount
-            ? `<div class="code-steps-stack">${toolCalls.map((tc) => renderToolCallCardHtml(tc)).join('')}</div>`
-            : '';
-
-          const toolsHtml = toolCount
-            ? m.text
-              ? `<details class="tools-details" ${isLastTurn && activeRow?.status === 'working' ? 'open' : ''}><summary>${esc(summaryParts.join(' · '))}</summary>${toolCardsHtml}</details>`
-              : `<div class="active-tools-panel"><div class="active-tools-hdr">${esc(summaryParts.join(' · '))}</div>${toolCardsHtml}</div>`
-            : '';
-
-          const liveThought =
-            !m.text && (m.latestThinking || m.thinking)
-              ? String(m.latestThinking || m.thinking)
-                  .trim()
-                  .split(/\n\n+/)
-                  .pop()
+            const toolCardsHtml = toolCount
+              ? `<div class="code-steps-stack">${toolCalls.map((tc) => renderToolCallCardHtml(tc)).join('')}</div>`
               : '';
 
-          const thinkHtml = m.thinking
-            ? `<details class="thinking-details" ${!m.text && isLastTurn ? 'open' : ''}><summary>Reasoning &amp; Internal Thought</summary><div class="turn-text mono" style="margin-top:6px">${esc(m.thinking)}</div></details>`
-            : liveThought
-              ? `<div class="thinking-details"><div class="turn-text mono">${esc(liveThought)}</div></div>`
+            const toolsHtml = toolCount
+              ? m.text
+                ? `<details class="tools-details" ${isLastTurn && activeRow?.status === 'working' ? 'open' : ''}><summary>${esc(summaryParts.join(' · '))}</summary>${toolCardsHtml}</details>`
+                : `<div class="active-tools-panel"><div class="active-tools-hdr">${esc(summaryParts.join(' · '))}</div>${toolCardsHtml}</div>`
               : '';
 
-          return `
-            <div class="turn-bubble ${isUser ? 'user' : 'assistant'}">
-              <div class="turn-head">
-                <span class="turn-role">${isUser ? 'Hussein Bdeir' : provKey === 'claude' ? `THEO · Claude Code (${esc(resolvedModelLabel)})` : `THEO · Antigravity (${esc(resolvedModelLabel)})`}</span>
-                <span class="tabular">${m.createdAt ? timeAgo(Date.parse(m.createdAt)) : ''}</span>
+            const liveThought =
+              !m.text && (m.latestThinking || m.thinking)
+                ? String(m.latestThinking || m.thinking)
+                    .trim()
+                    .split(/\n\n+/)
+                    .pop()
+                : '';
+
+            const thinkHtml = m.thinking
+              ? `<details class="thinking-details" ${!m.text && isLastTurn ? 'open' : ''}><summary>Reasoning &amp; Internal Thought</summary><div class="turn-text mono" style="margin-top:6px">${esc(m.thinking)}</div></details>`
+              : liveThought
+                ? `<div class="thinking-details"><div class="turn-text mono">${esc(liveThought)}</div></div>`
+                : '';
+
+            return `
+              <div class="turn-bubble ${isUser ? 'user' : 'assistant'}">
+                <div class="turn-head">
+                  <span class="turn-role">${isUser ? 'Hussein Bdeir' : provKey === 'claude' ? `THEO · Claude Code (${esc(resolvedModelLabel)})` : `THEO · Antigravity (${esc(resolvedModelLabel)})`}</span>
+                  <span class="tabular">${m.createdAt ? timeAgo(Date.parse(m.createdAt)) : ''}</span>
+                </div>
+                ${thinkHtml}
+                ${m.text ? `<div class="turn-text md-rich">${formatTurnMarkdown(m.text)}</div>` : ''}
+                ${toolsHtml}
               </div>
-              ${thinkHtml}
-              ${m.text ? `<div class="turn-text md-rich">${formatTurnMarkdown(m.text)}</div>` : ''}
-              ${toolsHtml}
-            </div>
-          `;
-        })
-        .join('');
+            `;
+          })
+          .join('') + sessionApprovalHtml;
 
       if (
         forceScroll ||
@@ -4333,8 +4568,13 @@
       delBadge = `<span class="rem-badge hold">${esc(subTag)}</span>`;
     }
 
+    const isHighlightedRem =
+      Boolean(pinnedNavReminderId) &&
+      pinnedNavReminderId === item.id &&
+      Date.now() < pinnedNavUntil;
+
     return `
-      <div class="rem-card ${cardStateClass}" data-rem-id="${esc(item.id)}">
+      <div class="rem-card ${cardStateClass}" data-rem-id="${esc(item.id)}" ${isHighlightedRem ? 'style="outline:2px solid var(--brass);box-shadow:0 0 0 4px rgba(217,165,74,0.22)"' : ''}>
         <div class="rem-card-top">
           <div class="rem-card-body" style="flex:1 1 240px;min-width:0">
             <div class="rem-card-title">${esc(item.title)}</div>
@@ -4825,6 +5065,15 @@
         ${renderPushSettingsCardHtml()}
       </div>
     `;
+
+    if (pinnedNavReminderId && Date.now() < pinnedNavUntil) {
+      setTimeout(() => {
+        const targetEl = root.querySelector(`[data-rem-id="${CSS.escape(pinnedNavReminderId)}"]`);
+        if (targetEl && typeof targetEl.scrollIntoView === 'function') {
+          targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 60);
+    }
   }
 
   function addReminderFromDraft() {
@@ -5434,12 +5683,14 @@
       const tabBtn = e.target.closest('[data-tab]');
       if (tabBtn) {
         haptic(8);
+        clearPinnedNav();
         switchTab(tabBtn.dataset.tab);
         return;
       }
 
       const gotoBtn = e.target.closest('[data-goto-tab]');
       if (gotoBtn) {
+        clearPinnedNav();
         switchTab(gotoBtn.dataset.gotoTab);
         return;
       }
@@ -5458,6 +5709,7 @@
 
       const quickNew = e.target.closest('[data-quick-new]');
       if (quickNew) {
+        clearPinnedNav();
         const prov = quickNew.dataset.quickNew;
         prefs.composerMode = prov === 'claude' ? 'new-claude' : 'new-antigravity';
         switchTab('chat');
@@ -5468,6 +5720,7 @@
 
       const launchRepo = e.target.closest('[data-launch-repo]');
       if (launchRepo) {
+        clearPinnedNav();
         const repoName = launchRepo.dataset.launchName;
         prefs.composerRepoPrefix = repoName;
         prefs.composerMode = 'new-antigravity';
@@ -5483,6 +5736,7 @@
 
       const openChat = e.target.closest('[data-open-chat]');
       if (openChat && openChat.dataset.openChat) {
+        clearPinnedNav();
         prefs.selectedThreadId = openChat.dataset.openChat;
         prefs.composerMode = 'reply';
         saveJson(STORAGE_KEYS.PREFS, prefs);
@@ -5518,6 +5772,7 @@
 
       const sessCard = e.target.closest('.session-card[data-session-id]');
       if (sessCard && sessCard.dataset.sessionId) {
+        clearPinnedNav();
         prefs.selectedThreadId = sessCard.dataset.sessionId;
         prefs.composerMode = 'reply';
         saveJson(STORAGE_KEYS.PREFS, prefs);
@@ -5538,7 +5793,7 @@
             (a) => a.approvalId !== appId && a.sessionId !== sessId
           );
           persistCache();
-          renderPulseView();
+          renderAll();
         }
         await dispatchRemoteCommand({
           type: 'approve',
@@ -5669,6 +5924,7 @@
       const cmdItem = e.target.closest('[data-cmd-act], [data-cmd-thread]');
       if (cmdItem) {
         closeCommandPalette();
+        clearPinnedNav();
         const act = cmdItem.dataset.cmdAct;
         const tid = cmdItem.dataset.cmdThread;
         if (tid) {
@@ -5757,6 +6013,7 @@
 
     // Session select change in Chat
     $('chat-session-select')?.addEventListener('change', (e) => {
+      clearPinnedNav();
       prefs.selectedThreadId = e.target.value;
       prefs.composerMode = 'reply';
       saveJson(STORAGE_KEYS.PREFS, prefs);
@@ -5868,6 +6125,109 @@
     );
   }
 
+  function applyNotificationNav(nav) {
+    if (!nav || typeof nav !== 'object') return false;
+    const threadId = String(nav.threadId || nav.sessionId || '').trim();
+    const reminderId = String(nav.reminderId || '').trim();
+    const tab = String(nav.tab || '').trim();
+    if (!threadId && !reminderId && !tab) return false;
+
+    const notifKey = String(nav.id || nav.tag || '').trim();
+    if (notifKey) {
+      markNotifConsumed(notifKey);
+    }
+
+    if ('caches' in window) {
+      caches
+        .open(NAV_HANDOFF_CACHE)
+        .then((cache) =>
+          Promise.all([
+            cache.delete(PENDING_NAV_CACHE_URL),
+            cache.delete(LAST_PUSH_NAV_CACHE_URL)
+          ])
+        )
+        .catch(() => {});
+    }
+    try {
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'clear-pending-nav' });
+      }
+    } catch {}
+
+    setPinnedNav({
+      threadId,
+      provider: nav.provider || '',
+      title: nav.title || nav.sessionTitle || '',
+      reminderId
+    });
+
+    if (threadId) {
+      prefs.selectedThreadId = threadId;
+      prefs.composerMode = 'reply';
+      prefs.activeTab = 'chat';
+      saveJson(STORAGE_KEYS.PREFS, prefs);
+      switchTab('chat');
+      renderAll();
+      fetchThreadDetail(threadId, nav.provider || pinnedNavProvider || '').catch(() => {});
+    } else if (reminderId) {
+      prefs.activeTab = 'discipline';
+      saveJson(STORAGE_KEYS.PREFS, prefs);
+      switchTab('discipline');
+      renderAll();
+    } else if (tab) {
+      prefs.activeTab = tab;
+      saveJson(STORAGE_KEYS.PREFS, prefs);
+      switchTab(tab);
+      renderAll();
+    }
+
+    syncData().catch(() => {});
+    return true;
+  }
+
+  async function consumePendingNotificationNav(opts = {}) {
+    const allowUnseenPush = Boolean(opts && opts.allowUnseenPush);
+    try {
+      if ('caches' in window) {
+        const cache = await caches.open(NAV_HANDOFF_CACHE);
+        const pendingRes = await cache.match(PENDING_NAV_CACHE_URL);
+        if (pendingRes) {
+          await cache.delete(PENDING_NAV_CACHE_URL);
+          await cache.delete(LAST_PUSH_NAV_CACHE_URL);
+          const pending = await pendingRes.json().catch(() => null);
+          if (pending && Date.now() - Number(pending.ts || 0) < 10 * 60 * 1000) {
+            return applyNotificationNav(pending);
+          }
+        }
+        if (allowUnseenPush) {
+          const lastPushRes = await cache.match(LAST_PUSH_NAV_CACHE_URL);
+          if (lastPushRes) {
+            await cache.delete(LAST_PUSH_NAV_CACHE_URL);
+            const lastPush = await lastPushRes.json().catch(() => null);
+            const pushKey = String(lastPush?.id || lastPush?.tag || '').trim();
+            if (
+              lastPush &&
+              Date.now() - Number(lastPush.ts || 0) < 15 * 60 * 1000 &&
+              (!pushKey || !isNotifConsumed(pushKey))
+            ) {
+              return applyNotificationNav(lastPush);
+            }
+          }
+        }
+      }
+    } catch {}
+
+    try {
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: 'consume-pending-nav',
+          allowUnseenPush
+        });
+      }
+    } catch {}
+    return false;
+  }
+
   // Register Service Worker & Push Navigation Listener
   function registerServiceWorker() {
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
@@ -5880,7 +6240,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=14', { updateViaCache: 'none' })
+        .register('sw.js?v=15', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
@@ -5898,9 +6258,12 @@
           document.addEventListener('visibilitychange', () => {
             if (!document.hidden) {
               reg.update().catch(() => {});
-              syncData();
+              consumePendingNotificationNav({ allowUnseenPush: true }).finally(() => {
+                syncData();
+              });
             }
           });
+          consumePendingNotificationNav({ allowUnseenPush: true });
           return checkExistingPushSub();
         })
         .catch(() => {});
@@ -5909,21 +6272,26 @@
         const m = e && e.data;
         if (!m) return;
         if (m.type === 'theo-nav') {
-          if (m.threadId) {
-            prefs.selectedThreadId = m.threadId;
-            prefs.composerMode = 'reply';
-            saveJson(STORAGE_KEYS.PREFS, prefs);
-            switchTab('chat');
-            fetchThreadDetail(m.threadId, m.provider || '');
-          } else if (m.tab) {
-            switchTab(m.tab);
-          }
-          syncData();
+          applyNotificationNav(m);
         } else if (m.type === 'theo-push') {
           if (m.payload && m.payload.title) {
             playChime(m.payload.requireInteraction ? 'approve' : 'confirm');
+            const p = m.payload;
+            const navTarget =
+              p.threadId || p.reminderId || p.tab
+                ? {
+                    id: p.id || p.tag || '',
+                    tag: p.tag || '',
+                    tab: p.tab || (p.threadId ? 'chat' : 'pulse'),
+                    threadId: p.threadId || '',
+                    provider: p.provider || '',
+                    reminderId: p.reminderId || '',
+                    title: p.sessionTitle || p.title || ''
+                  }
+                : null;
             showToast(
-              `${m.payload.title}${m.payload.body ? ': ' + String(m.payload.body).slice(0, 95) : ''}`
+              `${p.title}${p.body ? ': ' + String(p.body).slice(0, 95) : ''}`,
+              navTarget
             );
           }
           syncData();
@@ -5955,30 +6323,66 @@
     });
     window.addEventListener('focus', () => {
       loadPersonalLedgerFromLocal();
-      renderAll();
-      syncData().catch(() => {});
+      consumePendingNotificationNav({ allowUnseenPush: true }).finally(() => {
+        renderAll();
+        syncData().catch(() => {});
+      });
     });
+    window.addEventListener('pageshow', () => {
+      consumePendingNotificationNav({ allowUnseenPush: true });
+    });
+
+    restorePinnedNavFromSession();
 
     const urlParams = new URLSearchParams(location.search);
     const tabParam = urlParams.get('tab');
     const threadParam = urlParams.get('thread');
     const provParam = urlParams.get('provider');
+    const remParam = urlParams.get('rem');
     const newParam = urlParams.get('new');
     if (newParam === 'antigravity' || newParam === 'claude') {
       prefs.composerMode = `new-${newParam}`;
       updateComposerModePills();
     }
+
+    if (threadParam || remParam || tabParam || newParam) {
+      try {
+        const cleanUrl = location.pathname + (location.hash || '');
+        history.replaceState(null, '', cleanUrl);
+      } catch {}
+    }
+
     if (threadParam) {
-      prefs.selectedThreadId = threadParam;
+      applyNotificationNav({
+        tab: 'chat',
+        threadId: threadParam,
+        provider: provParam || '',
+        clicked: true
+      });
+    } else if (remParam) {
+      applyNotificationNav({
+        tab: 'discipline',
+        reminderId: remParam,
+        clicked: true
+      });
+    } else if (pinnedNavThreadId && Date.now() < pinnedNavUntil) {
+      prefs.selectedThreadId = pinnedNavThreadId;
       prefs.composerMode = 'reply';
+      prefs.activeTab = 'chat';
       saveJson(STORAGE_KEYS.PREFS, prefs);
       switchTab('chat');
-      fetchThreadDetail(threadParam, provParam || '');
+      fetchThreadDetail(pinnedNavThreadId, pinnedNavProvider || '');
+    } else if (pinnedNavReminderId && Date.now() < pinnedNavUntil) {
+      prefs.activeTab = 'discipline';
+      saveJson(STORAGE_KEYS.PREFS, prefs);
+      switchTab('discipline');
     } else {
       switchTab(tabParam || prefs.activeTab || 'pulse');
     }
+
     renderAll();
     checkDueRemindersTick();
+    consumePendingNotificationNav({ allowUnseenPush: true });
     syncData();
     setInterval(() => {
       if (!document.hidden) syncData();

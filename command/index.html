@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/command.css?v=5">
+  <link rel="stylesheet" href="css/command.css?v=7">
   <script id="pre">
     (() => {
       try {
@@ -52,6 +52,12 @@
       <div class="hud-habit-strip" id="hud-habit-strip" aria-label="Quick 1-Tap Daily Do's and Don'ts"></div>
 
       <div class="hud-right">
+        <button type="button" class="hud-prayer-pill" id="btn-prayer-hud" title="Shia Prayer Times (Fajr, Dohor, Maghrib) &amp; Location Alerts">
+          <span class="prayer-hud-icon" id="prayer-hud-icon">🕌</span>
+          <span class="prayer-hud-name" id="prayer-hud-name">Prayer</span>
+          <strong class="prayer-hud-time tabular" id="prayer-hud-time">--:--</strong>
+          <span class="prayer-hud-cd tabular" id="prayer-hud-cd"></span>
+        </button>
         <button type="button" class="hud-sync-pill" id="btn-sync-now" title="Sync with Cloud Relay &amp; Workstation Bridge">
           <span class="sync-dot" id="sync-dot"></span>
           <span id="sync-label">Sync</span>
@@ -155,7 +161,7 @@
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=5"></script>
-  <script src="js/app.js?v=5"></script>
+  <script src="js/endpoints.js?v=7"></script>
+  <script src="js/app.js?v=7"></script>
 </body>
 </html>
