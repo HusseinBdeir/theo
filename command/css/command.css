@@ -257,6 +257,84 @@ button {
   flex-shrink: 0;
 }
 
+.hud-prayer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-primary);
+  transition: all 0.14s ease;
+  white-space: nowrap;
+}
+
+.hud-prayer-pill:hover {
+  border-color: var(--brass-bright);
+  background: var(--brass-glow);
+}
+
+.hud-prayer-pill.prayer-active-now {
+  background: var(--emerald-soft);
+  border-color: var(--emerald);
+  color: var(--emerald);
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.22);
+}
+
+.hud-prayer-pill.prayer-imminent {
+  background: var(--amber-soft);
+  border-color: var(--amber);
+}
+
+.prayer-hud-icon {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.prayer-hud-name {
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.hud-prayer-pill.prayer-active-now .prayer-hud-name,
+.hud-prayer-pill.prayer-active-now .prayer-hud-time {
+  color: var(--emerald);
+}
+
+.prayer-hud-time {
+  color: var(--brass-bright);
+  font-weight: 800;
+}
+
+.prayer-hud-cd {
+  font-size: 10px;
+  color: var(--text-muted);
+  padding-left: 4px;
+  border-left: 1px solid var(--border-subtle);
+}
+
+@media (max-width: 640px) {
+  .hud-score-delta {
+    display: none;
+  }
+  .prayer-hud-cd {
+    display: none;
+  }
+  .hud-prayer-pill {
+    padding: 4px 7px;
+    gap: 4px;
+  }
+  .hud-sync-pill {
+    padding: 4px 6px;
+  }
+  #sync-label {
+    display: none;
+  }
+}
+
 .hud-sync-pill {
   display: inline-flex;
   align-items: center;
@@ -568,7 +646,7 @@ button {
   min-height: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: repeat(4, minmax(84px, 1fr));
+  grid-template-rows: repeat(4, minmax(70px, 1fr));
   gap: 6px;
 }
 
@@ -589,7 +667,7 @@ button {
   flex-direction: column;
   justify-content: flex-start;
   min-width: 0;
-  min-height: 84px;
+  min-height: 70px;
   overflow: hidden;
   cursor: pointer;
   transition: border-color 0.14s ease, transform 0.12s ease;
@@ -1395,4 +1473,233 @@ button {
   font-size: 12.5px;
   font-weight: 600;
   box-shadow: var(--shadow-lg);
+}
+
+/* ============================================================================
+   SHIA PRAYER TIMES (JA'FARI: FAJR, DOHOR, MAGHRIB) STRIP & SHEET
+   ============================================================================ */
+
+.radar-prayer-strip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 9px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  overflow-x: auto;
+  scrollbar-width: none;
+  cursor: pointer;
+  transition: border-color 0.14s ease;
+}
+
+.radar-prayer-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.radar-prayer-strip:hover {
+  border-color: var(--brass-bright);
+}
+
+.radar-prayer-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--brass-bright);
+}
+
+.radar-prayer-loc {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.radar-prayer-slots {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.prayer-slot-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2.5px 7px;
+  border-radius: 6px;
+  background: var(--bg-ink);
+  border: 1px solid var(--border-subtle);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.prayer-slot-chip strong {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.prayer-slot-chip.is-next {
+  background: var(--brass-glow);
+  border-color: var(--brass);
+  color: var(--brass-bright);
+}
+
+.prayer-slot-chip.is-next strong {
+  color: var(--brass-bright);
+}
+
+.prayer-slot-chip.is-active-now {
+  background: var(--emerald-soft);
+  border-color: var(--emerald);
+  color: var(--emerald);
+}
+
+.prayer-slot-chip.is-active-now strong {
+  color: var(--emerald);
+}
+
+.prayer-slot-chip.is-passed {
+  opacity: 0.64;
+}
+
+.prayer-sheet-hero {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--brass-glow), rgba(16, 185, 129, 0.08));
+  border: 1px solid var(--border-strong);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.prayer-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+@media (max-width: 640px) {
+  .prayer-cards-grid {
+    grid-template-columns: 1fr;
+  }
+  .radar-prayer-loc {
+    display: none;
+  }
+}
+
+.prayer-detail-card {
+  padding: 11px 12px;
+  border-radius: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prayer-detail-card.is-next {
+  border-color: var(--brass);
+  background: linear-gradient(160deg, var(--brass-glow), var(--bg-card));
+}
+
+.prayer-detail-card.is-active-now {
+  border-color: var(--emerald);
+  background: linear-gradient(160deg, rgba(16, 185, 129, 0.12), var(--bg-card));
+}
+
+.prayer-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.prayer-card-time {
+  font-family: 'Archivo', sans-serif;
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1.05;
+}
+
+.prayer-card-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+
+.prayer-card-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle);
+  margin-top: auto;
+}
+
+.prayer-offset-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.prayer-step-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--bg-ink);
+  border: 1px solid var(--border-subtle);
+  font-weight: 800;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.prayer-loc-box {
+  padding: 11px 12px;
+  border-radius: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.prayer-week-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+
+.prayer-week-table th,
+.prayer-week-table td {
+  padding: 6px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+
+.prayer-week-table th {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  font-weight: 800;
+}
+
+.prayer-week-table tr.is-today {
+  background: var(--brass-glow);
+  font-weight: 700;
 }

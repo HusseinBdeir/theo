@@ -121,8 +121,8 @@
     jwk: {
       kty: 'EC',
       crv: 'P-256',
-      x: 'oALqBY5EVKiLph_te5Pe-hmcGB-VeYbUbNbQrWm3iFw',
-      y: '2hjsU1g8r4mf6ACCEq-mFtIz_6J4DpTzDQT3ISAoHrw',
+      x: 'oALqBY5EVKiLph_te5Le-hmcGB-VeYbUbNbQrWm3iFw',
+      y: 'NoY7FNYPK-Jn-gAghKvphbSM_-ieA6U8w0E9yEgKB68',
       d: 'MS5ta1KAESpycusDW8d1NMaj3fxc_oNO_F0V23oh5aA',
       ext: true
     },
@@ -1330,6 +1330,17 @@
     if (Array.isArray(incoming.teamRoster) && incoming.teamRoster.length) {
       personalLedger.teamRoster = incoming.teamRoster;
       changed = true;
+    }
+
+    if (incoming.prayerConfig && typeof incoming.prayerConfig === 'object') {
+      const curTs = Number(personalLedger.prayerConfig?.updatedAt || 0);
+      const incTs = Number(incoming.prayerConfig.updatedAt || 0);
+      if (!personalLedger.prayerConfig || incTs >= curTs) {
+        if (JSON.stringify(personalLedger.prayerConfig || null) !== JSON.stringify(incoming.prayerConfig)) {
+          personalLedger.prayerConfig = incoming.prayerConfig;
+          changed = true;
+        }
+      }
     }
 
     if (changed && !opts.skipSave) {
@@ -6240,7 +6251,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=15', { updateViaCache: 'none' })
+        .register('sw.js?v=16', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

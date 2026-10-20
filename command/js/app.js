@@ -75,8 +75,8 @@
   const VAPID_PRIVATE_JWK = {
     kty: 'EC',
     crv: 'P-256',
-    x: 'oALqBY5EVKiLph_te5Pe-hmcGB-VeYbUbNbQrWm3iFw',
-    y: '2hjsU1g8r4mf6ACCEq-mFtIz_6J4DpTzDQT3ISAoHrw',
+    x: 'oALqBY5EVKiLph_te5Le-hmcGB-VeYbUbNbQrWm3iFw',
+    y: 'NoY7FNYPK-Jn-gAghKvphbSM_-ieA6U8w0E9yEgKB68',
     d: 'MS5ta1KAESpycusDW8d1NMaj3fxc_oNO_F0V23oh5aA',
     ext: true
   };
@@ -1659,6 +1659,10 @@
                   if (r.ok) {
                     localMap[preTimerKey] = preTimerId;
                     scheduledCount++;
+                    try {
+                      localStorage.setItem(PRAYER_SCHED_KEY, JSON.stringify(localMap));
+                    } catch {}
+                    await new Promise((res) => setTimeout(res, 250));
                   }
                 } else {
                   localMap[preTimerKey] = preTimerId;
@@ -1703,6 +1707,10 @@
                 if (r.ok) {
                   localMap[timerKey] = timerId;
                   scheduledCount++;
+                  try {
+                    localStorage.setItem(PRAYER_SCHED_KEY, JSON.stringify(localMap));
+                  } catch {}
+                  await new Promise((res) => setTimeout(res, 250));
                 }
               } else {
                 localMap[timerKey] = timerId;
@@ -2128,32 +2136,44 @@
         }
         if (docs.push_registry && Array.isArray(docs.push_registry.items)) {
           state.cloudPushDevices = docs.push_registry.items.filter(
-            (d) => d && d.subscription && d.subscription.endpoint
+            (d) => normalizePushSubEntry(d) !== null
           );
+          try {
+            localStorage.setItem(CLOUD_PUSH_DEVS_KEY, JSON.stringify(state.cloudPushDevices));
+          } catch {}
         }
 
         // Ensure local browser Web Push subscription is also registered in shared push_registry
-        const localSub = getSavedPushSub();
+        const localSub = normalizePushSubEntry(getSavedPushSub());
         let nextPushRegistry = docs.push_registry;
         if (localSub && localSub.endpoint) {
           const existingItems = Array.isArray(docs.push_registry?.items)
             ? [...docs.push_registry.items]
             : [];
           const idx = existingItems.findIndex(
-            (d) => d && d.subscription && d.subscription.endpoint === localSub.endpoint
+            (d) => (d?.endpoint || d?.subscription?.endpoint) === localSub.endpoint
           );
+          const prevEntry = idx >= 0 ? existingItems[idx] : {};
           const devEntry = {
-            id: idx >= 0 && existingItems[idx].id ? existingItems[idx].id : `cmd_dev_${Math.abs(
-              Array.from(localSub.endpoint).reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0)
-            ).toString(36)}`,
-            label: /iPhone|iPad|iPod/i.test(navigator.userAgent || '') ? 'iPhone (Command)' : 'Command Device',
+            ...prevEntry,
+            id:
+              prevEntry.id ||
+              `cmd_dev_${Math.abs(
+                Array.from(localSub.endpoint).reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0)
+              ).toString(36)}`,
+            endpoint: localSub.endpoint,
+            p256dh: localSub.p256dh,
+            auth: localSub.auth,
+            keys: localSub.keys,
             ua: String(navigator.userAgent || '').slice(0, 140),
-            subscription: localSub,
             updatedAt: new Date().toISOString()
           };
           if (idx >= 0) existingItems[idx] = devEntry;
           else existingItems.push(devEntry);
           state.cloudPushDevices = existingItems;
+          try {
+            localStorage.setItem(CLOUD_PUSH_DEVS_KEY, JSON.stringify(state.cloudPushDevices));
+          } catch {}
           nextPushRegistry = {
             items: existingItems,
             updatedAt: new Date().toISOString()
@@ -2218,12 +2238,12 @@
           })
         });
 
-        // Arm exact-second serverless Web Push notifications for upcoming Shia prayers (Fajr, Dohor, Maghrib)
-        await scheduleUpcomingPrayerCloudPushes(docs);
-
         if (dot) dot.className = state.bridgeOrigin ? 'sync-dot' : 'sync-dot cloud';
         if (lbl) lbl.textContent = state.bridgeOrigin ? 'Bridge+Cloud' : 'Cloud Live';
         renderAll();
+
+        // Arm exact-second serverless Web Push notifications for upcoming Shia prayers (Fajr, Dohor, Maghrib)
+        scheduleUpcomingPrayerCloudPushes(docs).catch(() => {});
       }
     } catch {}
   }
@@ -2233,18 +2253,25 @@
      ============================================================================ */
   function renderPrayerHudPill() {
     const btn = document.getElementById('btn-prayer-hud');
-    const nameEl = document.getElementById('hud-prayer-name');
-    const timeEl = document.getElementById('hud-prayer-time');
+    const iconEl = document.getElementById('prayer-hud-icon');
+    const nameEl = document.getElementById('prayer-hud-name');
+    const timeEl = document.getElementById('prayer-hud-time');
+    const cdEl = document.getElementById('prayer-hud-cd');
     if (!btn || !nameEl || !timeEl) return;
 
-    const status = getNextShiaPrayerStatus(Date.now());
+    const now = Date.now();
+    const status = getNextShiaPrayerStatus(now);
     const nxt = status.nextPrayer;
-    const today = status.todaySchedule;
+    const today = status.todaySched;
     if (nxt) {
+      const cd = formatCountdown(nxt.epochMs, now);
+      const isImminent = Boolean(status.justEntered) || (nxt.epochMs - now <= 20 * 60000 && nxt.epochMs >= now);
+      if (iconEl) iconEl.textContent = nxt.icon || '🕌';
       nameEl.textContent = nxt.label;
-      timeEl.textContent = `${nxt.timeStr} (${status.countdownLabel})`;
-      btn.classList.toggle('imminent', Boolean(status.imminent));
-      btn.title = `🕌 Shia Prayer Times (${today.locationLabel} · Day #${today.dayOfYear})\n🌅 Fajr: ${today.prayers.fajr.timeStr}  |  ☀️ Dohor: ${today.prayers.dohor.timeStr}  |  🌙 Maghrib: ${today.prayers.maghrib.timeStr}\nNext: ${nxt.label} (${nxt.arabic}) at ${nxt.timeStr} (in ${status.countdownLabel})\nTap to configure location, GPS, or test push notifications`;
+      timeEl.textContent = nxt.time24;
+      if (cdEl) cdEl.textContent = `in ${cd}`;
+      btn.classList.toggle('imminent', isImminent);
+      btn.title = `🕌 Shia Prayer Times (${today.locationName} · Day #${today.dayOfYear})\n🌅 Fajr: ${today.fajr.time24}  |  ☀️ Dohor: ${today.dhuhr.time24}  |  🌙 Maghrib: ${today.maghrib.time24}\nNext: ${nxt.label} (${nxt.arabic}) at ${nxt.time24} (in ${cd})\nTap to configure location, GPS, or test push notifications`;
     }
   }
 
@@ -2535,9 +2562,10 @@
      ============================================================================ */
   function renderRadarPrayerStripHtml(now = Date.now()) {
     const status = getNextShiaPrayerStatus(now);
-    const today = status.todaySchedule;
+    const today = status.todaySched;
     const nxt = status.nextPrayer;
-    const slots = [today.prayers.fajr, today.prayers.dohor, today.prayers.maghrib];
+    const cd = nxt ? formatCountdown(nxt.epochMs, now) : '';
+    const slots = today.prayers;
     const isMobileViewport = typeof window !== 'undefined' && window.innerWidth <= 640;
 
     const slotsHtml = slots
@@ -2551,10 +2579,10 @@
           <span class="${cls}">
             <span>${p.icon}</span>
             <span class="p-lbl">${esc(p.label)}</span>
-            <span class="p-tm tabular">${esc(p.timeStr)}</span>
+            <span class="p-tm tabular">${esc(p.time24)}</span>
             ${
               isNext && !isMobileViewport
-                ? `<span class="p-cnt tabular">in ${esc(status.countdownLabel)}</span>`
+                ? `<span class="p-cnt tabular">in ${esc(cd)}</span>`
                 : ''
             }
           </span>
@@ -2562,7 +2590,7 @@
       })
       .join('');
 
-    const shortLoc = (today.locationLabel || 'Beirut').split(',')[0].trim();
+    const shortLoc = (today.locationName || 'Beirut').split(',')[0].trim();
 
     return `
       <div class="radar-prayer-strip" data-open-prayer="1" title="Tap to open Shia Prayer Times, GPS location &amp; notification settings">
@@ -2579,7 +2607,7 @@
           ${slotsHtml}
           ${
             nxt && nxt.isTomorrow && !isMobileViewport
-              ? `<span class="prayer-slot-chip active-next"><span>🌅</span><span class="p-lbl">Fajr (Tom)</span><span class="p-tm tabular">${esc(nxt.timeStr)}</span><span class="p-cnt tabular">in ${esc(status.countdownLabel)}</span></span>`
+              ? `<span class="prayer-slot-chip active-next"><span>🌅</span><span class="p-lbl">Fajr (Tom)</span><span class="p-tm tabular">${esc(nxt.time24)}</span><span class="p-cnt tabular">in ${esc(cd)}</span></span>`
               : ''
           }
         </div>
@@ -2742,28 +2770,27 @@
 
   function renderPrayerTimerRowsHtml(now = Date.now()) {
     const status = getNextShiaPrayerStatus(now);
-    const today = status.todaySchedule;
-    const tomorrow = status.tomorrowSchedule;
-    const cfg = status.config;
+    const today = status.todaySched;
+    const tomorrow = status.tomorrowSched;
+    const cfg = normalizePrayerConfig(state.prayerConfig);
 
-    const slots = ['fajr', 'dohor', 'maghrib'].map((id) => {
-      const todaySlot = today.prayers[id];
+    const slots = today.prayers.map((todaySlot, idx) => {
       const passedToday = now >= todaySlot.epochMs;
-      const activeSlot = passedToday ? tomorrow.prayers[id] : todaySlot;
-      const isNext = status.nextPrayer && status.nextPrayer.id === id;
+      const activeSlot = passedToday ? tomorrow.prayers[idx] : todaySlot;
+      const isNext = status.nextPrayer && status.nextPrayer.id === todaySlot.id;
       const countdown = formatCountdown(activeSlot.epochMs, now);
       return {
         ...activeSlot,
         passedToday,
         isNext,
         countdown,
-        enabled: cfg.enabled && cfg.prayers?.[id] !== false
+        enabled: cfg.enabled && todaySlot.enabled
       };
     });
 
     return `
       <div class="ticker-group-header" style="display:flex;justify-content:space-between;align-items:center">
-        <span>🕌 Daily Shia Prayer Alerts · ${esc(today.locationLabel)} (Day #${today.dayOfYear} · δ ${today.solarDeclinationDeg >= 0 ? '+' : ''}${today.solarDeclinationDeg}°)</span>
+        <span>🕌 Daily Shia Prayer Alerts · ${esc(today.locationName)} (Day #${today.dayOfYear} · δ ${today.declinationDeg >= 0 ? '+' : ''}${today.declinationDeg}°)</span>
         <button type="button" class="mini-chip active" data-open-prayer="1">⚙️ Location, Angles &amp; Test Push</button>
       </div>
       ${slots
@@ -2774,10 +2801,10 @@
             <span style="font-size:16px">${p.icon}</span>
             <span class="ticker-title">
               <strong>${esc(p.label)} (${esc(p.arabic)})</strong>
-              <span style="color:var(--text-secondary);font-size:12px;margin-left:6px">${esc(p.sub)} · ${esc(p.astroNote)}</span>
+              <span style="color:var(--text-secondary);font-size:12px;margin-left:6px">${esc(p.windowNote)}</span>
             </span>
             <div class="ticker-pills">
-              <span class="t-pill">${p.passedToday ? 'Tomorrow' : 'Today'} · ${esc(p.timeStr)}</span>
+              <span class="t-pill">${p.passedToday ? 'Tomorrow' : 'Today'} · ${esc(p.time24)}</span>
               <span class="t-pill ${p.isNext ? 'matured' : 'timer'} tabular">
                 ${p.isNext ? `🕌 Next in ${esc(p.countdown)}` : `⏳ in ${esc(p.countdown)}`}
               </span>
@@ -3241,8 +3268,9 @@
     const now = Date.now();
     const cfg = normalizePrayerConfig(state.prayerConfig);
     const status = getNextShiaPrayerStatus(now);
-    const today = status.todaySchedule;
+    const today = status.todaySched;
     const nxt = status.nextPrayer;
+    const cd = nxt ? formatCountdown(nxt.epochMs, now) : '';
     const activeSubsCount = getAllActivePushSubscriptions().length;
 
     titleWrap.innerHTML = `
@@ -3251,18 +3279,18 @@
         <div>
           <strong style="font-size:15px">Shia Prayer Times &amp; Notifications (Ja'fari)</strong>
           <div style="font-size:11px;color:var(--text-muted)">
-            Astronomical calculation by Location (${esc(today.lat.toFixed(4))}°, ${esc(today.lng.toFixed(4))}°) &amp; Day of Year (#${today.dayOfYear})
+            Astronomical calculation by Location (${esc(today.lat.toFixed(4))}°, ${esc(today.lng.toFixed(4))}°) &amp; Day of Year (#${today.dayOfYear}/${today.daysInYear})
           </div>
         </div>
       </div>
     `;
 
-    const slots = [today.prayers.fajr, today.prayers.dohor, today.prayers.maghrib];
+    const slots = today.prayers;
     const cardsHtml = slots
       .map((p) => {
         const isNext = nxt && nxt.id === p.id && !nxt.isTomorrow;
-        const pEnabled = cfg.enabled && cfg.prayers?.[p.id] !== false;
-        const adj = Number(cfg.adjustments?.[p.id] || 0);
+        const pEnabled = cfg.enabled && p.enabled;
+        const adj = Number(p.offsetMin || 0);
         const adjSign = adj > 0 ? `+${adj}m` : `${adj}m`;
         return `
           <div class="prayer-detail-card ${isNext ? 'is-next' : ''}">
@@ -3279,9 +3307,9 @@
               >${pEnabled ? '🔔 On' : '🔕 Muted'}</button>
             </div>
 
-            <div class="prayer-detail-time tabular">${esc(p.timeStr)}</div>
-            <div style="font-size:10.5px;color:var(--text-secondary)">${esc(p.sub)}</div>
-            <div style="font-size:10px;color:var(--text-muted)">${esc(p.astroNote)}</div>
+            <div class="prayer-detail-time tabular">${esc(p.time24)}</div>
+            <div style="font-size:10.5px;color:var(--text-secondary)">${esc(p.time12)} · Window until ${esc(p.windowEnd24)}</div>
+            <div style="font-size:10px;color:var(--text-muted)">${esc(p.windowNote)}</div>
 
             <div class="prayer-adj-row">
               <span style="color:var(--text-muted)">Offset: <strong class="tabular">${adjSign}</strong></span>
@@ -3297,31 +3325,32 @@
 
     // Build 7-day Shia timetable to show day-of-year progression
     const weekRows = [];
+    const baseIso = todayIso();
     for (let i = 0; i < 7; i++) {
-      const dMs = now + i * 86400000;
-      const parts = getTzDateParts(new Date(dMs), cfg.timeZone);
-      const sch = computeShiaPrayerTimesForDate(parts.year, parts.month, parts.day, cfg);
+      const iso = shiftIsoDate(baseIso, i);
+      const sch = computeShiaPrayerTimesForDate(iso, cfg);
+      const [yy, mm, dd] = iso.split('-').map(Number);
+      const dObj = new Date(yy, mm - 1, dd, 12, 0, 0);
       const dayLabel =
         i === 0
           ? 'Today'
           : i === 1
             ? 'Tomorrow'
-            : new Date(dMs).toLocaleDateString('en-US', {
-                timeZone: cfg.timeZone,
+            : dObj.toLocaleDateString('en-US', {
                 weekday: 'short',
                 month: 'short',
                 day: 'numeric'
               });
       weekRows.push({
         dayLabel,
-        dateIso: sch.dateIso,
+        dateIso: sch.isoDate,
         dayOfYear: sch.dayOfYear,
-        decl: sch.solarDeclinationDeg,
-        fajr: sch.prayers.fajr.timeStr,
-        sunrise: sch.references.sunrise,
-        dohor: sch.prayers.dohor.timeStr,
-        sunset: sch.references.sunset,
-        maghrib: sch.prayers.maghrib.timeStr,
+        decl: sch.declinationDeg,
+        fajr: sch.fajr.time24,
+        sunrise: sch.sunrise.time24,
+        dohor: sch.dhuhr.time24,
+        sunset: sch.sunset.time24,
+        maghrib: sch.maghrib.time24,
         isToday: i === 0
       });
     }
@@ -3333,16 +3362,16 @@
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
           <div>
             <div style="font-size:11px;font-weight:800;color:var(--brass-bright);text-transform:uppercase;letter-spacing:0.06em">
-              🕌 Next Shia Prayer · ${esc(today.locationLabel)}
+              🕌 Next Shia Prayer · ${esc(today.locationName)}
             </div>
             <div style="font-size:20px;font-weight:800;margin-top:2px">
-              ${nxt ? `${nxt.icon} ${esc(nxt.label)} — ${esc(nxt.arabic)} at <span class="tabular" style="color:var(--emerald)">${esc(nxt.timeStr)}</span>` : 'Calculating…'}
+              ${nxt ? `${nxt.icon} ${esc(nxt.label)} — ${esc(nxt.arabic)} at <span class="tabular" style="color:var(--emerald)">${esc(nxt.time24)}</span>` : 'Calculating…'}
             </div>
             <div style="font-size:12px;color:var(--text-secondary);margin-top:2px">
-              ⏳ Countdown: <strong class="tabular" style="color:var(--text-primary)">in ${esc(status.countdownLabel)}</strong>
-              · Sunrise <span class="tabular">${esc(today.references.sunrise)}</span>
-              · Sunset <span class="tabular">${esc(today.references.sunset)}</span>
-              · Midnight <span class="tabular">${esc(today.references.midnight)}</span>
+              ⏳ Countdown: <strong class="tabular" style="color:var(--text-primary)">in ${esc(cd)}</strong>
+              · Sunrise <span class="tabular">${esc(today.sunrise.time24)}</span>
+              · Sunset <span class="tabular">${esc(today.sunset.time24)}</span>
+              · Midnight <span class="tabular">${esc(today.midnight.time24)}</span>
             </div>
           </div>
 
@@ -3350,16 +3379,16 @@
             <button type="button" class="mini-chip ${cfg.enabled ? 'active' : ''}" id="btn-prayer-master-toggle">
               ${cfg.enabled ? '🔔 Master Alerts: ON' : '🔕 Master Alerts: OFF'}
             </button>
-            <button type="button" class="mini-chip ${cfg.soundChime ? 'active' : ''}" id="btn-prayer-sound-toggle">
-              ${cfg.soundChime ? '🔊 Chime: ON' : '🔇 Chime: OFF'}
+            <button type="button" class="mini-chip ${cfg.chime ? 'active' : ''}" id="btn-prayer-sound-toggle">
+              ${cfg.chime ? '🔊 Chime: ON' : '🔇 Chime: OFF'}
             </button>
           </div>
         </div>
 
         <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--text-muted);padding-top:4px;border-top:1px solid var(--border-subtle)">
-          <span>📅 Date: <strong class="tabular">${esc(today.dateIso)}</strong> (Day <strong>#${today.dayOfYear}</strong>)</span>
-          <span>☀️ Solar Declination δ: <strong class="tabular">${today.solarDeclinationDeg >= 0 ? '+' : ''}${today.solarDeclinationDeg}°</strong></span>
-          <span>⏱️ Equation of Time: <strong class="tabular">${today.eqTimeMinutes >= 0 ? '+' : ''}${today.eqTimeMinutes}m</strong></span>
+          <span>📅 Date: <strong class="tabular">${esc(today.isoDate)}</strong> (Day <strong>#${today.dayOfYear}/${today.daysInYear}</strong>)</span>
+          <span>☀️ Solar Declination δ: <strong class="tabular">${today.declinationDeg >= 0 ? '+' : ''}${today.declinationDeg}°</strong></span>
+          <span>⏱️ Equation of Time: <strong class="tabular">${today.eqtMinutes >= 0 ? '+' : ''}${today.eqtMinutes}m</strong></span>
           <span>📱 Push Devices Armed: <strong style="color:var(--emerald)">${activeSubsCount}</strong></span>
         </div>
       </div>
@@ -3373,7 +3402,7 @@
           <div>
             <div style="font-size:12.5px;font-weight:800">📍 Location &amp; Push Delivery</div>
             <div style="font-size:11px;color:var(--text-muted)">
-              Active: <strong>${esc(cfg.locationLabel)}</strong> (<span class="tabular">${cfg.lat.toFixed(4)}°, ${cfg.lng.toFixed(4)}°</span> · ${esc(cfg.timeZone)})
+              Active: <strong>${esc(cfg.locationName)}</strong> (<span class="tabular">${cfg.lat.toFixed(4)}°, ${cfg.lng.toFixed(4)}°</span> · ${esc(cfg.timeZone)})
             </div>
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
@@ -3389,14 +3418,14 @@
             const isMatch = Math.abs(p.lat - cfg.lat) < 0.03 && Math.abs(p.lng - cfg.lng) < 0.03;
             return `
               <button type="button" class="mini-chip ${isMatch ? 'active' : ''}" data-prayer-preset="${p.id}">
-                📍 ${esc(p.label)}
+                ${esc(p.short)}
               </button>
             `;
           }).join('')}
         </div>
 
         <form id="prayer-custom-loc-form" style="display:grid;grid-template-columns:1.3fr 0.8fr 0.8fr 1.1fr auto;gap:6px;align-items:center">
-          <input type="text" id="prayer-loc-label" value="${esc(cfg.locationLabel)}" placeholder="City / Label" style="padding:6px 8px;border-radius:7px;background:var(--bg-ink);border:1px solid var(--border-subtle);font-size:12px">
+          <input type="text" id="prayer-loc-label" value="${esc(cfg.locationName)}" placeholder="City / Label" style="padding:6px 8px;border-radius:7px;background:var(--bg-ink);border:1px solid var(--border-subtle);font-size:12px">
           <input type="number" step="0.0001" id="prayer-loc-lat" value="${cfg.lat}" placeholder="Lat" required style="padding:6px 8px;border-radius:7px;background:var(--bg-ink);border:1px solid var(--border-subtle);font-size:12px">
           <input type="number" step="0.0001" id="prayer-loc-lng" value="${cfg.lng}" placeholder="Lng" required style="padding:6px 8px;border-radius:7px;background:var(--bg-ink);border:1px solid var(--border-subtle);font-size:12px">
           <input type="text" id="prayer-loc-tz" value="${esc(cfg.timeZone)}" placeholder="Timezone (e.g. Asia/Beirut)" required style="padding:6px 8px;border-radius:7px;background:var(--bg-ink);border:1px solid var(--border-subtle);font-size:12px">
@@ -3406,15 +3435,13 @@
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding-top:4px;border-top:1px solid var(--border-subtle)">
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             <span style="font-size:11px;font-weight:700;color:var(--text-secondary)">Shia Angle Method:</span>
-            ${Object.values(SHIA_METHODS)
-              .map(
-                (m) => `
-              <button type="button" class="mini-chip ${cfg.method === m.id ? 'active' : ''}" data-prayer-method="${m.id}" title="${esc(m.note)}">
-                ${esc(m.label)}
+            ${SHIA_METHODS.map(
+              (m) => `
+              <button type="button" class="mini-chip ${cfg.method === m.id ? 'active' : ''}" data-prayer-method="${m.id}" title="${esc(m.label)}">
+                ${esc(m.short)}
               </button>
             `
-              )
-              .join('')}
+            ).join('')}
           </div>
 
           <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
@@ -3422,7 +3449,7 @@
             ${preOptions
               .map(
                 (mins) => `
-              <button type="button" class="mini-chip ${cfg.preReminderMinutes === mins ? 'active' : ''}" data-prayer-pre="${mins}">
+              <button type="button" class="mini-chip ${cfg.preRemindMin === mins ? 'active' : ''}" data-prayer-pre="${mins}">
                 ${mins === 0 ? 'Exact Only' : `${mins}m before`}
               </button>
             `
@@ -3995,20 +4022,18 @@
         return;
       }
       if (e.target.closest('#btn-prayer-sound-toggle')) {
-        const nextSound = !state.prayerConfig.soundChime;
-        if (nextSound) playSpiritualPrayerChime();
-        updatePrayerConfig({ soundChime: nextSound });
+        const nextSound = !state.prayerConfig.chime;
+        if (nextSound) playPrayerChime();
+        updatePrayerConfig({ chime: nextSound });
         openPrayerSheet();
         showToast(nextSound ? '🔊 Spiritual Prayer Chime On' : '🔇 Prayer Chime Muted');
         return;
       }
       if (e.target.closest('#btn-prayer-gps')) {
-        await detectPrayerLocationGps(false);
-        openPrayerSheet();
+        detectPrayerLocationGps(false);
         return;
       }
       if (e.target.closest('#btn-prayer-test-push')) {
-        playSpiritualPrayerChime();
         await sendTestPrayerPush();
         return;
       }
@@ -4020,10 +4045,12 @@
       const pToggle = e.target.closest('[data-prayer-toggle]');
       if (pToggle) {
         const pId = pToggle.getAttribute('data-prayer-toggle');
-        const cur = state.prayerConfig.prayers?.[pId] !== false;
+        const keyMap = { fajr: 'notifyFajr', dhuhr: 'notifyDhuhr', maghrib: 'notifyMaghrib' };
+        const cfgKey = keyMap[pId] || 'notifyFajr';
+        const cur = state.prayerConfig[cfgKey] !== false;
         updatePrayerConfig({
           enabled: true,
-          prayers: { ...state.prayerConfig.prayers, [pId]: !cur }
+          [cfgKey]: !cur
         });
         openPrayerSheet();
         showToast(`${!cur ? '🔔 Enabled' : '🔕 Muted'} ${pId.toUpperCase()} prayer alert`);
@@ -4033,10 +4060,12 @@
       if (pAdj) {
         const [pId, deltaStr] = pAdj.getAttribute('data-prayer-adj').split(':');
         const delta = Number(deltaStr) || 0;
-        const cur = Number(state.prayerConfig.adjustments?.[pId] || 0);
+        const offMap = { fajr: 'fajrOffsetMin', dhuhr: 'dhuhrOffsetMin', maghrib: 'maghribOffsetMin' };
+        const offKey = offMap[pId] || 'fajrOffsetMin';
+        const cur = Number(state.prayerConfig[offKey] || 0);
         const nextVal = Math.max(-20, Math.min(20, cur + delta));
         updatePrayerConfig({
-          adjustments: { ...state.prayerConfig.adjustments, [pId]: nextVal }
+          [offKey]: nextVal
         });
         openPrayerSheet();
         return;
@@ -4049,8 +4078,8 @@
           updatePrayerConfig({
             lat: found.lat,
             lng: found.lng,
-            locationLabel: found.label,
-            timeZone: found.tz,
+            locationName: found.label,
+            timeZone: found.timeZone,
             autoGps: false
           });
           openPrayerSheet();
@@ -4061,17 +4090,18 @@
       const pMethod = e.target.closest('[data-prayer-method]');
       if (pMethod) {
         const mId = pMethod.getAttribute('data-prayer-method');
-        if (SHIA_METHODS[mId]) {
-          updatePrayerConfig({ method: mId });
+        const foundM = SHIA_METHODS.find((m) => m.id === mId);
+        if (foundM) {
+          updatePrayerConfig({ method: foundM.id });
           openPrayerSheet();
-          showToast(`🕌 Calculation set to ${SHIA_METHODS[mId].label}`);
+          showToast(`🕌 Calculation set to ${foundM.short}`);
         }
         return;
       }
       const pPre = e.target.closest('[data-prayer-pre]');
       if (pPre) {
         const mins = Number(pPre.getAttribute('data-prayer-pre')) || 0;
-        updatePrayerConfig({ preReminderMinutes: mins });
+        updatePrayerConfig({ preRemindMin: mins });
         openPrayerSheet();
         showToast(mins > 0 ? `⏳ Pre-reminder set to ${mins}m before prayer` : '🕌 Exact prayer time alerts only');
         return;
@@ -4126,7 +4156,7 @@
           return;
         }
         updatePrayerConfig({
-          locationLabel: label,
+          locationName: label,
           lat: Number(lat.toFixed(4)),
           lng: Number(lng.toFixed(4)),
           timeZone: tz,
