@@ -1626,50 +1626,9 @@
     }
   }
 
-  async function scheduleExactReminderPush(item) {
-    const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
-    if (!nf.enabled || nf.paymentHolds === false || !pushSub || !pushSub.endpoint || !item) return;
-    const targetMs = Number(item.matureAt || item.dueAt || 0);
-    if (!targetMs) return;
-    const delaySec = Math.round((targetMs - Date.now()) / 1000);
-    if (delaySec < 5 || delaySec > 7 * 86400) return;
-
-    const isPayment = item.kind === 'payment';
-    const isWait = item.kind === 'wait';
-    const amtTxt = item.amount > 0 ? ` ($${fmtInt(item.amount)})` : '';
-    const title = isPayment
-      ? `💸 Payment Hold Matured${amtTxt}`
-      : isWait
-        ? `⏳ Cooling-Off Complete · Ready to Act`
-        : `⏰ THEO Reminder Due`;
-    const body = isPayment
-      ? `${item.title}${amtTxt} — ${item.waitDays || 3}d wait period is over. Tap to review or release.`
-      : `${item.title} — Tap to open THEO Reminders & Daily 100%.`;
-
-    try {
-      const exp = Math.floor(targetMs / 1000) + 43200;
-      const [vapid, bodyB64] = await Promise.all([
-        signVapid(pushSub.endpoint, exp),
-        encryptWebPush(pushSub, {
-          id: `rem-${item.id}-${targetMs}`,
-          title,
-          body,
-          tag: `theo-rem-${item.id}`,
-          url: `./?tab=discipline&rem=${encodeURIComponent(item.id)}`,
-          tab: 'discipline',
-          reminderId: item.id
-        })
-      ]);
-      await callCloudPush({
-        op: 'push_delay',
-        timerKey: `timer/rem_${item.id}`,
-        timerId: String(item.updatedAt || Date.now()),
-        delaySec,
-        endpoint: pushSub.endpoint,
-        vapid,
-        bodyB64
-      });
-    } catch {}
+  async function scheduleExactReminderPush() {
+    // All Prayer, Task, Reminder, Wait Timer, Delegation & 100% Score notifications are now owned by Planner (https://husseinbdeir.github.io/planner/)
+    return;
   }
 
   async function cancelExactReminderPush(itemId) {
@@ -1685,43 +1644,8 @@
   }
 
   function checkDueRemindersTick() {
-    const nowMs = Date.now();
-    const activeItems = (personalLedger.reminders || []).filter(
-      (r) => r && !r.deleted && !r.completed
-    );
-    let anyChanged = false;
-    for (const item of activeItems) {
-      const targetMs = Number(item.matureAt || item.dueAt || 0);
-      if (!targetMs) continue;
-      if (nowMs >= targetMs && nowMs - targetMs < 3600 * 1000 && !alertedReminderIds.has(item.id)) {
-        alertedReminderIds.add(item.id);
-        anyChanged = true;
-        playChime('approve');
-        const amtTxt = item.amount > 0 ? ` ($${fmtInt(item.amount)})` : '';
-        const msgTitle =
-          item.kind === 'payment'
-            ? `💸 Payment Hold Matured${amtTxt}`
-            : item.kind === 'wait'
-              ? `⏳ Wait Timer Complete`
-              : `⏰ Reminder Due`;
-        showToast(`${msgTitle}: ${item.title}`, { tab: 'discipline', reminderId: item.id });
-        if (notifPerm() === 'granted' && document.hidden) {
-          swLocalNotif({
-            id: `rem-due-${item.id}-${targetMs}`,
-            title: msgTitle,
-            body: `${item.title}${amtTxt} is ready for your action.`,
-            tag: `theo-rem-${item.id}`,
-            tab: 'discipline',
-            reminderId: item.id,
-            url: `./?tab=discipline&rem=${encodeURIComponent(item.id)}`
-          });
-        }
-      }
-    }
-    if (anyChanged || prefs.activeTab === 'discipline' || prefs.activeTab === 'pulse') {
-      if (prefs.activeTab === 'discipline') renderDisciplineView(true);
-      if (prefs.activeTab === 'pulse') renderPulseView();
-    }
+    // Handled exclusively by Planner PWA
+    return;
   }
 
   async function buildPushSlots(subJson, daysCount = 14) {
@@ -6852,7 +6776,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=23', { updateViaCache: 'none' })
+        .register('sw.js?v=24', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
