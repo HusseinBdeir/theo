@@ -6852,7 +6852,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=21', { updateViaCache: 'none' })
+        .register('sw.js?v=22', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
