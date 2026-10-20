@@ -2091,12 +2091,63 @@ html[data-theme="dark"] .tools-details {
   white-space: pre;
 }
 
-/* Composer (hidden on Workbench reader view) */
-.chat-composer,
-.chat-composer[hidden],
-.composer-quick-chips,
-.composer-target-bar {
+/* Docked Prompt & File Composer */
+.chat-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-top: 6px;
+  flex-shrink: 0;
+  width: 100%;
+  min-width: 0;
+}
+
+.chat-composer[hidden] {
   display: none !important;
+}
+
+.composer-quick-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  width: 100%;
+  min-width: 0;
+}
+
+.slash-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: border-color 0.14s, color 0.14s, background 0.14s;
+}
+
+.slash-chip:hover,
+.slash-chip:active {
+  border-color: var(--brass);
+  color: var(--brass);
+}
+
+.slash-chip.attach-chip {
+  background: var(--brass-glow);
+  border-color: var(--border-strong);
+  color: var(--brass);
+}
+
+.slash-chip.repo-chip {
+  background: var(--agy-soft);
+  border-color: rgba(49, 134, 255, 0.35);
+  color: var(--agy);
 }
 
 .composer-box {
@@ -2105,54 +2156,159 @@ html[data-theme="dark"] .tools-details {
   background: var(--bg-plate);
   border: 1px solid var(--border-strong);
   box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .composer-target-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  gap: 8px;
 }
 
 .composer-mode-pills {
   display: flex;
+  align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .target-pill {
-  padding: 3px 9px;
-  border-radius: 6px;
+  padding: 4px 9px;
+  border-radius: 7px;
   font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
   background: var(--bg-ink);
+  border: 1px solid var(--border-subtle);
+  white-space: nowrap;
 }
 
 .target-pill.active {
   background: var(--brass-glow);
   color: var(--brass);
+  border-color: var(--border-strong);
+}
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.composer-attachments[hidden] {
+  display: none !important;
+}
+
+.composer-attach-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--bg-ink);
   border: 1px solid var(--border-strong);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  max-width: 100%;
+}
+
+.composer-attach-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.composer-attach-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 165px;
+}
+
+.composer-attach-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.composer-attach-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.composer-attach-remove:hover {
+  color: var(--crimson);
 }
 
 .composer-input-row {
   display: flex;
   align-items: flex-end;
-  gap: 10px;
+  gap: 8px;
+}
+
+.composer-attach-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--bg-ink);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.composer-attach-btn:hover,
+.composer-attach-btn:active {
+  border-color: var(--brass);
+  color: var(--brass);
+}
+
+.composer-attach-btn svg {
+  width: 17px;
+  height: 17px;
 }
 
 .composer-input-row textarea {
   flex: 1;
+  min-width: 0;
   background: none;
   border: none;
   outline: none;
   resize: none;
   font-size: 14px;
-  max-height: 120px;
+  line-height: 1.4;
+  padding: 6px 2px;
+  max-height: 110px;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.composer-input-row textarea::-webkit-scrollbar {
+  display: none;
 }
 
 .composer-send-btn {
-  width: 38px;
-  height: 38px;
+  width: 36px;
+  height: 36px;
   border-radius: 10px;
   background: linear-gradient(135deg, var(--brass), var(--brass-deep));
   color: #071022;
@@ -2163,8 +2319,8 @@ html[data-theme="dark"] .tools-details {
 }
 
 .composer-send-btn svg {
-  width: 18px;
-  height: 18px;
+  width: 17px;
+  height: 17px;
 }
 
 /* Workspaces & Git Inspector */
@@ -2937,14 +3093,20 @@ html[data-theme="light"] .mobile-bottom-dock {
   }
   .composer-box {
     padding: 8px 10px;
+    gap: 6px;
   }
   .composer-mode-pills {
-    flex-wrap: wrap;
-    gap: 4px;
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 5px;
   }
   .target-pill {
     font-size: 10.5px;
-    padding: 3px 7px;
+    padding: 4px 5px;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /* Workspaces horizontal repo selector on phone */

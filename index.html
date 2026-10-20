@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/theo.css?v=20">
+  <link rel="stylesheet" href="css/theo.css?v=21">
   <script id="pre">
     (() => {
       try {
@@ -366,20 +366,33 @@
           <!-- Conversation Stream -->
           <div class="chat-stream" id="chat-stream"></div>
 
-          <!-- Floating Prompt Composer (hidden on Workbench view) -->
-          <form class="chat-composer" id="chat-composer-form" hidden>
-            <div class="composer-quick-chips" id="composer-quick-chips" hidden></div>
-            <div class="composer-box" hidden>
-              <div class="composer-target-bar" hidden>
-                <div class="composer-mode-pills" hidden>
+          <!-- Docked Prompt & File Composer -->
+          <form class="chat-composer" id="chat-composer-form">
+            <div class="composer-quick-chips" id="composer-quick-chips">
+              <button type="button" class="slash-chip attach-chip" id="chip-attach-file" title="Upload photo, screenshot, or file from device">📎 Attach File</button>
+              <button type="button" class="slash-chip repo-chip" id="chip-pick-repo-file" title="Reference a BHFIRMS workspace or modified file">📁 @Repo / File</button>
+              <button type="button" class="slash-chip" data-insert-prompt="Continue with the next priority item in NEXT THREAD and verify live.">▶ Next Thread</button>
+              <button type="button" class="slash-chip" data-insert-prompt="Run the test suite and verify everything passes with zero errors.">✓ Run Tests</button>
+              <button type="button" class="slash-chip" data-insert-prompt="Check git status and summarize any uncommitted changes.">⎇ Git Status</button>
+              <button type="button" class="slash-chip" data-insert-prompt="/compact">⚡ /compact</button>
+              <button type="button" class="slash-chip" data-insert-prompt="/plan">📐 /plan</button>
+            </div>
+            <div class="composer-box">
+              <div class="composer-target-bar">
+                <div class="composer-mode-pills">
                   <button type="button" class="target-pill active" id="comp-mode-reply" data-comp-mode="reply">Reply to Current</button>
                   <button type="button" class="target-pill" id="comp-mode-new-agy" data-comp-mode="new-antigravity">+ New Antigravity</button>
                   <button type="button" class="target-pill" id="comp-mode-new-claude" data-comp-mode="new-claude">+ New Claude</button>
                 </div>
                 <span class="outbox-indicator tabular" id="outbox-indicator" hidden>0 queued</span>
               </div>
+              <div class="composer-attachments" id="composer-attachments" hidden></div>
               <div class="composer-input-row">
-                <textarea id="composer-input" rows="1" placeholder=""></textarea>
+                <input type="file" id="composer-file-input" multiple accept="image/*,.pdf,.txt,.md,.json,.csv,.py,.js,.ts,.tsx,.jsx,.html,.css,.sql,.xml,.yaml,.yml,.ps1,.sh,.log" hidden>
+                <button type="button" class="composer-attach-btn" id="btn-composer-attach" title="Attach file, screenshot, or photo">
+                  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 6.5l-5.8 5.8a2.1 2.1 0 0 0 3 3l6.2-6.2a4.2 4.2 0 0 0-6-6L4.7 9.3a6.3 6.3 0 0 0 8.9 8.9l5.2-5.2"/></svg>
+                </button>
+                <textarea id="composer-input" rows="1" placeholder="Prompt THEO or attach files…"></textarea>
                 <button type="submit" class="composer-send-btn" id="composer-send-btn" title="Dispatch Prompt">
                   <svg viewBox="0 0 20 20"><path d="M3 10l14-6.5-4.5 13-2.5-4.5L3 10z" fill="currentColor"/></svg>
                 </button>
@@ -520,7 +533,7 @@
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=20"></script>
-  <script src="js/app.js?v=20"></script>
+  <script src="js/endpoints.js?v=21"></script>
+  <script src="js/app.js?v=21"></script>
 </body>
 </html>

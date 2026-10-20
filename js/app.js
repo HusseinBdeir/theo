@@ -5539,12 +5539,147 @@
     if (prefs.activeTab === 'analytics') renderAnalyticsView();
   }
 
-  // Command Palette (⌘K)
-  function openCommandPalette() {
+  let cmdPaletteMode = 'default';
+  let composerAttachments = [];
+
+  function fmtFileBytes(bytes) {
+    const n = Number(bytes || 0);
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function renderComposerAttachments() {
+    const tray = $('composer-attachments');
+    if (!tray) return;
+    if (!composerAttachments.length) {
+      tray.hidden = true;
+      tray.innerHTML = '';
+      return;
+    }
+    tray.hidden = false;
+    tray.innerHTML = composerAttachments
+      .map((a) => {
+        const iconHtml =
+          a.kind === 'image' && a.dataUrl
+            ? `<img src="${esc(a.dataUrl)}" class="composer-attach-thumb" alt="">`
+            : a.kind === 'repo'
+              ? `<span>📁</span>`
+              : `<span>📄</span>`;
+        return `
+          <span class="composer-attach-pill">
+            ${iconHtml}
+            <span class="composer-attach-name">${esc(a.name)}</span>
+            ${a.sizeLabel ? `<span class="composer-attach-meta tabular">${esc(a.sizeLabel)}</span>` : ''}
+            <button type="button" class="composer-attach-remove" data-remove-attach="${esc(a.id)}" title="Remove attachment">✕</button>
+          </span>
+        `;
+      })
+      .join('');
+  }
+
+  function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result || ''));
+      fr.onerror = () => reject(fr.error);
+      fr.readAsDataURL(file);
+    });
+  }
+
+  async function compressImageFile(file) {
+    const rawDataUrl = await readFileAsDataUrl(file);
+    if (file.size <= 220 * 1024) return rawDataUrl;
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const maxDim = 1440;
+          let w = img.naturalWidth || img.width || 800;
+          let h = img.naturalHeight || img.height || 600;
+          if (w > maxDim || h > maxDim) {
+            if (w >= h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL('image/jpeg', 0.82));
+        } catch {
+          resolve(rawDataUrl);
+        }
+      };
+      img.onerror = () => resolve(rawDataUrl);
+      img.src = rawDataUrl;
+    });
+  }
+
+  async function handleComposerFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    for (const file of files) {
+      const isImg = String(file.type || '').startsWith('image/');
+      const isText =
+        /\.(txt|md|json|csv|py|js|ts|tsx|jsx|html|css|sql|xml|yaml|yml|ps1|sh|log|ini|env|toml)$/i.test(
+          file.name || ''
+        ) || String(file.type || '').startsWith('text/');
+      let dataUrl = '';
+      let textContent = '';
+      try {
+        if (isImg) {
+          dataUrl = await compressImageFile(file);
+        } else {
+          if (isText && file.size <= 512 * 1024 && typeof file.text === 'function') {
+            textContent = (await file.text()).slice(0, 64000);
+          }
+          if (file.size <= 2 * 1024 * 1024) {
+            dataUrl = await readFileAsDataUrl(file);
+          }
+        }
+        composerAttachments.push({
+          id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          kind: isImg ? 'image' : 'file',
+          name: file.name || 'attachment',
+          mime: file.type || 'application/octet-stream',
+          size: file.size || 0,
+          sizeLabel: fmtFileBytes(file.size || 0),
+          dataUrl,
+          textContent
+        });
+      } catch {}
+    }
+    renderComposerAttachments();
+    showToast(`📎 Attached ${files.length} file${files.length === 1 ? '' : 's'}`);
+    $('composer-input')?.focus();
+  }
+
+  function openRepoFilePicker() {
+    cmdPaletteMode = 'repo-file';
     const modal = $('cmd-modal');
     const input = $('cmd-input');
     if (!modal || !input) return;
     modal.hidden = false;
+    input.placeholder = 'Filter BHFIRMS workspace or modified git file to attach…';
+    input.value = '';
+    renderCommandPaletteResults('');
+    setTimeout(() => input.focus(), 30);
+  }
+
+  // Command Palette (⌘K)
+  function openCommandPalette() {
+    cmdPaletteMode = 'default';
+    const modal = $('cmd-modal');
+    const input = $('cmd-input');
+    if (!modal || !input) return;
+    modal.hidden = false;
+    input.placeholder = 'Jump to session, repo, or run a remote THEO command…';
     input.value = '';
     renderCommandPaletteResults('');
     setTimeout(() => input.focus(), 30);
@@ -5553,13 +5688,58 @@
   function closeCommandPalette() {
     const modal = $('cmd-modal');
     if (modal) modal.hidden = true;
+    cmdPaletteMode = 'default';
   }
 
   function renderCommandPaletteResults(query) {
     const resEl = $('cmd-results');
     if (!resEl) return;
     const q = query.trim().toLowerCase();
+
+    if (cmdPaletteMode === 'repo-file') {
+      const repoItems = [];
+      for (const w of appState?.workspaces || []) {
+        repoItems.push({
+          title: `📁 [${w.name}] Workspace Root`,
+          sub: `${w.group || 'BHFIRMS'} · ⎇ ${w.branch || 'main'}${w.dirtyCount ? ` · ${w.dirtyCount} modified` : ''}`,
+          repoLabel: `[${w.name}]`,
+          repoPath: w.path || w.name
+        });
+        const det = workspacesDetailCache[w.id];
+        if (det && Array.isArray(det.files)) {
+          for (const f of det.files.slice(0, 20)) {
+            const fPath = f.path || f.file || '';
+            if (fPath) {
+              repoItems.push({
+                title: `📄 [${w.name}] ${fPath}`,
+                sub: `Modified (${f.status || 'M'}) · ⎇ ${w.branch || 'main'}`,
+                repoLabel: `[${w.name}] ${fPath}`,
+                repoPath: `${w.path ? w.path + '/' : ''}${fPath}`
+              });
+            }
+          }
+        }
+      }
+      const matchedRepos = repoItems.filter(
+        (it) => !q || `${it.title} ${it.sub}`.toLowerCase().includes(q)
+      );
+      resEl.innerHTML = matchedRepos
+        .slice(0, 16)
+        .map(
+          (it) => `
+          <button type="button" class="cmd-item" data-cmd-attach-repo="${esc(it.repoLabel)}" data-cmd-repo-path="${esc(it.repoPath)}">
+            <strong>${esc(it.title)}</strong>
+            <span class="meta-timestamp">${esc(it.sub)}</span>
+          </button>
+        `
+        )
+        .join('');
+      return;
+    }
+
     const items = [
+      { title: '📎 Attach File or Photo to Prompt', sub: 'Workbench Composer', act: 'attach-file' },
+      { title: '📁 Attach Workspace / Modified Git File (@Repo)', sub: 'Workbench Composer', act: 'pick-repo-file' },
       { title: '🎯 Open Planner PWA (Planning, Tasks, Delegation, Score, Prayers)', sub: 'Standalone PWA ↗', act: 'open-command-pwa' },
       { title: '+ New Google Antigravity Session', sub: 'Action', act: 'new-agy' },
       { title: '+ New Claude Code Session', sub: 'Action', act: 'new-claude' },
@@ -6268,6 +6448,35 @@
         return;
       }
 
+      const removeAttachBtn = e.target.closest('[data-remove-attach]');
+      if (removeAttachBtn) {
+        const rmId = removeAttachBtn.dataset.removeAttach;
+        composerAttachments = composerAttachments.filter((a) => a.id !== rmId);
+        renderComposerAttachments();
+        return;
+      }
+
+      const attachRepoBtn = e.target.closest('[data-cmd-attach-repo]');
+      if (attachRepoBtn) {
+        closeCommandPalette();
+        const label = attachRepoBtn.dataset.cmdAttachRepo || '';
+        const repoPath = attachRepoBtn.dataset.cmdRepoPath || '';
+        if (label) {
+          composerAttachments.push({
+            id: `att-repo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            kind: 'repo',
+            name: label,
+            repoPath,
+            sizeLabel: 'workspace'
+          });
+          renderComposerAttachments();
+          switchTab('chat');
+          showToast(`📁 Attached ${label}`);
+          setTimeout(() => $('composer-input')?.focus(), 40);
+        }
+        return;
+      }
+
       const cmdItem = e.target.closest('[data-cmd-act], [data-cmd-thread]');
       if (cmdItem) {
         closeCommandPalette();
@@ -6280,6 +6489,12 @@
           saveJson(STORAGE_KEYS.PREFS, prefs);
           switchTab('chat');
           fetchThreadDetail(tid);
+        } else if (act === 'attach-file') {
+          switchTab('chat');
+          $('composer-file-input')?.click();
+        } else if (act === 'pick-repo-file') {
+          switchTab('chat');
+          openRepoFilePicker();
         } else if (act === 'open-command-pwa' || act === 'open-discipline' || act === 'new-payment-hold') {
           window.open('https://husseinbdeir.github.io/command/', '_blank', 'noopener');
         } else if (act === 'new-agy') {
@@ -6367,6 +6582,39 @@
     // Search in Sessions
     $('sess-search-input')?.addEventListener('input', () => renderSessionsView());
 
+    // Composer File Attachments & @Repo Picker
+    $('btn-composer-attach')?.addEventListener('click', () => {
+      $('composer-file-input')?.click();
+    });
+    $('chip-attach-file')?.addEventListener('click', () => {
+      $('composer-file-input')?.click();
+    });
+    $('chip-pick-repo-file')?.addEventListener('click', () => {
+      openRepoFilePicker();
+    });
+    $('composer-file-input')?.addEventListener('change', async (e) => {
+      const files = e.target.files;
+      if (files && files.length) {
+        await handleComposerFiles(files);
+        e.target.value = '';
+      }
+    });
+    $('composer-input')?.addEventListener('paste', async (e) => {
+      const items = Array.from(e.clipboardData?.items || []);
+      const fileItems = items.filter((it) => it.kind === 'file');
+      if (fileItems.length > 0) {
+        const files = fileItems.map((it) => it.getAsFile()).filter(Boolean);
+        if (files.length > 0) {
+          await handleComposerFiles(files);
+        }
+      }
+    });
+    $('composer-input')?.addEventListener('input', (e) => {
+      const el = e.target;
+      el.style.height = 'auto';
+      el.style.height = `${Math.min(110, el.scrollHeight)}px`;
+    });
+
     // Composer Form Submit
     $('chat-composer-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -6405,12 +6653,27 @@
   async function submitComposerPrompt() {
     const inp = $('composer-input');
     if (!inp) return;
-    const text = inp.value.trim();
-    if (!text) return;
+    const rawText = inp.value.trim();
+    if (!rawText && composerAttachments.length === 0) return;
+
+    const sentAttachments = [...composerAttachments];
+    composerAttachments = [];
+    renderComposerAttachments();
 
     inp.value = '';
+    inp.style.height = 'auto';
     haptic(15);
     playChime('send');
+
+    const repoRefs = sentAttachments.filter((a) => a.kind === 'repo');
+    const fileRefs = sentAttachments.filter((a) => a.kind !== 'repo');
+    const contextHeader = repoRefs.length
+      ? `${repoRefs.map((r) => `${r.name}${r.repoPath ? ` (${r.repoPath})` : ''}`).join(', ')}\n`
+      : '';
+    const attachDisplayLine = sentAttachments.length
+      ? `\n\n📎 Attached: ${sentAttachments.map((a) => a.name).join(', ')}`
+      : '';
+    const text = `${contextHeader}${rawText || (fileRefs.length ? `Please inspect the attached file(s): ${fileRefs.map((f) => f.name).join(', ')}` : '')}`.trim();
 
     const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId);
     const isNewAgy = prefs.composerMode === 'new-antigravity';
@@ -6431,7 +6694,7 @@
         id: `local-${Date.now()}`,
         role: 'user',
         createdAt: new Date().toISOString(),
-        text,
+        text: `${rawText || text}${attachDisplayLine}`,
         toolCalls: [],
         optimistic: true,
         optimisticAt: Date.now()
@@ -6445,6 +6708,13 @@
       id: targetId,
       provider,
       prompt: text,
+      attachments: fileRefs.map((f) => ({
+        name: f.name,
+        mime: f.mime,
+        size: f.size,
+        dataUrl: f.dataUrl || '',
+        textContent: f.textContent || ''
+      })),
       newSession: Boolean(isNewAgy || isNewClaude || !targetId)
     });
 
@@ -6582,7 +6852,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=20', { updateViaCache: 'none' })
+        .register('sw.js?v=21', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
