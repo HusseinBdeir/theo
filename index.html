@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/theo.css?v=25">
+  <link rel="stylesheet" href="css/theo.css?v=26">
   <script id="pre">
     (() => {
       try {
@@ -384,8 +384,9 @@
                   <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 6.5l-5.8 5.8a2.1 2.1 0 0 0 3 3l6.2-6.2a4.2 4.2 0 0 0-6-6L4.7 9.3a6.3 6.3 0 0 0 8.9 8.9l5.2-5.2"/></svg>
                 </button>
                 <textarea id="composer-input" rows="1" placeholder="Prompt THEO or attach files…"></textarea>
-                <button type="submit" class="composer-send-btn" id="composer-send-btn" title="Dispatch Prompt">
-                  <svg viewBox="0 0 20 20"><path d="M3 10l14-6.5-4.5 13-2.5-4.5L3 10z" fill="currentColor"/></svg>
+                <button type="submit" class="composer-send-btn" id="composer-send-btn" title="Dispatch Prompt" aria-label="Dispatch Prompt">
+                  <svg class="icon-send" viewBox="0 0 20 20"><path d="M3 10l14-6.5-4.5 13-2.5-4.5L3 10z" fill="currentColor"/></svg>
+                  <svg class="icon-stop" viewBox="0 0 20 20"><rect x="5" y="5" width="10" height="10" rx="2.2" fill="currentColor"/></svg>
                 </button>
               </div>
             </div>
@@ -524,7 +525,7 @@
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=25"></script>
-  <script src="js/app.js?v=25"></script>
+  <script src="js/endpoints.js?v=26"></script>
+  <script src="js/app.js?v=26"></script>
 </body>
 </html>

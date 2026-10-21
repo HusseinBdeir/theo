@@ -3806,6 +3806,7 @@
       lastRenderedThreadId = prefs.selectedThreadId;
       lastRenderedMsgCount = messages.length;
     }
+    updateComposerActionButton();
   }
 
   function renderFileChipHtml(rawLabel) {
@@ -5479,6 +5480,7 @@
     if (!composerAttachments.length) {
       tray.hidden = true;
       tray.innerHTML = '';
+      updateComposerActionButton();
       return;
     }
     tray.hidden = false;
@@ -5500,6 +5502,7 @@
         `;
       })
       .join('');
+    updateComposerActionButton();
   }
 
   function readFileAsDataUrl(file) {
@@ -6537,6 +6540,7 @@
       const el = e.target;
       el.style.height = 'auto';
       el.style.height = `${Math.min(110, el.scrollHeight)}px`;
+      updateComposerActionButton();
     });
 
     // Composer Form Submit
@@ -6568,17 +6572,127 @@
     });
   }
 
+  const stoppedSessionsById = new Map();
+
+  function isSessionActivelyRunning(tid) {
+    const cleanId = String(tid || prefs.selectedThreadId || '').trim();
+    if (!cleanId) return false;
+    const row = (appState?.rows || []).find((r) => r.id === cleanId);
+    const detail = threadsCache[cleanId] || null;
+    const msgs = coalesceThreadMessages(detail?.messages || []);
+    const lastMsg = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+
+    const stopRec = stoppedSessionsById.get(cleanId);
+    if (stopRec) {
+      const hasNewUserTurn =
+        msgs.length > stopRec.msgCount ||
+        Boolean(lastMsg && lastMsg.id && lastMsg.id !== stopRec.lastMsgId && lastMsg.role === 'user');
+      if (!hasNewUserTurn && Date.now() - stopRec.at < 300000) {
+        return false;
+      }
+      if (hasNewUserTurn) {
+        stoppedSessionsById.delete(cleanId);
+      }
+    }
+
+    if (row?.status === 'working' || row?.dot === 'running' || row?.bgTask?.state === 'running') {
+      return true;
+    }
+    if (lastMsg) {
+      if (lastMsg.optimistic && Date.now() - Number(lastMsg.optimisticAt || 0) < 90000) {
+        return true;
+      }
+      const msgTimeMs = lastMsg.createdAt ? Date.parse(lastMsg.createdAt) : 0;
+      const isRecentMsg = !msgTimeMs || Date.now() - msgTimeMs < 3600 * 1000;
+      if (lastMsg.role === 'user' && isRecentMsg && row?.status !== 'waiting' && !row?.pendingQuestion) {
+        return true;
+      }
+      if (
+        lastMsg.role === 'assistant' &&
+        !String(lastMsg.text || '').trim() &&
+        Array.isArray(lastMsg.toolCalls) &&
+        lastMsg.toolCalls.length > 0 &&
+        isRecentMsg &&
+        row?.status !== 'waiting' &&
+        !row?.pendingQuestion
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function updateComposerActionButton() {
+    const btn = $('composer-send-btn');
+    if (!btn) return;
+    const inp = $('composer-input');
+    const hasDraft = Boolean((inp && inp.value.trim().length > 0) || composerAttachments.length > 0);
+    const isReplyMode = !prefs.composerMode || prefs.composerMode === 'reply';
+    const shouldShowStop = isReplyMode && !hasDraft && isSessionActivelyRunning(prefs.selectedThreadId);
+    btn.classList.toggle('is-stop', shouldShowStop);
+    btn.setAttribute('title', shouldShowStop ? 'Stop / End Running Session' : 'Dispatch Prompt');
+    btn.setAttribute('aria-label', shouldShowStop ? 'Stop running session' : 'Dispatch Prompt');
+  }
+
+  async function stopActiveSession(explicitId = '') {
+    const tid = String(explicitId || prefs.selectedThreadId || '').trim();
+    if (!tid) return;
+    const row = (appState?.rows || []).find((r) => r.id === tid);
+    const detail = threadsCache[tid] || null;
+    const msgs = coalesceThreadMessages(detail?.messages || []);
+    const lastMsg = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+    const provider = (detail?.provider || row?.provider) === 'claude' ? 'claude' : 'antigravity';
+
+    stoppedSessionsById.set(tid, {
+      at: Date.now(),
+      msgCount: msgs.length,
+      lastMsgId: lastMsg?.id || ''
+    });
+
+    if (row) {
+      row.status = 'completed';
+      row.statusLabel = 'Stopped';
+      row.dot = 'idle';
+      row.bgTask = null;
+    }
+    if (detail && Array.isArray(detail.messages)) {
+      detail.messages = detail.messages.filter((m) => !m.optimistic);
+    }
+
+    haptic(20);
+    persistCache();
+    updateComposerActionButton();
+    renderAll();
+    showToast('■ Stopped session');
+
+    await dispatchRemoteCommand({
+      type: 'sessionAction',
+      action: 'interrupt',
+      subAction: 'interrupt',
+      id: tid,
+      threadId: tid,
+      provider
+    });
+  }
+
   function updateComposerModePills() {
     document.querySelectorAll('[data-comp-mode]').forEach((b) => {
       b.classList.toggle('active', b.dataset.compMode === prefs.composerMode);
     });
+    updateComposerActionButton();
   }
 
   async function submitComposerPrompt() {
     const inp = $('composer-input');
     if (!inp) return;
+    const sendBtn = $('composer-send-btn');
     const rawText = inp.value.trim();
-    if (!rawText && composerAttachments.length === 0) return;
+    if (!rawText && composerAttachments.length === 0) {
+      if (sendBtn?.classList.contains('is-stop') || isSessionActivelyRunning(prefs.selectedThreadId)) {
+        await stopActiveSession();
+      }
+      return;
+    }
 
     const sentAttachments = [...composerAttachments];
     composerAttachments = [];
@@ -6611,6 +6725,11 @@
 
     // Optimistically append turn to local thread view
     if (targetId) {
+      stoppedSessionsById.delete(targetId);
+      if (activeRow) {
+        activeRow.status = 'working';
+        activeRow.dot = 'running';
+      }
       if (!threadsCache[targetId]) {
         threadsCache[targetId] = { id: targetId, provider, messages: [] };
       }

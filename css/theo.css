@@ -2310,11 +2310,39 @@ html[data-theme="dark"] .tools-details {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  transition: background 0.16s ease, border-color 0.16s ease, transform 0.12s ease, box-shadow 0.16s ease;
 }
 
 .composer-send-btn svg {
   width: 17px;
   height: 17px;
+}
+
+.composer-send-btn .icon-stop {
+  display: none;
+}
+
+.composer-send-btn.is-stop {
+  background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%);
+  color: #FFFFFF;
+  border: 1px solid rgba(254, 202, 202, 0.45);
+  box-shadow: 0 2px 10px rgba(220, 38, 38, 0.35);
+}
+
+.composer-send-btn.is-stop:hover {
+  background: linear-gradient(135deg, #F87171 0%, #DC2626 100%);
+}
+
+.composer-send-btn.is-stop:active {
+  transform: scale(0.95);
+}
+
+.composer-send-btn.is-stop .icon-send {
+  display: none;
+}
+
+.composer-send-btn.is-stop .icon-stop {
+  display: block;
 }
 
 /* Workspaces & Git Inspector */
