@@ -1,7 +1,7 @@
-/* THEO Remote PWA Service Worker, v30 (2026-10-21).
+/* THEO Remote PWA Service Worker, v31 (2026-10-21).
    App shell: network-first (cache: no-cache) for HTML/JS/CSS, cache-first for static assets.
    Web Push: RFC 8291 aes128gcm push listener + durable Cache Storage & postMessage notificationclick handoff. */
-const CACHE_NAME = 'theo-remote-v30';
+const CACHE_NAME = 'theo-remote-v31';
 const NAV_CACHE = 'theo-nav-handoff-v1';
 const PENDING_NAV_URL = './__theo_pending_nav.json';
 const LAST_PUSH_NAV_URL = './__theo_last_push_nav.json';
@@ -12,9 +12,9 @@ let lastUnseenPushNav = null;
 const APP_SHELL = [
   './',
   './index.html',
-  './css/theo.css?v=30',
-  './js/endpoints.js?v=30',
-  './js/app.js?v=30',
+  './css/theo.css?v=31',
+  './js/endpoints.js?v=31',
+  './js/app.js?v=31',
   './manifest.json',
   './icon.svg',
   './icon-180.png',
@@ -29,7 +29,13 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) => Promise.all(APP_SHELL.map((u) => cache.add(new Request(u, { cache: 'reload' })))))
+      .then((cache) =>
+        Promise.all(
+          APP_SHELL.map((u) =>
+            cache.add(new Request(u, { cache: 'reload' })).catch(() => {})
+          )
+        )
+      )
       .then(() => self.skipWaiting())
   );
 });
@@ -180,32 +186,44 @@ self.addEventListener('push', (event) => {
       rawTag.includes('cmd-') ||
       rawTag.includes('theo-cmd-')
   );
-  // Prayer, Task, Reminder, Wait-Timer, Delegation & 100% Score alerts belong exclusively to Planner PWA
-  if (isPlannerDomainNotif) {
-    return;
-  }
+  // Never return without calling showNotification() — iOS webpushd penalizes silent pushes on userVisibleOnly subscriptions
+  const effectivePayload = isPlannerDomainNotif
+    ? {
+        title: 'THEO Workbench ⚡',
+        body: 'Remote workbench connected & synced.',
+        tag: 'theo-sync-pulse',
+        tab: 'pulse',
+        url: './?tab=pulse'
+      }
+    : d;
 
-  const title = d.title || 'THEO Workbench';
-  const opts = buildNotifOptions(d);
+  const title = effectivePayload.title || 'THEO Workbench';
+  const opts = buildNotifOptions(effectivePayload);
   const nav = opts.data;
 
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (list) => {
-      const theoClients = list.filter((c) => isTheoRemoteClientUrl(c.url));
-      const anyVisible = theoClients.some(
-        (c) => c.focused || c.visibilityState === 'visible'
-      );
-      if (!anyVisible && (nav.threadId || nav.reminderId || nav.tab !== 'pulse')) {
-        lastUnseenPushNav = { ...nav, clicked: false, ts: Date.now() };
-        await writeNavCache(LAST_PUSH_NAV_URL, lastUnseenPushNav);
-      }
-      theoClients.forEach((c) => {
+    (async () => {
+      const showPromise = self.registration.showNotification(title, opts);
+      if (!isPlannerDomainNotif) {
         try {
-          c.postMessage({ type: 'theo-push', payload: { ...d, ...nav } });
+          const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+          const theoClients = list.filter((c) => isTheoRemoteClientUrl(c.url));
+          const anyVisible = theoClients.some(
+            (c) => c.focused || c.visibilityState === 'visible'
+          );
+          if (!anyVisible && (nav.threadId || nav.reminderId || nav.tab !== 'pulse')) {
+            lastUnseenPushNav = { ...nav, clicked: false, ts: Date.now() };
+            await writeNavCache(LAST_PUSH_NAV_URL, lastUnseenPushNav);
+          }
+          theoClients.forEach((c) => {
+            try {
+              c.postMessage({ type: 'theo-push', payload: { ...d, ...nav } });
+            } catch {}
+          });
         } catch {}
-      });
-      return self.registration.showNotification(title, opts);
-    })
+      }
+      await showPromise;
+    })()
   );
 });
 

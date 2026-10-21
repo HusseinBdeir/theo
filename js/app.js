@@ -1734,6 +1734,8 @@
     return slots;
   }
 
+  let lastPushScheduleSyncAt = 0;
+
   function schedulePushSync() {
     if (!pushSub) return;
     clearTimeout(pushSyncTimer);
@@ -1744,6 +1746,7 @@
 
   async function syncPushSchedule() {
     if (!pushSub || !pushSub.endpoint) return;
+    lastPushScheduleSyncAt = Date.now();
     const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
     const devId = getDeviceId();
     const slots = nf.enabled ? await buildPushSlots(pushSub, 14) : {};
@@ -1792,10 +1795,55 @@
           }
         });
       } catch {}
+
+      // 3. Arm exact-second push_delay timers for today/tomorrow Morning & Evening Briefs
+      if (nf.enabled) {
+        try {
+          const devSuffix = String(devId || 'dev').replace(/[^a-zA-Z0-9]/g, '').slice(-12);
+          const armedRaw = localStorage.getItem('theo_armed_briefs_v1');
+          const armedMap = armedRaw ? JSON.parse(armedRaw) : {};
+          const now = new Date();
+          const nowMs = now.getTime();
+          for (let d = 0; d < 2; d++) {
+            const baseDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + d);
+            const iso = `${baseDate.getFullYear()}-${String(baseDate.getMonth() + 1).padStart(2, '0')}-${String(baseDate.getDate()).padStart(2, '0')}`;
+            const checks = [];
+            if (nf.morning !== false) {
+              const dtAm = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), Number(nf.morningHour || 8), 0, 0);
+              checks.push({ kind: 'am', dt: dtAm, slotKey: dtAm.toISOString().slice(0, 13) });
+            }
+            if (nf.evening !== false) {
+              const dtPm = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), Number(nf.eveningHour || 21), 0, 0);
+              checks.push({ kind: 'pm', dt: dtPm, slotKey: dtPm.toISOString().slice(0, 13) });
+            }
+            for (const c of checks) {
+              const delaySec = Math.round((c.dt.getTime() - nowMs) / 1000);
+              const slotObj = slots[c.slotKey];
+              const timerId = `${iso}_${c.kind}_${c.dt.getTime()}`;
+              const timerKey = `theo_brief_d${d}_${c.kind}_${devSuffix}`;
+              if (slotObj && delaySec >= 30 && delaySec <= 36 * 3600 && armedMap[timerKey] !== timerId) {
+                armedMap[timerKey] = timerId;
+                callCloudPush({
+                  op: 'push_delay',
+                  timerKey,
+                  timerId,
+                  delaySec,
+                  delaySeconds: delaySec,
+                  endpoint: pushSub.endpoint,
+                  vapid: slotObj.vapid,
+                  bodyB64: slotObj.bodyB64,
+                  ttl: 14400
+                }).catch(() => {});
+              }
+            }
+          }
+          localStorage.setItem('theo_armed_briefs_v1', JSON.stringify(armedMap));
+        } catch {}
+      }
     }
   }
 
-  async function enablePush() {
+  async function enablePush(forceFresh = true) {
     if (pushBusy) return;
     const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
     const ios = /iPhone|iPad|iPod/.test(ua);
@@ -1823,6 +1871,12 @@
       }
       const reg = await navigator.serviceWorker.ready;
       let sub = await reg.pushManager.getSubscription();
+      if (sub && forceFresh) {
+        try {
+          await sub.unsubscribe();
+          sub = null;
+        } catch {}
+      }
       if (!sub) {
         sub = await reg.pushManager.subscribe({
           userVisibleOnly: true,
@@ -1833,8 +1887,9 @@
       prefs.notif = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {}, { enabled: true });
       saveJson(STORAGE_KEYS.PREFS, prefs);
       saveJson(STORAGE_KEYS.PUSH_HINT, 1);
+      localStorage.removeItem('theo_armed_briefs_v1');
       await syncPushSchedule();
-      showToast('Push notifications enabled! Sending confirmation banner…');
+      showToast('Push notifications paired! Sending confirmation banner…');
       await sendTestPush(true);
     } catch (e) {
       showToast(`Could not enable push: ${(e && e.message) || e}`);
@@ -1876,13 +1931,15 @@
       url: './?tab=pulse',
       tab: 'pulse'
     };
+    if (notifPerm() === 'granted') {
+      swLocalNotif(msg);
+    }
     if (!pushSub || !pushSub.endpoint) {
       if (notifPerm() === 'granted') {
-        swLocalNotif(msg);
         showToast('Local notification sent (enable Push to receive alerts while THEO is closed).');
         return;
       }
-      await enablePush();
+      await enablePush(true);
       return;
     }
     try {
@@ -1900,17 +1957,15 @@
         if (!isWelcome) {
           showToast(`Push delivered (HTTP ${res.pushStatus})! Check your lock-screen banner.`);
         }
-      } else if (res && res.pushStatus === 410) {
+      } else if (res && (res.pushStatus === 410 || res.pushStatus === 404)) {
         pushSub = null;
         showToast('Subscription expired on device — re-subscribing…');
-        await enablePush();
-      } else {
-        swLocalNotif(msg);
-        if (!isWelcome) showToast('Notification displayed.');
+        await enablePush(true);
+      } else if (!isWelcome) {
+        showToast('Notification displayed.');
       }
     } catch {
-      swLocalNotif(msg);
-      if (!isWelcome) showToast('Offline fallback notification shown.');
+      if (!isWelcome) showToast('Notification displayed.');
     }
   }
 
@@ -2316,6 +2371,9 @@
             if (!sseSource) connectSse(bridgeBase);
             persistCache();
             renderAll();
+            if (pushSub && prefs.notif && prefs.notif.enabled && Date.now() - lastPushScheduleSyncAt > 10 * 60 * 1000) {
+              schedulePushSync();
+            }
             flushOutbox().catch(() => {});
             if (prefs.selectedThreadId) {
               fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
@@ -2361,6 +2419,9 @@
           }
           persistCache();
           renderAll();
+          if (pushSub && prefs.notif && prefs.notif.enabled && Date.now() - lastPushScheduleSyncAt > 10 * 60 * 1000) {
+            schedulePushSync();
+          }
           flushOutbox().catch(() => {});
           if (prefs.selectedThreadId) {
             fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
@@ -2676,7 +2737,7 @@
         <button type="button" class="btn-brass-sm" id="conn-modal-sync-btn" style="flex:1">↻ Sync Now with VS Code</button>
         ${
           pushActive
-            ? `<button type="button" class="btn-ghost-sm" data-push-act="test">🔔 Test Push</button>`
+            ? `<button type="button" class="btn-ghost-sm" data-push-act="test">🔔 Test Push</button><button type="button" class="btn-ghost-sm" data-push-act="reset" title="Mint a fresh iOS APNs / Web Push subscription">🔄 Re-Pair Push</button>`
             : `<button type="button" class="btn-ghost-sm" data-push-act="enable">${pushBusy ? 'Enabling…' : '🔔 Enable Push'}</button>`
         }
         ${
@@ -2828,6 +2889,7 @@
             active
               ? `
                 <button type="button" class="btn-brass-sm" data-push-act="test">🔔 Send Test Push</button>
+                <button type="button" class="btn-ghost-sm" data-push-act="reset" title="Unsubscribe and mint a brand-new APNs push token">${pushBusy ? 'Re-pairing…' : '🔄 Re-Pair Push'}</button>
                 <button type="button" class="btn-ghost-sm" data-push-act="sync">↻ Refresh Schedule</button>
                 <button type="button" class="btn-ghost-sm" data-push-act="disable">Turn Off</button>
               `
@@ -6718,8 +6780,8 @@
           }
           return;
         }
-        if (act === 'enable') {
-          await enablePush();
+        if (act === 'enable' || act === 'reset') {
+          await enablePush(true);
         } else if (act === 'disable') {
           await disablePush();
         } else if (act === 'test') {
@@ -7897,7 +7959,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=30', { updateViaCache: 'none' })
+        .register('sw.js', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
