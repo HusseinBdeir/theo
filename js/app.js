@@ -3052,6 +3052,10 @@
         out.push({
           question: prompt || 'Select an option',
           header: String(q.header || '').trim(),
+          codePreview: String(q.codePreview || '').trim(),
+          description: String(q.description || '').trim(),
+          isToolPermission: Boolean(q.isToolPermission),
+          writeInPlaceholder: String(q.writeInPlaceholder || '').trim(),
           isMultiSelect: Boolean(explicitMulti),
           options
         });
@@ -3273,6 +3277,7 @@
     const draft = getQuestionDraft(cardKey);
     const selectedCount = countDraftSelections(draft, questions.length);
     const anyMulti = questions.some((q) => q.isMultiSelect);
+    const anyToolPerm = questions.some((q) => q.isToolPermission);
 
     if (draft.submitted) {
       return `
@@ -3280,7 +3285,7 @@
           <div class="vs-q-card-top">
             <span class="approval-prov">
               <span class="prov-glyph">${PROVIDER_ICONS[provider]}</span>
-              <span>${provider === 'claude' ? 'Claude Code' : 'Antigravity'} · Answered</span>
+              <span>${provider === 'claude' ? 'Claude Code' : 'Antigravity'} · ${anyToolPerm ? 'Resolved' : 'Answered'}</span>
             </span>
             <span class="pill-count emerald">✓ Dispatched</span>
           </div>
@@ -3295,6 +3300,9 @@
         const writeInVal = String(draft.writeInByQ[qIdx] || '');
         const optionsList = Array.isArray(q.options) ? q.options : [];
         const modeHint = q.isMultiSelect ? 'Select all that apply' : 'Select one option';
+        const writeInPh =
+          q.writeInPlaceholder ||
+          (optionsList.length > 0 ? 'Other (type custom answer or notes)…' : 'Type your answer…');
 
         const optionsHtml = optionsList
           .map((opt, oIdx) => {
@@ -3314,7 +3322,7 @@
                 <span class="vs-q-opt-body">
                   <span class="vs-q-opt-title-row">
                     <span class="vs-q-opt-text">${esc(opt.cleanText || opt.text)}</span>
-                    ${opt.isRecommended ? `<span class="vs-q-rec-badge">★ Recommended</span>` : ''}
+                    ${opt.isRecommended && !q.isToolPermission ? `<span class="vs-q-rec-badge">★ Recommended</span>` : ''}
                   </span>
                   ${opt.description ? `<span class="vs-q-opt-desc">${esc(opt.description)}</span>` : ''}
                 </span>
@@ -3329,6 +3337,8 @@
               <div class="vs-q-prompt">${esc(q.question || 'Question')}</div>
               ${optionsList.length > 0 ? `<span class="vs-q-mode-pill">${esc(modeHint)}</span>` : ''}
             </div>
+            ${q.codePreview ? `<pre class="code-step-snippet mono" style="margin:6px 0 4px;padding:8px 10px;border-radius:8px;white-space:pre-wrap;word-break:break-all">${esc(q.codePreview)}</pre>` : ''}
+            ${q.description ? `<div class="vs-q-opt-desc" style="margin-bottom:6px">${esc(q.description)}</div>` : ''}
             ${optionsList.length > 0 ? `<div class="vs-q-options-list">${optionsHtml}</div>` : ''}
             <div class="vs-q-writein-wrap">
               <input
@@ -3337,7 +3347,7 @@
                 data-q-writein-input="1"
                 data-card-key="${esc(cardKey)}"
                 data-q-idx="${qIdx}"
-                placeholder="${optionsList.length > 0 ? 'Other (type custom answer or notes)…' : 'Type your answer…'}"
+                placeholder="${esc(writeInPh)}"
                 value="${esc(writeInVal)}"
                 autocomplete="off"
               >
@@ -3347,14 +3357,20 @@
       })
       .join('');
 
+    const badgeRight = anyToolPerm
+      ? questions[0]?.header || 'Permission'
+      : anyMulti
+        ? 'Multi-Select'
+        : 'Interactive Choice';
+
     return `
       <div class="vs-question-card" data-q-card="${esc(cardKey)}">
         <div class="vs-q-card-top">
           <span class="approval-prov">
             <span class="prov-glyph">${PROVIDER_ICONS[provider]}</span>
-            <span>${provider === 'claude' ? 'Claude Code' : 'Antigravity'} · Question</span>
+            <span>${provider === 'claude' ? 'Claude Code' : 'Antigravity'} · ${anyToolPerm ? 'Tool Permission' : 'Question'}</span>
           </span>
-          <span class="approval-tool-badge tabular">${anyMulti ? 'Multi-Select' : 'Interactive Choice'}</span>
+          <span class="approval-tool-badge tabular">${esc(badgeRight)}</span>
         </div>
         ${sessionTitle ? `<div class="approval-title">${esc(sessionTitle)}</div>` : ''}
         ${blocksHtml}
@@ -3364,13 +3380,13 @@
             class="btn-approve btn-q-submit"
             data-q-submit="1"
             data-card-key="${esc(cardKey)}"
-          >✓ Submit Answer${selectedCount > 0 ? ` (${selectedCount})` : ''}</button>
+          >✓ ${anyToolPerm ? (selectedCount > 0 ? `Confirm (${selectedCount})` : 'Yes (Allow)') : `Submit Answer${selectedCount > 0 ? ` (${selectedCount})` : ''}`}</button>
           <button
             type="button"
             class="btn-inspect btn-q-skip"
             data-q-skip="1"
             data-card-key="${esc(cardKey)}"
-          >Skip</button>
+          >${anyToolPerm ? '✕ Deny' : 'Skip'}</button>
           ${showInspectBtn && sessionId ? `<button type="button" class="btn-inspect" data-open-chat="${esc(sessionId)}">Inspect</button>` : ''}
         </div>
       </div>
@@ -4188,11 +4204,12 @@
       prefs.selectedThreadId &&
       pendingThreadRequests.has(prefs.selectedThreadId);
     const sessionApprovals = (appState?.approvals || []).filter(
-      (a) => a && a.sessionId === prefs.selectedThreadId && a.kind !== 'waiting_session'
+      (a) => a && a.sessionId === prefs.selectedThreadId
     );
     const matchingQuestionApproval = sessionApprovals.find(
       (a) =>
         a.kind === 'question' ||
+        Boolean(a.isToolPermission) ||
         /question/i.test(String(a.toolName || '')) ||
         (Array.isArray(a.questions) && a.questions.length > 0) ||
         (Array.isArray(a.options) && a.options.length > 0)
@@ -4205,6 +4222,7 @@
           const aProv = a.provider === 'claude' ? 'claude' : 'antigravity';
           const isQ =
             a.kind === 'question' ||
+            Boolean(a.isToolPermission) ||
             /question/i.test(String(a.toolName || '')) ||
             (Array.isArray(a.questions) && a.questions.length > 0) ||
             (Array.isArray(a.options) && a.options.length > 0);
@@ -4222,6 +4240,9 @@
               });
             }
           }
+          if (a.kind === 'waiting_session' && skipQuestionApprovals) {
+            return '';
+          }
           return `
             <div class="approval-card" data-approval-id="${esc(a.id)}" style="margin-top:8px">
               <div class="approval-top">
@@ -4233,10 +4254,14 @@
               </div>
               <div class="approval-title">${esc(a.title || activeRow?.title || 'Session')}</div>
               <div class="approval-detail mono">${esc(a.detail || '')}</div>
-              <div class="approval-actions">
-                <button type="button" class="btn-approve" data-approve-act="approve" data-app-id="${esc(a.approvalId)}" data-sess-id="${esc(a.sessionId)}" data-prov="${aProv}" data-sel="${esc(a.selector || '')}" data-lbl="${esc(a.toolName || 'Accept')}">✓ Approve</button>
-                <button type="button" class="btn-reject" data-approve-act="reject" data-app-id="${esc(a.approvalId)}" data-sess-id="${esc(a.sessionId)}" data-prov="${aProv}" data-sel="${esc(a.selector || '')}">✕ Deny</button>
-              </div>
+              ${
+                a.kind === 'waiting_session'
+                  ? `<div class="meta-timestamp" style="margin-top:6px">Waiting for your response — type your reply in the composer below.</div>`
+                  : `<div class="approval-actions">
+                      <button type="button" class="btn-approve" data-approve-act="approve" data-app-id="${esc(a.approvalId)}" data-sess-id="${esc(a.sessionId)}" data-prov="${aProv}" data-sel="${esc(a.selector || '')}" data-lbl="${esc(a.toolName || 'Accept')}">✓ Approve</button>
+                      <button type="button" class="btn-reject" data-approve-act="reject" data-app-id="${esc(a.approvalId)}" data-sess-id="${esc(a.sessionId)}" data-prov="${aProv}" data-sel="${esc(a.selector || '')}">✕ Deny</button>
+                    </div>`
+              }
             </div>
           `;
         })
@@ -6485,6 +6510,7 @@
       kind: 'question',
       decision: skipped ? 'skip' : 'answer',
       skipped,
+      isToolPermission: Boolean(questions.some((q) => q.isToolPermission)),
       approvalId: meta.approvalId || sessId,
       sessionId: sessId,
       threadId: sessId,
@@ -6540,11 +6566,12 @@
         draft.writeInByQ[qIdx] = qInput.value;
         const meta = renderedQuestionsByCardKey.get(cardKey);
         const qCount = meta?.questions?.length || 1;
+        const anyToolPerm = Boolean(meta?.questions?.some((q) => q.isToolPermission));
         const count = countDraftSelections(draft, qCount);
         const cardEl = qInput.closest('[data-q-card]');
         const subBtn = cardEl?.querySelector('[data-q-submit]');
         if (subBtn) {
-          subBtn.textContent = `✓ Submit Answer${count > 0 ? ` (${count})` : ''}`;
+          subBtn.textContent = `✓ ${anyToolPerm ? (count > 0 ? `Confirm (${count})` : 'Yes (Allow)') : `Submit Answer${count > 0 ? ` (${count})` : ''}`}`;
         }
       }
     });
@@ -6608,10 +6635,11 @@
             if (chk) chk.textContent = active ? '✓' : '';
           });
           const qCount = meta?.questions?.length || 1;
+          const anyToolPerm = Boolean(meta?.questions?.some((q) => q.isToolPermission));
           const totalCount = countDraftSelections(draft, qCount);
           const subBtn = cardEl.querySelector('[data-q-submit]');
           if (subBtn) {
-            subBtn.textContent = `✓ Submit Answer${totalCount > 0 ? ` (${totalCount})` : ''}`;
+            subBtn.textContent = `✓ ${anyToolPerm ? (totalCount > 0 ? `Confirm (${totalCount})` : 'Yes (Allow)') : `Submit Answer${totalCount > 0 ? ` (${totalCount})` : ''}`}`;
           }
         }
         return;

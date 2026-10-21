@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/theo.css?v=31">
+  <link rel="stylesheet" href="css/theo.css?v=32">
   <script id="pre">
     (() => {
       try {
@@ -140,6 +140,11 @@
           <kbd>⌘K</kbd>
         </button>
         <div class="rail-footer-actions">
+          <button type="button" class="icon-btn" id="rail-push-btn" data-push-act="header-bell" title="Notifications &amp; Web Push Alerts" aria-label="Notifications" style="position:relative">
+            <svg viewBox="0 0 20 20"><path d="M10 3a4.5 4.5 0 0 0-4.5 4.5v2.8c0 .7-.25 1.38-.7 1.9L3.8 13.4h12.4l-1-1.2a3 3 0 0 1-.7-1.9V7.5A4.5 4.5 0 0 0 10 3zm-1.8 12.2a1.8 1.8 0 0 0 3.6 0" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="conn-dot" id="rail-push-dot" style="position:absolute;top:5px;right:5px;width:6px;height:6px;box-shadow:none"></span>
+            <span class="push-count-badge tabular" id="rail-push-badge" hidden>0</span>
+          </button>
           <button type="button" class="icon-btn" id="btn-theme-toggle" title="Toggle Obsidian Dark / Warm Paper Light theme" aria-label="Toggle theme">
             <svg viewBox="0 0 20 20"><path d="M10 3a7 7 0 1 0 7 7c0-.4-.04-.8-.1-1.2A5.5 5.5 0 0 1 11.2 3.1C10.8 3.04 10.4 3 10 3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
           </button>
@@ -174,9 +179,10 @@
         </div>
         <div class="mobile-actions">
           <a href="https://husseinbdeir.github.io/planner/" target="_blank" rel="noopener" class="icon-btn" title="Open standalone Planner PWA" aria-label="Planner PWA" style="text-decoration:none;font-size:13px">🎯</a>
-          <button type="button" class="icon-btn" id="mobile-push-btn" data-push-act="header-bell" title="Web Push Notifications" aria-label="Push Notifications" style="position:relative">
+          <button type="button" class="icon-btn" id="mobile-push-btn" data-push-act="header-bell" title="Notifications &amp; Web Push Alerts" aria-label="Notifications" style="position:relative">
             <svg viewBox="0 0 20 20"><path d="M10 3a4.5 4.5 0 0 0-4.5 4.5v2.8c0 .7-.25 1.38-.7 1.9L3.8 13.4h12.4l-1-1.2a3 3 0 0 1-.7-1.9V7.5A4.5 4.5 0 0 0 10 3zm-1.8 12.2a1.8 1.8 0 0 0 3.6 0" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
             <span class="conn-dot" id="mobile-push-dot" style="position:absolute;top:5px;right:5px;width:6px;height:6px;box-shadow:none"></span>
+            <span class="push-count-badge tabular" id="mobile-push-badge" hidden>0</span>
           </button>
           <button type="button" class="icon-btn" id="mobile-cmd-btn" title="Command Palette (⌘K)" aria-label="Search &amp; Commands">
             <svg viewBox="0 0 20 20"><circle cx="8.5" cy="8.5" r="5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12.5 12.5L16.5 16.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
@@ -513,6 +519,19 @@
     </div>
   </div>
 
+  <!-- Unchecked Notifications & Web Push Center Modal -->
+  <div class="cmd-modal" id="notif-modal" hidden>
+    <div class="cmd-dialog notif-dialog">
+      <div class="cmd-input-row">
+        <span class="conn-dot" id="notif-modal-dot"></span>
+        <strong id="notif-modal-title" style="flex:1;font-size:14.5px">Notifications &amp; Home Screen Badge</strong>
+        <button type="button" class="cmd-esc" id="notif-modal-close">ESC</button>
+      </div>
+      <div class="brass-rule-single" style="margin:0 16px"></div>
+      <div class="conn-modal-body" id="notif-modal-body"></div>
+    </div>
+  </div>
+
   <!-- ⌘K Command Palette Modal -->
   <div class="cmd-modal" id="cmd-modal" hidden>
     <div class="cmd-dialog">
@@ -529,7 +548,7 @@
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=31"></script>
-  <script src="js/app.js?v=31"></script>
+  <script src="js/endpoints.js?v=33"></script>
+  <script src="js/app.js?v=33"></script>
 </body>
 </html>

@@ -1,10 +1,11 @@
-/* THEO Remote PWA Service Worker, v31 (2026-10-21).
+/* THEO Remote PWA Service Worker, v33 (2026-10-21).
    App shell: network-first (cache: no-cache) for HTML/JS/CSS, cache-first for static assets.
-   Web Push: RFC 8291 aes128gcm push listener + durable Cache Storage & postMessage notificationclick handoff. */
-const CACHE_NAME = 'theo-remote-v31';
+   Web Push: RFC 8291 aes128gcm push listener + W3C Badging API (navigator.setAppBadge) + durable Cache Storage & postMessage notificationclick handoff. */
+const CACHE_NAME = 'theo-remote-v33';
 const NAV_CACHE = 'theo-nav-handoff-v1';
 const PENDING_NAV_URL = './__theo_pending_nav.json';
 const LAST_PUSH_NAV_URL = './__theo_last_push_nav.json';
+const UNREAD_NOTIFS_URL = './__theo_unread_notifs.json';
 
 let pendingClickNav = null;
 let lastUnseenPushNav = null;
@@ -12,9 +13,9 @@ let lastUnseenPushNav = null;
 const APP_SHELL = [
   './',
   './index.html',
-  './css/theo.css?v=31',
-  './js/endpoints.js?v=31',
-  './js/app.js?v=31',
+  './css/theo.css?v=33',
+  './js/endpoints.js?v=33',
+  './js/app.js?v=33',
   './manifest.json',
   './icon.svg',
   './icon-180.png',
@@ -93,6 +94,22 @@ function buildNavTarget(d, clicked = false) {
   };
 }
 
+function applySwAppBadge(count) {
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  try {
+    if (self.navigator && typeof self.navigator.setAppBadge === 'function') {
+      if (n > 0) {
+        return Promise.resolve(self.navigator.setAppBadge(n)).catch(() => {});
+      }
+      if (typeof self.navigator.clearAppBadge === 'function') {
+        return Promise.resolve(self.navigator.clearAppBadge()).catch(() => {});
+      }
+      return Promise.resolve(self.navigator.setAppBadge(0)).catch(() => {});
+    }
+  } catch {}
+  return Promise.resolve();
+}
+
 function writeNavCache(keyUrl, navObj) {
   return caches
     .open(NAV_CACHE)
@@ -108,6 +125,52 @@ function writeNavCache(keyUrl, navObj) {
       )
     )
     .catch(() => {});
+}
+
+async function readUnreadNotifsFromCache() {
+  try {
+    const cache = await caches.open(NAV_CACHE);
+    const res = await cache.match(UNREAD_NOTIFS_URL);
+    if (!res) return [];
+    const data = await res.json();
+    return Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeUnreadNotifsToCache(items) {
+  const safe = Array.isArray(items) ? items.slice(0, 60) : [];
+  await writeNavCache(UNREAD_NOTIFS_URL, {
+    updatedAt: Date.now(),
+    items: safe
+  });
+  return safe;
+}
+
+async function upsertSwUnreadNotif(d, nav) {
+  const existing = await readUnreadNotifsFromCache();
+  const tag = String(nav.tag || d.tag || `theo-${Date.now()}`);
+  const id = String(d.id || nav.id || tag);
+  const entry = {
+    id,
+    tag,
+    title: String(d.title || 'THEO Workbench'),
+    body: String(d.body || ''),
+    tab: nav.tab || 'pulse',
+    threadId: nav.threadId || '',
+    provider: nav.provider || '',
+    reminderId: nav.reminderId || '',
+    sessionTitle: nav.sessionTitle || '',
+    url: nav.url || './',
+    ts: Date.now(),
+    checked: false
+  };
+  const filtered = existing.filter((x) => x && x.id !== id && x.tag !== tag);
+  const next = [entry, ...filtered].slice(0, 60);
+  await writeUnreadNotifsToCache(next);
+  const unreadCount = next.filter((x) => x && !x.checked).length;
+  return { item: entry, unreadCount, items: next };
 }
 
 function clearNavCache() {
@@ -206,6 +269,13 @@ self.addEventListener('push', (event) => {
       const showPromise = self.registration.showNotification(title, opts);
       if (!isPlannerDomainNotif) {
         try {
+          const { item: unreadItem, unreadCount } = await upsertSwUnreadNotif(effectivePayload, nav);
+          const badgeCount =
+            Number.isFinite(Number(d.badgeCount)) && Number(d.badgeCount) > 0
+              ? Math.max(unreadCount, Number(d.badgeCount))
+              : Math.max(1, unreadCount);
+          await applySwAppBadge(badgeCount);
+
           const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
           const theoClients = list.filter((c) => isTheoRemoteClientUrl(c.url));
           const anyVisible = theoClients.some(
@@ -217,7 +287,12 @@ self.addEventListener('push', (event) => {
           }
           theoClients.forEach((c) => {
             try {
-              c.postMessage({ type: 'theo-push', payload: { ...d, ...nav } });
+              c.postMessage({
+                type: 'theo-push',
+                payload: { ...d, ...nav },
+                item: unreadItem,
+                unreadCount: badgeCount
+              });
             } catch {}
           });
         } catch {}
@@ -236,6 +311,33 @@ self.addEventListener('message', (event) => {
   }
   if (m.type === 'clear-pending-nav') {
     event.waitUntil(clearNavCache());
+    return;
+  }
+  if (m.type === 'sync-unread-notifs') {
+    event.waitUntil(
+      (async () => {
+        const items = Array.isArray(m.items) ? m.items : [];
+        await writeUnreadNotifsToCache(items);
+        const unreadCount = items.filter((x) => x && !x.checked).length;
+        const explicitBadge = Number.isFinite(Number(m.badgeCount))
+          ? Math.max(0, Number(m.badgeCount))
+          : unreadCount;
+        await applySwAppBadge(Math.max(unreadCount, explicitBadge));
+        if (m.closeOsNotifications && self.registration && self.registration.getNotifications) {
+          try {
+            const active = await self.registration.getNotifications();
+            const checkedTags = new Set(
+              Array.isArray(m.checkedTags) ? m.checkedTags.map(String) : []
+            );
+            active.forEach((n) => {
+              if (!checkedTags.size || (n.tag && checkedTags.has(String(n.tag)))) {
+                n.close();
+              }
+            });
+          } catch {}
+        }
+      })()
+    );
     return;
   }
   if (m.type === 'consume-pending-nav') {
@@ -261,12 +363,18 @@ self.addEventListener('message', (event) => {
       lastUnseenPushNav = { ...nav, clicked: false, ts: Date.now() };
     }
     event.waitUntil(
-      Promise.all([
-        nav.threadId || nav.reminderId || nav.tab !== 'pulse'
-          ? writeNavCache(LAST_PUSH_NAV_URL, lastUnseenPushNav)
-          : Promise.resolve(),
-        self.registration.showNotification(d.title || 'THEO Workbench', opts)
-      ])
+      (async () => {
+        if (!m.skipUnread) {
+          const { unreadCount } = await upsertSwUnreadNotif(d, nav);
+          await applySwAppBadge(Math.max(1, unreadCount));
+        }
+        await Promise.all([
+          nav.threadId || nav.reminderId || nav.tab !== 'pulse'
+            ? writeNavCache(LAST_PUSH_NAV_URL, lastUnseenPushNav)
+            : Promise.resolve(),
+          self.registration.showNotification(d.title || 'THEO Workbench', opts)
+        ]);
+      })()
     );
   }
 });
@@ -280,9 +388,38 @@ self.addEventListener('notificationclick', (event) => {
 
   event.waitUntil(
     (async () => {
+      try {
+        const items = await readUnreadNotifsFromCache();
+        let changed = false;
+        const next = items.map((it) => {
+          if (!it) return it;
+          if (
+            it.id === nav.id ||
+            it.tag === nav.tag ||
+            (nav.threadId && it.threadId === nav.threadId) ||
+            (nav.reminderId && it.reminderId === nav.reminderId)
+          ) {
+            changed = true;
+            return { ...it, checked: true, checkedAt: Date.now() };
+          }
+          return it;
+        });
+        if (changed) {
+          await writeUnreadNotifsToCache(next);
+        }
+        const unreadCount = next.filter((x) => x && !x.checked).length;
+        await applySwAppBadge(unreadCount);
+      } catch {}
+
+      const navWithChecked = {
+        ...nav,
+        checkedNotifId: nav.id,
+        checkedNotifTag: nav.tag
+      };
+
       await Promise.all([
-        writeNavCache(PENDING_NAV_URL, nav),
-        writeNavCache(LAST_PUSH_NAV_URL, nav)
+        writeNavCache(PENDING_NAV_URL, navWithChecked),
+        writeNavCache(LAST_PUSH_NAV_URL, navWithChecked)
       ]);
       const list = await self.clients.matchAll({
         type: 'window',
@@ -295,15 +432,15 @@ self.addEventListener('notificationclick', (event) => {
 
       if (targetClient && 'focus' in targetClient) {
         try {
-          targetClient.postMessage(nav);
+          targetClient.postMessage(navWithChecked);
         } catch {}
         await targetClient.focus().catch(() => {});
         try {
-          targetClient.postMessage(nav);
+          targetClient.postMessage(navWithChecked);
         } catch {}
         await new Promise((r) => setTimeout(r, 260));
         try {
-          targetClient.postMessage(nav);
+          targetClient.postMessage(navWithChecked);
         } catch {}
         return;
       }
