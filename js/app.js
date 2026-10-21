@@ -7406,7 +7406,11 @@
       }
       r.status = 'completed';
       r.statusLabel = 'Stopped';
-      r.dot = 'idle';
+      r.dot = r.open ? 'idle' : null;
+      r.category = 'completed';
+      r.unread = false;
+      r.elsewhere = false;
+      r.reason = null;
       r.bgTask = null;
     }
   }
@@ -7505,7 +7509,11 @@
     if (row) {
       row.status = 'completed';
       row.statusLabel = 'Stopped';
-      row.dot = 'idle';
+      row.dot = row.open ? 'idle' : null;
+      row.category = 'completed';
+      row.unread = false;
+      row.elsewhere = false;
+      row.reason = null;
       row.bgTask = null;
     }
 
