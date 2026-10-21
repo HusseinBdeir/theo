@@ -10,12 +10,15 @@
     PUSH_HINT: 'theo_remote_pushhint_v1',
     PERSONAL: 'theo_personal_ledger_v1',
     COMMAND: 'theo_command_state_v1',
-    CONSUMED_NOTIF: 'theo_remote_consumed_notif_v1'
+    CONSUMED_NOTIF: 'theo_remote_consumed_notif_v1',
+    NOTIFS: 'theo_remote_notifications_v1',
+    CHECKED_NOTIFS: 'theo_remote_checked_notifs_v1'
   };
   const PINNED_NAV_SESSION_KEY = 'theo_pinned_nav_v1';
   const NAV_HANDOFF_CACHE = 'theo-nav-handoff-v1';
   const PENDING_NAV_CACHE_URL = './__theo_pending_nav.json';
   const LAST_PUSH_NAV_CACHE_URL = './__theo_last_push_nav.json';
+  const UNREAD_NOTIFS_CACHE_URL = './__theo_unread_notifs.json';
 
   const DEFAULT_NOTIF = {
     enabled: false,
@@ -1576,11 +1579,418 @@
     return await res.json();
   }
 
+  // ---------- Unchecked Notifications Ledger & Home Screen App Badge ----------
+  function loadNotifLog() {
+    const raw = loadJson(STORAGE_KEYS.NOTIFS, []);
+    return Array.isArray(raw) ? raw : [];
+  }
+
+  function saveNotifLog(items) {
+    const safe = Array.isArray(items) ? items.slice(0, 60) : [];
+    saveJson(STORAGE_KEYS.NOTIFS, safe);
+    return safe;
+  }
+
+  function loadCheckedNotifKeys() {
+    const raw = loadJson(STORAGE_KEYS.CHECKED_NOTIFS, []);
+    return new Set(Array.isArray(raw) ? raw.map(String) : []);
+  }
+
+  function saveCheckedNotifKeys(set) {
+    const arr = Array.from(set || []).slice(-200);
+    saveJson(STORAGE_KEYS.CHECKED_NOTIFS, arr);
+  }
+
+  function rememberCheckedNotifKeys(...keys) {
+    const set = loadCheckedNotifKeys();
+    for (const k of keys) {
+      if (k) set.add(String(k));
+    }
+    saveCheckedNotifKeys(set);
+  }
+
+  function isNotifKeyChecked(...keys) {
+    const set = loadCheckedNotifKeys();
+    return keys.some((k) => k && set.has(String(k)));
+  }
+
+  function syncUnreadCacheToSw(items, closeOsNotifications = false, checkedTags = [], badgeCount = 0) {
+    const safe = Array.isArray(items) ? items.slice(0, 60) : [];
+    try {
+      if ('caches' in window) {
+        caches
+          .open(NAV_HANDOFF_CACHE)
+          .then((cache) =>
+            cache.put(
+              UNREAD_NOTIFS_CACHE_URL,
+              new Response(JSON.stringify({ updatedAt: Date.now(), items: safe }), {
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Cache-Control': 'no-store'
+                }
+              })
+            )
+          )
+          .catch(() => {});
+      }
+    } catch {}
+    try {
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: 'sync-unread-notifs',
+          items: safe,
+          badgeCount,
+          closeOsNotifications: Boolean(closeOsNotifications),
+          checkedTags: Array.isArray(checkedTags) ? checkedTags : []
+        });
+      }
+    } catch {}
+  }
+
+  function computeTheoUnreadBadgeCount(items = null) {
+    const list = Array.isArray(items) ? items : loadNotifLog();
+    const uncheckedNotifs = list.filter((x) => x && !x.checked);
+    const seenSessionIds = new Set(
+      uncheckedNotifs.map((x) => x.threadId).filter(Boolean)
+    );
+    const seenApprovalTags = new Set(
+      uncheckedNotifs.map((x) => x.tag || x.id).filter(Boolean)
+    );
+    const checkedSet = loadCheckedNotifKeys();
+    let liveExtra = 0;
+    for (const a of appState?.approvals || []) {
+      if (!a || !a.id) continue;
+      const appTag = `theo-app-${a.id}`;
+      if (!seenApprovalTags.has(appTag) && !checkedSet.has(appTag)) {
+        liveExtra++;
+      }
+    }
+    for (const r of appState?.rows || []) {
+      if (!r || !r.id || r.archived || !r.unread) continue;
+      const unreadKey = `theo-unread-${r.id}-${r.stepCount || r.at || 0}`;
+      if (!seenSessionIds.has(r.id) && !checkedSet.has(unreadKey) && !checkedSet.has(`session:${r.id}`)) {
+        liveExtra++;
+      }
+    }
+    return uncheckedNotifs.length + liveExtra;
+  }
+
+  function updateAppBadgeCount(closeOsNotifications = false, checkedTags = []) {
+    const items = loadNotifLog();
+    const count = computeTheoUnreadBadgeCount(items);
+
+    const mobBadge = $('mobile-push-badge');
+    if (mobBadge) {
+      if (count > 0) {
+        mobBadge.textContent = count > 99 ? '99+' : String(count);
+        mobBadge.hidden = false;
+      } else {
+        mobBadge.textContent = '0';
+        mobBadge.hidden = true;
+      }
+    }
+
+    const railBadge = $('rail-push-badge');
+    if (railBadge) {
+      if (count > 0) {
+        railBadge.textContent = count > 99 ? '99+' : String(count);
+        railBadge.hidden = false;
+      } else {
+        railBadge.textContent = '0';
+        railBadge.hidden = true;
+      }
+    }
+
+    const mobBtn = $('mobile-push-btn');
+    if (mobBtn) {
+      mobBtn.classList.toggle('has-unread-badge', count > 0);
+    }
+    const railBtn = $('rail-push-btn');
+    if (railBtn) {
+      railBtn.classList.toggle('has-unread-badge', count > 0);
+    }
+
+    try {
+      const baseTitle = 'THEO — AI Session Workbench';
+      document.title = count > 0 ? `(${count}) ${baseTitle}` : baseTitle;
+    } catch {}
+
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.setAppBadge === 'function') {
+        if (count > 0) {
+          Promise.resolve(navigator.setAppBadge(count)).catch(() => {});
+        } else if (typeof navigator.clearAppBadge === 'function') {
+          Promise.resolve(navigator.clearAppBadge()).catch(() => {});
+        } else {
+          Promise.resolve(navigator.setAppBadge(0)).catch(() => {});
+        }
+      }
+    } catch {}
+
+    syncUnreadCacheToSw(items, closeOsNotifications, checkedTags, count);
+    const notifModal = $('notif-modal');
+    if (notifModal && !notifModal.hidden) {
+      renderNotifModal();
+    }
+    return count;
+  }
+
+  function recordTheoNotification(rawItem, opts = {}) {
+    if (!rawItem || typeof rawItem !== 'object') return null;
+    const tag = String(rawItem.tag || rawItem.id || `theo-${Date.now()}`);
+    const id = String(rawItem.id || tag);
+    if (!opts.force && isNotifKeyChecked(id, tag)) {
+      return null;
+    }
+    const existing = loadNotifLog();
+    const prev = existing.find((x) => x && (x.id === id || x.tag === tag));
+    const entry = {
+      id,
+      tag,
+      title: String(rawItem.title || prev?.title || 'THEO Workbench'),
+      body: String(rawItem.body || prev?.body || ''),
+      tab: String(rawItem.tab || prev?.tab || (rawItem.threadId ? 'chat' : 'pulse')),
+      threadId: String(rawItem.threadId || rawItem.sessionId || prev?.threadId || ''),
+      provider: String(rawItem.provider || prev?.provider || ''),
+      reminderId: String(rawItem.reminderId || prev?.reminderId || ''),
+      sessionTitle: String(rawItem.sessionTitle || prev?.sessionTitle || ''),
+      url: String(rawItem.url || prev?.url || './'),
+      ts: Number(rawItem.ts || prev?.ts || Date.now()),
+      checked: opts.checked !== undefined ? Boolean(opts.checked) : false
+    };
+    const filtered = existing.filter((x) => x && x.id !== id && x.tag !== tag);
+    const next = [entry, ...filtered].slice(0, 60);
+    saveNotifLog(next);
+    if (!opts.silent) {
+      updateAppBadgeCount(false);
+    }
+    return entry;
+  }
+
+  function seedUncheckedTheoNotifications() {
+    const approvals = Array.isArray(appState?.approvals) ? appState.approvals : [];
+    const rows = Array.isArray(appState?.rows) ? appState.rows : [];
+    const existing = loadNotifLog();
+    const checkedSet = loadCheckedNotifKeys();
+    let changed = false;
+    const next = [...existing];
+
+    const activeApprovalTags = new Set();
+    for (const a of approvals) {
+      if (!a || !a.id) continue;
+      const tag = `theo-app-${a.id}`;
+      activeApprovalTags.add(tag);
+      if (checkedSet.has(tag)) continue;
+      if (!next.some((x) => x && (x.id === tag || x.tag === tag))) {
+        const isQ = a.kind === 'question' || /question/i.test(String(a.toolName || ''));
+        next.unshift({
+          id: tag,
+          tag,
+          title: isQ
+            ? `❓ Question · ${a.title || 'Session'}`
+            : `⚡ Approval Needed · ${a.title || 'Session'}`,
+          body: String(a.detail || a.toolName || 'Waiting for confirmation in VS Code'),
+          tab: a.sessionId ? 'chat' : 'pulse',
+          threadId: String(a.sessionId || ''),
+          provider: String(a.provider || 'antigravity'),
+          reminderId: '',
+          sessionTitle: String(a.title || 'Session'),
+          url: a.sessionId
+            ? `./?tab=chat&thread=${encodeURIComponent(a.sessionId)}&provider=${encodeURIComponent(a.provider || 'antigravity')}`
+            : './?tab=pulse',
+          ts: Date.now(),
+          checked: false
+        });
+        changed = true;
+      }
+    }
+
+    // Auto-clear approval notifications whose approvals have already been resolved
+    for (const it of next) {
+      if (
+        it &&
+        !it.checked &&
+        String(it.tag || '').startsWith('theo-app-') &&
+        !activeApprovalTags.has(it.tag)
+      ) {
+        it.checked = true;
+        it.checkedAt = Date.now();
+        rememberCheckedNotifKeys(it.id, it.tag);
+        changed = true;
+      }
+    }
+
+    // Seed unread sessions if not already represented or checked
+    for (const r of rows) {
+      if (!r || !r.id || r.archived || !r.unread) continue;
+      const tag = `theo-unread-${r.id}-${r.stepCount || r.at || 0}`;
+      if (checkedSet.has(tag)) continue;
+      const alreadyHasUncheckedForThread = next.some(
+        (x) => x && !x.checked && x.threadId === r.id
+      );
+      if (!alreadyHasUncheckedForThread && !next.some((x) => x && (x.id === tag || x.tag === tag))) {
+        const lastTxt = String(r.lastAssistantText || '').trim();
+        next.unshift({
+          id: tag,
+          tag,
+          title: `● Unread Session · ${r.title || 'Session'}`,
+          body: lastTxt
+            ? lastTxt.slice(0, 140)
+            : `${r.provider === 'claude' ? 'Claude Code' : 'Antigravity'} session has unread updates (${r.folder || 'Workspace'}).`,
+          tab: 'chat',
+          threadId: r.id,
+          provider: r.provider || 'antigravity',
+          reminderId: '',
+          sessionTitle: r.title || 'Session',
+          url: `./?tab=chat&thread=${encodeURIComponent(r.id)}&provider=${encodeURIComponent(r.provider || 'antigravity')}`,
+          ts: Number(r.at || Date.now()),
+          checked: false
+        });
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      saveNotifLog(next.slice(0, 60));
+    }
+  }
+
+  async function syncUnreadNotificationsWithSwCache() {
+    let swItems = [];
+    try {
+      if ('caches' in window) {
+        const cache = await caches.open(NAV_HANDOFF_CACHE);
+        const res = await cache.match(UNREAD_NOTIFS_CACHE_URL);
+        if (res) {
+          const data = await res.json().catch(() => null);
+          if (Array.isArray(data?.items)) swItems = data.items;
+          else if (Array.isArray(data)) swItems = data;
+        }
+      }
+    } catch {}
+
+    const localItems = loadNotifLog();
+    const checkedKeys = loadCheckedNotifKeys();
+    const byKey = new Map();
+
+    for (const item of [...swItems, ...localItems]) {
+      if (!item || typeof item !== 'object') continue;
+      const id = String(item.id || item.tag || '');
+      const tag = String(item.tag || id);
+      if (!id) continue;
+      const isChecked =
+        Boolean(item.checked) || checkedKeys.has(id) || checkedKeys.has(tag);
+      const prev = byKey.get(id) || byKey.get(tag);
+      if (!prev) {
+        byKey.set(id, { ...item, id, tag, checked: isChecked });
+      } else {
+        prev.checked = Boolean(prev.checked || isChecked);
+        if (Number(item.ts || 0) > Number(prev.ts || 0)) {
+          prev.title = item.title || prev.title;
+          prev.body = item.body || prev.body;
+          prev.ts = item.ts;
+        }
+      }
+    }
+
+    const merged = Array.from(byKey.values())
+      .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0))
+      .slice(0, 60);
+    saveNotifLog(merged);
+    seedUncheckedTheoNotifications();
+    updateAppBadgeCount(false);
+  }
+
+  function markNotificationChecked(idOrTag, opts = {}) {
+    const key = String(idOrTag || '').trim();
+    if (!key) return;
+    const items = loadNotifLog();
+    const checkedTags = [];
+    let matchedItem = null;
+    const next = items.map((it) => {
+      if (!it) return it;
+      if (it.id === key || it.tag === key) {
+        matchedItem = it;
+        if (it.tag) checkedTags.push(it.tag);
+        rememberCheckedNotifKeys(it.id, it.tag);
+        return { ...it, checked: true, checkedAt: Date.now() };
+      }
+      return it;
+    });
+    if (!matchedItem) {
+      rememberCheckedNotifKeys(key);
+      checkedTags.push(key);
+    }
+    saveNotifLog(next);
+    updateAppBadgeCount(true, checkedTags);
+    if (opts.navigate && matchedItem) {
+      closeNotifModal();
+      applyNotificationNav({ ...matchedItem, clicked: true });
+    }
+  }
+
+  function markNotificationsCheckedForSession(sessionId) {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return;
+    const items = loadNotifLog();
+    const checkedTags = [];
+    let changed = false;
+    const next = items.map((it) => {
+      if (!it || it.checked) return it;
+      if (it.threadId === sid) {
+        changed = true;
+        if (it.tag) checkedTags.push(it.tag);
+        rememberCheckedNotifKeys(it.id, it.tag);
+        return { ...it, checked: true, checkedAt: Date.now() };
+      }
+      return it;
+    });
+    if (changed) {
+      saveNotifLog(next);
+      updateAppBadgeCount(true, checkedTags);
+    }
+  }
+
+  function markAllNotificationsChecked() {
+    const items = loadNotifLog();
+    const checkedTags = [];
+    const next = items.map((it) => {
+      if (!it) return it;
+      if (it.tag) checkedTags.push(it.tag);
+      rememberCheckedNotifKeys(it.id, it.tag);
+      return { ...it, checked: true, checkedAt: Date.now() };
+    });
+    for (const a of appState?.approvals || []) {
+      if (a && a.id) rememberCheckedNotifKeys(`theo-app-${a.id}`);
+    }
+    for (const r of appState?.rows || []) {
+      if (r && r.id && r.unread) {
+        rememberCheckedNotifKeys(`theo-unread-${r.id}-${r.stepCount || r.at || 0}`);
+      }
+    }
+    saveNotifLog(next);
+    updateAppBadgeCount(true, checkedTags);
+    showToast('✓ All notifications marked checked — Home Screen badge cleared');
+  }
+
+  function clearCheckedNotifications() {
+    const items = loadNotifLog();
+    const unchecked = items.filter((it) => it && !it.checked);
+    saveNotifLog(unchecked);
+    updateAppBadgeCount(false);
+    showToast('Cleared checked notifications');
+  }
+
   function swLocalNotif(payload) {
+    const item = recordTheoNotification(payload, { force: true, checked: false });
     try {
       if (navigator.serviceWorker) {
         if (navigator.serviceWorker.controller) {
-          navigator.serviceWorker.controller.postMessage({ type: 'show-notification', payload });
+          navigator.serviceWorker.controller.postMessage({
+            type: 'show-notification',
+            payload: { ...payload, id: item?.id || payload.id, tag: item?.tag || payload.tag },
+            skipUnread: true
+          });
         } else {
           navigator.serviceWorker.ready
             .then((reg) => {
@@ -1589,10 +1999,11 @@
                   body: payload.body || '',
                   icon: './icon-192.png',
                   badge: './icon-192.png',
-                  tag: payload.tag || 'theo-local',
+                  tag: item?.tag || payload.tag || 'theo-local',
                   renotify: true,
                   data: {
-                    id: payload.id || payload.tag || `local-${Date.now()}`,
+                    id: item?.id || payload.id || payload.tag || `local-${Date.now()}`,
+                    tag: item?.tag || payload.tag || 'theo-local',
                     url: payload.url || './',
                     tab: payload.tab || 'pulse',
                     threadId: payload.threadId || '',
@@ -2055,6 +2466,20 @@
           ? `./?tab=chat&thread=${encodeURIComponent(a.sessionId)}&provider=${encodeURIComponent(a.provider || 'antigravity')}`
           : `./?tab=${targetTab}`
       };
+      const notifTitle = isQ
+        ? `❓ Question from THEO — ${a.title || 'Session'}`
+        : `⚡ Approval Needed · ${a.provider === 'claude' ? 'Claude Code' : 'Antigravity'}`;
+      const notifBody = isQ
+        ? `${a.detail || 'THEO is waiting for your answer.'}`
+        : `${a.title || 'Session'}: ${a.toolName || 'Permission'} — ${a.detail || 'Waiting for confirmation'}`;
+      recordTheoNotification(
+        {
+          title: notifTitle,
+          body: notifBody,
+          ...navTarget
+        },
+        { force: true, checked: false }
+      );
       playChime('approve');
       showToast(
         isQ
@@ -2069,12 +2494,8 @@
         notifPerm() === 'granted'
       ) {
         swLocalNotif({
-          title: isQ
-            ? `❓ Question from THEO — ${a.title || 'Session'}`
-            : `⚡ Approval Needed · ${a.provider === 'claude' ? 'Claude Code' : 'Antigravity'}`,
-          body: isQ
-            ? `${a.detail || 'THEO is waiting for your answer.'}`
-            : `${a.title || 'Session'}: ${a.toolName || 'Permission'} — ${a.detail || 'Waiting for confirmation'}`,
+          title: notifTitle,
+          body: notifBody,
           ...navTarget
         });
       }
@@ -2120,6 +2541,27 @@
           sessionTitle: r.title || 'Session',
           url: `./?tab=chat&thread=${encodeURIComponent(r.id)}&provider=${encodeURIComponent(r.provider || 'antigravity')}`
         };
+        const notifTitle = endsWithQ
+          ? `❓ Question from THEO — ${r.title || 'Session'}`
+          : `✓ Task Complete — ${r.title || 'Session'}`;
+        const notifBody = lastText
+          ? lastText.slice(0, 160)
+          : `${r.title || 'Session'} (${r.folder || 'Workspace'}) finished running. Tap to inspect.`;
+        const activelyViewingThisChat =
+          !document.hidden &&
+          document.hasFocus() &&
+          prefs.activeTab === 'chat' &&
+          prefs.selectedThreadId === r.id;
+        if (!activelyViewingThisChat) {
+          recordTheoNotification(
+            {
+              title: notifTitle,
+              body: notifBody,
+              ...navTarget
+            },
+            { force: true, checked: false }
+          );
+        }
         playChime(endsWithQ ? 'approve' : 'confirm');
         showToast(
           endsWithQ
@@ -2134,12 +2576,8 @@
           notifPerm() === 'granted'
         ) {
           swLocalNotif({
-            title: endsWithQ
-              ? `❓ Question from THEO — ${r.title || 'Session'}`
-              : `✓ Task Complete — ${r.title || 'Session'}`,
-            body: lastText
-              ? lastText.slice(0, 160)
-              : `${r.title || 'Session'} (${r.folder || 'Workspace'}) finished running. Tap to inspect.`,
+            title: notifTitle,
+            body: notifBody,
             ...navTarget
           });
         }
@@ -2648,23 +3086,129 @@
 
     const pushDot = $('mobile-push-dot');
     const pushBtn = $('mobile-push-btn');
+    const railPushDot = $('rail-push-dot');
+    const railPushBtn = $('rail-push-btn');
     const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
     const pushActive = Boolean(nf.enabled && pushSub && notifPerm() === 'granted');
     if (pushDot) {
       pushDot.className = `conn-dot ${pushActive ? 'live' : ''}`;
     }
+    if (railPushDot) {
+      railPushDot.className = `conn-dot ${pushActive ? 'live' : ''}`;
+    }
+    const bellTitle = pushActive
+      ? 'Notifications & Home Screen Badge (Web Push Active)'
+      : 'Notifications & Home Screen Badge (Tap to enable Web Push)';
     if (pushBtn) {
       pushBtn.style.borderColor = pushActive ? 'var(--emerald)' : 'var(--brass)';
       pushBtn.style.color = pushActive ? 'var(--emerald)' : 'var(--brass)';
-      pushBtn.title = pushActive
-        ? 'Web Push Notifications Active (Tap to test / configure)'
-        : 'Tap to Enable Web Push Notifications';
+      pushBtn.title = bellTitle;
+    }
+    if (railPushBtn) {
+      railPushBtn.style.borderColor = pushActive ? 'var(--emerald)' : 'var(--brass)';
+      railPushBtn.style.color = pushActive ? 'var(--emerald)' : 'var(--brass)';
+      railPushBtn.title = bellTitle;
     }
 
     const connModal = $('conn-modal');
     if (connModal && !connModal.hidden) {
       renderConnModal();
     }
+    const notifModal = $('notif-modal');
+    if (notifModal && !notifModal.hidden) {
+      renderNotifModal();
+    }
+  }
+
+  function openNotifModal() {
+    const modal = $('notif-modal');
+    if (!modal) return;
+    seedUncheckedTheoNotifications();
+    renderNotifModal();
+    modal.hidden = false;
+  }
+
+  function closeNotifModal() {
+    const modal = $('notif-modal');
+    if (modal) modal.hidden = true;
+  }
+
+  function renderNotifModal() {
+    const dotEl = $('notif-modal-dot');
+    const titleEl = $('notif-modal-title');
+    const bodyEl = $('notif-modal-body');
+    if (!bodyEl) return;
+
+    const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
+    const pushActive = Boolean(nf.enabled && pushSub && notifPerm() === 'granted');
+    const items = loadNotifLog();
+    const unchecked = items.filter((x) => x && !x.checked);
+    const checked = items.filter((x) => x && x.checked);
+    const badgeCount = computeTheoUnreadBadgeCount(items);
+
+    if (dotEl) {
+      dotEl.className = `conn-dot ${pushActive ? 'live' : ''}`;
+    }
+    if (titleEl) {
+      titleEl.textContent =
+        badgeCount > 0
+          ? `Notifications (${badgeCount} Unchecked on Home Screen)`
+          : 'Notifications & Home Screen Badge';
+    }
+
+    const listHtml =
+      items.length === 0
+        ? `<div class="meta-timestamp" style="padding:14px 12px;border-radius:10px;background:var(--bg-ink);border:1px solid var(--border-subtle);text-align:center">No unchecked notifications — Home Screen badge is clear (0).</div>`
+        : `<div class="notif-inbox-list">
+            ${items
+              .slice(0, 25)
+              .map(
+                (it) => `
+              <div class="notif-item-row ${it.checked ? 'checked' : 'unchecked'}" data-notif-open="${esc(it.id || it.tag)}">
+                <div class="notif-item-body">
+                  <div class="notif-item-title">${esc(it.title || 'THEO Notification')}</div>
+                  ${it.body ? `<div class="notif-item-sub">${esc(it.body)}</div>` : ''}
+                  <div class="notif-item-meta tabular">${timeAgo(it.ts)} · ${it.checked ? '✓ Checked' : '● Unchecked (on Home Screen badge)'}</div>
+                </div>
+                ${
+                  !it.checked
+                    ? `<button type="button" class="notif-check-btn" data-notif-check="${esc(it.id || it.tag)}" title="Mark checked &amp; decrement Home Screen badge">✓ Check</button>`
+                    : `<span class="pill-count steel" style="font-size:10px">Done</span>`
+                }
+              </div>
+            `
+              )
+              .join('')}
+          </div>`;
+
+    bodyEl.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+        <span class="meta-timestamp">
+          Home Screen Badge: <strong class="tabular" style="color:${badgeCount > 0 ? '#FF3B30' : 'var(--emerald)'}">${badgeCount > 0 ? `${badgeCount} Unchecked` : '0 (All Clear)'}</strong> · Push: <strong style="color:${pushActive ? 'var(--emerald)' : 'var(--amber)'}">${pushActive ? 'Active' : 'Off'}</strong>
+        </span>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${
+            unchecked.length > 0 || badgeCount > 0
+              ? `<button type="button" class="btn-brass-sm" data-notif-act="check-all" style="padding:5px 10px;font-size:11.5px">✓ Mark All Checked (${badgeCount})</button>`
+              : ''
+          }
+          ${
+            checked.length > 0
+              ? `<button type="button" class="btn-ghost-sm" data-notif-act="clear-checked" style="padding:5px 10px;font-size:11.5px">Clear Checked</button>`
+              : ''
+          }
+        </div>
+      </div>
+      ${listHtml}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;padding-top:8px;border-top:1px solid var(--border-subtle)">
+        ${
+          pushActive
+            ? `<button type="button" class="btn-brass-sm" data-push-act="test">🔔 Send Test Push</button><button type="button" class="btn-ghost-sm" data-push-act="reset">🔄 Re-Pair Push</button>`
+            : `<button type="button" class="btn-brass-sm" data-push-act="enable">${pushBusy ? 'Enabling…' : '🔔 Enable Web Push'}</button>`
+        }
+        <button type="button" class="btn-ghost-sm" data-notif-act="open-settings" style="margin-left:auto">⚙️ Push Settings</button>
+      </div>
+    `;
   }
 
   function openConnModal() {
@@ -6072,6 +6616,8 @@
   }
 
   function renderAll() {
+    seedUncheckedTheoNotifications();
+    updateAppBadgeCount(false);
     updateConnectionBanner();
     renderOutboxBadge();
     renderPulseView();
@@ -6472,6 +7018,9 @@
         (a) => a.approvalId !== meta.approvalId && a.sessionId !== sessId
       );
     }
+    if (sessId) {
+      markNotificationsCheckedForSession(sessId);
+    }
 
     const row = (appState?.rows || []).find((r) => r.id === sessId);
     if (row) {
@@ -6793,19 +7342,45 @@
         return;
       }
 
+      const notifCheckBtn = e.target.closest('[data-notif-check]');
+      if (notifCheckBtn) {
+        e.stopPropagation();
+        haptic(10);
+        markNotificationChecked(notifCheckBtn.dataset.notifCheck, { navigate: false });
+        return;
+      }
+
+      const notifOpenRow = e.target.closest('[data-notif-open]');
+      if (notifOpenRow) {
+        haptic(10);
+        markNotificationChecked(notifOpenRow.dataset.notifOpen, { navigate: true });
+        return;
+      }
+
+      const notifActBtn = e.target.closest('[data-notif-act]');
+      if (notifActBtn) {
+        haptic(10);
+        const nAct = notifActBtn.dataset.notifAct;
+        if (nAct === 'check-all') {
+          markAllNotificationsChecked();
+        } else if (nAct === 'clear-checked') {
+          clearCheckedNotifications();
+        } else if (nAct === 'open-settings') {
+          closeNotifModal();
+          switchTab('analytics');
+          setTimeout(() => {
+            $('push-settings-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }, 60);
+        }
+        return;
+      }
+
       const pushBtn = e.target.closest('[data-push-act]');
       if (pushBtn) {
         haptic(10);
         const act = pushBtn.dataset.pushAct;
         if (act === 'header-bell') {
-          const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
-          const active = Boolean(nf.enabled && pushSub && notifPerm() === 'granted');
-          if (!active) {
-            saveJson(STORAGE_KEYS.PUSH_HINT, 0);
-            await enablePush();
-          } else {
-            await sendTestPush(false);
-          }
+          openNotifModal();
           return;
         }
         if (act === 'enable' || act === 'reset') {
@@ -6886,6 +7461,7 @@
         prefs.selectedThreadId = openChat.dataset.openChat;
         prefs.composerMode = 'reply';
         saveJson(STORAGE_KEYS.PREFS, prefs);
+        markNotificationsCheckedForSession(prefs.selectedThreadId);
         switchTab('chat');
         fetchThreadDetail(prefs.selectedThreadId);
         return;
@@ -7126,11 +7702,13 @@
           if (action === 'archive') {
             targetRow.archived = val;
             noteRowOverride(id, { archived: val });
+            if (val) markNotificationsCheckedForSession(id);
           }
           if (action === 'unread') {
             targetRow.unread = val;
             if (!val && targetRow.dot === 'unread') targetRow.dot = targetRow.open ? 'idle' : null;
             noteRowOverride(id, { unread: val });
+            if (!val) markNotificationsCheckedForSession(id);
           }
           persistCache();
           renderAll();
@@ -7153,6 +7731,7 @@
         prefs.selectedThreadId = sessCard.dataset.sessionId;
         prefs.composerMode = 'reply';
         saveJson(STORAGE_KEYS.PREFS, prefs);
+        markNotificationsCheckedForSession(prefs.selectedThreadId);
         switchTab('chat');
         fetchThreadDetail(prefs.selectedThreadId, sessCard.dataset.sessionProv);
         return;
@@ -7165,6 +7744,8 @@
         const sessId = approveBtn.dataset.sessId;
         haptic(20);
         playChime('approve');
+        if (appId) markNotificationChecked(`theo-app-${appId}`);
+        if (sessId) markNotificationsCheckedForSession(sessId);
         if (Array.isArray(appState?.approvals)) {
           appState.approvals = appState.approvals.filter(
             (a) => a.approvalId !== appId && a.sessionId !== sessId
@@ -7208,6 +7789,11 @@
 
       if (e.target.closest('#conn-modal-close') || e.target === $('conn-modal')) {
         closeConnModal();
+        return;
+      }
+
+      if (e.target.closest('#notif-modal-close') || e.target === $('notif-modal')) {
+        closeNotifModal();
         return;
       }
 
@@ -7441,6 +8027,7 @@
       prefs.selectedThreadId = e.target.value;
       prefs.composerMode = 'reply';
       saveJson(STORAGE_KEYS.PREFS, prefs);
+      markNotificationsCheckedForSession(prefs.selectedThreadId);
       renderChatView(true);
       fetchThreadDetail(prefs.selectedThreadId);
     });
@@ -7507,6 +8094,7 @@
       } else if (e.key === 'Escape') {
         closeCommandPalette();
         closeConnModal();
+        closeNotifModal();
       }
     });
   }
@@ -7880,9 +8468,13 @@
     const tab = String(nav.tab || '').trim();
     if (!threadId && !reminderId && !tab) return false;
 
-    const notifKey = String(nav.id || nav.tag || '').trim();
+    const notifKey = String(nav.id || nav.tag || nav.checkedNotifId || nav.checkedNotifTag || '').trim();
     if (notifKey) {
       markNotifConsumed(notifKey);
+      markNotificationChecked(notifKey, { navigate: false });
+    }
+    if (threadId) {
+      markNotificationsCheckedForSession(threadId);
     }
 
     if ('caches' in window) {
@@ -8005,11 +8597,13 @@
           document.addEventListener('visibilitychange', () => {
             if (!document.hidden) {
               reg.update().catch(() => {});
+              syncUnreadNotificationsWithSwCache();
               consumePendingNotificationNav({ allowUnseenPush: true }).finally(() => {
                 syncData();
               });
             }
           });
+          syncUnreadNotificationsWithSwCache();
           consumePendingNotificationNav({ allowUnseenPush: true });
           return checkExistingPushSub();
         })
@@ -8021,6 +8615,11 @@
         if (m.type === 'theo-nav') {
           applyNotificationNav(m);
         } else if (m.type === 'theo-push') {
+          if (m.item && typeof m.item === 'object') {
+            recordTheoNotification(m.item, { force: true, checked: false });
+          } else if (m.payload && m.payload.title) {
+            recordTheoNotification(m.payload, { force: true, checked: false });
+          }
           if (m.payload && m.payload.title) {
             playChime(m.payload.requireInteraction ? 'approve' : 'confirm');
             const p = m.payload;
@@ -8070,6 +8669,7 @@
     });
     window.addEventListener('focus', () => {
       loadPersonalLedgerFromLocal();
+      syncUnreadNotificationsWithSwCache();
       consumePendingNotificationNav({ allowUnseenPush: true }).finally(() => {
         renderAll();
         syncData().catch(() => {});
