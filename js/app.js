@@ -2242,6 +2242,7 @@
           const st = JSON.parse(ev.data);
           if (st) {
             applyStoppedSessionOverrides(st);
+            applyPendingLocalOverrides(st);
             checkLiveStateNotifications(st);
             appState = st;
             if (st.personalLedger) {
@@ -2306,6 +2307,7 @@
           if (payload?.state) {
             connMode = 'local';
             applyStoppedSessionOverrides(payload.state);
+            applyPendingLocalOverrides(payload.state);
             checkLiveStateNotifications(payload.state);
             appState = payload.state;
             if (payload.state.personalLedger) {
@@ -2344,6 +2346,7 @@
           connMode = 'cloud';
           if (store?.state?.snapshot) {
             applyStoppedSessionOverrides(store.state.snapshot);
+            applyPendingLocalOverrides(store.state.snapshot);
             checkLiveStateNotifications(store.state.snapshot);
             appState = store.state.snapshot;
           }
@@ -6835,6 +6838,7 @@
           if (!name || !name.trim()) return;
           const cleanName = name.trim();
           const newId = `grp-${Date.now().toString(36)}`;
+          noteGroupOverride(newId, { op: 'create', name: cleanName });
           if (appState) {
             appState.groups = [...(appState.groups || []), { id: newId, name: cleanName, collapsed: false }];
             persistCache();
@@ -6854,6 +6858,7 @@
           const nextName = prompt('Rename session group:', gName || '');
           if (!nextName || !nextName.trim()) return;
           const clean = nextName.trim();
+          noteGroupOverride(gId, { op: 'rename', name: clean });
           const grpObj = (appState?.groups || []).find((g) => g.id === gId);
           if (grpObj) {
             grpObj.name = clean;
@@ -6872,10 +6877,20 @@
         }
         if (act === 'delete' && gId) {
           if (!confirm(`Delete group "${gName || 'Group'}"? (Sessions will move to Ungrouped)`)) return;
+          const victimName =
+            gName || (appState?.groups || []).find((g) => g.id === gId)?.name || '';
+          noteGroupOverride(gId, { op: 'delete', name: victimName });
+          if (prefs.collapsedSessionGroups && typeof prefs.collapsedSessionGroups === 'object') {
+            delete prefs.collapsedSessionGroups[gId];
+            saveJson(STORAGE_KEYS.PREFS, prefs);
+          }
           if (appState) {
             appState.groups = (appState.groups || []).filter((g) => g.id !== gId);
             for (const r of appState.rows || []) {
-              if (r.group === gId) r.group = '';
+              if (r.group === gId) {
+                r.group = '';
+                noteRowOverride(r.id, { group: '' });
+              }
             }
             persistCache();
             renderSessionsView();
@@ -6884,7 +6899,8 @@
             type: 'sessionAction',
             action: 'groupDelete',
             subAction: 'groupDelete',
-            group: gId
+            group: gId,
+            name: victimName
           });
           showToast(`Removed group "${gName || 'Group'}"`);
           return;
@@ -6913,7 +6929,10 @@
             .map((r) => r.id);
           if (!closedIds.length) return;
           for (const r of appState?.rows || []) {
-            if (closedIds.includes(r.id)) r.archived = true;
+            if (closedIds.includes(r.id)) {
+              r.archived = true;
+              noteRowOverride(r.id, { archived: true });
+            }
           }
           persistCache();
           renderAll();
@@ -6953,6 +6972,7 @@
           const clean = rawChoice.trim();
           if (!clean || clean === '0' || clean.toLowerCase() === 'ungrouped' || clean.toLowerCase() === 'none') {
             targetRow.group = '';
+            noteRowOverride(id, { group: '' });
             persistCache();
             renderAll();
             await dispatchRemoteCommand({
@@ -6973,6 +6993,7 @@
             groups.find((g) => String(g.name || '').toLowerCase() === clean.toLowerCase());
           if (matchedGrp) {
             targetRow.group = matchedGrp.id;
+            noteRowOverride(id, { group: matchedGrp.id });
             if (prefs.collapsedSessionGroups) {
               prefs.collapsedSessionGroups[matchedGrp.id] = false;
               saveJson(STORAGE_KEYS.PREFS, prefs);
@@ -6990,6 +7011,8 @@
             showToast(`📁 Moved to "${matchedGrp.name}"`);
           } else {
             const newId = `grp-${Date.now().toString(36)}`;
+            noteGroupOverride(newId, { op: 'create', name: clean });
+            noteRowOverride(id, { group: newId });
             if (appState) {
               appState.groups = [...groups, { id: newId, name: clean, collapsed: false }];
             }
@@ -7010,8 +7033,15 @@
           return;
         }
         if (targetRow) {
-          if (action === 'archive') targetRow.archived = val;
-          if (action === 'unread') targetRow.unread = val;
+          if (action === 'archive') {
+            targetRow.archived = val;
+            noteRowOverride(id, { archived: val });
+          }
+          if (action === 'unread') {
+            targetRow.unread = val;
+            if (!val && targetRow.dot === 'unread') targetRow.dot = targetRow.open ? 'idle' : null;
+            noteRowOverride(id, { unread: val });
+          }
           persistCache();
           renderAll();
         }
@@ -7393,6 +7423,120 @@
 
   const stoppedSessionsById = new Map();
 
+  // Optimistic session/group edits made on this device (unread, archive, group moves,
+  // group create/rename/delete) are re-applied on top of every incoming SSE / local /
+  // cloud snapshot until the workstation state agrees, or until they expire. Without
+  // this, a cloud poll that lands before the relay drains the command queue silently
+  // reverts the toggle (e.g. "○ Read" flips back to "● Unread").
+  const PENDING_OVERRIDE_TTL_MS = 240000;
+  const pendingRowOverrides = new Map();
+  const pendingGroupOverrides = new Map();
+
+  function noteRowOverride(id, patch) {
+    const cleanId = String(id || '').trim();
+    if (!cleanId || !patch) return;
+    const prev = pendingRowOverrides.get(cleanId) || {};
+    pendingRowOverrides.set(cleanId, { ...prev, ...patch, at: Date.now() });
+  }
+
+  function noteGroupOverride(gId, patch) {
+    const cleanId = String(gId || '').trim();
+    if (!cleanId || !patch) return;
+    pendingGroupOverrides.set(cleanId, {
+      ...patch,
+      nameKey: String(patch.name || patch.nameKey || '')
+        .trim()
+        .toLowerCase(),
+      at: Date.now()
+    });
+  }
+
+  function applyPendingLocalOverrides(stateObj) {
+    if (!stateObj || typeof stateObj !== 'object') return;
+    if (pendingRowOverrides.size === 0 && pendingGroupOverrides.size === 0) return;
+    const now = Date.now();
+    if (!Array.isArray(stateObj.groups)) stateObj.groups = [];
+    const rows = Array.isArray(stateObj.rows) ? stateObj.rows : [];
+    const nameKeyOf = (g) =>
+      String(g?.name || '')
+        .trim()
+        .toLowerCase();
+
+    for (const [gId, rec] of Array.from(pendingGroupOverrides.entries())) {
+      if (now - rec.at > PENDING_OVERRIDE_TTL_MS) {
+        pendingGroupOverrides.delete(gId);
+        continue;
+      }
+      if (rec.op === 'delete') {
+        const before = stateObj.groups.length;
+        stateObj.groups = stateObj.groups.filter(
+          (g) => g && g.id !== gId && !(rec.nameKey && nameKeyOf(g) === rec.nameKey)
+        );
+        for (const r of rows) {
+          if (r && r.group === gId) r.group = '';
+        }
+        if (before === stateObj.groups.length) pendingGroupOverrides.delete(gId);
+      } else if (rec.op === 'create') {
+        const byId = stateObj.groups.find((g) => g && g.id === gId);
+        if (byId) {
+          pendingGroupOverrides.delete(gId);
+          continue;
+        }
+        const byName = rec.nameKey ? stateObj.groups.find((g) => g && nameKeyOf(g) === rec.nameKey) : null;
+        if (byName) {
+          // Workstation minted its own id for the same group — re-point pending row moves.
+          for (const rr of pendingRowOverrides.values()) {
+            if (rr.group === gId) rr.group = byName.id;
+          }
+          for (const r of rows) {
+            if (r && r.group === gId) r.group = byName.id;
+          }
+          pendingGroupOverrides.delete(gId);
+          continue;
+        }
+        stateObj.groups.push({ id: gId, name: rec.name || 'Group', collapsed: false });
+      } else if (rec.op === 'rename') {
+        const g = stateObj.groups.find((x) => x && x.id === gId);
+        if (!g) continue;
+        if (g.name === rec.name) pendingGroupOverrides.delete(gId);
+        else g.name = rec.name;
+      }
+    }
+
+    const groupIds = new Set(stateObj.groups.map((g) => g && g.id).filter(Boolean));
+    for (const [id, rec] of Array.from(pendingRowOverrides.entries())) {
+      if (now - rec.at > PENDING_OVERRIDE_TTL_MS) {
+        pendingRowOverrides.delete(id);
+        continue;
+      }
+      const r = rows.find((x) => x && x.id === id);
+      if (!r) continue;
+      let settled = true;
+      if ('unread' in rec) {
+        if (Boolean(r.unread) !== rec.unread) {
+          r.unread = rec.unread;
+          if (!rec.unread && r.dot === 'unread') r.dot = r.open ? 'idle' : null;
+          if (rec.unread && !r.dot && r.status !== 'working' && r.status !== 'waiting') r.dot = 'unread';
+          settled = false;
+        }
+      }
+      if ('archived' in rec) {
+        if (Boolean(r.archived) !== rec.archived) {
+          r.archived = rec.archived;
+          settled = false;
+        }
+      }
+      if ('group' in rec) {
+        const want = rec.group && groupIds.has(rec.group) ? rec.group : rec.group ? rec.group : '';
+        if ((r.group || '') !== want) {
+          r.group = want;
+          settled = false;
+        }
+      }
+      if (settled) pendingRowOverrides.delete(id);
+    }
+  }
+
   function applyStoppedSessionOverrides(stateObj) {
     if (!stateObj || !Array.isArray(stateObj.rows) || stoppedSessionsById.size === 0) return;
     const now = Date.now();
@@ -7753,7 +7897,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=28', { updateViaCache: 'none' })
+        .register('sw.js?v=30', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
