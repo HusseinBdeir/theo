@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/theo.css?v=26">
+  <link rel="stylesheet" href="css/theo.css?v=28">
   <script id="pre">
     (() => {
       try {
@@ -328,6 +328,10 @@
             </div>
 
             <div class="chat-header-actions">
+              <button type="button" class="btn-chat-stop" id="btn-chat-stop" title="Stop / interrupt this running session" aria-label="Stop running session" hidden>
+                <svg class="icon-stop-sm" viewBox="0 0 20 20"><rect x="4.5" y="4.5" width="11" height="11" rx="2.4" fill="currentColor"/></svg>
+                <span>Stop</span>
+              </button>
               <!-- Context Window Breakdown Trigger Pill -->
               <button type="button" class="ctx-window-pill tabular" id="btn-ctx-window" title="Inspect Context Window Breakdown &amp; /compact">
                 <span class="ctx-ring-wrap">
@@ -385,7 +389,7 @@
                 </button>
                 <textarea id="composer-input" rows="1" placeholder="Prompt THEO or attach files…"></textarea>
                 <button type="submit" class="composer-send-btn" id="composer-send-btn" title="Dispatch Prompt" aria-label="Dispatch Prompt">
-                  <svg class="icon-send" viewBox="0 0 20 20"><path d="M3 10l14-6.5-4.5 13-2.5-4.5L3 10z" fill="currentColor"/></svg>
+                  <svg class="icon-send" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 15.5V4.5M5.25 9.25L10 4.5l4.75 4.75"/></svg>
                   <svg class="icon-stop" viewBox="0 0 20 20"><rect x="5" y="5" width="10" height="10" rx="2.2" fill="currentColor"/></svg>
                 </button>
               </div>
@@ -525,7 +529,7 @@
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=26"></script>
-  <script src="js/app.js?v=26"></script>
+  <script src="js/endpoints.js?v=28"></script>
+  <script src="js/app.js?v=28"></script>
 </body>
 </html>

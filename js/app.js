@@ -2241,6 +2241,7 @@
         try {
           const st = JSON.parse(ev.data);
           if (st) {
+            applyStoppedSessionOverrides(st);
             checkLiveStateNotifications(st);
             appState = st;
             if (st.personalLedger) {
@@ -2304,6 +2305,7 @@
           const payload = await res.json();
           if (payload?.state) {
             connMode = 'local';
+            applyStoppedSessionOverrides(payload.state);
             checkLiveStateNotifications(payload.state);
             appState = payload.state;
             if (payload.state.personalLedger) {
@@ -2341,6 +2343,7 @@
             rawStore?.docs && typeof rawStore.docs === 'object' ? rawStore.docs : rawStore || {};
           connMode = 'cloud';
           if (store?.state?.snapshot) {
+            applyStoppedSessionOverrides(store.state.snapshot);
             checkLiveStateNotifications(store.state.snapshot);
             appState = store.state.snapshot;
           }
@@ -2456,7 +2459,7 @@
         const endpoint =
           cmd.type === 'send'
             ? '/api/send'
-            : cmd.type === 'approve'
+            : cmd.type === 'approve' || cmd.type === 'answerQuestion'
               ? '/api/approve'
               : '/api/session-action';
         const res = await fetch(`${localBridgeBase}${endpoint}`, {
@@ -2887,6 +2890,428 @@
     }
   }
 
+  // ---------- Interactive Question & Recommendation Cards (VS Code Parity) ----------
+  const questionDrafts = new Map();
+  const renderedQuestionsByCardKey = new Map();
+
+  function getQuestionDraft(cardKey) {
+    let draft = questionDrafts.get(cardKey);
+    if (!draft) {
+      draft = {
+        selectedByQ: {},
+        writeInByQ: {},
+        submitted: false,
+        submittedSummary: ''
+      };
+      questionDrafts.set(cardKey, draft);
+    }
+    return draft;
+  }
+
+  function parseOptionRecommendation(rawText) {
+    const fullText = String(rawText || '').trim();
+    if (!fullText) {
+      return { isRecommended: false, cleanText: '', fullText: '' };
+    }
+    const prefixRe = /^\(\s*Recommended\s*\)\s*/i;
+    const suffixRe = /\s*\(\s*Recommended\s*\)\s*$/i;
+    if (prefixRe.test(fullText)) {
+      return {
+        isRecommended: true,
+        cleanText: fullText.replace(prefixRe, '').trim() || fullText,
+        fullText
+      };
+    }
+    if (suffixRe.test(fullText)) {
+      return {
+        isRecommended: true,
+        cleanText: fullText.replace(suffixRe, '').trim() || fullText,
+        fullText
+      };
+    }
+    return { isRecommended: false, cleanText: fullText, fullText };
+  }
+
+  function inferMultiSelectFromQuestion(questionText, optionsCount = 0) {
+    const q = String(questionText || '').toLowerCase();
+    if (
+      /which .* changes|which .* options|which .* items|select all|choose any|which of the following|apply right now/i.test(
+        q
+      ) &&
+      optionsCount >= 2
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  function normalizeFrontendQuestions(
+    rawQuestions,
+    fallbackPrompt = '',
+    fallbackOptions = [],
+    fallbackMulti = undefined
+  ) {
+    const out = [];
+    if (Array.isArray(rawQuestions) && rawQuestions.length > 0) {
+      for (let i = 0; i < rawQuestions.length; i++) {
+        const q = rawQuestions[i];
+        if (!q || typeof q !== 'object') continue;
+        const prompt = String(q.question || q.prompt || q.text || fallbackPrompt || '').trim();
+        const rawOpts = Array.isArray(q.options) ? q.options : [];
+        const options = rawOpts
+          .map((opt, idx) => {
+            const rawLabel =
+              typeof opt === 'string'
+                ? opt
+                : String(opt?.text || opt?.label || opt?.title || opt?.value || '').trim();
+            if (!rawLabel) return null;
+            const parsed = parseOptionRecommendation(rawLabel);
+            return {
+              id: String(opt?.id || idx + 1),
+              text: parsed.fullText,
+              cleanText: parsed.cleanText,
+              isRecommended: Boolean(opt?.isRecommended || parsed.isRecommended),
+              description: typeof opt === 'object' && opt?.description ? String(opt.description).trim() : ''
+            };
+          })
+          .filter(Boolean);
+        if (!prompt && options.length === 0) continue;
+        const explicitMulti =
+          typeof q.isMultiSelect === 'boolean'
+            ? q.isMultiSelect
+            : typeof q.multiSelect === 'boolean'
+              ? q.multiSelect
+              : typeof fallbackMulti === 'boolean'
+                ? fallbackMulti
+                : inferMultiSelectFromQuestion(prompt, options.length);
+        out.push({
+          question: prompt || 'Select an option',
+          header: String(q.header || '').trim(),
+          isMultiSelect: Boolean(explicitMulti),
+          options
+        });
+      }
+    }
+    if (out.length === 0 && Array.isArray(fallbackOptions) && fallbackOptions.length > 0) {
+      const prompt = String(fallbackPrompt || 'Select an option').trim();
+      const options = fallbackOptions
+        .map((opt, idx) => {
+          const rawLabel = typeof opt === 'string' ? opt : String(opt?.text || opt?.label || '').trim();
+          if (!rawLabel) return null;
+          const parsed = parseOptionRecommendation(rawLabel);
+          return {
+            id: String(idx + 1),
+            text: parsed.fullText,
+            cleanText: parsed.cleanText,
+            isRecommended: parsed.isRecommended,
+            description: ''
+          };
+        })
+        .filter(Boolean);
+      if (options.length > 0) {
+        out.push({
+          question: prompt,
+          header: '',
+          isMultiSelect:
+            typeof fallbackMulti === 'boolean'
+              ? fallbackMulti
+              : inferMultiSelectFromQuestion(prompt, options.length),
+          options
+        });
+      }
+    }
+    return out;
+  }
+
+  function extractStructuredQuestionsFromText(rawText) {
+    const src = String(rawText || '');
+    if (!src.trim()) {
+      return { questions: [], cleanedText: '' };
+    }
+
+    // 1. Parse explicit **Q1: ...**\n- opt1\n- opt2 blocks (appended by remote.js transcript parser)
+    const qBlockRegex = /(?:^|\n\n)\*\*Q(\d+):\s*([^\n*]+)\*\*\n((?:\s*-\s+[^\n]+(?:\n|$))+)/g;
+    const extracted = [];
+    let match;
+    while ((match = qBlockRegex.exec(src)) !== null) {
+      const qPrompt = String(match[2] || '').trim();
+      const bulletsRaw = String(match[3] || '');
+      const opts = bulletsRaw
+        .split('\n')
+        .map((line) => line.replace(/^\s*-\s+/, '').trim())
+        .filter(Boolean);
+      if (qPrompt && opts.length > 0) {
+        extracted.push({
+          question: qPrompt,
+          isMultiSelect: inferMultiSelectFromQuestion(qPrompt, opts.length),
+          options: opts
+        });
+      }
+    }
+
+    if (extracted.length > 0) {
+      const cleanedText = src.replace(qBlockRegex, '').trim();
+      return {
+        questions: normalizeFrontendQuestions(extracted),
+        cleanedText
+      };
+    }
+
+    // 2. Also detect plain-markdown recommendation lists (e.g. bullets starting with (Recommended) or following a question)
+    const lines = src.split('\n');
+    const bulletItems = [];
+    let firstBulletLine = -1;
+    let lastBulletLine = -1;
+    let hasRecommendedMarker = false;
+
+    for (let i = 0; i < lines.length; i++) {
+      const ln = lines[i].trim();
+      const mBullet = ln.match(/^(?:[-*•]|\d+[.)])\s+(.+)$/);
+      if (mBullet) {
+        const itemText = mBullet[1].trim().replace(/^\*\*(.+)\*\*$/, '$1');
+        if (firstBulletLine === -1) firstBulletLine = i;
+        lastBulletLine = i;
+        if (/\(\s*Recommended\s*\)/i.test(itemText)) {
+          hasRecommendedMarker = true;
+        }
+        bulletItems.push(itemText);
+      } else if (firstBulletLine !== -1 && ln !== '') {
+        // Non-bullet line after bullets started: only keep scanning if we haven't collected a recommendation block yet
+        if (!hasRecommendedMarker) {
+          bulletItems.length = 0;
+          firstBulletLine = -1;
+          lastBulletLine = -1;
+        } else {
+          break;
+        }
+      }
+    }
+
+    if (bulletItems.length >= 2 && hasRecommendedMarker) {
+      let promptLine = 'Which recommendation would you like to apply?';
+      for (let j = firstBulletLine - 1; j >= 0; j--) {
+        const prev = lines[j].trim().replace(/^\*\*|\*\*$/g, '');
+        if (prev) {
+          promptLine = prev;
+          break;
+        }
+      }
+      const beforeLines = lines.slice(0, firstBulletLine);
+      if (
+        beforeLines.length > 0 &&
+        beforeLines[beforeLines.length - 1].trim().replace(/^\*\*|\*\*$/g, '') === promptLine
+      ) {
+        beforeLines.pop();
+      }
+      const afterLines = lines.slice(lastBulletLine + 1);
+      const cleanedText = [...beforeLines, ...afterLines].join('\n').trim();
+      return {
+        questions: normalizeFrontendQuestions([
+          {
+            question: promptLine,
+            isMultiSelect: inferMultiSelectFromQuestion(promptLine, bulletItems.length),
+            options: bulletItems
+          }
+        ]),
+        cleanedText
+      };
+    }
+
+    return { questions: [], cleanedText: src };
+  }
+
+  function resolveQuestionsForTurn(m, matchingApproval = null) {
+    const parsedFromText = extractStructuredQuestionsFromText(m?.text || '');
+    const explicitQuestions = normalizeFrontendQuestions(
+      m?.questions || matchingApproval?.questions,
+      matchingApproval?.detail || '',
+      matchingApproval?.options || [],
+      matchingApproval?.isMultiSelect
+    );
+    const questions =
+      explicitQuestions.length > 0 ? explicitQuestions : parsedFromText.questions;
+
+    if (matchingApproval && typeof matchingApproval.isMultiSelect === 'boolean' && questions.length === 1) {
+      questions[0].isMultiSelect = matchingApproval.isMultiSelect;
+    }
+
+    return {
+      questions,
+      cleanedText: parsedFromText.cleanedText
+    };
+  }
+
+  function resolveQuestionsForApproval(a, sessionMessages = []) {
+    const direct = normalizeFrontendQuestions(
+      a?.questions,
+      a?.detail || a?.title || 'Question',
+      a?.options || [],
+      a?.isMultiSelect
+    );
+    if (direct.length > 0) return direct;
+
+    for (let i = sessionMessages.length - 1; i >= 0; i--) {
+      const msg = sessionMessages[i];
+      if (!msg || msg.role !== 'assistant') continue;
+      const resolved = resolveQuestionsForTurn(msg, a);
+      if (resolved.questions.length > 0) {
+        return resolved.questions;
+      }
+    }
+
+    if (a?.detail) {
+      return [
+        {
+          question: String(a.detail).trim(),
+          header: '',
+          isMultiSelect: Boolean(a?.isMultiSelect),
+          options: []
+        }
+      ];
+    }
+    return [];
+  }
+
+  function countDraftSelections(draft, questionsCount) {
+    if (!draft) return 0;
+    let total = 0;
+    for (let i = 0; i < questionsCount; i++) {
+      const set = draft.selectedByQ[i];
+      if (set && set.size > 0) total += set.size;
+      const w = String(draft.writeInByQ[i] || '').trim();
+      if (w) total += 1;
+    }
+    return total;
+  }
+
+  function renderInteractiveQuestionCardHtml(opts = {}) {
+    const cardKey = String(opts.cardKey || `qcard-${opts.sessionId || 'sess'}`);
+    const sessionId = String(opts.sessionId || '').trim();
+    const provider = opts.provider === 'claude' ? 'claude' : 'antigravity';
+    const approvalId = String(opts.approvalId || sessionId || '').trim();
+    const selector = String(opts.selector || '').trim();
+    const sessionTitle = String(opts.sessionTitle || '').trim();
+    const showInspectBtn = Boolean(opts.showInspectBtn);
+    const plainQuestionFallback = Boolean(opts.plainQuestionFallback);
+    const questions = Array.isArray(opts.questions) ? opts.questions : [];
+
+    renderedQuestionsByCardKey.set(cardKey, {
+      cardKey,
+      sessionId,
+      provider,
+      approvalId,
+      selector,
+      questions,
+      plainQuestionFallback
+    });
+
+    const draft = getQuestionDraft(cardKey);
+    const selectedCount = countDraftSelections(draft, questions.length);
+    const anyMulti = questions.some((q) => q.isMultiSelect);
+
+    if (draft.submitted) {
+      return `
+        <div class="vs-question-card is-answered" data-q-card="${esc(cardKey)}">
+          <div class="vs-q-card-top">
+            <span class="approval-prov">
+              <span class="prov-glyph">${PROVIDER_ICONS[provider]}</span>
+              <span>${provider === 'claude' ? 'Claude Code' : 'Antigravity'} · Answered</span>
+            </span>
+            <span class="pill-count emerald">✓ Dispatched</span>
+          </div>
+          <div class="vs-q-answered-summary">${esc(draft.submittedSummary || 'Response sent to VS Code')}</div>
+        </div>
+      `;
+    }
+
+    const blocksHtml = questions
+      .map((q, qIdx) => {
+        const selSet = draft.selectedByQ[qIdx] || new Set();
+        const writeInVal = String(draft.writeInByQ[qIdx] || '');
+        const optionsList = Array.isArray(q.options) ? q.options : [];
+        const modeHint = q.isMultiSelect ? 'Select all that apply' : 'Select one option';
+
+        const optionsHtml = optionsList
+          .map((opt, oIdx) => {
+            const isSelected = selSet.has(String(oIdx));
+            return `
+              <button
+                type="button"
+                class="vs-q-opt ${isSelected ? 'is-selected' : ''} ${opt.isRecommended ? 'is-recommended' : ''}"
+                data-q-opt-toggle="1"
+                data-card-key="${esc(cardKey)}"
+                data-q-idx="${qIdx}"
+                data-opt-idx="${oIdx}"
+                aria-pressed="${isSelected ? 'true' : 'false'}"
+              >
+                <span class="vs-q-check ${q.isMultiSelect ? 'is-checkbox' : 'is-radio'}" aria-hidden="true">${isSelected ? '✓' : ''}</span>
+                <span class="vs-q-num tabular">${oIdx + 1}</span>
+                <span class="vs-q-opt-body">
+                  <span class="vs-q-opt-title-row">
+                    <span class="vs-q-opt-text">${esc(opt.cleanText || opt.text)}</span>
+                    ${opt.isRecommended ? `<span class="vs-q-rec-badge">★ Recommended</span>` : ''}
+                  </span>
+                  ${opt.description ? `<span class="vs-q-opt-desc">${esc(opt.description)}</span>` : ''}
+                </span>
+              </button>
+            `;
+          })
+          .join('');
+
+        return `
+          <div class="vs-q-block" data-q-block="${qIdx}">
+            <div class="vs-q-prompt-row">
+              <div class="vs-q-prompt">${esc(q.question || 'Question')}</div>
+              ${optionsList.length > 0 ? `<span class="vs-q-mode-pill">${esc(modeHint)}</span>` : ''}
+            </div>
+            ${optionsList.length > 0 ? `<div class="vs-q-options-list">${optionsHtml}</div>` : ''}
+            <div class="vs-q-writein-wrap">
+              <input
+                type="text"
+                class="vs-q-writein-input"
+                data-q-writein-input="1"
+                data-card-key="${esc(cardKey)}"
+                data-q-idx="${qIdx}"
+                placeholder="${optionsList.length > 0 ? 'Other (type custom answer or notes)…' : 'Type your answer…'}"
+                value="${esc(writeInVal)}"
+                autocomplete="off"
+              >
+            </div>
+          </div>
+        `;
+      })
+      .join('');
+
+    return `
+      <div class="vs-question-card" data-q-card="${esc(cardKey)}">
+        <div class="vs-q-card-top">
+          <span class="approval-prov">
+            <span class="prov-glyph">${PROVIDER_ICONS[provider]}</span>
+            <span>${provider === 'claude' ? 'Claude Code' : 'Antigravity'} · Question</span>
+          </span>
+          <span class="approval-tool-badge tabular">${anyMulti ? 'Multi-Select' : 'Interactive Choice'}</span>
+        </div>
+        ${sessionTitle ? `<div class="approval-title">${esc(sessionTitle)}</div>` : ''}
+        ${blocksHtml}
+        <div class="vs-q-actions">
+          <button
+            type="button"
+            class="btn-approve btn-q-submit"
+            data-q-submit="1"
+            data-card-key="${esc(cardKey)}"
+          >✓ Submit Answer${selectedCount > 0 ? ` (${selectedCount})` : ''}</button>
+          <button
+            type="button"
+            class="btn-inspect btn-q-skip"
+            data-q-skip="1"
+            data-card-key="${esc(cardKey)}"
+          >Skip</button>
+          ${showInspectBtn && sessionId ? `<button type="button" class="btn-inspect" data-open-chat="${esc(sessionId)}">Inspect</button>` : ''}
+        </div>
+      </div>
+    `;
+  }
+
   // VIEW 1: Render Pulse
   function renderPulseView() {
     const bannerEl = $('pulse-notif-banner');
@@ -2952,46 +3377,73 @@
       pillEl.className = `pill-count tabular ${waitingCount > 0 ? 'amber' : 'emerald'}`;
     }
     if (listEl) {
-      if (approvals.length === 0) {
-        listEl.innerHTML = `
-          <div class="approval-card clear-state">
-            <div>
-              <div class="approval-title">Zero Blocked Sessions</div>
-              <div class="meta-timestamp">No Antigravity or Claude Code tool permissions are waiting on confirmation.</div>
-            </div>
-            <span class="pill-count emerald">✓ Ready</span>
-          </div>
-        `;
-      } else {
-        listEl.innerHTML = approvals
-          .map((a) => {
-            const provKey = a.provider === 'claude' ? 'claude' : 'antigravity';
-            return `
-              <div class="approval-card" data-approval-id="${esc(a.id)}">
-                <div class="approval-top">
-                  <span class="approval-prov">
-                    <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
-                    <span>${provKey === 'claude' ? 'Claude Code' : 'Antigravity'}</span>
-                  </span>
-                  <span class="approval-tool-badge tabular">${esc(a.toolName || 'Permission')}</span>
-                </div>
-                <div class="approval-title">${esc(a.title || 'Session')}</div>
-                <div class="approval-detail mono">${esc(a.detail || '')}</div>
-                <div class="approval-actions">
-                  ${
-                    a.kind === 'waiting_session'
-                      ? `<button type="button" class="btn-approve" data-open-chat="${esc(a.sessionId)}">Open &amp; Reply →</button>`
-                      : `
-                        <button type="button" class="btn-approve" data-approve-act="approve" data-app-id="${esc(a.approvalId)}" data-sess-id="${esc(a.sessionId)}" data-prov="${provKey}" data-sel="${esc(a.selector || '')}" data-lbl="${esc(a.toolName || 'Accept')}">✓ Approve</button>
-                        <button type="button" class="btn-reject" data-approve-act="reject" data-app-id="${esc(a.approvalId)}" data-sess-id="${esc(a.sessionId)}" data-prov="${provKey}" data-sel="${esc(a.selector || '')}">✕ Deny</button>
-                        <button type="button" class="btn-inspect" data-open-chat="${esc(a.sessionId)}">Inspect</button>
-                      `
-                  }
-                </div>
+      const focusedWriteIn =
+        document.activeElement &&
+        listEl.contains(document.activeElement) &&
+        document.activeElement.matches('[data-q-writein-input]');
+      if (!focusedWriteIn) {
+        if (approvals.length === 0) {
+          listEl.innerHTML = `
+            <div class="approval-card clear-state">
+              <div>
+                <div class="approval-title">Zero Blocked Sessions</div>
+                <div class="meta-timestamp">No Antigravity or Claude Code tool permissions are waiting on confirmation.</div>
               </div>
-            `;
-          })
-          .join('');
+              <span class="pill-count emerald">✓ Ready</span>
+            </div>
+          `;
+        } else {
+          listEl.innerHTML = approvals
+            .map((a) => {
+              const provKey = a.provider === 'claude' ? 'claude' : 'antigravity';
+              const isQuestionApproval =
+                a.kind === 'question' ||
+                /question/i.test(String(a.toolName || '')) ||
+                (Array.isArray(a.questions) && a.questions.length > 0) ||
+                (Array.isArray(a.options) && a.options.length > 0);
+              if (isQuestionApproval) {
+                const sessMsgs = coalesceThreadMessages(threadsCache[a.sessionId]?.messages || []);
+                const qList = resolveQuestionsForApproval(a, sessMsgs);
+                if (qList.length > 0) {
+                  return renderInteractiveQuestionCardHtml({
+                    cardKey: `q-pulse-${a.sessionId || a.id}`,
+                    sessionId: a.sessionId,
+                    provider: provKey,
+                    approvalId: a.approvalId || a.sessionId,
+                    selector: a.selector || '',
+                    sessionTitle: a.title || 'Session',
+                    showInspectBtn: true,
+                    questions: qList
+                  });
+                }
+              }
+              return `
+                <div class="approval-card" data-approval-id="${esc(a.id)}">
+                  <div class="approval-top">
+                    <span class="approval-prov">
+                      <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
+                      <span>${provKey === 'claude' ? 'Claude Code' : 'Antigravity'}</span>
+                    </span>
+                    <span class="approval-tool-badge tabular">${esc(a.toolName || 'Permission')}</span>
+                  </div>
+                  <div class="approval-title">${esc(a.title || 'Session')}</div>
+                  <div class="approval-detail mono">${esc(a.detail || '')}</div>
+                  <div class="approval-actions">
+                    ${
+                      a.kind === 'waiting_session'
+                        ? `<button type="button" class="btn-approve" data-open-chat="${esc(a.sessionId)}">Open &amp; Reply →</button>`
+                        : `
+                          <button type="button" class="btn-approve" data-approve-act="approve" data-app-id="${esc(a.approvalId)}" data-sess-id="${esc(a.sessionId)}" data-prov="${provKey}" data-sel="${esc(a.selector || '')}" data-lbl="${esc(a.toolName || 'Accept')}">✓ Approve</button>
+                          <button type="button" class="btn-reject" data-approve-act="reject" data-app-id="${esc(a.approvalId)}" data-sess-id="${esc(a.sessionId)}" data-prov="${provKey}" data-sel="${esc(a.selector || '')}">✕ Deny</button>
+                          <button type="button" class="btn-inspect" data-open-chat="${esc(a.sessionId)}">Inspect</button>
+                        `
+                    }
+                  </div>
+                </div>
+              `;
+            })
+            .join('');
+        }
       }
     }
 
@@ -3181,6 +3633,11 @@
           </div>
         </div>
         <div class="sess-right">
+          ${
+            r.status === 'working' || r.dot === 'running' || r.bgTask?.state === 'running'
+              ? `<button type="button" class="sess-act-btn stop-btn" data-sess-act="stop" data-id="${esc(r.id || '')}" title="Stop / interrupt running session">■ Stop</button>`
+              : ''
+          }
           <button type="button" class="sess-act-btn" data-sess-act="group" data-id="${esc(r.id || '')}" title="Assign or move session to a group">
             📁 ${esc(grpObj ? grpObj.name : 'Group')}
           </button>
@@ -3431,6 +3888,9 @@
         if (Array.isArray(m.toolCalls) && m.toolCalls.length) {
           prev.toolCalls = [...(prev.toolCalls || []), ...m.toolCalls].slice(-28);
         }
+        if (Array.isArray(m.questions) && m.questions.length) {
+          prev.questions = [...(prev.questions || []), ...m.questions];
+        }
         if (Array.isArray(m.artifacts) && m.artifacts.length) {
           const nextArts = [...(prev.artifacts || [])];
           for (const art of m.artifacts) {
@@ -3446,6 +3906,7 @@
         merged.push({
           ...m,
           toolCalls: Array.isArray(m.toolCalls) ? [...m.toolCalls] : [],
+          questions: Array.isArray(m.questions) ? [...m.questions] : [],
           artifacts: Array.isArray(m.artifacts) ? [...m.artifacts] : []
         });
       }
@@ -3645,6 +4106,15 @@
     // Conversation Stream
     const streamEl = $('chat-stream');
     if (!streamEl) return;
+    if (
+      !forceScroll &&
+      document.activeElement &&
+      streamEl.contains(document.activeElement) &&
+      document.activeElement.matches('[data-q-writein-input]')
+    ) {
+      updateComposerActionButton();
+      return;
+    }
     const wasNearBottom =
       streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight < 100;
     const messages = coalesceThreadMessages(threadDetail?.messages || []);
@@ -3655,28 +4125,57 @@
     const sessionApprovals = (appState?.approvals || []).filter(
       (a) => a && a.sessionId === prefs.selectedThreadId && a.kind !== 'waiting_session'
     );
-    const sessionApprovalHtml = sessionApprovals
-      .map((a) => {
-        const aProv = a.provider === 'claude' ? 'claude' : 'antigravity';
-        return `
-          <div class="approval-card" data-approval-id="${esc(a.id)}" style="margin-top:8px">
-            <div class="approval-top">
-              <span class="approval-prov">
-                <span class="prov-glyph">${PROVIDER_ICONS[aProv]}</span>
-                <span>${aProv === 'claude' ? 'Claude Code' : 'Antigravity'} · Action Required</span>
-              </span>
-              <span class="approval-tool-badge tabular">${esc(a.toolName || 'Permission')}</span>
+    const matchingQuestionApproval = sessionApprovals.find(
+      (a) =>
+        a.kind === 'question' ||
+        /question/i.test(String(a.toolName || '')) ||
+        (Array.isArray(a.questions) && a.questions.length > 0) ||
+        (Array.isArray(a.options) && a.options.length > 0)
+    );
+    let questionRenderedInTurn = false;
+
+    const buildSessionApprovalHtml = (skipQuestionApprovals = false) =>
+      sessionApprovals
+        .map((a) => {
+          const aProv = a.provider === 'claude' ? 'claude' : 'antigravity';
+          const isQ =
+            a.kind === 'question' ||
+            /question/i.test(String(a.toolName || '')) ||
+            (Array.isArray(a.questions) && a.questions.length > 0) ||
+            (Array.isArray(a.options) && a.options.length > 0);
+          if (isQ) {
+            if (skipQuestionApprovals) return '';
+            const qList = resolveQuestionsForApproval(a, messages);
+            if (qList.length > 0) {
+              return renderInteractiveQuestionCardHtml({
+                cardKey: `q-chat-${prefs.selectedThreadId}-${a.approvalId || 'active'}`,
+                sessionId: prefs.selectedThreadId,
+                provider: aProv,
+                approvalId: a.approvalId || prefs.selectedThreadId,
+                selector: a.selector || '',
+                questions: qList
+              });
+            }
+          }
+          return `
+            <div class="approval-card" data-approval-id="${esc(a.id)}" style="margin-top:8px">
+              <div class="approval-top">
+                <span class="approval-prov">
+                  <span class="prov-glyph">${PROVIDER_ICONS[aProv]}</span>
+                  <span>${aProv === 'claude' ? 'Claude Code' : 'Antigravity'} · Action Required</span>
+                </span>
+                <span class="approval-tool-badge tabular">${esc(a.toolName || 'Permission')}</span>
+              </div>
+              <div class="approval-title">${esc(a.title || activeRow?.title || 'Session')}</div>
+              <div class="approval-detail mono">${esc(a.detail || '')}</div>
+              <div class="approval-actions">
+                <button type="button" class="btn-approve" data-approve-act="approve" data-app-id="${esc(a.approvalId)}" data-sess-id="${esc(a.sessionId)}" data-prov="${aProv}" data-sel="${esc(a.selector || '')}" data-lbl="${esc(a.toolName || 'Accept')}">✓ Approve</button>
+                <button type="button" class="btn-reject" data-approve-act="reject" data-app-id="${esc(a.approvalId)}" data-sess-id="${esc(a.sessionId)}" data-prov="${aProv}" data-sel="${esc(a.selector || '')}">✕ Deny</button>
+              </div>
             </div>
-            <div class="approval-title">${esc(a.title || activeRow?.title || 'Session')}</div>
-            <div class="approval-detail mono">${esc(a.detail || '')}</div>
-            <div class="approval-actions">
-              <button type="button" class="btn-approve" data-approve-act="approve" data-app-id="${esc(a.approvalId)}" data-sess-id="${esc(a.sessionId)}" data-prov="${aProv}" data-sel="${esc(a.selector || '')}" data-lbl="${esc(a.toolName || 'Accept')}">✓ Approve</button>
-              <button type="button" class="btn-reject" data-approve-act="reject" data-app-id="${esc(a.approvalId)}" data-sess-id="${esc(a.sessionId)}" data-prov="${aProv}" data-sel="${esc(a.selector || '')}">✕ Deny</button>
-            </div>
-          </div>
-        `;
-      })
-      .join('');
+          `;
+        })
+        .join('');
 
     if (messages.length === 0) {
       streamEl.innerHTML = `
@@ -3693,107 +4192,135 @@
             }
           </div>
         </div>
-        ${sessionApprovalHtml}
+        ${buildSessionApprovalHtml(false)}
       `;
       lastRenderedThreadId = prefs.selectedThreadId;
       lastRenderedMsgCount = 0;
     } else {
-      streamEl.innerHTML =
-        messages
-          .map((m, msgIdx) => {
-            const isUser = m.role === 'user';
-            const isLastTurn = msgIdx === messages.length - 1;
-            const toolCalls = Array.isArray(m.toolCalls) ? m.toolCalls : [];
-            const toolCount = Number(m.totalTurnTools || toolCalls.length);
-            const editTools = toolCalls.filter((t) => t.kind === 'edit' || t.kind === 'write');
-            const changedFilesSet = new Set(
-              editTools.map((t) => t.relPath || t.file || t.summary).filter(Boolean)
-            );
-            const filesChangedCount = changedFilesSet.size || editTools.length;
-            const totalAdded = editTools.reduce((acc, t) => acc + Number(t.addedLines || 0), 0);
-            const totalRemoved = editTools.reduce((acc, t) => acc + Number(t.removedLines || 0), 0);
+      const turnsHtml = messages
+        .map((m, msgIdx) => {
+          const isUser = m.role === 'user';
+          const isLastTurn = msgIdx === messages.length - 1;
+          const toolCalls = Array.isArray(m.toolCalls) ? m.toolCalls : [];
+          const toolCount = Number(m.totalTurnTools || toolCalls.length);
+          const editTools = toolCalls.filter((t) => t.kind === 'edit' || t.kind === 'write');
+          const changedFilesSet = new Set(
+            editTools.map((t) => t.relPath || t.file || t.summary).filter(Boolean)
+          );
+          const filesChangedCount = changedFilesSet.size || editTools.length;
+          const totalAdded = editTools.reduce((acc, t) => acc + Number(t.addedLines || 0), 0);
+          const totalRemoved = editTools.reduce((acc, t) => acc + Number(t.removedLines || 0), 0);
 
-            const summaryHtmlParts = [];
-            if (filesChangedCount > 0) {
-              const diffHtml =
-                totalAdded > 0 || totalRemoved > 0
-                  ? ` <span class="tabular"><span class="diff-add">+${totalAdded}</span> <span class="diff-del">-${totalRemoved}</span></span>`
-                  : '';
-              summaryHtmlParts.push(
-                `<span>${filesChangedCount} ${filesChangedCount === 1 ? 'file' : 'files'} changed${diffHtml}</span>`
-              );
-            }
+          const summaryHtmlParts = [];
+          if (filesChangedCount > 0) {
+            const diffHtml =
+              totalAdded > 0 || totalRemoved > 0
+                ? ` <span class="tabular"><span class="diff-add">+${totalAdded}</span> <span class="diff-del">-${totalRemoved}</span></span>`
+                : '';
             summaryHtmlParts.push(
-              `<span>⚡ ${toolCount} tool ${toolCount === 1 ? 'step' : 'steps'}</span>`
+              `<span>${filesChangedCount} ${filesChangedCount === 1 ? 'file' : 'files'} changed${diffHtml}</span>`
             );
-            const summaryLabelHtml = `<span class="tools-summary-left">${summaryHtmlParts.join(' <span style="opacity:0.5">·</span> ')}</span><span class="tools-summary-chevron">›</span>`;
+          }
+          summaryHtmlParts.push(
+            `<span>⚡ ${toolCount} tool ${toolCount === 1 ? 'step' : 'steps'}</span>`
+          );
+          const summaryLabelHtml = `<span class="tools-summary-left">${summaryHtmlParts.join(' <span style="opacity:0.5">·</span> ')}</span><span class="tools-summary-chevron">›</span>`;
 
-            const toolCardsHtml = toolCalls.length
-              ? `<div class="code-steps-stack">${toolCalls.map((tc) => renderToolCallCardHtml(tc)).join('')}</div>`
-              : '';
+          const toolCardsHtml = toolCalls.length
+            ? `<div class="code-steps-stack">${toolCalls.map((tc) => renderToolCallCardHtml(tc)).join('')}</div>`
+            : '';
 
-            const toolsHtml = toolCalls.length
-              ? m.text
-                ? `<details class="tools-details" ${isLastTurn && activeRow?.status === 'working' ? 'open' : ''}><summary>${summaryLabelHtml}</summary>${toolCardsHtml}</details>`
-                : `<div class="active-tools-panel"><div class="active-tools-hdr">${summaryHtmlParts.join(' · ')}</div>${toolCardsHtml}</div>`
-              : '';
+          const artifacts = Array.isArray(m.artifacts) ? m.artifacts : [];
+          const artifactsHtml = artifacts
+            .map(
+              (art) => `
+                <details class="vs-artifact-card">
+                  <summary class="vs-artifact-summary">
+                    <div class="vs-artifact-head">
+                      <svg class="vs-artifact-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M2 3.5A1.5 1.5 0 0 1 3.5 2H7a1.5 1.5 0 0 1 1.5 1.5v10A1.5 1.5 0 0 0 7 12H3.5A1.5 1.5 0 0 1 2 10.5v-7z"/>
+                        <path d="M14 3.5A1.5 1.5 0 0 0 12.5 2H9a1.5 1.5 0 0 0-1.5 1.5v10A1.5 1.5 0 0 1 9 12h3.5a1.5 1.5 0 0 0 1.5-1.5v-7z"/>
+                      </svg>
+                      <span>${esc(art.title || 'Walkthrough')}</span>
+                    </div>
+                    ${art.summary ? `<div class="vs-artifact-desc">${formatTurnMarkdown(art.summary)}</div>` : ''}
+                  </summary>
+                  ${art.content ? `<div class="vs-artifact-body turn-text md-rich">${formatTurnMarkdown(art.content)}</div>` : ''}
+                </details>
+              `
+            )
+            .join('');
 
-            const artifacts = Array.isArray(m.artifacts) ? m.artifacts : [];
-            const artifactsHtml = artifacts
-              .map(
-                (art) => `
-                  <details class="vs-artifact-card">
-                    <summary class="vs-artifact-summary">
-                      <div class="vs-artifact-head">
-                        <svg class="vs-artifact-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-                          <path d="M2 3.5A1.5 1.5 0 0 1 3.5 2H7a1.5 1.5 0 0 1 1.5 1.5v10A1.5 1.5 0 0 0 7 12H3.5A1.5 1.5 0 0 1 2 10.5v-7z"/>
-                          <path d="M14 3.5A1.5 1.5 0 0 0 12.5 2H9a1.5 1.5 0 0 0-1.5 1.5v10A1.5 1.5 0 0 1 9 12h3.5a1.5 1.5 0 0 0 1.5-1.5v-7z"/>
-                        </svg>
-                        <span>${esc(art.title || 'Walkthrough')}</span>
-                      </div>
-                      ${art.summary ? `<div class="vs-artifact-desc">${formatTurnMarkdown(art.summary)}</div>` : ''}
-                    </summary>
-                    ${art.content ? `<div class="vs-artifact-body turn-text md-rich">${formatTurnMarkdown(art.content)}</div>` : ''}
-                  </details>
-                `
-              )
-              .join('');
+          const timeLabel = m.createdAt ? timeAgo(Date.parse(m.createdAt)) : '';
 
-            const liveThought =
-              !m.text && (m.latestThinking || m.thinking)
-                ? String(m.latestThinking || m.thinking)
-                    .trim()
-                    .split(/\n\n+/)
-                    .pop()
-                : '';
-
-            const thinkHtml = m.thinking
-              ? `<details class="thinking-details" ${!m.text && isLastTurn ? 'open' : ''}><summary>Reasoning &amp; Internal Thought</summary><div class="turn-text mono" style="margin-top:6px">${esc(m.thinking)}</div></details>`
-              : liveThought
-                ? `<div class="thinking-details"><div class="turn-text mono">${esc(liveThought)}</div></div>`
-                : '';
-
-            const timeLabel = m.createdAt ? timeAgo(Date.parse(m.createdAt)) : '';
-
-            if (isUser) {
-              return `
-                <div class="turn-bubble user">
-                  <div class="turn-text">${esc(m.text || '')}</div>
-                </div>
-              `;
-            }
-
+          if (isUser) {
             return `
-              <div class="turn-bubble assistant">
-                ${thinkHtml}
-                ${m.text ? `<div class="turn-text md-rich">${formatTurnMarkdown(m.text)}</div>` : ''}
-                ${artifactsHtml}
-                ${toolsHtml}
-                ${timeLabel ? `<div class="turn-foot tabular">${esc(timeLabel)}</div>` : ''}
+              <div class="turn-bubble user">
+                <div class="turn-text">${esc(m.text || '')}</div>
               </div>
             `;
-          })
-          .join('') + sessionApprovalHtml;
+          }
+
+          const { questions: turnQuestions, cleanedText } = resolveQuestionsForTurn(
+            m,
+            isLastTurn ? matchingQuestionApproval : null
+          );
+          const hasTurnQuestions = turnQuestions.length > 0;
+          if (isLastTurn && hasTurnQuestions) {
+            questionRenderedInTurn = true;
+          }
+
+          const toolsHtml = toolCalls.length
+            ? cleanedText || hasTurnQuestions
+              ? `<details class="tools-details" ${isLastTurn && activeRow?.status === 'working' ? 'open' : ''}><summary>${summaryLabelHtml}</summary>${toolCardsHtml}</details>`
+              : `<div class="active-tools-panel"><div class="active-tools-hdr">${summaryHtmlParts.join(' · ')}</div>${toolCardsHtml}</div>`
+            : '';
+
+          const liveThought =
+            !cleanedText && !hasTurnQuestions && (m.latestThinking || m.thinking)
+              ? String(m.latestThinking || m.thinking)
+                  .trim()
+                  .split(/\n\n+/)
+                  .pop()
+              : '';
+
+          const thinkHtml = m.thinking
+            ? `<details class="thinking-details" ${!cleanedText && !hasTurnQuestions && isLastTurn ? 'open' : ''}><summary>Reasoning &amp; Internal Thought</summary><div class="turn-text mono" style="margin-top:6px">${esc(m.thinking)}</div></details>`
+            : liveThought
+              ? `<div class="thinking-details"><div class="turn-text mono">${esc(liveThought)}</div></div>`
+              : '';
+
+          const questionCardHtml = hasTurnQuestions
+            ? renderInteractiveQuestionCardHtml({
+                cardKey:
+                  isLastTurn && matchingQuestionApproval
+                    ? `q-chat-${prefs.selectedThreadId}-${matchingQuestionApproval.approvalId || 'active'}`
+                    : `q-turn-${prefs.selectedThreadId}-${m.id || msgIdx}`,
+                sessionId: prefs.selectedThreadId,
+                provider: provKey,
+                approvalId:
+                  (isLastTurn && matchingQuestionApproval?.approvalId) || prefs.selectedThreadId,
+                selector: (isLastTurn && matchingQuestionApproval?.selector) || '',
+                plainQuestionFallback:
+                  !matchingQuestionApproval && (!Array.isArray(m.questions) || m.questions.length === 0),
+                questions: turnQuestions
+              })
+            : '';
+
+          return `
+            <div class="turn-bubble assistant">
+              ${thinkHtml}
+              ${cleanedText ? `<div class="turn-text md-rich">${formatTurnMarkdown(cleanedText)}</div>` : ''}
+              ${artifactsHtml}
+              ${toolsHtml}
+              ${questionCardHtml}
+              ${timeLabel ? `<div class="turn-foot tabular">${esc(timeLabel)}</div>` : ''}
+            </div>
+          `;
+        })
+        .join('');
+
+      streamEl.innerHTML = turnsHtml + buildSessionApprovalHtml(questionRenderedInTurn);
 
       if (
         forceScroll ||
@@ -5737,6 +6264,183 @@
     });
   }
 
+  async function submitInteractiveQuestionCard(cardKey, skipped = false) {
+    const meta = renderedQuestionsByCardKey.get(cardKey);
+    if (!meta) return;
+    const draft = getQuestionDraft(cardKey);
+    const questions = Array.isArray(meta.questions) ? meta.questions : [];
+    const sessId = String(meta.sessionId || prefs.selectedThreadId || '').trim();
+    const provider = meta.provider === 'claude' ? 'claude' : 'antigravity';
+
+    const responses = [];
+    const allSelectedIds = [];
+    const allSelectedTexts = [];
+    const writeIns = [];
+    const answersMap = {};
+    const summaryParts = [];
+
+    if (!skipped) {
+      let totalChosen = countDraftSelections(draft, questions.length);
+      // If user clicked Submit Answer without selecting anything, auto-select Recommended option(s) if present
+      if (totalChosen === 0) {
+        questions.forEach((q, qIdx) => {
+          const opts = Array.isArray(q.options) ? q.options : [];
+          const recIndices = [];
+          opts.forEach((opt, oIdx) => {
+            if (opt.isRecommended) recIndices.push(String(oIdx));
+          });
+          if (recIndices.length > 0) {
+            draft.selectedByQ[qIdx] = new Set(
+              q.isMultiSelect ? recIndices : [recIndices[0]]
+            );
+          }
+        });
+        totalChosen = countDraftSelections(draft, questions.length);
+      }
+
+      if (totalChosen === 0 && questions.some((q) => Array.isArray(q.options) && q.options.length > 0)) {
+        showToast('Tap one or more options above (or type a custom answer) first');
+        return;
+      }
+
+      questions.forEach((q, qIdx) => {
+        const opts = Array.isArray(q.options) ? q.options : [];
+        const selSet = draft.selectedByQ[qIdx] || new Set();
+        const writeIn = String(draft.writeInByQ[qIdx] || '').trim();
+        const qSelIds = [];
+        const qSelTexts = [];
+        const qCleanTexts = [];
+
+        Array.from(selSet)
+          .map((idxStr) => Number(idxStr))
+          .filter((n) => Number.isFinite(n) && n >= 0 && n < opts.length)
+          .sort((a, b) => a - b)
+          .forEach((oIdx) => {
+            const opt = opts[oIdx];
+            qSelIds.push(String(opt.id || oIdx + 1));
+            qSelTexts.push(opt.text);
+            qCleanTexts.push(opt.cleanText || opt.text);
+            allSelectedIds.push(String(opt.id || oIdx + 1));
+            allSelectedTexts.push(opt.text);
+          });
+
+        if (writeIn) {
+          writeIns.push(writeIn);
+        }
+
+        const answerPieces = [...qCleanTexts];
+        if (writeIn) answerPieces.push(writeIn);
+        const answerText = answerPieces.join('; ');
+        if (q.question && answerText) {
+          answersMap[q.question] = answerText;
+        }
+        if (answerText) {
+          summaryParts.push(
+            questions.length > 1 ? `${q.question}: ${answerText}` : answerText
+          );
+        }
+
+        responses.push({
+          question: q.question || '',
+          isMultiSelect: Boolean(q.isMultiSelect),
+          options: opts.map((o, idx) => ({ id: String(o.id || idx + 1), text: o.text })),
+          selectedOptionIds: qSelIds,
+          selectedTexts: qSelTexts,
+          writeInResponse: writeIn,
+          answerText,
+          skipped: false
+        });
+      });
+    } else {
+      questions.forEach((q) => {
+        const opts = Array.isArray(q.options) ? q.options : [];
+        responses.push({
+          question: q.question || '',
+          isMultiSelect: Boolean(q.isMultiSelect),
+          options: opts.map((o, idx) => ({ id: String(o.id || idx + 1), text: o.text })),
+          selectedOptionIds: [],
+          selectedTexts: [],
+          writeInResponse: '',
+          answerText: '',
+          skipped: true
+        });
+      });
+    }
+
+    const humanSummary = skipped
+      ? 'Skipped question'
+      : summaryParts.join('\n') || writeIns.join('; ') || allSelectedTexts.join('; ') || 'Submitted answer';
+
+    draft.submitted = true;
+    draft.submittedSummary = humanSummary;
+
+    haptic(20);
+    playChime('approve');
+
+    if (Array.isArray(appState?.approvals)) {
+      appState.approvals = appState.approvals.filter(
+        (a) => a.approvalId !== meta.approvalId && a.sessionId !== sessId
+      );
+    }
+
+    const row = (appState?.rows || []).find((r) => r.id === sessId);
+    if (row) {
+      row.pendingQuestion = null;
+      row.status = 'working';
+      row.statusLabel = 'Running';
+    }
+
+    if (sessId && !skipped) {
+      if (!threadsCache[sessId]) {
+        threadsCache[sessId] = {
+          id: sessId,
+          provider,
+          title: row?.title || 'Session',
+          messages: []
+        };
+      }
+      if (!Array.isArray(threadsCache[sessId].messages)) {
+        threadsCache[sessId].messages = [];
+      }
+      threadsCache[sessId].messages.push({
+        id: `opt-ans-${Date.now()}`,
+        role: 'user',
+        text: humanSummary,
+        createdAt: new Date().toISOString(),
+        optimistic: true,
+        optimisticAt: Date.now()
+      });
+    }
+
+    persistCache();
+    renderAll();
+
+    await dispatchRemoteCommand({
+      type: 'answerQuestion',
+      kind: 'question',
+      decision: skipped ? 'skip' : 'answer',
+      skipped,
+      approvalId: meta.approvalId || sessId,
+      sessionId: sessId,
+      threadId: sessId,
+      provider,
+      selector: meta.selector || '',
+      selectedOptionIds: allSelectedIds,
+      selectedTexts: allSelectedTexts,
+      writeInResponse: writeIns.join('\n'),
+      responses,
+      answers: answersMap,
+      answerText: humanSummary,
+      plainQuestionFallback: Boolean(meta.plainQuestionFallback)
+    });
+
+    showToast(
+      skipped
+        ? 'Skipped remote question'
+        : `✓ Answered: ${humanSummary.slice(0, 85)}${humanSummary.length > 85 ? '…' : ''}`
+    );
+  }
+
   // Event Wiring
   function bindEvents() {
     document.addEventListener('change', (e) => {
@@ -5760,6 +6464,34 @@
         if (aEl) remDraft.amount = aEl.value;
         const adv = $('wait-advisor-live');
         if (adv) adv.innerHTML = renderWaitAdvisorInnerHtml();
+        return;
+      }
+
+      const qInput = e.target.closest('[data-q-writein-input]');
+      if (qInput) {
+        const cardKey = qInput.dataset.cardKey || '';
+        const qIdx = Number(qInput.dataset.qIdx || 0);
+        const draft = getQuestionDraft(cardKey);
+        draft.writeInByQ[qIdx] = qInput.value;
+        const meta = renderedQuestionsByCardKey.get(cardKey);
+        const qCount = meta?.questions?.length || 1;
+        const count = countDraftSelections(draft, qCount);
+        const cardEl = qInput.closest('[data-q-card]');
+        const subBtn = cardEl?.querySelector('[data-q-submit]');
+        if (subBtn) {
+          subBtn.textContent = `✓ Submit Answer${count > 0 ? ` (${count})` : ''}`;
+        }
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      const qInput = e.target.closest?.('[data-q-writein-input]');
+      if (qInput && e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        const cardKey = qInput.dataset.cardKey || '';
+        if (cardKey) {
+          submitInteractiveQuestionCard(cardKey, false);
+        }
       }
     });
 
@@ -5771,6 +6503,72 @@
     });
 
     document.addEventListener('click', async (e) => {
+      // 0. Interactive VS Code Question & Recommendation Card Actions
+      const qOptBtn = e.target.closest('[data-q-opt-toggle]');
+      if (qOptBtn) {
+        haptic(10);
+        const cardKey = qOptBtn.dataset.cardKey || '';
+        const qIdx = Number(qOptBtn.dataset.qIdx || 0);
+        const optIdx = String(qOptBtn.dataset.optIdx || '0');
+        const draft = getQuestionDraft(cardKey);
+        const meta = renderedQuestionsByCardKey.get(cardKey);
+        const qObj = meta?.questions?.[qIdx];
+        const isMulti = Boolean(qObj?.isMultiSelect);
+
+        if (!draft.selectedByQ[qIdx]) {
+          draft.selectedByQ[qIdx] = new Set();
+        }
+        const selSet = draft.selectedByQ[qIdx];
+        if (isMulti) {
+          if (selSet.has(optIdx)) selSet.delete(optIdx);
+          else selSet.add(optIdx);
+        } else {
+          if (selSet.has(optIdx) && selSet.size === 1) {
+            selSet.clear();
+          } else {
+            selSet.clear();
+            selSet.add(optIdx);
+          }
+        }
+
+        const cardEl = qOptBtn.closest('[data-q-card]');
+        if (cardEl) {
+          const blockEl = cardEl.querySelector(`[data-q-block="${qIdx}"]`) || cardEl;
+          blockEl.querySelectorAll(`[data-q-opt-toggle][data-q-idx="${qIdx}"]`).forEach((btn) => {
+            const idx = String(btn.dataset.optIdx || '');
+            const active = selSet.has(idx);
+            btn.classList.toggle('is-selected', active);
+            btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+            const chk = btn.querySelector('.vs-q-check');
+            if (chk) chk.textContent = active ? '✓' : '';
+          });
+          const qCount = meta?.questions?.length || 1;
+          const totalCount = countDraftSelections(draft, qCount);
+          const subBtn = cardEl.querySelector('[data-q-submit]');
+          if (subBtn) {
+            subBtn.textContent = `✓ Submit Answer${totalCount > 0 ? ` (${totalCount})` : ''}`;
+          }
+        }
+        return;
+      }
+
+      const qSubmitBtn = e.target.closest('[data-q-submit]');
+      if (qSubmitBtn) {
+        const cardKey = qSubmitBtn.dataset.cardKey || '';
+        if (cardKey) {
+          await submitInteractiveQuestionCard(cardKey, false);
+        }
+        return;
+      }
+
+      const qSkipBtn = e.target.closest('[data-q-skip]');
+      if (qSkipBtn) {
+        const cardKey = qSkipBtn.dataset.cardKey || '';
+        if (cardKey) {
+          await submitInteractiveQuestionCard(cardKey, true);
+        }
+        return;
+      }
       // 1. Daily 100-Point Habit Buttons (5 Do's & 5 Don'ts)
       const habitBtn = e.target.closest('[data-habit-group]');
       if (habitBtn) {
@@ -5983,6 +6781,7 @@
         const inp = $('composer-input');
         if (inp) {
           inp.value = `[${repoName}] `;
+          updateComposerActionButton();
           inp.focus();
         }
         return;
@@ -6137,6 +6936,10 @@
         const action = sessAct.dataset.sessAct;
         const id = sessAct.dataset.id;
         const val = sessAct.dataset.val === 'true';
+        if (action === 'stop' && id) {
+          await stopActiveSession(id);
+          return;
+        }
         const targetRow = (appState?.rows || []).find((r) => r.id === id);
         if (action === 'group' && targetRow) {
           const groups = Array.isArray(appState?.groups) ? appState.groups : [];
@@ -6321,6 +7124,7 @@
         const inp = $('composer-input');
         if (inp) {
           inp.value = slashChip.dataset.insertPrompt;
+          updateComposerActionButton();
           inp.focus();
         }
         return;
@@ -6496,6 +7300,21 @@
       showToast('Opened session tab in VS Code');
     });
 
+    $('btn-chat-stop')?.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      await stopActiveSession(prefs.selectedThreadId);
+    });
+
+    $('composer-send-btn')?.addEventListener('click', async (e) => {
+      const sendBtn = $('composer-send-btn');
+      if (sendBtn?.classList.contains('is-stop')) {
+        e.preventDefault();
+        e.stopPropagation();
+        await stopActiveSession(prefs.selectedThreadId);
+      }
+    });
+
     // Session select change in Chat
     $('chat-session-select')?.addEventListener('change', (e) => {
       clearPinnedNav();
@@ -6574,6 +7393,24 @@
 
   const stoppedSessionsById = new Map();
 
+  function applyStoppedSessionOverrides(stateObj) {
+    if (!stateObj || !Array.isArray(stateObj.rows) || stoppedSessionsById.size === 0) return;
+    const now = Date.now();
+    for (const r of stateObj.rows) {
+      if (!r || !r.id) continue;
+      const stopRec = stoppedSessionsById.get(r.id);
+      if (!stopRec) continue;
+      if (now - stopRec.at > 300000) {
+        stoppedSessionsById.delete(r.id);
+        continue;
+      }
+      r.status = 'completed';
+      r.statusLabel = 'Stopped';
+      r.dot = 'idle';
+      r.bgTask = null;
+    }
+  }
+
   function isSessionActivelyRunning(tid) {
     const cleanId = String(tid || prefs.selectedThreadId || '').trim();
     if (!cleanId) return false;
@@ -6581,16 +7418,27 @@
     const detail = threadsCache[cleanId] || null;
     const msgs = coalesceThreadMessages(detail?.messages || []);
     const lastMsg = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+    const nonOptMsgs = msgs.filter((m) => !m.optimistic);
+    const lastNonOptMsg = nonOptMsgs.length > 0 ? nonOptMsgs[nonOptMsgs.length - 1] : null;
 
     const stopRec = stoppedSessionsById.get(cleanId);
     if (stopRec) {
-      const hasNewUserTurn =
-        msgs.length > stopRec.msgCount ||
-        Boolean(lastMsg && lastMsg.id && lastMsg.id !== stopRec.lastMsgId && lastMsg.role === 'user');
-      if (!hasNewUserTurn && Date.now() - stopRec.at < 300000) {
+      const hasNewOptimisticUserTurn = Boolean(
+        lastMsg && lastMsg.optimistic && Number(lastMsg.optimisticAt || 0) > stopRec.at
+      );
+      const lastNonOptTimeMs = lastNonOptMsg?.createdAt ? Date.parse(lastNonOptMsg.createdAt) : 0;
+      const hasNewServerUserTurn = Boolean(
+        lastNonOptMsg &&
+          lastNonOptMsg.role === 'user' &&
+          lastNonOptMsg.id &&
+          lastNonOptMsg.id !== stopRec.lastMsgId &&
+          lastNonOptTimeMs > stopRec.at + 1000
+      );
+      if (hasNewOptimisticUserTurn || hasNewServerUserTurn) {
+        stoppedSessionsById.delete(cleanId);
+      } else if (Date.now() - stopRec.at < 300000) {
         return false;
-      }
-      if (hasNewUserTurn) {
+      } else {
         stoppedSessionsById.delete(cleanId);
       }
     }
@@ -6598,24 +7446,19 @@
     if (row?.status === 'working' || row?.dot === 'running' || row?.bgTask?.state === 'running') {
       return true;
     }
+    if (row?.status === 'waiting' || row?.pendingQuestion) {
+      return false;
+    }
     if (lastMsg) {
       if (lastMsg.optimistic && Date.now() - Number(lastMsg.optimisticAt || 0) < 90000) {
         return true;
       }
       const msgTimeMs = lastMsg.createdAt ? Date.parse(lastMsg.createdAt) : 0;
-      const isRecentMsg = !msgTimeMs || Date.now() - msgTimeMs < 3600 * 1000;
-      if (lastMsg.role === 'user' && isRecentMsg && row?.status !== 'waiting' && !row?.pendingQuestion) {
-        return true;
-      }
-      if (
-        lastMsg.role === 'assistant' &&
-        !String(lastMsg.text || '').trim() &&
-        Array.isArray(lastMsg.toolCalls) &&
-        lastMsg.toolCalls.length > 0 &&
-        isRecentMsg &&
-        row?.status !== 'waiting' &&
-        !row?.pendingQuestion
-      ) {
+      const isFreshUserDispatch =
+        msgTimeMs > 0 &&
+        Date.now() - msgTimeMs < 35 * 1000 &&
+        (!row || msgTimeMs > Number(row.at || 0));
+      if (lastMsg.role === 'user' && isFreshUserDispatch) {
         return true;
       }
     }
@@ -6623,13 +7466,20 @@
   }
 
   function updateComposerActionButton() {
+    const running = isSessionActivelyRunning(prefs.selectedThreadId);
+    const stopHdrBtn = $('btn-chat-stop');
+    if (stopHdrBtn) {
+      stopHdrBtn.hidden = !running;
+    }
     const btn = $('composer-send-btn');
     if (!btn) return;
     const inp = $('composer-input');
     const hasDraft = Boolean((inp && inp.value.trim().length > 0) || composerAttachments.length > 0);
     const isReplyMode = !prefs.composerMode || prefs.composerMode === 'reply';
-    const shouldShowStop = isReplyMode && !hasDraft && isSessionActivelyRunning(prefs.selectedThreadId);
+    const shouldShowStop = isReplyMode && !hasDraft && running;
+    const shouldBrighten = !shouldShowStop && hasDraft;
     btn.classList.toggle('is-stop', shouldShowStop);
+    btn.classList.toggle('is-ready', shouldBrighten);
     btn.setAttribute('title', shouldShowStop ? 'Stop / End Running Session' : 'Dispatch Prompt');
     btn.setAttribute('aria-label', shouldShowStop ? 'Stop running session' : 'Dispatch Prompt');
   }
@@ -6639,6 +7489,9 @@
     if (!tid) return;
     const row = (appState?.rows || []).find((r) => r.id === tid);
     const detail = threadsCache[tid] || null;
+    if (detail && Array.isArray(detail.messages)) {
+      detail.messages = detail.messages.filter((m) => !m.optimistic);
+    }
     const msgs = coalesceThreadMessages(detail?.messages || []);
     const lastMsg = msgs.length > 0 ? msgs[msgs.length - 1] : null;
     const provider = (detail?.provider || row?.provider) === 'claude' ? 'claude' : 'antigravity';
@@ -6654,9 +7507,6 @@
       row.statusLabel = 'Stopped';
       row.dot = 'idle';
       row.bgTask = null;
-    }
-    if (detail && Array.isArray(detail.messages)) {
-      detail.messages = detail.messages.filter((m) => !m.optimistic);
     }
 
     haptic(20);
@@ -6895,7 +7745,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=24', { updateViaCache: 'none' })
+        .register('sw.js?v=27', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
