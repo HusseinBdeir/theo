@@ -1,7 +1,7 @@
-/* THEO Remote PWA Service Worker, v36 (2026-10-22).
+/* THEO Remote PWA Service Worker, v37 (2026-10-23).
    App shell: network-first (cache: no-cache) for HTML/JS/CSS, cache-first for static assets.
    Web Push: RFC 8291 aes128gcm push listener + W3C Badging API (navigator.setAppBadge) + durable Cache Storage & postMessage notificationclick handoff. */
-const CACHE_NAME = 'theo-remote-v36';
+const CACHE_NAME = 'theo-remote-v37';
 const NAV_CACHE = 'theo-nav-handoff-v1';
 const PENDING_NAV_URL = './__theo_pending_nav.json';
 const LAST_PUSH_NAV_URL = './__theo_last_push_nav.json';
@@ -13,9 +13,9 @@ let lastUnseenPushNav = null;
 const APP_SHELL = [
   './',
   './index.html',
-  './css/theo.css?v=36',
-  './js/endpoints.js?v=36',
-  './js/app.js?v=36',
+  './css/theo.css?v=37',
+  './js/endpoints.js?v=37',
+  './js/app.js?v=37',
   './manifest.json',
   './icon.svg',
   './icon-180.png',

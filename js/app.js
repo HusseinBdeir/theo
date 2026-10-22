@@ -2771,6 +2771,7 @@
             applyPendingLocalOverrides(st);
             checkLiveStateNotifications(st);
             appState = st;
+            reconcilePendingNewSessionBind(st);
             if (st.personalLedger) {
               mergePersonalLedger(st.personalLedger);
             }
@@ -2846,6 +2847,7 @@
               applyPendingLocalOverrides(payload.state);
               checkLiveStateNotifications(payload.state);
               appState = payload.state;
+              reconcilePendingNewSessionBind(payload.state);
               if (payload.state.personalLedger) {
                 mergePersonalLedger(payload.state.personalLedger);
               }
@@ -2856,7 +2858,11 @@
                 schedulePushSync();
               }
               flushOutbox().catch(() => {});
-              if (prefs.selectedThreadId) {
+              if (
+                prefs.selectedThreadId &&
+                prefs.selectedThreadId !== '__new__' &&
+                !String(prefs.selectedThreadId).startsWith('draft-new-')
+              ) {
                 fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
               }
               if (options.toast) {
@@ -2891,6 +2897,7 @@
               applyPendingLocalOverrides(store.state.snapshot);
               checkLiveStateNotifications(store.state.snapshot);
               appState = store.state.snapshot;
+              reconcilePendingNewSessionBind(store.state.snapshot);
             }
             if (store?.personal_ledger && typeof store.personal_ledger === 'object') {
               mergePersonalLedger(store.personal_ledger);
@@ -2908,7 +2915,11 @@
               schedulePushSync();
             }
             flushOutbox().catch(() => {});
-            if (prefs.selectedThreadId) {
+            if (
+              prefs.selectedThreadId &&
+              prefs.selectedThreadId !== '__new__' &&
+              !String(prefs.selectedThreadId).startsWith('draft-new-')
+            ) {
               fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
             }
             if (options.toast) {
@@ -3290,6 +3301,7 @@
     const hostName = conn.hostname || 'Hussein-Laptop';
     const rowCount = (appState?.rows || []).length;
     const activeCount = (appState?.rows || []).filter((r) => !r.archived).length;
+    const runningCount = (appState?.rows || []).filter((r) => !r.archived && r.status === 'working').length;
     const threadCount = Object.keys(threadsCache || {}).length;
     const snapTime = appState?.generatedAt ? timeAgo(appState.generatedAt) : '—';
     const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
@@ -3319,7 +3331,7 @@
         </div>
         <div class="conn-stat-box">
           <span class="conn-stat-lbl">Synced Sessions</span>
-          <span class="conn-stat-val">${activeCount} active / ${rowCount} total</span>
+          <span class="conn-stat-val">${runningCount} running · ${activeCount} sessions</span>
         </div>
         <div class="conn-stat-box">
           <span class="conn-stat-lbl">Web Push Alerts</span>
@@ -3528,7 +3540,13 @@
     if (target === 'chat') {
       ensureSelectedThread();
       renderChatView(true);
-      fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '');
+      if (
+        prefs.selectedThreadId &&
+        prefs.selectedThreadId !== '__new__' &&
+        !String(prefs.selectedThreadId).startsWith('draft-new-')
+      ) {
+        fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '');
+      }
     } else if (target === 'workspaces') {
       renderWorkspacesView();
     } else if (target === 'analytics') {
@@ -3536,7 +3554,153 @@
     }
   }
 
+  let pendingNewSessionBind = null;
+
+  function isNewSessionMode() {
+    return Boolean(
+      prefs.selectedThreadId === '__new__' ||
+        prefs.composerMode === 'new-antigravity' ||
+        prefs.composerMode === 'new-claude'
+    );
+  }
+
+  function enterNewSessionMode(provider = 'antigravity', opts = {}) {
+    clearPinnedNav();
+    const prov = provider === 'claude' ? 'claude' : 'antigravity';
+    if (
+      prefs.selectedThreadId &&
+      prefs.selectedThreadId !== '__new__' &&
+      !String(prefs.selectedThreadId).startsWith('draft-new-')
+    ) {
+      prefs.lastReplyThreadId = prefs.selectedThreadId;
+    }
+    prefs.composerMode = prov === 'claude' ? 'new-claude' : 'new-antigravity';
+    prefs.selectedThreadId = '__new__';
+    prefs.newSessionGroupId = opts.groupId || '';
+    if (opts.repoPrefix !== undefined) {
+      prefs.composerRepoPrefix = opts.repoPrefix;
+    }
+    saveJson(STORAGE_KEYS.PREFS, prefs);
+    switchTab('chat');
+    updateComposerModePills();
+    renderChatView(true);
+    setTimeout(() => $('composer-input')?.focus(), 30);
+  }
+
+  function exitNewSessionModeToReply(explicitThreadId = '') {
+    const rows = (appState?.rows || []).filter((r) => r.id && !r.draft);
+    const candidateId =
+      explicitThreadId ||
+      prefs.lastReplyThreadId ||
+      (rows.find((r) => r.active) || rows.find((r) => r.open) || rows[0])?.id ||
+      '';
+    prefs.composerMode = 'reply';
+    prefs.selectedThreadId = candidateId;
+    prefs.newSessionGroupId = '';
+    saveJson(STORAGE_KEYS.PREFS, prefs);
+    updateComposerModePills();
+    renderChatView(true);
+    if (candidateId) {
+      fetchThreadDetail(candidateId);
+    }
+  }
+
+  function bindDraftThreadToRealSession(draftId, realId, provider = 'antigravity') {
+    const cleanReal = String(realId || '').trim();
+    if (!cleanReal) return false;
+    const draftThread = draftId ? threadsCache[draftId] : null;
+    if (draftThread && Array.isArray(draftThread.messages)) {
+      if (!threadsCache[cleanReal]) {
+        threadsCache[cleanReal] = {
+          id: cleanReal,
+          provider,
+          title: draftThread.title || 'New Session',
+          messages: []
+        };
+      }
+      const existingMsgs = Array.isArray(threadsCache[cleanReal].messages)
+        ? threadsCache[cleanReal].messages
+        : [];
+      for (const m of draftThread.messages) {
+        if (
+          m &&
+          !existingMsgs.some(
+            (em) => em.role === m.role && String(em.text || '').trim() === String(m.text || '').trim()
+          )
+        ) {
+          existingMsgs.push(m);
+        }
+      }
+      threadsCache[cleanReal].messages = existingMsgs;
+    }
+    if (draftId && draftId !== cleanReal) {
+      delete threadsCache[draftId];
+    }
+    if (
+      !prefs.selectedThreadId ||
+      prefs.selectedThreadId === draftId ||
+      prefs.selectedThreadId === '__new__'
+    ) {
+      prefs.selectedThreadId = cleanReal;
+      prefs.lastReplyThreadId = cleanReal;
+      prefs.composerMode = 'reply';
+      saveJson(STORAGE_KEYS.PREFS, prefs);
+      setPinnedNav({
+        threadId: cleanReal,
+        provider,
+        title: draftThread?.title || '',
+        durationMs: 60000
+      });
+    }
+    if (pendingNewSessionBind && (!draftId || pendingNewSessionBind.draftThreadId === draftId)) {
+      pendingNewSessionBind = null;
+    }
+    persistCache();
+    renderAll();
+    fetchThreadDetail(cleanReal, provider).catch(() => {});
+    return true;
+  }
+
+  function reconcilePendingNewSessionBind(stateObj) {
+    if (!pendingNewSessionBind) return;
+    if (Date.now() - pendingNewSessionBind.createdAt > 75000) {
+      pendingNewSessionBind = null;
+      return;
+    }
+    const rows = Array.isArray(stateObj?.rows) ? stateObj.rows : [];
+    const wantProv = pendingNewSessionBind.provider || 'antigravity';
+    const known = pendingNewSessionBind.knownIds || new Set();
+    const freshRow = rows.find(
+      (r) =>
+        r &&
+        r.id &&
+        !r.draft &&
+        (r.provider === 'claude' ? 'claude' : 'antigravity') === wantProv &&
+        !known.has(r.id)
+    );
+    if (freshRow) {
+      if (pendingNewSessionBind.groupId) {
+        freshRow.group = pendingNewSessionBind.groupId;
+        noteRowOverride(freshRow.id, { group: pendingNewSessionBind.groupId });
+      }
+      bindDraftThreadToRealSession(
+        pendingNewSessionBind.draftThreadId,
+        freshRow.id,
+        wantProv
+      );
+    }
+  }
+
   function ensureSelectedThread() {
+    if (isNewSessionMode()) {
+      if (prefs.selectedThreadId !== '__new__') {
+        prefs.selectedThreadId = '__new__';
+      }
+      return;
+    }
+    if (String(prefs.selectedThreadId || '').startsWith('draft-new-')) {
+      return;
+    }
     const rows = (appState?.rows || []).filter((r) => r.id && !r.draft);
     const hasPinned =
       Boolean(pinnedNavThreadId) &&
@@ -4037,7 +4201,7 @@
         </div>
         <div class="kpi-tile tabular">
           <span class="kpi-val ${workingCount > 0 ? 'emerald' : ''}">${workingCount}</span>
-          <span class="kpi-lbl">Running</span>
+          <span class="kpi-lbl">Running Now</span>
         </div>
         <div class="kpi-tile tabular">
           <span class="kpi-val steel">${unreadCount}</span>
@@ -4397,12 +4561,13 @@
     const q = ($('sess-search-input')?.value || '').trim().toLowerCase();
 
     const activeTotalAll = rows.filter((r) => !r.archived).length;
+    const runningNowCount = rows.filter((r) => !r.archived && r.status === 'working').length;
     const sumPill = $('sess-header-summary-pill');
     if (sumPill) {
-      sumPill.textContent =
-        groups.length > 0
-          ? `${activeTotalAll} Active · ${groups.length} Group${groups.length === 1 ? '' : 's'}`
-          : `${activeTotalAll} Active`;
+      const runPart = runningNowCount > 0 ? `${runningNowCount} Running · ` : '';
+      const grpPart =
+        groups.length > 0 ? ` · ${groups.length} Group${groups.length === 1 ? '' : 's'}` : '';
+      sumPill.textContent = `${runPart}${activeTotalAll} Sessions${grpPart}`;
     }
 
     // Sync active state & live counts on provider segmented buttons
@@ -4436,9 +4601,9 @@
       archived: provRows.filter((r) => r.archived).length
     };
     const chipLabels = {
-      all: 'All Active',
+      all: 'All Sessions',
       needs_input: 'Needs Input',
-      working: 'Working',
+      working: 'Running Now',
       unread: 'Unread',
       open: 'Open Tabs',
       archived: 'Archived'
@@ -4483,7 +4648,7 @@
           <div style="display:flex;gap:8px">
             ${
               hasActiveFilters
-                ? `<button type="button" class="btn-ghost-sm" id="btn-reset-sess-filters">Reset Filters (${rows.filter((r) => !r.archived).length} Active)</button>`
+                ? `<button type="button" class="btn-ghost-sm" id="btn-reset-sess-filters">Reset Filters (Show All ${rows.filter((r) => !r.archived).length} Sessions)</button>`
                 : ''
             }
             <button type="button" class="btn-brass-sm" id="btn-empty-sync-now">↻ Sync VS Code</button>
@@ -4664,59 +4829,88 @@
     ensureSelectedThread();
     updateComposerModePills();
     const rows = (appState?.rows || []).filter((r) => r.id && !r.draft);
-    const threadDetail = threadsCache[prefs.selectedThreadId] || null;
-    const matchedRow = rows.find((r) => r.id === prefs.selectedThreadId);
-    const activeRow =
-      matchedRow ||
-      (prefs.selectedThreadId
-        ? {
-            id: prefs.selectedThreadId,
-            title:
-              threadDetail?.title ||
-              pinnedNavTitle ||
-              'Task Session',
-            provider:
-              threadDetail?.provider ||
-              pinnedNavProvider ||
-              'antigravity',
-            folder: threadDetail?.folder || '',
-            model: threadDetail?.model || '',
-            status: 'done',
-            at: Date.now()
-          }
-        : rows[0]);
+    const isNewDraft = isNewSessionMode();
+    const newProv = prefs.composerMode === 'new-claude' ? 'claude' : 'antigravity';
+    const threadDetail = isNewDraft ? null : threadsCache[prefs.selectedThreadId] || null;
+    const matchedRow = isNewDraft ? null : rows.find((r) => r.id === prefs.selectedThreadId);
+    const activeRow = isNewDraft
+      ? {
+          id: '__new__',
+          title: `New ${newProv === 'claude' ? 'Claude Code' : 'Antigravity'} Session`,
+          provider: newProv,
+          folder: prefs.composerRepoPrefix
+            ? `Scope: ${prefs.composerRepoPrefix}`
+            : 'New Unrelated Session',
+          model: newProv === 'claude' ? 'Claude Opus 4.7 (1M)' : 'Gemini 3.1 Pro',
+          status: 'idle',
+          at: Date.now()
+        }
+      : matchedRow ||
+        (prefs.selectedThreadId
+          ? {
+              id: prefs.selectedThreadId,
+              title:
+                threadDetail?.title ||
+                pinnedNavTitle ||
+                'Task Session',
+              provider:
+                threadDetail?.provider ||
+                pinnedNavProvider ||
+                'antigravity',
+              folder: threadDetail?.folder || '',
+              model: threadDetail?.model || '',
+              status: 'done',
+              at: Date.now()
+            }
+          : rows[0]);
 
     const selectEl = $('chat-session-select');
     if (selectEl) {
       const topRows = rows.slice(0, 80);
-      if (prefs.selectedThreadId && activeRow && !topRows.some((r) => r.id === prefs.selectedThreadId)) {
+      if (
+        !isNewDraft &&
+        prefs.selectedThreadId &&
+        activeRow &&
+        !topRows.some((r) => r.id === prefs.selectedThreadId)
+      ) {
         topRows.unshift(activeRow);
       }
-      selectEl.innerHTML = topRows
-        .map(
-          (r) =>
-            `<option value="${esc(r.id)}" ${r.id === prefs.selectedThreadId ? 'selected' : ''}>[${r.provider === 'claude' ? 'Claude' : 'AGY'}] ${esc(r.title)} (${timeAgo(r.at)})</option>`
-        )
-        .join('');
+      const newOptionsHtml = [
+        `<option value="__new_antigravity__" ${isNewDraft && newProv === 'antigravity' ? 'selected' : ''}>✨ + New Antigravity Session (Unrelated)</option>`,
+        `<option value="__new_claude__" ${isNewDraft && newProv === 'claude' ? 'selected' : ''}>✨ + New Claude Code Session (Unrelated)</option>`
+      ].join('');
+      selectEl.innerHTML =
+        newOptionsHtml +
+        topRows
+          .map(
+            (r) =>
+              `<option value="${esc(r.id)}" ${!isNewDraft && r.id === prefs.selectedThreadId ? 'selected' : ''}>[${r.provider === 'claude' ? 'Claude' : 'AGY'}] ${esc(r.title)} (${timeAgo(r.at)})</option>`
+          )
+          .join('');
     }
 
-    const provKey = (threadDetail?.provider || activeRow?.provider) === 'claude' ? 'claude' : 'antigravity';
+    const provKey = isNewDraft
+      ? newProv
+      : (threadDetail?.provider || activeRow?.provider) === 'claude'
+        ? 'claude'
+        : 'antigravity';
 
     const badgeEl = $('chat-prov-badge');
     if (badgeEl) {
       badgeEl.innerHTML = `<span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>`;
     }
-    const folderLabel =
-      threadDetail?.folder ||
-      activeRow?.folder ||
-      (prefs.composerRepoPrefix ? `Scope: ${prefs.composerRepoPrefix}` : 'BHFIRMS Workspace');
+    const folderLabel = isNewDraft
+      ? activeRow.folder
+      : threadDetail?.folder ||
+        activeRow?.folder ||
+        (prefs.composerRepoPrefix ? `Scope: ${prefs.composerRepoPrefix}` : 'BHFIRMS Workspace');
     const folderEl = $('chat-folder-pill');
     if (folderEl) {
       folderEl.textContent = folderLabel;
     }
 
     // Keep selectedRepoId aligned with the active session's workspace if a matching repo exists
-    if (folderLabel && Array.isArray(appState?.workspaces)) {
+    if (!isNewDraft && folderLabel && Array.isArray(appState?.workspaces)) {
       const fLow = folderLabel.toLowerCase();
       const matchedWs = appState.workspaces.find(
         (w) =>
@@ -4748,21 +4942,28 @@
         : provKey === 'claude' && rawLimit === 200000 && defaultLimit === 1000000
           ? 1000000
           : rawLimit || defaultLimit;
-    let usedTokens = Number(rawCtx.usedTokens || activeRow?.usedTokens || 22019);
-    if (provKey === 'antigravity' && (rawLimit === 1000000 || usedTokens > 256000)) {
+    let usedTokens = isNewDraft
+      ? 0
+      : Number(rawCtx.usedTokens || activeRow?.usedTokens || 22019);
+    if (!isNewDraft && provKey === 'antigravity' && (rawLimit === 1000000 || usedTokens > 256000)) {
       usedTokens = Math.min(220000, Math.max(22019, Math.round(usedTokens * 0.145)));
     }
-    const pct = Math.min(
-      100,
-      Math.max(1, Math.round((usedTokens / Math.max(1, limitTokens)) * 100))
-    );
-    const breakdownArr = Array.isArray(rawCtx.breakdown)
-      ? rawCtx.breakdown
-      : [
-          { label: 'System Prompt & Rules', tokens: Math.round(usedTokens * 0.35), color: '#D9A54A' },
-          { label: 'Tool I/O & Files', tokens: Math.round(usedTokens * 0.45), color: '#10B981' },
-          { label: 'Conversation & Responses', tokens: Math.max(200, usedTokens - Math.round(usedTokens * 0.8)), color: '#4F8FD6' }
-        ];
+    const pct = isNewDraft
+      ? 0
+      : Math.min(100, Math.max(1, Math.round((usedTokens / Math.max(1, limitTokens)) * 100)));
+    const breakdownArr = isNewDraft
+      ? [
+          { label: 'System Prompt & Rules', tokens: 0, color: '#D9A54A' },
+          { label: 'Tool I/O & Files', tokens: 0, color: '#10B981' },
+          { label: 'Conversation & Responses', tokens: 0, color: '#4F8FD6' }
+        ]
+      : Array.isArray(rawCtx.breakdown)
+        ? rawCtx.breakdown
+        : [
+            { label: 'System Prompt & Rules', tokens: Math.round(usedTokens * 0.35), color: '#D9A54A' },
+            { label: 'Tool I/O & Files', tokens: Math.round(usedTokens * 0.45), color: '#10B981' },
+            { label: 'Conversation & Responses', tokens: Math.max(200, usedTokens - Math.round(usedTokens * 0.8)), color: '#4F8FD6' }
+          ];
     const ctx = {
       usedTokens,
       limitTokens,
@@ -4778,7 +4979,7 @@
     const circle = $('ctx-ring-circle');
     if (circle) {
       const circum = 56.5;
-      const offset = circum - (Math.min(100, Math.max(2, ctx.pct)) / 100) * circum;
+      const offset = circum - (Math.min(100, Math.max(isNewDraft ? 0 : 2, ctx.pct)) / 100) * circum;
       circle.setAttribute('stroke-dashoffset', String(offset));
     }
 
@@ -4787,6 +4988,28 @@
     // Conversation Stream
     const streamEl = $('chat-stream');
     if (!streamEl) return;
+    if (isNewDraft) {
+      const provDisplay = provKey === 'claude' ? 'Claude Code' : 'Google Antigravity';
+      const grpObj = prefs.newSessionGroupId
+        ? (appState?.groups || []).find((g) => g && g.id === prefs.newSessionGroupId)
+        : null;
+      streamEl.innerHTML = `
+        <div class="turn-bubble" style="border-color:var(--brass)">
+          <div class="turn-head">
+            <span class="turn-role">✨ New ${esc(provDisplay)} Session</span>
+            <span class="pill-count emerald">Fresh Context · 0% Used</span>
+          </div>
+          <div class="turn-text">
+            Starting a <strong>brand-new, unrelated ${esc(provDisplay)} session</strong>${grpObj ? ` in group <strong>${esc(grpObj.name)}</strong>` : ''} with a clean context window.<br>
+            Type your prompt below and press <strong>Send</strong> to launch this new session in VS Code (or tap <strong>Open on Laptop</strong> above to open a blank tab immediately).
+          </div>
+        </div>
+      `;
+      lastRenderedThreadId = '__new__';
+      lastRenderedMsgCount = 0;
+      updateComposerActionButton();
+      return;
+    }
     if (
       !forceScroll &&
       document.activeElement &&
@@ -7484,23 +7707,14 @@
 
       const quickNew = e.target.closest('[data-quick-new]');
       if (quickNew) {
-        clearPinnedNav();
-        const prov = quickNew.dataset.quickNew;
-        prefs.composerMode = prov === 'claude' ? 'new-claude' : 'new-antigravity';
-        switchTab('chat');
-        updateComposerModePills();
-        $('composer-input')?.focus();
+        enterNewSessionMode(quickNew.dataset.quickNew, { repoPrefix: '' });
         return;
       }
 
       const launchRepo = e.target.closest('[data-launch-repo]');
       if (launchRepo) {
-        clearPinnedNav();
         const repoName = launchRepo.dataset.launchName;
-        prefs.composerRepoPrefix = repoName;
-        prefs.composerMode = 'new-antigravity';
-        switchTab('chat');
-        updateComposerModePills();
+        enterNewSessionMode('antigravity', { repoPrefix: repoName });
         const inp = $('composer-input');
         if (inp) {
           inp.value = `[${repoName}] `;
@@ -7627,11 +7841,7 @@
           return;
         }
         if (act === 'new-in-group') {
-          clearPinnedNav();
-          prefs.composerMode = 'new-antigravity';
-          switchTab('chat');
-          updateComposerModePills();
-          $('composer-input')?.focus();
+          enterNewSessionMode('antigravity', { groupId: gId });
           return;
         }
         if (act === 'archive-closed') {
@@ -7875,8 +8085,14 @@
 
       const compModeBtn = e.target.closest('[data-comp-mode]');
       if (compModeBtn) {
-        prefs.composerMode = compModeBtn.dataset.compMode;
-        updateComposerModePills();
+        const nextMode = compModeBtn.dataset.compMode;
+        if (nextMode === 'new-antigravity') {
+          enterNewSessionMode('antigravity');
+        } else if (nextMode === 'new-claude') {
+          enterNewSessionMode('claude');
+        } else {
+          exitNewSessionModeToReply();
+        }
         return;
       }
 
@@ -7990,13 +8206,9 @@
         } else if (act === 'open-command-pwa' || act === 'open-discipline' || act === 'new-payment-hold') {
           window.open('https://husseinbdeir.github.io/planner/', '_blank', 'noopener');
         } else if (act === 'new-agy') {
-          prefs.composerMode = 'new-antigravity';
-          switchTab('chat');
-          updateComposerModePills();
+          enterNewSessionMode('antigravity');
         } else if (act === 'new-claude') {
-          prefs.composerMode = 'new-claude';
-          switchTab('chat');
-          updateComposerModePills();
+          enterNewSessionMode('claude');
         } else if (act === 'sync') {
           syncData({ toast: true });
         } else if (act === 'push-test') {
@@ -8050,6 +8262,22 @@
     });
 
     $('btn-chat-open-vscode')?.addEventListener('click', async () => {
+      if (isNewSessionMode()) {
+        const prov = prefs.composerMode === 'new-claude' ? 'claude' : 'antigravity';
+        await dispatchRemoteCommand({
+          type: 'sessionAction',
+          action: 'openNew',
+          subAction: 'openNew',
+          id: '',
+          threadId: '',
+          provider: prov,
+          group: prefs.newSessionGroupId || ''
+        });
+        showToast(
+          `Opened new blank ${prov === 'claude' ? 'Claude Code' : 'Antigravity'} tab in VS Code`
+        );
+        return;
+      }
       const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId);
       await dispatchRemoteCommand({
         type: 'sessionAction',
@@ -8078,9 +8306,20 @@
 
     // Session select change in Chat
     $('chat-session-select')?.addEventListener('change', (e) => {
+      const val = e.target.value;
+      if (val === '__new_antigravity__' || val === '__new__') {
+        enterNewSessionMode('antigravity');
+        return;
+      }
+      if (val === '__new_claude__') {
+        enterNewSessionMode('claude');
+        return;
+      }
       clearPinnedNav();
-      prefs.selectedThreadId = e.target.value;
+      prefs.selectedThreadId = val;
+      prefs.lastReplyThreadId = val;
       prefs.composerMode = 'reply';
+      prefs.newSessionGroupId = '';
       saveJson(STORAGE_KEYS.PREFS, prefs);
       markNotificationsCheckedForSession(prefs.selectedThreadId);
       renderChatView(true);
@@ -8449,17 +8688,66 @@
     const text = `${contextHeader}${rawText || (fileRefs.length ? `Please inspect the attached file(s): ${fileRefs.map((f) => f.name).join(', ')}` : '')}`.trim();
 
     const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId);
-    const isNewAgy = prefs.composerMode === 'new-antigravity';
+    const isNewAgy =
+      prefs.composerMode === 'new-antigravity' ||
+      (prefs.selectedThreadId === '__new__' && prefs.composerMode !== 'new-claude');
     const isNewClaude = prefs.composerMode === 'new-claude';
+    const isNew = Boolean(
+      isNewAgy || isNewClaude || !prefs.selectedThreadId || prefs.selectedThreadId === '__new__'
+    );
     const provider = isNewClaude
       ? 'claude'
       : isNewAgy
         ? 'antigravity'
-        : activeRow?.provider || 'antigravity';
-    const targetId = isNewAgy || isNewClaude ? '' : prefs.selectedThreadId;
+        : activeRow?.provider || threadsCache[prefs.selectedThreadId]?.provider || 'antigravity';
+    const targetId = isNew ? '' : prefs.selectedThreadId;
+    const targetGroupId = isNew ? prefs.newSessionGroupId || '' : '';
 
-    // Optimistically append turn to local thread view
-    if (targetId) {
+    let draftId = '';
+    if (isNew) {
+      draftId = `draft-new-${Date.now()}`;
+      const knownIds = new Set((appState?.rows || []).map((r) => r && r.id).filter(Boolean));
+      const cleanTitle =
+        (rawText || text).replace(/\s+/g, ' ').trim().slice(0, 56) || 'New Session';
+      threadsCache[draftId] = {
+        id: draftId,
+        provider,
+        title: cleanTitle,
+        folder: prefs.composerRepoPrefix
+          ? `Scope: ${prefs.composerRepoPrefix}`
+          : 'New Unrelated Session',
+        contextWindow: {
+          usedTokens: Math.max(120, Math.round(text.length / 4)),
+          limitTokens: provider === 'claude' ? 1000000 : 256000
+        },
+        messages: [
+          {
+            id: `local-${Date.now()}`,
+            role: 'user',
+            createdAt: new Date().toISOString(),
+            text: `${rawText || text}${attachDisplayLine}`,
+            toolCalls: [],
+            optimistic: true,
+            optimisticAt: Date.now()
+          }
+        ]
+      };
+      pendingNewSessionBind = {
+        draftThreadId: draftId,
+        provider,
+        promptText: rawText || text,
+        groupId: targetGroupId,
+        knownIds,
+        createdAt: Date.now()
+      };
+      prefs.selectedThreadId = draftId;
+      prefs.composerMode = 'reply';
+      prefs.newSessionGroupId = '';
+      saveJson(STORAGE_KEYS.PREFS, prefs);
+      persistCache();
+      updateComposerModePills();
+      renderChatView(true);
+    } else if (targetId) {
       stoppedSessionsById.delete(targetId);
       if (activeRow) {
         activeRow.status = 'working';
@@ -8484,8 +8772,10 @@
     const res = await dispatchRemoteCommand({
       type: 'send',
       id: targetId,
+      threadId: targetId,
       provider,
       prompt: text,
+      group: targetGroupId || undefined,
       attachments: fileRefs.map((f) => ({
         name: f.name,
         mime: f.mime,
@@ -8493,13 +8783,16 @@
         dataUrl: f.dataUrl || '',
         textContent: f.textContent || ''
       })),
-      newSession: Boolean(isNewAgy || isNewClaude || !targetId)
+      newSession: isNew
     });
 
-    if (isNewAgy || isNewClaude) {
-      prefs.composerMode = 'reply';
-      saveJson(STORAGE_KEYS.PREFS, prefs);
-      updateComposerModePills();
+    if (isNew) {
+      const returnedRealId = String(
+        res?.out?.id || res?.out?.result?.id || res?.out?.result?.sessionId || ''
+      ).trim();
+      if (returnedRealId && !returnedRealId.startsWith('cmd-')) {
+        bindDraftThreadToRealSession(draftId, returnedRealId, provider);
+      }
     }
 
     if (res.mode === 'cloud') {
@@ -8793,6 +9086,7 @@
     const newParam = urlParams.get('new');
     if (newParam === 'antigravity' || newParam === 'claude') {
       prefs.composerMode = `new-${newParam}`;
+      prefs.selectedThreadId = '__new__';
       updateComposerModePills();
     }
 
