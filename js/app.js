@@ -2155,6 +2155,18 @@
     }, 600);
   }
 
+  function getTheoPlatformClass(ua) {
+    const s = String(ua || '').toLowerCase();
+    if (!s) return '';
+    if (s.includes('iphone')) return 'iphone';
+    if (s.includes('ipad')) return 'ipad';
+    if (s.includes('android')) return 'android';
+    if (s.includes('macintosh') || s.includes('mac os')) return 'mac';
+    if (s.includes('windows')) return 'windows';
+    if (s.includes('linux')) return 'linux';
+    return s.slice(0, 32);
+  }
+
   async function syncPushSchedule() {
     if (!pushSub || !pushSub.endpoint) return;
     lastPushScheduleSyncAt = Date.now();
@@ -2163,6 +2175,8 @@
     const slots = nf.enabled ? await buildPushSlots(pushSub, 14) : {};
     const p256dh = (pushSub.keys && pushSub.keys.p256dh) || '';
     const auth = (pushSub.keys && pushSub.keys.auth) || '';
+    const curUa = String((typeof navigator !== 'undefined' && navigator.userAgent) || '').slice(0, 140);
+    const curPlat = getTheoPlatformClass(curUa);
     const entry = {
       id: devId,
       app: 'theo',
@@ -2171,6 +2185,7 @@
       auth,
       keys: { p256dh, auth },
       prefs: nf,
+      ua: curUa,
       updatedAt: new Date().toISOString(),
       slots
     };
@@ -2185,6 +2200,7 @@
     }
 
     // 2. Register with Dataverse Cloud Relay (for Personal - THEO Remote Daily Push & remote bridge sync)
+    // Note: Do NOT arm duplicate theo_brief_d* push_delay timers — Personal - THEO Remote Daily Push already dispatches entry.slots hourly!
     if (cloudCfg.url && cloudCfg.key) {
       try {
         const curRes = await callCloudPush({ op: 'get' });
@@ -2192,65 +2208,33 @@
         const existing = Array.isArray(curDocs?.push_registry?.items)
           ? curDocs.push_registry.items
           : [];
-        const others = existing.filter(
-          (x) => x && x.id && x.id !== devId && x.endpoint !== pushSub.endpoint
-        );
+        const others = existing.filter((x) => {
+          if (!x || !x.id) return false;
+          if (x.id === devId || x.endpoint === pushSub.endpoint) return false;
+          const xApp = String(x.app || '').toLowerCase();
+          const isTheoItem = !xApp || xApp === 'theo';
+          if (isTheoItem && curPlat && getTheoPlatformClass(x.ua) === curPlat) {
+            return false;
+          }
+          return true;
+        });
         const nextItems = nf.enabled ? others.concat([entry]) : others;
+        const patchObj = {
+          push_registry: {
+            items: nextItems,
+            updatedAt: new Date().toISOString()
+          }
+        };
+        for (const k of Object.keys(curDocs)) {
+          if (k.startsWith('theo_brief_') && curDocs[k]?.id !== 'cancelled') {
+            patchObj[k] = { id: 'cancelled', updatedAt: new Date().toISOString() };
+          }
+        }
         await callCloudPush({
           op: 'patch',
-          patch: {
-            push_registry: {
-              items: nextItems,
-              updatedAt: new Date().toISOString()
-            }
-          }
+          patch: patchObj
         });
       } catch {}
-
-      // 3. Arm exact-second push_delay timers for today/tomorrow Morning & Evening Briefs
-      if (nf.enabled) {
-        try {
-          const devSuffix = String(devId || 'dev').replace(/[^a-zA-Z0-9]/g, '').slice(-12);
-          const armedRaw = localStorage.getItem('theo_armed_briefs_v1');
-          const armedMap = armedRaw ? JSON.parse(armedRaw) : {};
-          const now = new Date();
-          const nowMs = now.getTime();
-          for (let d = 0; d < 2; d++) {
-            const baseDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + d);
-            const iso = `${baseDate.getFullYear()}-${String(baseDate.getMonth() + 1).padStart(2, '0')}-${String(baseDate.getDate()).padStart(2, '0')}`;
-            const checks = [];
-            if (nf.morning !== false) {
-              const dtAm = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), Number(nf.morningHour || 8), 0, 0);
-              checks.push({ kind: 'am', dt: dtAm, slotKey: dtAm.toISOString().slice(0, 13) });
-            }
-            if (nf.evening !== false) {
-              const dtPm = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), Number(nf.eveningHour || 21), 0, 0);
-              checks.push({ kind: 'pm', dt: dtPm, slotKey: dtPm.toISOString().slice(0, 13) });
-            }
-            for (const c of checks) {
-              const delaySec = Math.round((c.dt.getTime() - nowMs) / 1000);
-              const slotObj = slots[c.slotKey];
-              const timerId = `${iso}_${c.kind}_${c.dt.getTime()}`;
-              const timerKey = `theo_brief_d${d}_${c.kind}_${devSuffix}`;
-              if (slotObj && delaySec >= 30 && delaySec <= 36 * 3600 && armedMap[timerKey] !== timerId) {
-                armedMap[timerKey] = timerId;
-                callCloudPush({
-                  op: 'push_delay',
-                  timerKey,
-                  timerId,
-                  delaySec,
-                  delaySeconds: delaySec,
-                  endpoint: pushSub.endpoint,
-                  vapid: slotObj.vapid,
-                  bodyB64: slotObj.bodyB64,
-                  ttl: 14400
-                }).catch(() => {});
-              }
-            }
-          }
-          localStorage.setItem('theo_armed_briefs_v1', JSON.stringify(armedMap));
-        } catch {}
-      }
     }
   }
 
@@ -2342,11 +2326,9 @@
       url: './?tab=pulse',
       tab: 'pulse'
     };
-    if (notifPerm() === 'granted') {
-      swLocalNotif(msg);
-    }
     if (!pushSub || !pushSub.endpoint) {
       if (notifPerm() === 'granted') {
+        swLocalNotif(msg);
         showToast('Local notification sent (enable Push to receive alerts while THEO is closed).');
         return;
       }
@@ -2482,7 +2464,7 @@
       seenApprovalIds.add(a.id);
       if (a.sessionId) newlyNotifiedSessions.add(a.sessionId);
       const isQ = a.kind === 'question' || /question/i.test(String(a.toolName || ''));
-      const tag = `theo-app-${a.id}`;
+      const tag = `theo-app-${a.sessionId || a.id}`;
       const targetTab = a.sessionId ? 'chat' : 'pulse';
       const navTarget = {
         id: tag,
@@ -2519,6 +2501,7 @@
       if (
         nf.enabled &&
         nf.approvals !== false &&
+        !(pushSub && pushSub.endpoint) &&
         (document.hidden || !document.hasFocus()) &&
         notifPerm() === 'granted'
       ) {
@@ -2560,7 +2543,7 @@
         const lastText = String(r.lastAssistantText || '').trim();
         const endsWithQ = /\?\s*["')*\]]*\s*$/.test(lastText);
         const doneId = `done-${r.id}-${curStep || curAt || Date.now()}`;
-        const tag = `theo-done-${r.id}-${curStep || Date.now()}`;
+        const tag = `theo-done-${r.id}`;
         const navTarget = {
           id: doneId,
           tag,
@@ -2601,6 +2584,7 @@
         if (
           nf.enabled &&
           nf.completed !== false &&
+          !(pushSub && pushSub.endpoint) &&
           (document.hidden || !document.hasFocus()) &&
           notifPerm() === 'granted'
         ) {

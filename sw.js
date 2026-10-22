@@ -1,7 +1,7 @@
-/* THEO Remote PWA Service Worker, v34 (2026-10-22).
+/* THEO Remote PWA Service Worker, v35 (2026-10-22).
    App shell: network-first (cache: no-cache) for HTML/JS/CSS, cache-first for static assets.
    Web Push: RFC 8291 aes128gcm push listener + W3C Badging API (navigator.setAppBadge) + durable Cache Storage & postMessage notificationclick handoff. */
-const CACHE_NAME = 'theo-remote-v34';
+const CACHE_NAME = 'theo-remote-v35';
 const NAV_CACHE = 'theo-nav-handoff-v1';
 const PENDING_NAV_URL = './__theo_pending_nav.json';
 const LAST_PUSH_NAV_URL = './__theo_last_push_nav.json';
@@ -13,9 +13,9 @@ let lastUnseenPushNav = null;
 const APP_SHELL = [
   './',
   './index.html',
-  './css/theo.css?v=34',
-  './js/endpoints.js?v=34',
-  './js/app.js?v=34',
+  './css/theo.css?v=35',
+  './js/endpoints.js?v=35',
+  './js/app.js?v=35',
   './manifest.json',
   './icon.svg',
   './icon-180.png',
@@ -209,17 +209,44 @@ function isTheoRemoteClientUrl(rawUrl) {
   }
 }
 
-function buildNotifOptions(d) {
+function buildNotifOptions(d, isRepeat = false) {
   const nav = buildNavTarget(d, false);
   return {
     body: d.body || 'Tap to open THEO Remote Workbench.',
     icon: './icon-192.png',
     badge: './icon-192.png',
     tag: nav.tag,
-    renotify: true,
-    vibrate: [180, 80, 180, 80, 260],
+    renotify: !isRepeat,
+    silent: Boolean(isRepeat),
+    vibrate: isRepeat ? [] : [180, 80, 180, 80, 260],
     data: nav
   };
+}
+
+async function isTagRecentlyDelivered(tag, title = '') {
+  const cleanTag = String(tag || '').trim();
+  const cleanTitle = String(title || '').trim();
+  const now = Date.now();
+  try {
+    if (self.registration && typeof self.registration.getNotifications === 'function') {
+      const active = await self.registration.getNotifications(cleanTag ? { tag: cleanTag } : undefined);
+      if (Array.isArray(active) && active.some((n) => (cleanTag && n.tag === cleanTag) || (cleanTitle && n.title === cleanTitle))) {
+        return true;
+      }
+    }
+  } catch {}
+  try {
+    const existing = await readUnreadNotifsFromCache();
+    return existing.some(
+      (x) =>
+        x &&
+        now - Number(x.ts || 0) < 10 * 60 * 1000 &&
+        ((cleanTag && (x.tag === cleanTag || x.id === cleanTag)) ||
+          (cleanTitle && x.title === cleanTitle && now - Number(x.ts || 0) < 90 * 1000))
+    );
+  } catch {
+    return false;
+  }
 }
 
 self.addEventListener('push', (event) => {
@@ -261,11 +288,12 @@ self.addEventListener('push', (event) => {
     : d;
 
   const title = effectivePayload.title || 'THEO Workbench';
-  const opts = buildNotifOptions(effectivePayload);
-  const nav = opts.data;
 
   event.waitUntil(
     (async () => {
+      const isRepeat = isPlannerDomainNotif || (await isTagRecentlyDelivered(effectivePayload.tag, title));
+      const opts = buildNotifOptions(effectivePayload, isRepeat);
+      const nav = opts.data;
       const showPromise = self.registration.showNotification(title, opts);
       if (!isPlannerDomainNotif) {
         try {
@@ -354,23 +382,23 @@ self.addEventListener('message', (event) => {
   }
   if (m.type === 'show-notification') {
     const d = m.payload || {};
-    const opts = buildNotifOptions(d);
-    const nav = opts.data;
-    if (nav.threadId || nav.reminderId || nav.tab !== 'pulse') {
-      lastUnseenPushNav = { ...nav, clicked: false, ts: Date.now() };
-    }
     event.waitUntil(
       (async () => {
+        const isRepeat = await isTagRecentlyDelivered(d.tag, d.title);
+        const opts = buildNotifOptions(d, isRepeat);
+        const nav = opts.data;
+        if (nav.threadId || nav.reminderId || nav.tab !== 'pulse') {
+          lastUnseenPushNav = { ...nav, clicked: false, ts: Date.now() };
+        }
         if (!m.skipUnread) {
           const { unreadCount } = await upsertSwUnreadNotif(d, nav);
           await applySwAppBadge(Math.max(1, unreadCount));
         }
-        await Promise.all([
-          nav.threadId || nav.reminderId || nav.tab !== 'pulse'
-            ? writeNavCache(LAST_PUSH_NAV_URL, lastUnseenPushNav)
-            : Promise.resolve(),
-          self.registration.showNotification(d.title || 'THEO Workbench', opts)
-        ]);
+        if (nav.threadId || nav.reminderId || nav.tab !== 'pulse') {
+          await writeNavCache(LAST_PUSH_NAV_URL, lastUnseenPushNav);
+        }
+        if (isRepeat) return;
+        await self.registration.showNotification(d.title || 'THEO Workbench', opts);
       })()
     );
   }
