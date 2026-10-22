@@ -2381,22 +2381,45 @@
   }
 
   function checkServerLastNotificationOnResume(nextState) {
-    const ln = nextState && nextState.lastNotification;
-    if (!ln || typeof ln !== 'object') return;
-    const notifId = String(ln.id || ln.tag || '');
-    const notifTag = String(ln.tag || '');
-    if (!notifId && !ln.threadId) return;
-    if (isNotifConsumed(notifId, notifTag)) return;
+    if (!nextState || typeof nextState !== 'object') return;
+    const rawList = [
+      ...(Array.isArray(nextState.recentNotifications) ? nextState.recentNotifications : []),
+      ...(nextState.lastNotification && typeof nextState.lastNotification === 'object'
+        ? [nextState.lastNotification]
+        : [])
+    ];
+    if (!rawList.length) return;
 
-    const ageMs = Date.now() - Number(ln.at || ln.ts || 0);
-    if (ageMs < 0 || ageMs > 25 * 60 * 1000) {
-      markNotifConsumed(notifId, notifTag);
-      return;
+    const seenKeys = new Set();
+    let candidate = null;
+    for (const item of rawList) {
+      if (!item || typeof item !== 'object') continue;
+      const notifId = String(item.id || item.tag || '');
+      const notifTag = String(item.tag || '');
+      const dedupeKey = `${notifId}::${notifTag}`;
+      if (seenKeys.has(dedupeKey)) continue;
+      seenKeys.add(dedupeKey);
+      if (!notifId && !item.threadId && !item.reminderId) continue;
+      if (isNotifConsumed(notifId, notifTag)) continue;
+
+      const ageMs = Date.now() - Number(item.at || item.ts || 0);
+      if (ageMs < 0 || ageMs > 25 * 60 * 1000) {
+        markNotifConsumed(notifId, notifTag);
+        continue;
+      }
+      if (!candidate && (item.threadId || item.reminderId)) {
+        candidate = { item, notifId, notifTag };
+      }
     }
+    if (!candidate) return;
+
+    const { item: ln, notifId, notifTag } = candidate;
 
     // If the user explicitly navigated via ?thread= URL param or notification tap, do not hijack their target
     if (pinnedNavThreadId && Date.now() < pinnedNavUntil) {
-      markNotifConsumed(notifId, notifTag);
+      if (ln.threadId === pinnedNavThreadId) {
+        markNotifConsumed(notifId, notifTag);
+      }
       return;
     }
 
@@ -2416,8 +2439,14 @@
       return;
     }
 
-    // If the app is actively open in foreground (not a fresh resume), mark consumed so future resumes don't replay it
-    if (!document.hidden && Date.now() >= recentResumeUntil) {
+    // Only passively mark consumed if the user is already actively viewing that exact session in foreground
+    if (
+      !document.hidden &&
+      Date.now() >= recentResumeUntil &&
+      ln.threadId &&
+      prefs.activeTab === 'chat' &&
+      prefs.selectedThreadId === ln.threadId
+    ) {
       markNotifConsumed(notifId, notifTag);
     }
   }
@@ -2678,12 +2707,20 @@
   }
 
   // Connectivity Engine: Probes Direct Local Bridge (:4318) first, then Cloud Relay fallback
-  async function probeLocalBridge() {
+  let lastLocalProbeFailedAt = 0;
+  let syncInFlight = false;
+  let pendingSyncAfterFlight = false;
+
+  async function probeLocalBridge(force = false) {
     const candidates = [];
+    const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
+    const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(ua);
+    const isGithubHosted = location.hostname.endsWith('.github.io');
+
     // If opened directly from the VS Code LAN/local bridge (e.g. http://192.168.3.129:4318), use location.origin first
     if (
       location.port === String(cloudCfg.port) ||
-      (location.protocol === 'http:' && !location.hostname.endsWith('.github.io'))
+      (location.protocol === 'http:' && !isGithubHosted)
     ) {
       candidates.push(location.origin.replace(/\/+$/, ''));
     }
@@ -2693,7 +2730,17 @@
     if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
       candidates.push(`http://localhost:${cloudCfg.port}`);
     }
-    candidates.push(`http://127.0.0.1:${cloudCfg.port}`);
+    // On mobile devices hosted on GitHub Pages, 127.0.0.1 is the phone itself (never the laptop)
+    if (!isMobileDevice) {
+      candidates.push(`http://127.0.0.1:${cloudCfg.port}`);
+    }
+
+    if (!candidates.length) {
+      return '';
+    }
+    if (!force && lastLocalProbeFailedAt && Date.now() - lastLocalProbeFailedAt < 30000) {
+      return '';
+    }
 
     const seen = new Set();
     for (const base of candidates) {
@@ -2701,18 +2748,20 @@
       seen.add(base);
       try {
         const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 900);
+        const timer = setTimeout(() => ctrl.abort(), 700);
         const res = await fetch(`${base}/api/ping`, { signal: ctrl.signal });
         clearTimeout(timer);
         if (res.ok) {
           const data = await res.json();
           if (data && data.ok) {
             localBridgeBase = base;
+            lastLocalProbeFailedAt = 0;
             return base;
           }
         }
       } catch {}
     }
+    lastLocalProbeFailedAt = Date.now();
     return '';
   }
 
@@ -2788,25 +2837,87 @@
   }
 
   async function syncData(options = {}) {
-    updateConnectionBanner('syncing');
+    if (syncInFlight) {
+      if (options.force || options.toast) {
+        pendingSyncAfterFlight = true;
+      }
+      return false;
+    }
+    syncInFlight = true;
+    try {
+      if (options.toast || connMode === 'probing' || !appState) {
+        updateConnectionBanner('syncing');
+      }
 
-    // 1. Try Direct Local Bridge first
-    const bridgeBase = localBridgeBase || (await probeLocalBridge());
-    if (bridgeBase) {
-      try {
-        const res = await fetch(`${bridgeBase}/api/state`);
-        if (res.ok) {
-          const payload = await res.json();
-          if (payload?.state) {
-            connMode = 'local';
-            applyStoppedSessionOverrides(payload.state);
-            applyPendingLocalOverrides(payload.state);
-            checkLiveStateNotifications(payload.state);
-            appState = payload.state;
-            if (payload.state.personalLedger) {
-              mergePersonalLedger(payload.state.personalLedger);
+      // 1. Try Direct Local Bridge first
+      const bridgeBase = localBridgeBase || (await probeLocalBridge(Boolean(options.toast)));
+      if (bridgeBase) {
+        try {
+          const res = await fetch(`${bridgeBase}/api/state`);
+          if (res.ok) {
+            const payload = await res.json();
+            if (payload?.state) {
+              connMode = 'local';
+              applyStoppedSessionOverrides(payload.state);
+              applyPendingLocalOverrides(payload.state);
+              checkLiveStateNotifications(payload.state);
+              appState = payload.state;
+              if (payload.state.personalLedger) {
+                mergePersonalLedger(payload.state.personalLedger);
+              }
+              if (!sseSource) connectSse(bridgeBase);
+              persistCache();
+              renderAll();
+              if (pushSub && prefs.notif && prefs.notif.enabled && Date.now() - lastPushScheduleSyncAt > 10 * 60 * 1000) {
+                schedulePushSync();
+              }
+              flushOutbox().catch(() => {});
+              if (prefs.selectedThreadId) {
+                fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
+              }
+              if (options.toast) {
+                showToast(`Connected to VS Code Direct Bridge (${(appState.rows || []).length} sessions)`);
+              }
+              return true;
             }
-            if (!sseSource) connectSse(bridgeBase);
+          }
+        } catch {
+          localBridgeBase = '';
+        }
+      }
+
+      // 2. Fallback to Dataverse Cloud Relay (Zero-VPN worldwide access)
+      if (cloudCfg.url && cloudCfg.key) {
+        try {
+          const res = await fetch(cloudCfg.url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+            body: JSON.stringify({ key: cloudCfg.key, op: 'get_theo' })
+          });
+          if (res.ok) {
+            const rawStore = await res.json();
+            const store =
+              rawStore?.docs && typeof rawStore.docs === 'object' ? rawStore.docs : rawStore || {};
+            connMode = 'cloud';
+            if (store?.threads && typeof store.threads === 'object') {
+              mergeRemoteThreads(store.threads);
+            }
+            if (store?.state?.snapshot) {
+              applyStoppedSessionOverrides(store.state.snapshot);
+              applyPendingLocalOverrides(store.state.snapshot);
+              checkLiveStateNotifications(store.state.snapshot);
+              appState = store.state.snapshot;
+            }
+            if (store?.personal_ledger && typeof store.personal_ledger === 'object') {
+              mergePersonalLedger(store.personal_ledger);
+            }
+            if (store?.state?.workspacesDetail && typeof store.state.workspacesDetail === 'object') {
+              workspacesDetailCache = { ...workspacesDetailCache, ...store.state.workspacesDetail };
+            }
+            if (pinnedNavThreadId && Date.now() < pinnedNavUntil) {
+              prefs.selectedThreadId = pinnedNavThreadId;
+              prefs.activeTab = 'chat';
+            }
             persistCache();
             renderAll();
             if (pushSub && prefs.notif && prefs.notif.enabled && Date.now() - lastPushScheduleSyncAt > 10 * 60 * 1000) {
@@ -2817,67 +2928,28 @@
               fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
             }
             if (options.toast) {
-              showToast(`Connected to VS Code Direct Bridge (${(appState.rows || []).length} sessions)`);
+              showToast(`Synced with VS Code Cloud Relay (${(appState?.rows || []).length} sessions)`);
             }
             return true;
           }
-        }
-      } catch {
-        localBridgeBase = '';
+        } catch {}
+      }
+
+      connMode = 'offline';
+      renderAll();
+      if (options.toast) {
+        showToast('Offline — showing cached snapshot');
+      }
+      return false;
+    } finally {
+      syncInFlight = false;
+      if (pendingSyncAfterFlight) {
+        pendingSyncAfterFlight = false;
+        setTimeout(() => {
+          syncData().catch(() => {});
+        }, 80);
       }
     }
-
-    // 2. Fallback to Dataverse Cloud Relay (Zero-VPN worldwide access)
-    if (cloudCfg.url && cloudCfg.key) {
-      try {
-        const res = await fetch(cloudCfg.url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-          body: JSON.stringify({ key: cloudCfg.key, op: 'get' })
-        });
-        if (res.ok) {
-          const rawStore = await res.json();
-          const store =
-            rawStore?.docs && typeof rawStore.docs === 'object' ? rawStore.docs : rawStore || {};
-          connMode = 'cloud';
-          if (store?.state?.snapshot) {
-            applyStoppedSessionOverrides(store.state.snapshot);
-            applyPendingLocalOverrides(store.state.snapshot);
-            checkLiveStateNotifications(store.state.snapshot);
-            appState = store.state.snapshot;
-          }
-          if (store?.personal_ledger && typeof store.personal_ledger === 'object') {
-            mergePersonalLedger(store.personal_ledger);
-          }
-          if (store?.threads && typeof store.threads === 'object') {
-            mergeRemoteThreads(store.threads);
-          }
-          if (store?.state?.workspacesDetail && typeof store.state.workspacesDetail === 'object') {
-            workspacesDetailCache = { ...workspacesDetailCache, ...store.state.workspacesDetail };
-          }
-          persistCache();
-          renderAll();
-          if (pushSub && prefs.notif && prefs.notif.enabled && Date.now() - lastPushScheduleSyncAt > 10 * 60 * 1000) {
-            schedulePushSync();
-          }
-          flushOutbox().catch(() => {});
-          if (prefs.selectedThreadId) {
-            fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
-          }
-          if (options.toast) {
-            showToast(`Synced with VS Code Cloud Relay (${(appState?.rows || []).length} sessions)`);
-          }
-          return true;
-        }
-      } catch {}
-    }
-
-    connMode = 'offline';
-    renderAll();
-    if (options.toast) {
-      showToast('Offline — showing cached snapshot');
-    }
-    return false;
   }
 
   async function fetchThreadDetail(threadId, providerHint = '') {
@@ -8468,9 +8540,13 @@
     const tab = String(nav.tab || '').trim();
     if (!threadId && !reminderId && !tab) return false;
 
-    const notifKey = String(nav.id || nav.tag || nav.checkedNotifId || nav.checkedNotifTag || '').trim();
+    const notifId = String(nav.id || nav.checkedNotifId || '').trim();
+    const notifTag = String(nav.tag || nav.checkedNotifTag || '').trim();
+    const notifKey = notifId || notifTag;
+    if (notifId || notifTag) {
+      markNotifConsumed(notifId, notifTag, nav.checkedNotifId, nav.checkedNotifTag);
+    }
     if (notifKey) {
-      markNotifConsumed(notifKey);
       markNotificationChecked(notifKey, { navigate: false });
     }
     if (threadId) {
@@ -8498,7 +8574,8 @@
       threadId,
       provider: nav.provider || '',
       title: nav.title || nav.sessionTitle || '',
-      reminderId
+      reminderId,
+      durationMs: 90000
     });
 
     if (threadId) {
@@ -8519,7 +8596,7 @@
       renderAll();
     }
 
-    syncData().catch(() => {});
+    syncData({ force: true }).catch(() => {});
     return true;
   }
 
@@ -8533,7 +8610,7 @@
           await cache.delete(PENDING_NAV_CACHE_URL);
           await cache.delete(LAST_PUSH_NAV_CACHE_URL);
           const pending = await pendingRes.json().catch(() => null);
-          if (pending && Date.now() - Number(pending.ts || 0) < 10 * 60 * 1000) {
+          if (pending && Date.now() - Number(pending.ts || 0) < 20 * 60 * 1000) {
             return applyNotificationNav(pending);
           }
         }
@@ -8542,13 +8619,36 @@
           if (lastPushRes) {
             await cache.delete(LAST_PUSH_NAV_CACHE_URL);
             const lastPush = await lastPushRes.json().catch(() => null);
-            const pushKey = String(lastPush?.id || lastPush?.tag || '').trim();
+            const pushId = String(lastPush?.id || '').trim();
+            const pushTag = String(lastPush?.tag || '').trim();
             if (
               lastPush &&
-              Date.now() - Number(lastPush.ts || 0) < 15 * 60 * 1000 &&
-              (!pushKey || !isNotifConsumed(pushKey))
+              Date.now() - Number(lastPush.ts || 0) < 20 * 60 * 1000 &&
+              !isNotifConsumed(pushId, pushTag)
             ) {
               return applyNotificationNav(lastPush);
+            }
+          }
+
+          // Fallback: check the newest unconsumed push recorded by sw.js in UNREAD_NOTIFS_CACHE_URL
+          const unreadRes = await cache.match(UNREAD_NOTIFS_CACHE_URL);
+          if (unreadRes) {
+            const unreadData = await unreadRes.json().catch(() => null);
+            const unreadItems = Array.isArray(unreadData?.items)
+              ? unreadData.items
+              : Array.isArray(unreadData)
+                ? unreadData
+                : [];
+            const recentUnread = unreadItems.find(
+              (it) =>
+                it &&
+                !it.checked &&
+                (it.threadId || it.reminderId) &&
+                Date.now() - Number(it.ts || 0) < 15 * 60 * 1000 &&
+                !isNotifConsumed(it.id, it.tag)
+            );
+            if (recentUnread) {
+              return applyNotificationNav(recentUnread);
             }
           }
         }
@@ -8595,11 +8695,14 @@
             });
           });
           document.addEventListener('visibilitychange', () => {
-            if (!document.hidden) {
+            if (document.hidden) {
+              wasAppHiddenAt = Date.now();
+            } else {
+              recentResumeUntil = Date.now() + 25000;
               reg.update().catch(() => {});
               syncUnreadNotificationsWithSwCache();
               consumePendingNotificationNav({ allowUnseenPush: true }).finally(() => {
-                syncData();
+                syncData({ force: true });
               });
             }
           });
@@ -8635,12 +8738,28 @@
                     title: p.sessionTitle || p.title || ''
                   }
                 : null;
-            showToast(
-              `${p.title}${p.body ? ': ' + String(p.body).slice(0, 95) : ''}`,
-              navTarget
-            );
+            // If the app is backgrounded or not focused when the push arrives, pre-stage the session in the Workbench
+            if (navTarget && navTarget.threadId && (document.hidden || !document.hasFocus())) {
+              setPinnedNav({
+                threadId: navTarget.threadId,
+                provider: navTarget.provider || '',
+                title: navTarget.title || '',
+                durationMs: 90000
+              });
+              prefs.selectedThreadId = navTarget.threadId;
+              prefs.composerMode = 'reply';
+              prefs.activeTab = 'chat';
+              saveJson(STORAGE_KEYS.PREFS, prefs);
+              switchTab('chat');
+              renderAll();
+            } else {
+              showToast(
+                `${p.title}${p.body ? ': ' + String(p.body).slice(0, 95) : ''}`,
+                navTarget
+              );
+            }
           }
-          syncData();
+          syncData({ force: true });
         }
       });
     }
@@ -8668,14 +8787,16 @@
       }
     });
     window.addEventListener('focus', () => {
+      recentResumeUntil = Date.now() + 25000;
       loadPersonalLedgerFromLocal();
       syncUnreadNotificationsWithSwCache();
       consumePendingNotificationNav({ allowUnseenPush: true }).finally(() => {
         renderAll();
-        syncData().catch(() => {});
+        syncData({ force: true }).catch(() => {});
       });
     });
     window.addEventListener('pageshow', () => {
+      recentResumeUntil = Date.now() + 25000;
       consumePendingNotificationNav({ allowUnseenPush: true });
     });
 
@@ -8730,7 +8851,7 @@
     if (!initialNoSse) {
       setInterval(() => {
         if (!document.hidden) syncData();
-      }, 12000);
+      }, 4500);
     }
     registerServiceWorker();
   }

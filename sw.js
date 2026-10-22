@@ -1,7 +1,7 @@
-/* THEO Remote PWA Service Worker, v33 (2026-10-21).
+/* THEO Remote PWA Service Worker, v34 (2026-10-22).
    App shell: network-first (cache: no-cache) for HTML/JS/CSS, cache-first for static assets.
    Web Push: RFC 8291 aes128gcm push listener + W3C Badging API (navigator.setAppBadge) + durable Cache Storage & postMessage notificationclick handoff. */
-const CACHE_NAME = 'theo-remote-v33';
+const CACHE_NAME = 'theo-remote-v34';
 const NAV_CACHE = 'theo-nav-handoff-v1';
 const PENDING_NAV_URL = './__theo_pending_nav.json';
 const LAST_PUSH_NAV_URL = './__theo_last_push_nav.json';
@@ -13,9 +13,9 @@ let lastUnseenPushNav = null;
 const APP_SHELL = [
   './',
   './index.html',
-  './css/theo.css?v=33',
-  './js/endpoints.js?v=33',
-  './js/app.js?v=33',
+  './css/theo.css?v=34',
+  './js/endpoints.js?v=34',
+  './js/app.js?v=34',
   './manifest.json',
   './icon.svg',
   './icon-180.png',
@@ -278,10 +278,7 @@ self.addEventListener('push', (event) => {
 
           const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
           const theoClients = list.filter((c) => isTheoRemoteClientUrl(c.url));
-          const anyVisible = theoClients.some(
-            (c) => c.focused || c.visibilityState === 'visible'
-          );
-          if (!anyVisible && (nav.threadId || nav.reminderId || nav.tab !== 'pulse')) {
+          if (nav.threadId || nav.reminderId || nav.tab !== 'pulse') {
             lastUnseenPushNav = { ...nav, clicked: false, ts: Date.now() };
             await writeNavCache(LAST_PUSH_NAV_URL, lastUnseenPushNav);
           }
@@ -430,18 +427,22 @@ self.addEventListener('notificationclick', (event) => {
         theoClients.find((c) => c.focused || c.visibilityState === 'visible') ||
         theoClients[0];
 
+      const postToAllClients = () => {
+        theoClients.forEach((c) => {
+          try {
+            c.postMessage(navWithChecked);
+          } catch {}
+        });
+      };
+
       if (targetClient && 'focus' in targetClient) {
-        try {
-          targetClient.postMessage(navWithChecked);
-        } catch {}
+        postToAllClients();
         await targetClient.focus().catch(() => {});
-        try {
-          targetClient.postMessage(navWithChecked);
-        } catch {}
-        await new Promise((r) => setTimeout(r, 260));
-        try {
-          targetClient.postMessage(navWithChecked);
-        } catch {}
+        postToAllClients();
+        await new Promise((r) => setTimeout(r, 150));
+        postToAllClients();
+        await new Promise((r) => setTimeout(r, 350));
+        postToAllClients();
         return;
       }
 
