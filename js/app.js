@@ -6886,7 +6886,6 @@
     const items = [
       { title: '📎 Attach File or Photo to Prompt', sub: 'Workbench Composer', act: 'attach-file' },
       { title: '📁 Attach Workspace / Modified Git File (@Repo)', sub: 'Workbench Composer', act: 'pick-repo-file' },
-      { title: '🎯 Open Planner PWA (Planning, Tasks, Delegation, Score, Prayers)', sub: 'Standalone PWA ↗', act: 'open-command-pwa' },
       { title: '+ New Google Antigravity Session', sub: 'Action', act: 'new-agy' },
       { title: '+ New Claude Code Session', sub: 'Action', act: 'new-claude' },
       { title: 'Sync with VS Code & Cloud Relay Now', sub: 'Connectivity', act: 'sync' },
