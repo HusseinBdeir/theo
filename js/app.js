@@ -2374,6 +2374,7 @@
 
     const seenKeys = new Set();
     let candidate = null;
+    const unconsumedKeys = [];
     for (const item of rawList) {
       if (!item || typeof item !== 'object') continue;
       const notifId = String(item.id || item.tag || '');
@@ -2389,24 +2390,41 @@
         markNotifConsumed(notifId, notifTag);
         continue;
       }
+      unconsumedKeys.push(notifId, notifTag);
       if (!candidate && (item.threadId || item.reminderId)) {
         candidate = { item, notifId, notifTag };
       }
     }
     if (!candidate) return;
 
-    const { item: ln, notifId, notifTag } = candidate;
-
-    // If the user explicitly navigated via ?thread= URL param or notification tap, do not hijack their target
-    if (pinnedNavThreadId && Date.now() < pinnedNavUntil) {
-      if (ln.threadId === pinnedNavThreadId) {
-        markNotifConsumed(notifId, notifTag);
+    const consumeAllSeen = () => {
+      if (unconsumedKeys.length > 0) {
+        markNotifConsumed(...unconsumedKeys);
       }
+    };
+
+    // Never hijack when the user is composing or binding a new session
+    if (
+      isNewSessionMode() ||
+      String(prefs.selectedThreadId || '').startsWith('draft-new-') ||
+      pendingNewSessionBind
+    ) {
+      consumeAllSeen();
       return;
     }
 
-    // If the user just launched or resumed the PWA from background after a task notification fired, jump to that task
+    const { item: ln, notifId, notifTag } = candidate;
+
+    // If the user explicitly navigated via ?thread= URL param, session click, or notification tap, do not hijack their target
+    if (pinnedNavThreadId && Date.now() < pinnedNavUntil) {
+      consumeAllSeen();
+      return;
+    }
+
+    // If the user just launched or resumed the PWA from background after a task notification fired, jump to that task once
     if (Date.now() < recentResumeUntil && (ln.threadId || ln.reminderId)) {
+      consumeAllSeen();
+      recentResumeUntil = 0;
       applyNotificationNav({
         id: notifId,
         tag: notifTag,
@@ -2421,15 +2439,9 @@
       return;
     }
 
-    // Only passively mark consumed if the user is already actively viewing that exact session in foreground
-    if (
-      !document.hidden &&
-      Date.now() >= recentResumeUntil &&
-      ln.threadId &&
-      prefs.activeTab === 'chat' &&
-      prefs.selectedThreadId === ln.threadId
-    ) {
-      markNotifConsumed(notifId, notifTag);
+    // When already foregrounded past the resume window, mark historical server notifications consumed so they never act as delayed landmines
+    if (!document.hidden && Date.now() >= recentResumeUntil) {
+      consumeAllSeen();
     }
   }
 
@@ -2897,7 +2909,7 @@
               applyPendingLocalOverrides(store.state.snapshot);
               checkLiveStateNotifications(store.state.snapshot);
               appState = store.state.snapshot;
-              reconcilePendingNewSessionBind(store.state.snapshot);
+              reconcilePendingNewSessionBind(store.state.snapshot, store?.queue);
             }
             if (store?.personal_ledger && typeof store.personal_ledger === 'object') {
               mergePersonalLedger(store.personal_ledger);
@@ -3009,8 +3021,19 @@
     return { workspace: workspacesDetailCache[repoId] || null, file: null };
   }
 
+  let cloudCmdChain = Promise.resolve();
+
+  function cleanTargetThreadId(val) {
+    const s = String(val || '').trim();
+    if (!s || s === '__new__' || s.startsWith('cmd-') || s.startsWith('draft-new-')) {
+      return '';
+    }
+    return s;
+  }
+
   async function dispatchRemoteCommand(cmdObj) {
-    const targetThreadId = String(cmdObj?.threadId || cmdObj?.id || '').trim();
+    const targetThreadId =
+      cleanTargetThreadId(cmdObj?.threadId) || cleanTargetThreadId(cmdObj?.id);
     const cmd = {
       ...cmdObj,
       id:
@@ -3034,29 +3057,36 @@
         const res = await fetch(`${localBridgeBase}${endpoint}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...cmd, id: targetThreadId || cmd.id })
+          body: JSON.stringify({
+            ...cmd,
+            id: cmd.newSession ? '' : targetThreadId,
+            threadId: cmd.newSession ? '' : targetThreadId
+          })
         });
         if (res.ok) {
           const out = await res.json();
           setTimeout(() => syncData(), 500);
-          return { ok: true, mode: 'local', out };
+          return { ok: true, mode: 'local', id: cmd.id, out };
         }
       } catch {}
     }
 
-    // 2. Cloud Relay Command Queue (text/plain POST avoids CORS preflight)
+    // 2. Cloud Relay Command Queue (serialized + fast get_control to avoid race overwrites)
     if (cloudCfg.url && cloudCfg.key) {
-      try {
+      const runCloudWrite = async () => {
+        const ctrlGet = new AbortController();
+        const tGet = setTimeout(() => ctrlGet.abort(), 12000);
         const curRes = await fetch(cloudCfg.url, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-          body: JSON.stringify({ key: cloudCfg.key, op: 'get' })
-        });
+          body: JSON.stringify({ key: cloudCfg.key, op: 'get_control' }),
+          signal: ctrlGet.signal
+        }).finally(() => clearTimeout(tGet));
         const rawCur = curRes.ok ? await curRes.json() : {};
         const curStore =
           rawCur?.docs && typeof rawCur.docs === 'object' ? rawCur.docs : rawCur || {};
         const existingCmds = Array.isArray(curStore?.queue?.commands)
-          ? curStore.queue.commands.slice(-14)
+          ? curStore.queue.commands.filter((c) => c && c.id && c.id !== cmd.id).slice(-14)
           : [];
         existingCmds.push(cmd);
 
@@ -3068,25 +3098,36 @@
           nextQueue.activeThreadId = targetThreadId;
         }
 
-
+        const ctrlPost = new AbortController();
+        const tPost = setTimeout(() => ctrlPost.abort(), 15000);
         const postRes = await fetch(cloudCfg.url, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
           body: JSON.stringify({
             key: cloudCfg.key,
             op: 'patch',
+            ackOnly: true,
             patch: {
               queue: nextQueue
             }
-          })
-        });
-        if (postRes.ok) {
+          }),
+          signal: ctrlPost.signal
+        }).finally(() => clearTimeout(tPost));
+        return Boolean(postRes.ok);
+      };
+
+      try {
+        const p = cloudCmdChain.then(runCloudWrite, runCloudWrite);
+        cloudCmdChain = p.catch(() => false);
+        const ok = await p;
+        if (ok) {
           return { ok: true, mode: 'cloud', id: cmd.id };
         }
       } catch {}
     }
 
     // 3. Offline Outbox Queue
+    outbox = outbox.filter((c) => c && c.id !== cmd.id);
     outbox.push(cmd);
     saveJson(STORAGE_KEYS.OUTBOX, outbox);
     renderOutboxBadge();
@@ -3566,6 +3607,13 @@
 
   function enterNewSessionMode(provider = 'antigravity', opts = {}) {
     clearPinnedNav();
+    recentResumeUntil = 0;
+    if ('caches' in window) {
+      caches
+        .open(NAV_HANDOFF_CACHE)
+        .then((c) => c.delete(LAST_PUSH_NAV_CACHE_URL))
+        .catch(() => {});
+    }
     const prov = provider === 'claude' ? 'claude' : 'antigravity';
     if (
       prefs.selectedThreadId &&
@@ -3661,22 +3709,52 @@
     return true;
   }
 
-  function reconcilePendingNewSessionBind(stateObj) {
+  function reconcilePendingNewSessionBind(stateObj, queueObj = null) {
     if (!pendingNewSessionBind) return;
-    if (Date.now() - pendingNewSessionBind.createdAt > 75000) {
+    if (Date.now() - pendingNewSessionBind.createdAt > 90000) {
       pendingNewSessionBind = null;
       return;
     }
-    const rows = Array.isArray(stateObj?.rows) ? stateObj.rows : [];
     const wantProv = pendingNewSessionBind.provider || 'antigravity';
+    const rows = Array.isArray(stateObj?.rows) ? stateObj.rows : [];
+
+    // 1. Authoritative bind from Cloud Relay command execution result
+    if (queueObj && queueObj.results && typeof queueObj.results === 'object') {
+      const cmdId = pendingNewSessionBind.cmdId || '';
+      const resEntry = cmdId ? queueObj.results[cmdId] : null;
+      const resolvedId = cleanTargetThreadId(
+        resEntry?.id ||
+          resEntry?.result?.id ||
+          resEntry?.result?.sessionId ||
+          resEntry?.result?.opened?.id ||
+          ''
+      );
+      if (resolvedId) {
+        const matchedRow = rows.find((r) => r && r.id === resolvedId);
+        if (matchedRow && pendingNewSessionBind.groupId) {
+          matchedRow.group = pendingNewSessionBind.groupId;
+          noteRowOverride(matchedRow.id, { group: pendingNewSessionBind.groupId });
+        }
+        bindDraftThreadToRealSession(
+          pendingNewSessionBind.draftThreadId,
+          resolvedId,
+          wantProv
+        );
+        return;
+      }
+    }
+
+    // 2. Fallback: match a genuinely brand-new row whose timestamp is recent (never bind to older sessions missing from a stale cache)
     const known = pendingNewSessionBind.knownIds || new Set();
+    const minRowAt = (pendingNewSessionBind.createdAt || Date.now()) - 15000;
     const freshRow = rows.find(
       (r) =>
         r &&
         r.id &&
         !r.draft &&
         (r.provider === 'claude' ? 'claude' : 'antigravity') === wantProv &&
-        !known.has(r.id)
+        !known.has(r.id) &&
+        Number(r.at || 0) >= minRowAt
     );
     if (freshRow) {
       if (pendingNewSessionBind.groupId) {
@@ -7992,7 +8070,12 @@
 
       const sessCard = e.target.closest('.session-card[data-session-id]');
       if (sessCard && sessCard.dataset.sessionId) {
-        clearPinnedNav();
+        recentResumeUntil = 0;
+        setPinnedNav({
+          threadId: sessCard.dataset.sessionId,
+          provider: sessCard.dataset.sessionProv || '',
+          durationMs: 45000
+        });
         prefs.selectedThreadId = sessCard.dataset.sessionId;
         prefs.composerMode = 'reply';
         saveJson(STORAGE_KEYS.PREFS, prefs);
@@ -8189,9 +8272,11 @@
       if (cmdItem) {
         closeCommandPalette();
         clearPinnedNav();
+        recentResumeUntil = 0;
         const act = cmdItem.dataset.cmdAct;
         const tid = cmdItem.dataset.cmdThread;
         if (tid) {
+          setPinnedNav({ threadId: tid, durationMs: 45000 });
           prefs.selectedThreadId = tid;
           prefs.composerMode = 'reply';
           saveJson(STORAGE_KEYS.PREFS, prefs);
@@ -8315,7 +8400,8 @@
         enterNewSessionMode('claude');
         return;
       }
-      clearPinnedNav();
+      recentResumeUntil = 0;
+      setPinnedNav({ threadId: val, durationMs: 45000 });
       prefs.selectedThreadId = val;
       prefs.lastReplyThreadId = val;
       prefs.composerMode = 'reply';
@@ -8786,17 +8872,22 @@
       newSession: isNew
     });
 
+    recentResumeUntil = 0;
     if (isNew) {
-      const returnedRealId = String(
+      if (pendingNewSessionBind && res?.id) {
+        pendingNewSessionBind.cmdId = res.id;
+      }
+      const returnedRealId = cleanTargetThreadId(
         res?.out?.id || res?.out?.result?.id || res?.out?.result?.sessionId || ''
-      ).trim();
-      if (returnedRealId && !returnedRealId.startsWith('cmd-')) {
+      );
+      if (returnedRealId) {
         bindDraftThreadToRealSession(draftId, returnedRealId, provider);
       }
     }
 
     if (res.mode === 'cloud') {
-      setTimeout(() => syncData(), 3500);
+      setTimeout(() => syncData(), 1800);
+      setTimeout(() => syncData(), 4000);
       setTimeout(() => syncData(), 8000);
     }
 
@@ -8878,6 +8969,11 @@
 
   async function consumePendingNotificationNav(opts = {}) {
     const allowUnseenPush = Boolean(opts && opts.allowUnseenPush);
+    const inNewSessionFlow = Boolean(
+      isNewSessionMode() ||
+        String(prefs.selectedThreadId || '').startsWith('draft-new-') ||
+        pendingNewSessionBind
+    );
     try {
       if ('caches' in window) {
         const cache = await caches.open(NAV_HANDOFF_CACHE);
@@ -8886,11 +8982,19 @@
           await cache.delete(PENDING_NAV_CACHE_URL);
           await cache.delete(LAST_PUSH_NAV_CACHE_URL);
           const pending = await pendingRes.json().catch(() => null);
-          if (pending && Date.now() - Number(pending.ts || 0) < 20 * 60 * 1000) {
+          const pendingTs = Number(pending?.ts || 0);
+          const startedNewAfterClick = Boolean(
+            pendingNewSessionBind && Number(pendingNewSessionBind.createdAt || 0) > pendingTs
+          );
+          if (pending && Date.now() - pendingTs < 20 * 60 * 1000 && !startedNewAfterClick) {
             return applyNotificationNav(pending);
           }
         }
         if (allowUnseenPush) {
+          if (inNewSessionFlow || (pinnedNavThreadId && Date.now() < pinnedNavUntil)) {
+            await cache.delete(LAST_PUSH_NAV_CACHE_URL).catch(() => {});
+            return false;
+          }
           const lastPushRes = await cache.match(LAST_PUSH_NAV_CACHE_URL);
           if (lastPushRes) {
             await cache.delete(LAST_PUSH_NAV_CACHE_URL);
@@ -8931,6 +9035,7 @@
       }
     } catch {}
 
+    if (inNewSessionFlow) return false;
     try {
       if (navigator.serviceWorker && navigator.serviceWorker.controller) {
         navigator.serviceWorker.controller.postMessage({
@@ -8974,10 +9079,14 @@
             if (document.hidden) {
               wasAppHiddenAt = Date.now();
             } else {
-              recentResumeUntil = Date.now() + 25000;
+              const hiddenDur = wasAppHiddenAt > 0 ? Date.now() - wasAppHiddenAt : 99999;
+              wasAppHiddenAt = 0;
+              if (hiddenDur >= 1500) {
+                recentResumeUntil = Date.now() + 25000;
+              }
               reg.update().catch(() => {});
               syncUnreadNotificationsWithSwCache();
-              consumePendingNotificationNav({ allowUnseenPush: true }).finally(() => {
+              consumePendingNotificationNav({ allowUnseenPush: hiddenDur >= 1500 }).finally(() => {
                 syncData({ force: true });
               });
             }
@@ -9014,8 +9123,13 @@
                     title: p.sessionTitle || p.title || ''
                   }
                 : null;
-            // If the app is backgrounded or not focused when the push arrives, pre-stage the session in the Workbench
-            if (navTarget && navTarget.threadId && (document.hidden || !document.hasFocus())) {
+            const inNewSessionFlow = Boolean(
+              isNewSessionMode() ||
+                String(prefs.selectedThreadId || '').startsWith('draft-new-') ||
+                pendingNewSessionBind
+            );
+            // If the app is backgrounded when the push arrives (and not in a new-session draft), pre-stage the session
+            if (navTarget && navTarget.threadId && document.hidden && !inNewSessionFlow) {
               setPinnedNav({
                 threadId: navTarget.threadId,
                 provider: navTarget.provider || '',
@@ -9063,17 +9177,22 @@
       }
     });
     window.addEventListener('focus', () => {
-      recentResumeUntil = Date.now() + 25000;
+      const hiddenDur = wasAppHiddenAt > 0 ? Date.now() - wasAppHiddenAt : 0;
+      if (hiddenDur >= 1500) {
+        recentResumeUntil = Date.now() + 25000;
+      }
       loadPersonalLedgerFromLocal();
       syncUnreadNotificationsWithSwCache();
-      consumePendingNotificationNav({ allowUnseenPush: true }).finally(() => {
+      consumePendingNotificationNav({ allowUnseenPush: hiddenDur >= 1500 }).finally(() => {
         renderAll();
         syncData({ force: true }).catch(() => {});
       });
     });
-    window.addEventListener('pageshow', () => {
-      recentResumeUntil = Date.now() + 25000;
-      consumePendingNotificationNav({ allowUnseenPush: true });
+    window.addEventListener('pageshow', (ev) => {
+      if (ev && ev.persisted) {
+        recentResumeUntil = Date.now() + 25000;
+        consumePendingNotificationNav({ allowUnseenPush: true });
+      }
     });
 
     restorePinnedNavFromSession();
