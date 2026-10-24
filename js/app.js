@@ -1656,6 +1656,15 @@
     const seenApprovalTags = new Set(
       uncheckedNotifs.map((x) => x.tag || x.id).filter(Boolean)
     );
+    // Deduplicate unchecked log items so multiple notifications for the same session only count as 1 badge unit
+    const uniqueUncheckedKeys = new Set();
+    for (const x of uncheckedNotifs) {
+      const k =
+        x.threadId && !String(x.tag || '').startsWith('theo-app-')
+          ? `session:${x.threadId}`
+          : String(x.tag || x.id || '');
+      if (k) uniqueUncheckedKeys.add(k);
+    }
     const checkedSet = loadCheckedNotifKeys();
     let liveExtra = 0;
     for (const a of appState?.approvals || []) {
@@ -1667,12 +1676,18 @@
     }
     for (const r of appState?.rows || []) {
       if (!r || !r.id || r.archived || !r.unread) continue;
-      const unreadKey = `theo-unread-${r.id}-${r.stepCount || r.at || 0}`;
-      if (!seenSessionIds.has(r.id) && !checkedSet.has(unreadKey) && !checkedSet.has(`session:${r.id}`)) {
+      const unreadKey = `theo-unread-${r.id}`;
+      const legacyUnreadKey = `theo-unread-${r.id}-${r.stepCount || r.at || 0}`;
+      if (
+        !seenSessionIds.has(r.id) &&
+        !checkedSet.has(unreadKey) &&
+        !checkedSet.has(legacyUnreadKey) &&
+        !checkedSet.has(`session:${r.id}`)
+      ) {
         liveExtra++;
       }
     }
-    return uncheckedNotifs.length + liveExtra;
+    return uniqueUncheckedKeys.size + liveExtra;
   }
 
   function updateAppBadgeCount(closeOsNotifications = false, checkedTags = []) {
@@ -1743,7 +1758,15 @@
       return null;
     }
     const existing = loadNotifLog();
-    const prev = existing.find((x) => x && (x.id === id || x.tag === tag));
+    const threadId = String(rawItem.threadId || rawItem.sessionId || '');
+    const isApproval = tag.startsWith('theo-app-');
+    const prev = existing.find(
+      (x) =>
+        x &&
+        (x.id === id ||
+          x.tag === tag ||
+          (threadId && !isApproval && x.threadId === threadId && !String(x.tag || '').startsWith('theo-app-')))
+    );
     const entry = {
       id,
       tag,
@@ -1758,7 +1781,14 @@
       ts: Number(rawItem.ts || prev?.ts || Date.now()),
       checked: opts.checked !== undefined ? Boolean(opts.checked) : false
     };
-    const filtered = existing.filter((x) => x && x.id !== id && x.tag !== tag);
+    const filtered = existing.filter((x) => {
+      if (!x) return false;
+      if (x.id === id || x.tag === tag) return false;
+      if (threadId && !isApproval && x.threadId === threadId && !String(x.tag || '').startsWith('theo-app-')) {
+        return false;
+      }
+      return true;
+    });
     const next = [entry, ...filtered].slice(0, 60);
     saveNotifLog(next);
     if (!opts.silent) {
@@ -1820,15 +1850,14 @@
       }
     }
 
-    // Seed unread sessions if not already represented or checked
+    // Seed unread sessions if not already represented or checked (1 entry per session)
     for (const r of rows) {
       if (!r || !r.id || r.archived || !r.unread) continue;
-      const tag = `theo-unread-${r.id}-${r.stepCount || r.at || 0}`;
-      if (checkedSet.has(tag)) continue;
-      const alreadyHasUncheckedForThread = next.some(
-        (x) => x && !x.checked && x.threadId === r.id
-      );
-      if (!alreadyHasUncheckedForThread && !next.some((x) => x && (x.id === tag || x.tag === tag))) {
+      const tag = `theo-unread-${r.id}`;
+      const legacyTag = `theo-unread-${r.id}-${r.stepCount || r.at || 0}`;
+      if (checkedSet.has(tag) || checkedSet.has(legacyTag) || checkedSet.has(`session:${r.id}`)) continue;
+      const alreadyHasForThread = next.some((x) => x && x.threadId === r.id);
+      if (!alreadyHasForThread && !next.some((x) => x && (x.id === tag || x.tag === tag))) {
         const lastTxt = String(r.lastAssistantText || '').trim();
         next.unshift({
           id: tag,
@@ -2540,22 +2569,33 @@
 
       const isDone =
         curStatus === 'completed' || curStatus === 'idle' || curStatus === 'done';
-      const transitionedFromWorking = prevStatus === 'working' && isDone;
+      const lastText = String(r.lastAssistantText || '').trim();
+      const isTurnTrulyComplete =
+        isDone && r.turnComplete !== false && Boolean(lastText);
+      const transitionedFromWorking = prevStatus === 'working' && isTurnTrulyComplete;
       const fastTurnCompleted =
         Boolean(prevStatus) &&
         prevStatus !== 'working' &&
-        isDone &&
+        isTurnTrulyComplete &&
         prevStep > 0 &&
         curStep > prevStep &&
         curAt > prevAt &&
-        Date.now() - curAt < 90000 &&
-        Boolean(r.lastAssistantText);
+        Date.now() - curAt < 90000;
 
       if ((transitionedFromWorking || fastTurnCompleted) && !newlyNotifiedSessions.has(r.id)) {
-        const lastText = String(r.lastAssistantText || '').trim();
         const endsWithQ = /\?\s*["')*\]]*\s*$/.test(lastText);
         const doneId = `done-${r.id}-${curStep || curAt || Date.now()}`;
         const tag = `theo-done-${r.id}`;
+        const existingLog = loadNotifLog();
+        const alreadyLoggedSameText = existingLog.some(
+          (x) =>
+            x &&
+            x.threadId === r.id &&
+            x.tag === tag &&
+            Date.now() - Number(x.ts || 0) < 120000 &&
+            String(x.body || '').trim() === lastText.slice(0, 160).trim()
+        );
+        if (alreadyLoggedSameText) continue;
         const navTarget = {
           id: doneId,
           tag,
@@ -9060,7 +9100,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js', { updateViaCache: 'none' })
+        .register('sw.js?v=39', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

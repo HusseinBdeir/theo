@@ -1,7 +1,7 @@
-/* THEO Remote PWA Service Worker, v38 (2026-10-23).
+/* THEO Remote PWA Service Worker, v39 (2026-10-24).
    App shell: network-first (cache: no-cache) for HTML/JS/CSS, cache-first for static assets.
-   Web Push: RFC 8291 aes128gcm push listener + W3C Badging API (navigator.setAppBadge) + durable Cache Storage & postMessage notificationclick handoff. */
-const CACHE_NAME = 'theo-remote-v38';
+   Web Push: RFC 8291 aes128gcm push listener + synchronous in-memory & serialized push deduplication + W3C Badging API (navigator.setAppBadge) + durable Cache Storage & postMessage notificationclick handoff. */
+const CACHE_NAME = 'theo-remote-v39';
 const NAV_CACHE = 'theo-nav-handoff-v1';
 const PENDING_NAV_URL = './__theo_pending_nav.json';
 const LAST_PUSH_NAV_URL = './__theo_last_push_nav.json';
@@ -10,12 +10,49 @@ const UNREAD_NOTIFS_URL = './__theo_unread_notifs.json';
 let pendingClickNav = null;
 let lastUnseenPushNav = null;
 
+// Synchronous in-memory deduplication & serialized promise queue so concurrent pushes arriving within milliseconds never stack twice
+const recentDeliveredByKey = new Map();
+const recentCanonicalTagByTitle = new Map();
+let pushHandlingChain = Promise.resolve();
+
+function checkAndMarkInMemoryNotif(tag, title) {
+  const now = Date.now();
+  const cleanTag = String(tag || '').trim();
+  const cleanTitle = String(title || '').trim();
+  for (const [k, ts] of recentDeliveredByKey.entries()) {
+    if (now - ts > 15 * 60 * 1000) recentDeliveredByKey.delete(k);
+  }
+  for (const [k, entry] of recentCanonicalTagByTitle.entries()) {
+    if (now - entry.ts > 2 * 60 * 1000) recentCanonicalTagByTitle.delete(k);
+  }
+  let isRepeat = false;
+  let canonicalTag = cleanTag;
+  if (cleanTag && recentDeliveredByKey.has(`tag:${cleanTag}`)) {
+    if (now - recentDeliveredByKey.get(`tag:${cleanTag}`) < 10 * 60 * 1000) {
+      isRepeat = true;
+    }
+  }
+  if (cleanTitle && recentCanonicalTagByTitle.has(cleanTitle)) {
+    const prev = recentCanonicalTagByTitle.get(cleanTitle);
+    if (now - prev.ts < 90 * 1000) {
+      isRepeat = true;
+      if (prev.tag) canonicalTag = prev.tag;
+    }
+  }
+  if (canonicalTag) recentDeliveredByKey.set(`tag:${canonicalTag}`, now);
+  if (cleanTag) recentDeliveredByKey.set(`tag:${cleanTag}`, now);
+  if (cleanTitle) {
+    recentCanonicalTagByTitle.set(cleanTitle, { tag: canonicalTag || cleanTag, ts: now });
+  }
+  return { isRepeat, canonicalTag: canonicalTag || cleanTag };
+}
+
 const APP_SHELL = [
   './',
   './index.html',
-  './css/theo.css?v=38',
-  './js/endpoints.js?v=38',
-  './js/app.js?v=38',
+  './css/theo.css?v=39',
+  './js/endpoints.js?v=39',
+  './js/app.js?v=39',
   './manifest.json',
   './icon.svg',
   './icon-180.png',
@@ -152,13 +189,15 @@ async function upsertSwUnreadNotif(d, nav) {
   const existing = await readUnreadNotifsFromCache();
   const tag = String(nav.tag || d.tag || `theo-${Date.now()}`);
   const id = String(d.id || nav.id || tag);
+  const threadId = String(nav.threadId || '');
+  const isApproval = tag.startsWith('theo-app-');
   const entry = {
     id,
     tag,
     title: String(d.title || 'THEO Workbench'),
     body: String(d.body || ''),
     tab: nav.tab || 'pulse',
-    threadId: nav.threadId || '',
+    threadId,
     provider: nav.provider || '',
     reminderId: nav.reminderId || '',
     sessionTitle: nav.sessionTitle || '',
@@ -166,10 +205,28 @@ async function upsertSwUnreadNotif(d, nav) {
     ts: Date.now(),
     checked: false
   };
-  const filtered = existing.filter((x) => x && x.id !== id && x.tag !== tag);
+  const filtered = existing.filter((x) => {
+    if (!x) return false;
+    if (x.id === id || x.tag === tag) return false;
+    // Coalesce multiple non-approval session notifications for the same threadId so a single session only occupies 1 unread slot
+    if (threadId && !isApproval && x.threadId === threadId && !String(x.tag || '').startsWith('theo-app-')) {
+      return false;
+    }
+    return true;
+  });
   const next = [entry, ...filtered].slice(0, 60);
   await writeUnreadNotifsToCache(next);
-  const unreadCount = next.filter((x) => x && !x.checked).length;
+  const seenBadgeKeys = new Set();
+  for (const x of next) {
+    if (x && !x.checked) {
+      seenBadgeKeys.add(
+        x.threadId && !String(x.tag || '').startsWith('theo-app-')
+          ? `session:${x.threadId}`
+          : String(x.tag || x.id)
+      );
+    }
+  }
+  const unreadCount = seenBadgeKeys.size;
   return { item: entry, unreadCount, items: next };
 }
 
@@ -288,43 +345,50 @@ self.addEventListener('push', (event) => {
     : d;
 
   const title = effectivePayload.title || 'THEO Workbench';
+  const memCheck = checkAndMarkInMemoryNotif(effectivePayload.tag, title);
+  if (memCheck.canonicalTag) {
+    effectivePayload.tag = memCheck.canonicalTag;
+  }
 
-  event.waitUntil(
-    (async () => {
-      const isRepeat = isPlannerDomainNotif || (await isTagRecentlyDelivered(effectivePayload.tag, title));
-      const opts = buildNotifOptions(effectivePayload, isRepeat);
-      const nav = opts.data;
-      const showPromise = self.registration.showNotification(title, opts);
-      if (!isPlannerDomainNotif) {
-        try {
-          const { item: unreadItem, unreadCount } = await upsertSwUnreadNotif(effectivePayload, nav);
-          const badgeCount =
-            Number.isFinite(Number(d.badgeCount)) && Number(d.badgeCount) > 0
-              ? Math.max(unreadCount, Number(d.badgeCount))
-              : Math.max(1, unreadCount);
-          await applySwAppBadge(badgeCount);
+  const runPushTask = async () => {
+    const isRepeat =
+      isPlannerDomainNotif ||
+      memCheck.isRepeat ||
+      (await isTagRecentlyDelivered(effectivePayload.tag, title));
+    const opts = buildNotifOptions(effectivePayload, isRepeat);
+    const nav = opts.data;
+    const showPromise = self.registration.showNotification(title, opts);
+    if (!isPlannerDomainNotif && !isRepeat) {
+      try {
+        const { item: unreadItem, unreadCount } = await upsertSwUnreadNotif(effectivePayload, nav);
+        const badgeCount =
+          Number.isFinite(Number(d.badgeCount)) && Number(d.badgeCount) > 0
+            ? Math.max(unreadCount, Number(d.badgeCount))
+            : Math.max(1, unreadCount);
+        await applySwAppBadge(badgeCount);
 
-          const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-          const theoClients = list.filter((c) => isTheoRemoteClientUrl(c.url));
-          if (nav.threadId || nav.reminderId || nav.tab !== 'pulse') {
-            lastUnseenPushNav = { ...nav, clicked: false, ts: Date.now() };
-            await writeNavCache(LAST_PUSH_NAV_URL, lastUnseenPushNav);
-          }
-          theoClients.forEach((c) => {
-            try {
-              c.postMessage({
-                type: 'theo-push',
-                payload: { ...d, ...nav },
-                item: unreadItem,
-                unreadCount: badgeCount
-              });
-            } catch {}
-          });
-        } catch {}
-      }
-      await showPromise;
-    })()
-  );
+        const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+        const theoClients = list.filter((c) => isTheoRemoteClientUrl(c.url));
+        if (nav.threadId || nav.reminderId || nav.tab !== 'pulse') {
+          lastUnseenPushNav = { ...nav, clicked: false, ts: Date.now() };
+          await writeNavCache(LAST_PUSH_NAV_URL, lastUnseenPushNav);
+        }
+        theoClients.forEach((c) => {
+          try {
+            c.postMessage({
+              type: 'theo-push',
+              payload: { ...d, ...nav },
+              item: unreadItem,
+              unreadCount: badgeCount
+            });
+          } catch {}
+        });
+      } catch {}
+    }
+    await showPromise;
+  };
+  pushHandlingChain = pushHandlingChain.then(runPushTask, runPushTask);
+  event.waitUntil(pushHandlingChain);
 });
 
 self.addEventListener('message', (event) => {
@@ -382,25 +446,30 @@ self.addEventListener('message', (event) => {
   }
   if (m.type === 'show-notification') {
     const d = m.payload || {};
-    event.waitUntil(
-      (async () => {
-        const isRepeat = await isTagRecentlyDelivered(d.tag, d.title);
-        const opts = buildNotifOptions(d, isRepeat);
-        const nav = opts.data;
-        if (nav.threadId || nav.reminderId || nav.tab !== 'pulse') {
-          lastUnseenPushNav = { ...nav, clicked: false, ts: Date.now() };
-        }
-        if (!m.skipUnread) {
-          const { unreadCount } = await upsertSwUnreadNotif(d, nav);
-          await applySwAppBadge(Math.max(1, unreadCount));
-        }
-        if (nav.threadId || nav.reminderId || nav.tab !== 'pulse') {
-          await writeNavCache(LAST_PUSH_NAV_URL, lastUnseenPushNav);
-        }
-        if (isRepeat) return;
-        await self.registration.showNotification(d.title || 'THEO Workbench', opts);
-      })()
-    );
+    const title = d.title || 'THEO Workbench';
+    const memCheck = checkAndMarkInMemoryNotif(d.tag, title);
+    if (memCheck.canonicalTag) {
+      d.tag = memCheck.canonicalTag;
+    }
+    const runMsgTask = async () => {
+      const isRepeat = memCheck.isRepeat || (await isTagRecentlyDelivered(d.tag, title));
+      const opts = buildNotifOptions(d, isRepeat);
+      const nav = opts.data;
+      if (nav.threadId || nav.reminderId || nav.tab !== 'pulse') {
+        lastUnseenPushNav = { ...nav, clicked: false, ts: Date.now() };
+      }
+      if (!m.skipUnread && !isRepeat) {
+        const { unreadCount } = await upsertSwUnreadNotif(d, nav);
+        await applySwAppBadge(Math.max(1, unreadCount));
+      }
+      if (nav.threadId || nav.reminderId || nav.tab !== 'pulse') {
+        await writeNavCache(LAST_PUSH_NAV_URL, lastUnseenPushNav);
+      }
+      if (isRepeat) return;
+      await self.registration.showNotification(title, opts);
+    };
+    pushHandlingChain = pushHandlingChain.then(runMsgTask, runMsgTask);
+    event.waitUntil(pushHandlingChain);
   }
 });
 
