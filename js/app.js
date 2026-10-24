@@ -4421,8 +4421,11 @@
     if (quotaGrid) {
       const agy = appState?.providers?.antigravity;
       const claude = appState?.providers?.claude;
+      const agyList = Array.isArray(agy?.accounts) && agy.accounts.length ? agy.accounts : [agy || {}];
+      const claudeList = Array.isArray(claude?.accounts) && claude.accounts.length ? claude.accounts : [claude || {}];
       quotaGrid.innerHTML =
-        renderQuotaCardHtml(agy, 'antigravity') + renderQuotaCardHtml(claude, 'claude');
+        agyList.map((a) => renderQuotaCardHtml(a, 'antigravity', agyList.length)).join('') +
+        claudeList.map((a) => renderQuotaCardHtml(a, 'claude', claudeList.length)).join('');
     }
 
     // Repo Quick Launchers
@@ -4457,16 +4460,24 @@
     }
   }
 
-  function renderQuotaCardHtml(provInfo, key) {
+  function renderQuotaCardHtml(provInfo, key, sameProvCount = 1) {
+    const acctId = provInfo?.id || `${key}:default`;
     const label = key === 'claude' ? 'Claude Code' : 'Google Antigravity';
     const plan = provInfo?.account?.plan || (key === 'claude' ? 'Claude Max' : 'Google AI Pro');
     const email = provInfo?.account?.email || '';
-    const isCollapsed = Boolean(prefs.collapsedQuotaCards && prefs.collapsedQuotaCards[key]);
+    const nick = String(provInfo?.nickname || provInfo?.account?.nickname || '').trim();
+    const isActive = provInfo?.active !== false;
+    const multi = sameProvCount > 1;
+    const collapseKey = multi ? acctId : key;
+    const isCollapsed = Boolean(
+      prefs.collapsedQuotaCards &&
+        (prefs.collapsedQuotaCards[collapseKey] ?? prefs.collapsedQuotaCards[acctId])
+    );
     let limits = provInfo?.usage?.limits?.length
       ? provInfo.usage.limits
       : provInfo?.usage?.allLimits || [];
 
-    if (!limits.length && key === 'claude') {
+    if (!limits.length && key === 'claude' && isActive) {
       const claudeSum = appState?.summaryByProvider?.claude || appState?.summary || {};
       const tok5h = Number(claudeSum.today?.tokens || 0);
       const tok7d = Number(claudeSum.week?.tokens || 0);
@@ -4517,21 +4528,40 @@
             `;
           })
           .join('')
-      : `<div class="meta-timestamp">${esc(provInfo?.usageMessage || 'Quota telemetry ready.')}</div>`;
+      : `<div class="meta-timestamp">${esc(provInfo?.usageMessage || (isActive ? 'Quota telemetry ready.' : 'Signed in · Standby'))}</div>`;
+
+    const shortEmail = email.includes('@') ? email.split('@')[0] : email;
+    const nickHtml = nick
+      ? `<span class="quota-nick-pill${key === 'claude' ? ' claude' : ''}">${esc(nick)}</span>`
+      : isCollapsed && multi && shortEmail
+        ? `<span class="quota-nick-pill${key === 'claude' ? ' claude' : ''}">${esc(shortEmail)}</span>`
+        : '';
+
+    const statusControlHtml = !isActive
+      ? `<button type="button" class="quota-switch-btn" data-account-switch="${esc(acctId)}" data-account-prov="${key}" title="Switch active ${esc(label)} account to ${esc(email || label)} (keeps other accounts signed in)">⇄ Use</button>`
+      : multi
+        ? `<span class="quota-active-pill" title="Currently active for new ${esc(label)} sessions"><span class="quota-active-dot"></span>Active</span>`
+        : '';
 
     return `
-      <div class="quota-card${isCollapsed ? ' collapsed' : ''}">
-        <button type="button" class="quota-card-head quota-card-toggle" data-quota-collapse="${key}" aria-expanded="${!isCollapsed}" title="${isCollapsed ? 'Show' : 'Hide'} ${esc(label)} usage">
-          <div class="quota-prov-title">
-            <svg class="quota-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg>
-            <span class="prov-glyph">${PROVIDER_ICONS[key]}</span>
-            <div>
-              <div>${esc(label)}</div>
-              ${!isCollapsed && email ? `<div class="meta-timestamp">${esc(email)}</div>` : ''}
+      <div class="quota-card${isCollapsed ? ' collapsed' : ''}${isActive ? ' is-active' : ' is-secondary'}${multi ? ' multi' : ''}">
+        <div class="quota-card-head">
+          <button type="button" class="quota-card-toggle" data-quota-collapse="${esc(collapseKey)}" aria-expanded="${!isCollapsed}" title="${isCollapsed ? 'Show' : 'Hide'} ${esc(email || label)} usage">
+            <div class="quota-prov-title">
+              <svg class="quota-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg>
+              <span class="prov-glyph">${PROVIDER_ICONS[key]}</span>
+              <div>
+                <div class="quota-title-line"><span>${esc(label)}</span>${nickHtml}</div>
+                ${!isCollapsed && email ? `<div class="meta-timestamp">${esc(email)}</div>` : ''}
+              </div>
             </div>
+          </button>
+          <div class="quota-head-actions">
+            ${statusControlHtml}
+            <span class="plan-pill">${esc(plan)}</span>
+            <button type="button" class="quota-nick-btn" data-account-label="${esc(acctId)}" data-account-prov="${key}" data-account-nick="${esc(nick)}" title="${nick ? 'Edit account label' : 'Set account label (e.g. Friend, Work)'}">✎</button>
           </div>
-          <span class="plan-pill">${esc(plan)}</span>
-        </button>
+        </div>
         ${isCollapsed ? '' : `<div class="quota-bars-stack">${barsHtml}</div>`}
       </div>
     `;
@@ -7823,6 +7853,90 @@
         return;
       }
 
+      const acctSwitchBtn = e.target.closest('[data-account-switch]');
+      if (acctSwitchBtn) {
+        e.stopPropagation();
+        const accountId = acctSwitchBtn.dataset.accountSwitch;
+        const provider = acctSwitchBtn.dataset.accountProv === 'claude' ? 'claude' : 'antigravity';
+        const provList = appState?.providers?.[provider]?.accounts;
+        if (Array.isArray(provList)) {
+          for (const item of provList) {
+            item.active = item.id === accountId;
+          }
+          persistCache();
+          renderPulseView();
+        }
+        await dispatchRemoteCommand({
+          type: 'sessionAction',
+          action: 'accountSwitch',
+          subAction: 'accountSwitch',
+          accountId,
+          provider
+        });
+        showToast(`⇄ Switched active ${provider === 'claude' ? 'Claude Code' : 'Antigravity'} account`);
+        return;
+      }
+
+      const acctLabelBtn = e.target.closest('[data-account-label]');
+      if (acctLabelBtn) {
+        e.stopPropagation();
+        const accountId = acctLabelBtn.dataset.accountLabel;
+        const provider = acctLabelBtn.dataset.accountProv === 'claude' ? 'claude' : 'antigravity';
+        const curNick = acctLabelBtn.dataset.accountNick || '';
+        const nextVal = prompt(
+          'Set friendly label / nickname for this account (e.g. Friend, Personal, Work — leave empty to clear):',
+          curNick
+        );
+        if (nextVal === null) return;
+        const cleanLabel = nextVal.trim();
+        const provList = appState?.providers?.[provider]?.accounts;
+        if (Array.isArray(provList)) {
+          const item = provList.find((x) => x.id === accountId);
+          if (item) {
+            item.nickname = cleanLabel;
+            if (item.account) item.account.nickname = cleanLabel;
+          }
+          persistCache();
+          renderPulseView();
+        }
+        await dispatchRemoteCommand({
+          type: 'sessionAction',
+          action: 'accountLabel',
+          subAction: 'accountLabel',
+          accountId,
+          provider,
+          label: cleanLabel,
+          prompt: false
+        });
+        showToast(cleanLabel ? `🏷️ Saved label "${cleanLabel}"` : 'Cleared account label');
+        return;
+      }
+
+      const addAcctRemoteBtn = e.target.closest('[data-account-add-remote]');
+      if (addAcctRemoteBtn) {
+        e.stopPropagation();
+        const rawChoice = prompt(
+          'Add another account on your desktop workstation (existing accounts stay signed in).\nEnter "antigravity" or "claude" (optionally add a label after a colon, e.g. "antigravity:Friend" or "claude:Work"):',
+          'antigravity:Friend'
+        );
+        if (!rawChoice || !rawChoice.trim()) return;
+        const [rawProv, ...rest] = rawChoice.trim().split(':');
+        const provider = rawProv.trim().toLowerCase().startsWith('c') ? 'claude' : 'antigravity';
+        const label = rest.join(':').trim();
+        await dispatchRemoteCommand({
+          type: 'sessionAction',
+          action: 'accountAdd',
+          subAction: 'accountAdd',
+          provider,
+          label,
+          switchOnComplete: true
+        });
+        showToast(
+          `🔐 Sign-in launched on desktop for ${provider === 'claude' ? 'Claude Code' : 'Antigravity'} — existing accounts remain logged in`
+        );
+        return;
+      }
+
       const quickNew = e.target.closest('[data-quick-new]');
       if (quickNew) {
         enterNewSessionMode(quickNew.dataset.quickNew, { repoPrefix: '' });
@@ -9129,7 +9243,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=39', { updateViaCache: 'none' })
+        .register('sw.js?v=41', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

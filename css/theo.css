@@ -804,16 +804,50 @@ html[data-theme="light"] .kpi-tile {
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   box-shadow: var(--shadow-sm);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.quota-card.is-active.multi {
+  border-color: rgba(16, 185, 129, 0.45);
+}
+
+.quota-card.is-secondary {
+  opacity: 0.95;
 }
 
 .quota-card.collapsed {
   padding: 13px 18px;
 }
 
+.quota-head-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.quota-add-btn {
+  padding: 5px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--bg-elevated);
+  color: var(--steel);
+  border: 1px solid var(--border-strong);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.quota-add-btn:hover {
+  border-color: var(--steel);
+  color: var(--text-primary);
+}
+
 .quota-card-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   margin-bottom: 14px;
 }
 
@@ -822,7 +856,8 @@ html[data-theme="light"] .kpi-tile {
 }
 
 .quota-card-toggle {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 0;
   background: none;
   border: none;
@@ -830,6 +865,94 @@ html[data-theme="light"] .kpi-tile {
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.quota-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.quota-title-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.quota-nick-pill {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(49, 134, 255, 0.14);
+  color: var(--agy);
+  border: 1px solid rgba(49, 134, 255, 0.32);
+}
+
+.quota-nick-pill.claude {
+  background: rgba(217, 119, 87, 0.14);
+  color: var(--claude);
+  border-color: rgba(217, 119, 87, 0.32);
+}
+
+.quota-active-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.14);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.quota-active-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.quota-switch-btn {
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.quota-switch-btn:hover {
+  background: var(--steel);
+  color: #fff;
+  border-color: var(--steel);
+}
+
+.quota-nick-btn {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid transparent;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.quota-nick-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border-subtle);
 }
 
 .quota-chevron {

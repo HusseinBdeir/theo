@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/theo.css?v=40">
+  <link rel="stylesheet" href="css/theo.css?v=41">
   <script id="pre">
     (() => {
       try {
@@ -226,7 +226,10 @@
                 <h2 class="section-title">Live Quota &amp; Rate-Limit Windows</h2>
                 <div class="brass-rule-single"></div>
               </div>
-              <span class="meta-timestamp tabular" id="quota-updated-at">Updated just now</span>
+              <div class="quota-head-meta">
+                <span class="meta-timestamp tabular" id="quota-updated-at">Updated just now</span>
+                <button type="button" class="quota-add-btn" data-account-add-remote="1" title="Sign in an additional Antigravity or Claude Code account while keeping existing accounts logged in">+ Add Account</button>
+              </div>
             </div>
             <div class="quota-dual-grid" id="pulse-quota-grid"></div>
           </div>
@@ -543,7 +546,7 @@
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=40"></script>
-  <script src="js/app.js?v=40"></script>
+  <script src="js/endpoints.js?v=41"></script>
+  <script src="js/app.js?v=41"></script>
 </body>
 </html>
