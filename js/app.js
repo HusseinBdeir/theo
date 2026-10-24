@@ -3022,9 +3022,9 @@
       const cached = threadsCache[threadId];
       const hasMessages = Array.isArray(cached?.messages) && cached.messages.length > 0;
       const lastReq = pendingThreadRequests.get(threadId) || 0;
-      if (Date.now() - lastReq > 15000) {
+      if (!hasMessages && Date.now() - lastReq > 30000) {
         pendingThreadRequests.set(threadId, Date.now());
-        if (!hasMessages && prefs.activeTab === 'chat' && prefs.selectedThreadId === threadId) {
+        if (prefs.activeTab === 'chat' && prefs.selectedThreadId === threadId) {
           renderChatView();
         }
         dispatchRemoteCommand({
@@ -8928,7 +8928,36 @@
     if (res.mode === 'cloud') {
       setTimeout(() => syncData(), 1800);
       setTimeout(() => syncData(), 4000);
-      setTimeout(() => syncData(), 8000);
+      setTimeout(() => syncData(), 7500);
+      setTimeout(() => syncData(), 12000);
+      if (res.id) {
+        setTimeout(() => {
+          const q = lastCloudQueue || {};
+          const hasResult = Boolean(q.results && q.results[res.id]);
+          const inQueue =
+            Array.isArray(q.commands) && q.commands.some((c) => c && c.id === res.id);
+          const stillUnbound =
+            !isNew || (pendingNewSessionBind && pendingNewSessionBind.cmdId === res.id);
+          if (!hasResult && !inQueue && stillUnbound) {
+            dispatchRemoteCommand({
+              type: 'send',
+              id: res.id,
+              threadId: targetId,
+              provider,
+              prompt: text,
+              group: targetGroupId || undefined,
+              attachments: fileRefs.map((f) => ({
+                name: f.name,
+                mime: f.mime,
+                size: f.size,
+                dataUrl: f.dataUrl || '',
+                textContent: f.textContent || ''
+              })),
+              newSession: isNew
+            }).catch(() => {});
+          }
+        }, 4500);
+      }
     }
 
     showToast(
