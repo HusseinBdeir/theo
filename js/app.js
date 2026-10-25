@@ -4634,6 +4634,11 @@
           <button type="button" class="sess-act-btn" data-sess-act="group" data-id="${esc(r.id || '')}" title="Assign or move session to a group">
             📁 ${esc(grpObj ? grpObj.name : 'Group')}
           </button>
+          ${
+            grpObj && !r.archived
+              ? `<button type="button" class="sess-act-btn" data-sess-act="group-remove" data-id="${esc(r.id || '')}" title="Remove from ${esc(grpObj.name)}">✕</button>`
+              : ''
+          }
           <button type="button" class="sess-act-btn" data-sess-act="unread" data-id="${esc(r.id || '')}" data-val="${!r.unread}" title="Toggle unread">
             ${r.unread ? '● Unread' : '○ Read'}
           </button>
@@ -8123,6 +8128,23 @@
           return;
         }
         const targetRow = (appState?.rows || []).find((r) => r.id === id);
+        if (action === 'group-remove' && targetRow) {
+          const prevGrp = targetRow.group || '';
+          targetRow.group = '';
+          noteRowOverride(id, { group: '' });
+          persistCache();
+          renderAll();
+          await dispatchRemoteCommand({
+            type: 'sessionAction',
+            action: 'groupRemove',
+            subAction: 'groupRemove',
+            id,
+            ids: [id],
+            group: prevGrp
+          });
+          showToast('Removed session from group');
+          return;
+        }
         if (action === 'group' && targetRow) {
           const groups = Array.isArray(appState?.groups) ? appState.groups : [];
           const curGrp = groups.find((g) => g.id === targetRow.group);
@@ -8198,8 +8220,13 @@
         if (targetRow) {
           if (action === 'archive') {
             targetRow.archived = val;
-            noteRowOverride(id, { archived: val });
-            if (val) markNotificationsCheckedForSession(id);
+            if (val) {
+              targetRow.group = '';
+              noteRowOverride(id, { archived: true, group: '' });
+              markNotificationsCheckedForSession(id);
+            } else {
+              noteRowOverride(id, { archived: false });
+            }
           }
           if (action === 'unread') {
             targetRow.unread = val;
