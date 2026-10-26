@@ -4959,18 +4959,11 @@ html[data-theme="light"] .disc-bar-midline {
 }
 
 .bg-pill-dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--emerald);
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.22);
-  animation: bgTaskPulse 1.6s ease-in-out infinite;
   flex-shrink: 0;
-}
-
-@keyframes bgTaskPulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.45; transform: scale(0.84); }
 }
 
 .bg-popover-head-btns {

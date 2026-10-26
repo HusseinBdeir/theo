@@ -4767,7 +4767,7 @@
         return `
           <div class="pulse-bgtask-card">
             <div class="pulse-bgtask-top">
-              <span class="pulse-bgtask-sess" data-open-bgtasks="${esc(row.id)}" data-session-prov="${provKey}" data-focus-task="${esc(task.id)}" title="Open in Chat Workbench">
+              <span class="pulse-bgtask-sess" data-open-bgtasks="${esc(row.id)}" data-session-prov="${provKey}" data-focus-task="${esc(task.id)}">
                 <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
                 <span class="pulse-bgtask-sess-title">${esc(row.title || 'Session')}</span>
               </span>
@@ -4777,7 +4777,7 @@
               </span>
             </div>
             <div class="pulse-bgtask-summary">${esc(expl)}</div>
-            ${task.command ? `<div class="pulse-bgtask-cmd mono" title="${esc(task.command)}">${esc(task.command)}</div>` : ''}
+            ${task.command ? `<div class="pulse-bgtask-cmd mono">${esc(task.command)}</div>` : ''}
             <div class="pulse-bgtask-foot">
               <span class="meta-timestamp tabular">${esc(task.id)} · ${esc(timeStr)}</span>
               <div class="pulse-bgtask-btns">
@@ -4904,7 +4904,7 @@
                 <span class="bg-kind-badge ${stInfo.cls}">${esc(stInfo.label)}</span>
                 ${
                   t.state === 'running'
-                    ? `<button type="button" class="bg-stop-task-btn" data-bg-act="stop-task" data-sess-id="${esc(sid)}" data-task-id="${esc(t.fullId || t.id)}" data-prov="${provKey}" title="Stop this background task">■ Stop</button>`
+                    ? `<button type="button" class="bg-stop-task-btn" data-bg-act="stop-task" data-sess-id="${esc(sid)}" data-task-id="${esc(t.fullId || t.id)}" data-prov="${provKey}" aria-label="Stop this background task">■ Stop</button>`
                     : ''
                 }
               </span>
@@ -5262,20 +5262,11 @@
           : r.unread
             ? 'unread'
             : '';
-    const { allTasks: sessBgTasks, runningCount: sessBgRunning, totalCount: sessBgTotal } =
+    const { runningTasks: sessBgRunningTasks, runningCount: sessBgRunning } =
       getSessionBackgroundTasks(r, td);
     const bgPillHtml =
-      sessBgTotal > 0 || sessBgTasks.length > 0
-        ? `<button type="button" class="sess-bgtask-pill tabular ${sessBgRunning > 0 ? 'is-running' : ''}" data-open-bgtasks="${esc(r.id || '')}" data-session-prov="${provKey}" title="${esc(
-            sessBgTasks
-              .slice(0, 3)
-              .map((t) => `${t.summary || t.id} (${t.state})`)
-              .join(' · ') || 'Inspect Background Tasks'
-          )}">${getBgKindSvg(sessBgTasks[0]?.kind || 'task')}<span class="sess-bgtask-pill-txt">${
-            sessBgRunning > 0
-              ? `${sessBgRunning} live${sessBgTasks[0]?.summary ? ` · ${esc(sessBgTasks[0].summary)}` : ''}`
-              : `${sessBgTasks.length || sessBgTotal} ${(sessBgTasks.length || sessBgTotal) === 1 ? 'task' : 'tasks'}`
-          }</span></button>`
+      sessBgRunning > 0
+        ? `<button type="button" class="sess-bgtask-pill tabular is-running" data-open-bgtasks="${esc(r.id || '')}" data-session-prov="${provKey}" aria-label="Inspect running background tasks">${getBgKindSvg(sessBgRunningTasks[0]?.kind || 'task')}<span class="sess-bgtask-pill-txt">${sessBgRunning} live${sessBgRunningTasks[0]?.summary ? ` · ${esc(sessBgRunningTasks[0].summary)}` : ''}</span></button>`
         : '';
     return `
       <div class="session-card ${statusCls}" data-session-id="${esc(r.id || '')}" data-session-prov="${provKey}">
