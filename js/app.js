@@ -4557,6 +4557,382 @@
     `;
   }
 
+  // Background Tasks & Subagents Telemetry + Control (Antigravity + Claude Code)
+  const bgTaskLogsCache = new Map();
+  const openBgTaskDetails = new Set();
+  const locallyCancelledBgTasks = new Map();
+
+  function getBgKindSvg(kind) {
+    if (kind === 'subagent') {
+      return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="4.5" r="2"/><circle cx="11.5" cy="11.5" r="2"/><path d="M5 6.5v2a2 2 0 0 0 2 2h2.5"/></svg>';
+    }
+    if (kind === 'timer') {
+      return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8.5" r="5.5"/><path d="M8 5.5v3.2l2.1 1.3M6.2 1.8h3.6"/></svg>';
+    }
+    return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M4.5 6.2l2.3 1.8-2.3 1.8M8.4 9.8h3"/></svg>';
+  }
+
+  function getBgKindLabel(kind) {
+    if (kind === 'subagent') return 'Subagent';
+    if (kind === 'timer') return 'Timer';
+    return 'Task';
+  }
+
+  function getBgStateBadgeInfo(state) {
+    const s = String(state || 'completed').toLowerCase();
+    if (s === 'running') return { label: 'Running', cls: 'is-running' };
+    if (s === 'stalled') return { label: 'Stalled', cls: 'is-stalled' };
+    if (s === 'interrupted') return { label: 'Interrupted', cls: 'is-interrupted' };
+    if (s === 'failed') return { label: 'Failed', cls: 'is-failed' };
+    if (s === 'cancelled') return { label: 'Stopped', cls: '' };
+    return { label: 'Done', cls: '' };
+  }
+
+  function getSessionBackgroundTasks(row, threadDetail) {
+    const sid = String(row?.id || threadDetail?.id || '').trim();
+    const now = Date.now();
+    for (const [k, ts] of locallyCancelledBgTasks.entries()) {
+      if (now - ts > 90000) locallyCancelledBgTasks.delete(k);
+    }
+    const rawDetail = Array.isArray(threadDetail?.backgroundTasks)
+      ? threadDetail.backgroundTasks
+      : [];
+    const rawRow = Array.isArray(row?.bgTasks) ? row.bgTasks : [];
+    const byId = new Map();
+    for (const item of rawRow) {
+      if (!item || !item.id) continue;
+      byId.set(String(item.id), { ...item });
+    }
+    for (const item of rawDetail) {
+      if (!item || !item.id) continue;
+      const prev = byId.get(String(item.id)) || {};
+      byId.set(String(item.id), { ...prev, ...item });
+    }
+    const allTasks = Array.from(byId.values()).map((t) => {
+      const cancelKey = `${sid}:${t.id}`;
+      const cancelFullKey = t.fullId ? `${sid}:${t.fullId}` : '';
+      const isLocCancelled =
+        locallyCancelledBgTasks.has(cancelKey) ||
+        (cancelFullKey && locallyCancelledBgTasks.has(cancelFullKey));
+      return isLocCancelled && t.state === 'running'
+        ? { ...t, state: 'cancelled', completedAt: now }
+        : t;
+    });
+    allTasks.sort((a, b) => {
+      const aRun = a.state === 'running' ? 1 : 0;
+      const bRun = b.state === 'running' ? 1 : 0;
+      if (aRun !== bRun) return bRun - aRun;
+      return Number(b.startedAt || 0) - Number(a.startedAt || 0);
+    });
+    const runningTasks = allTasks.filter((t) => t.state === 'running');
+    const totalCount = Math.max(allTasks.length, Number(row?.bgTotalCount || 0));
+    const runningCount = runningTasks.length;
+    return { allTasks, runningTasks, totalCount, runningCount };
+  }
+
+  async function fetchBgTaskLiveLog(sessionId, taskId, provider = '') {
+    if (!sessionId || !taskId) return '';
+    const cacheKey = `${sessionId}:${taskId}`;
+    if (connMode === 'local' && localBridgeBase) {
+      try {
+        const q = `id=${encodeURIComponent(sessionId)}&taskId=${encodeURIComponent(taskId)}&provider=${encodeURIComponent(provider)}`;
+        const res = await fetch(`${localBridgeBase}/api/bg-task-log?${q}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (typeof data?.output === 'string' && data.output.trim()) {
+            bgTaskLogsCache.set(cacheKey, data.output);
+            const preEl = document.querySelector(`[data-bg-log-key="${CSS.escape(cacheKey)}"]`);
+            if (preEl) {
+              preEl.textContent = data.output;
+            }
+            return data.output;
+          }
+        }
+      } catch {}
+    }
+    return bgTaskLogsCache.get(cacheKey) || '';
+  }
+
+  async function cancelSingleBgTask(sessionId, taskId, provider = '') {
+    if (!sessionId || !taskId) return;
+    const now = Date.now();
+    locallyCancelledBgTasks.set(`${sessionId}:${taskId}`, now);
+    const shortId = String(taskId).split('/').pop();
+    if (shortId) locallyCancelledBgTasks.set(`${sessionId}:${shortId}`, now);
+    const row = (appState?.rows || []).find((r) => r.id === sessionId);
+    if (row && Array.isArray(row.bgTasks)) {
+      for (const t of row.bgTasks) {
+        if (t && (t.id === taskId || t.fullId === taskId || t.id === shortId)) {
+          t.state = 'cancelled';
+        }
+      }
+      row.bgRunningCount = row.bgTasks.filter((t) => t && t.state === 'running').length;
+    }
+    const td = threadsCache[sessionId];
+    if (td && Array.isArray(td.backgroundTasks)) {
+      for (const t of td.backgroundTasks) {
+        if (t && (t.id === taskId || t.fullId === taskId || t.id === shortId)) {
+          t.state = 'cancelled';
+        }
+      }
+    }
+    persistCache();
+    renderAll();
+    await dispatchRemoteCommand({
+      type: 'sessionAction',
+      action: 'cancelBgTask',
+      subAction: 'cancelBgTask',
+      id: sessionId,
+      sessionId,
+      taskId,
+      provider: provider || row?.provider || 'antigravity'
+    });
+    showToast(`Stopped background task ${shortId || taskId}`);
+  }
+
+  async function cancelAllSessionBgTasks(sessionId, provider = '') {
+    if (!sessionId) return;
+    const now = Date.now();
+    const row = (appState?.rows || []).find((r) => r.id === sessionId);
+    const td = threadsCache[sessionId];
+    for (const list of [row?.bgTasks, td?.backgroundTasks]) {
+      if (!Array.isArray(list)) continue;
+      for (const t of list) {
+        if (t && t.state === 'running') {
+          t.state = 'cancelled';
+          locallyCancelledBgTasks.set(`${sessionId}:${t.id}`, now);
+          if (t.fullId) locallyCancelledBgTasks.set(`${sessionId}:${t.fullId}`, now);
+        }
+      }
+    }
+    if (row) row.bgRunningCount = 0;
+    persistCache();
+    renderAll();
+    await dispatchRemoteCommand({
+      type: 'sessionAction',
+      action: 'cancelAllBgTasks',
+      subAction: 'cancelAllBgTasks',
+      id: sessionId,
+      sessionId,
+      provider: provider || row?.provider || 'antigravity'
+    });
+    showToast('Stopped all running background tasks');
+  }
+
+  function renderPulseBgTasksSection() {
+    const secEl = $('pulse-bgtasks-section');
+    const pillEl = $('pulse-bgtasks-count-pill');
+    const stopAllBtn = $('btn-pulse-stop-all-bg');
+    const listEl = $('pulse-bgtasks-list');
+    if (!secEl || !listEl) return;
+
+    const rows = (appState?.rows || []).filter((r) => r && r.id && !r.archived);
+    const activeEntries = [];
+    for (const r of rows) {
+      const { allTasks } = getSessionBackgroundTasks(r, threadsCache[r.id]);
+      for (const t of allTasks) {
+        if (t.state === 'running' || t.state === 'stalled' || t.state === 'interrupted') {
+          activeEntries.push({ row: r, task: t });
+        }
+      }
+    }
+
+    if (activeEntries.length === 0) {
+      secEl.hidden = true;
+      listEl.innerHTML = '';
+      if (stopAllBtn) stopAllBtn.hidden = true;
+      return;
+    }
+
+    secEl.hidden = false;
+    const runningOnlyCount = activeEntries.filter((e) => e.task.state === 'running').length;
+    if (pillEl) {
+      pillEl.textContent =
+        runningOnlyCount > 0
+          ? `${runningOnlyCount} Running`
+          : `${activeEntries.length} Attention`;
+      pillEl.className = `pill-count tabular ${runningOnlyCount > 0 ? 'emerald' : 'crimson'}`;
+    }
+    if (stopAllBtn) {
+      stopAllBtn.hidden = runningOnlyCount < 2;
+    }
+
+    listEl.innerHTML = activeEntries
+      .slice(0, 10)
+      .map(({ row, task }) => {
+        const provKey = row.provider === 'claude' ? 'claude' : 'antigravity';
+        const stInfo = getBgStateBadgeInfo(task.state);
+        const expl = task.summary || task.command || task.id || 'Background task';
+        const timeStr = task.startedAt ? timeAgo(task.startedAt) : 'Active';
+        return `
+          <div class="pulse-bgtask-card">
+            <div class="pulse-bgtask-top">
+              <span class="pulse-bgtask-sess" data-open-bgtasks="${esc(row.id)}" data-session-prov="${provKey}" data-focus-task="${esc(task.id)}" title="Open in Chat Workbench">
+                <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
+                <span class="pulse-bgtask-sess-title">${esc(row.title || 'Session')}</span>
+              </span>
+              <span class="bg-kind-badge ${stInfo.cls}">
+                ${getBgKindSvg(task.kind)}
+                <span>${esc(getBgKindLabel(task.kind))} · ${esc(stInfo.label)}</span>
+              </span>
+            </div>
+            <div class="pulse-bgtask-summary">${esc(expl)}</div>
+            ${task.command ? `<div class="pulse-bgtask-cmd mono" title="${esc(task.command)}">${esc(task.command)}</div>` : ''}
+            <div class="pulse-bgtask-foot">
+              <span class="meta-timestamp tabular">${esc(task.id)} · ${esc(timeStr)}</span>
+              <div class="pulse-bgtask-btns">
+                <button type="button" class="btn-ghost-sm" data-open-bgtasks="${esc(row.id)}" data-session-prov="${provKey}" data-focus-task="${esc(task.id)}">Inspect Log</button>
+                ${
+                  task.state === 'running'
+                    ? `<button type="button" class="btn-ghost-sm bg-stop-task-btn" data-bg-act="stop-task" data-sess-id="${esc(row.id)}" data-task-id="${esc(task.fullId || task.id)}" data-prov="${provKey}">■ Stop</button>`
+                    : ''
+                }
+              </div>
+            </div>
+          </div>
+        `;
+      })
+      .join('');
+  }
+
+  function renderChatBgTasks(activeRow, threadDetail, provKey, isNewDraft) {
+    const pillBtn = $('btn-bg-tasks');
+    const pillDot = $('bg-pill-dot');
+    const pillLbl = $('bg-tasks-pill-label');
+    const popEl = $('bg-tasks-popover');
+    const popTitle = $('bg-popover-title');
+    const popStopAll = $('btn-stop-all-bgtasks');
+    const popList = $('bg-tasks-popover-list');
+    const liveStrip = $('chat-live-bgtasks');
+
+    if (isNewDraft || !activeRow?.id || activeRow.id === '__new__') {
+      if (pillBtn) pillBtn.hidden = true;
+      if (popEl) popEl.hidden = true;
+      if (liveStrip) liveStrip.hidden = true;
+      return;
+    }
+
+    const sid = activeRow.id;
+    const { allTasks, runningTasks, totalCount, runningCount } = getSessionBackgroundTasks(
+      activeRow,
+      threadDetail
+    );
+
+    if (pillBtn) {
+      if (totalCount === 0 && allTasks.length === 0) {
+        pillBtn.hidden = true;
+        if (popEl) popEl.hidden = true;
+      } else {
+        pillBtn.hidden = false;
+        pillBtn.classList.toggle('has-running', runningCount > 0);
+        pillBtn.classList.toggle('active', Boolean(popEl && !popEl.hidden));
+        pillBtn.setAttribute('aria-expanded', String(Boolean(popEl && !popEl.hidden)));
+        if (pillDot) pillDot.hidden = runningCount === 0;
+        if (pillLbl) {
+          pillLbl.textContent =
+            runningCount > 0
+              ? `${runningCount} Live`
+              : `${allTasks.length || totalCount}`;
+        }
+      }
+    }
+
+    if (liveStrip) {
+      if (runningCount === 0) {
+        liveStrip.hidden = true;
+        liveStrip.innerHTML = '';
+      } else {
+        const primary = runningTasks[0];
+        const expl = primary?.summary || primary?.command || 'Background task running';
+        const extra = runningCount > 1 ? ` (+${runningCount - 1} more)` : '';
+        liveStrip.hidden = false;
+        liveStrip.innerHTML = `
+          <span class="bg-pill-dot"></span>
+          <span class="chat-live-bg-text">${esc(expl)}${esc(extra)}</span>
+          <div class="chat-live-bg-btns">
+            <button type="button" class="btn-ghost-sm" data-bg-act="open-popover">Inspect (${runningCount})</button>
+            <button type="button" class="bg-stop-task-btn" data-bg-act="${runningCount > 1 ? 'stop-session-all' : 'stop-task'}" data-sess-id="${esc(sid)}" data-task-id="${esc(primary?.fullId || primary?.id || '')}" data-prov="${provKey}">■ Stop${runningCount > 1 ? ' All' : ''}</button>
+          </div>
+        `;
+      }
+    }
+
+    if (!popEl || !popList) return;
+    if (popTitle) {
+      popTitle.textContent =
+        runningCount > 0
+          ? `Background Tasks (${runningCount} running · ${allTasks.length} total)`
+          : `Background Tasks (${allTasks.length})`;
+    }
+    if (popStopAll) {
+      popStopAll.hidden = runningCount === 0;
+    }
+
+    const prevScroll = popList.scrollTop;
+    if (allTasks.length === 0) {
+      popList.innerHTML = `<div class="meta-timestamp" style="padding:8px 4px">No background tasks or subagents recorded in this session.</div>`;
+      return;
+    }
+
+    popList.innerHTML = allTasks
+      .map((t) => {
+        const cacheKey = `${sid}:${t.id}`;
+        const isOpen = openBgTaskDetails.has(cacheKey);
+        const stInfo = getBgStateBadgeInfo(t.state);
+        const expl = t.summary || t.command || t.id || 'Background task';
+        const liveOut =
+          bgTaskLogsCache.get(cacheKey) ||
+          t.outputPreview ||
+          (t.state === 'running'
+            ? 'Task is running — expand or tap Refresh Log to tail output.'
+            : 'No console log output captured for this task.');
+        const timeStr = t.startedAt ? timeAgo(t.startedAt) : '';
+        return `
+          <details class="bg-task-item ${t.state === 'running' ? 'is-running' : ''}" data-bg-detail-key="${esc(cacheKey)}" data-sess-id="${esc(sid)}" data-task-id="${esc(t.id)}" data-prov="${provKey}" ${isOpen ? 'open' : ''}>
+            <summary class="bg-task-summary">
+              <span class="bg-task-ico">${getBgKindSvg(t.kind)}</span>
+              <span class="bg-task-main">
+                <span class="bg-task-expl">${esc(expl)}</span>
+                <span class="bg-task-meta tabular">
+                  <span>${esc(getBgKindLabel(t.kind))}</span>
+                  <span>·</span>
+                  <span>${esc(t.id)}</span>
+                  ${timeStr ? `<span>· ${esc(timeStr)}</span>` : ''}
+                </span>
+              </span>
+              <span class="bg-task-right">
+                <span class="bg-kind-badge ${stInfo.cls}">${esc(stInfo.label)}</span>
+                ${
+                  t.state === 'running'
+                    ? `<button type="button" class="bg-stop-task-btn" data-bg-act="stop-task" data-sess-id="${esc(sid)}" data-task-id="${esc(t.fullId || t.id)}" data-prov="${provKey}" title="Stop this background task">■ Stop</button>`
+                    : ''
+                }
+              </span>
+            </summary>
+            <div class="bg-task-detail-body">
+              ${
+                t.command
+                  ? `
+                <div class="bg-detail-label-row">
+                  <span>${t.kind === 'subagent' ? 'Subagent Prompt' : t.kind === 'timer' ? 'Timer Wakeup Prompt' : 'Command Line'}</span>
+                </div>
+                <pre class="bg-detail-pre mono">${esc(t.command)}</pre>
+              `
+                  : ''
+              }
+              <div class="bg-detail-label-row">
+                <span>Live Output / Trace</span>
+                <button type="button" class="btn-ghost-sm" style="padding:2px 8px;font-size:10.5px" data-bg-act="refresh-log" data-sess-id="${esc(sid)}" data-task-id="${esc(t.id)}" data-prov="${provKey}">↻ Refresh Log</button>
+              </div>
+              <pre class="bg-detail-pre mono" data-bg-log-key="${esc(cacheKey)}">${esc(liveOut)}</pre>
+            </div>
+          </details>
+        `;
+      })
+      .join('');
+    popList.scrollTop = prevScroll;
+  }
+
   // VIEW 1: Render Pulse
   function renderPulseView() {
     const bannerEl = $('pulse-notif-banner');
@@ -4691,6 +5067,8 @@
         }
       }
     }
+
+    renderPulseBgTasksSection();
 
     // Quota Cards
     const quotaGrid = $('pulse-quota-grid');
@@ -4884,6 +5262,21 @@
           : r.unread
             ? 'unread'
             : '';
+    const { allTasks: sessBgTasks, runningCount: sessBgRunning, totalCount: sessBgTotal } =
+      getSessionBackgroundTasks(r, td);
+    const bgPillHtml =
+      sessBgTotal > 0 || sessBgTasks.length > 0
+        ? `<button type="button" class="sess-bgtask-pill tabular ${sessBgRunning > 0 ? 'is-running' : ''}" data-open-bgtasks="${esc(r.id || '')}" data-session-prov="${provKey}" title="${esc(
+            sessBgTasks
+              .slice(0, 3)
+              .map((t) => `${t.summary || t.id} (${t.state})`)
+              .join(' · ') || 'Inspect Background Tasks'
+          )}">${getBgKindSvg(sessBgTasks[0]?.kind || 'task')}<span class="sess-bgtask-pill-txt">${
+            sessBgRunning > 0
+              ? `${sessBgRunning} live${sessBgTasks[0]?.summary ? ` · ${esc(sessBgTasks[0].summary)}` : ''}`
+              : `${sessBgTasks.length || sessBgTotal} ${(sessBgTasks.length || sessBgTotal) === 1 ? 'task' : 'tasks'}`
+          }</span></button>`
+        : '';
     return `
       <div class="session-card ${statusCls}" data-session-id="${esc(r.id || '')}" data-session-prov="${provKey}">
         <div class="sess-left">
@@ -4902,6 +5295,7 @@
                   ? `<span class="tag-pill tabular" title="Context window usage">${fmtCompact(safeUsed)} / ${fmtCompact(limTok)} · ${ctxPct}%</span>`
                   : ''
               }
+              ${bgPillHtml}
               <span>· ${timeAgo(r.at)}</span>
               ${r.open ? `<span class="tag-pill" style="color:var(--brass)">Open Tab</span>` : ''}
             </div>
@@ -5421,6 +5815,7 @@
     }
 
     renderContextPopover(ctx);
+    renderChatBgTasks(activeRow, threadDetail, provKey, isNewDraft);
 
     // Conversation Stream
     const streamEl = $('chat-stream');
@@ -7569,6 +7964,7 @@
       { title: '+ New Claude Code Session', sub: 'Action', act: 'new-claude' },
       { title: 'Sync with VS Code & Cloud Relay Now', sub: 'Connectivity', act: 'sync' },
       { title: 'Enable / Test Web Push Notifications', sub: 'Notifications', act: 'push-test' },
+      { title: 'Inspect Background Tasks & Subagents', sub: 'Workbench Overview', act: 'bgtasks' },
       { title: 'Run /compact on Active Session', sub: 'Context Window', act: 'compact' },
       { title: 'Switch Obsidian Dark / Warm Paper Light Theme', sub: 'Appearance', act: 'theme' }
     ];
@@ -8286,6 +8682,78 @@
         return;
       }
 
+      const openBgBtn = e.target.closest('[data-open-bgtasks]');
+      if (openBgBtn && openBgBtn.dataset.openBgtasks) {
+        e.stopPropagation();
+        const targetSid = openBgBtn.dataset.openBgtasks;
+        const targetProv = openBgBtn.dataset.sessionProv || '';
+        const focusTask = openBgBtn.dataset.focusTask || '';
+        recentResumeUntil = 0;
+        setPinnedNav({ threadId: targetSid, provider: targetProv, durationMs: 45000 });
+        prefs.selectedThreadId = targetSid;
+        prefs.composerMode = 'reply';
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        if (focusTask) {
+          openBgTaskDetails.add(`${targetSid}:${focusTask}`);
+        }
+        markNotificationsCheckedForSession(targetSid);
+        switchTab('chat');
+        const ctxPop = $('ctx-popover');
+        if (ctxPop) ctxPop.hidden = true;
+        const bgPop = $('bg-tasks-popover');
+        if (bgPop) bgPop.hidden = false;
+        renderChatView(true);
+        fetchThreadDetail(targetSid, targetProv).then(() => {
+          if (focusTask) {
+            fetchBgTaskLiveLog(targetSid, focusTask, targetProv);
+          }
+        });
+        return;
+      }
+
+      const bgActBtn = e.target.closest('[data-bg-act]');
+      if (bgActBtn) {
+        e.stopPropagation();
+        const act = bgActBtn.dataset.bgAct;
+        const sid = bgActBtn.dataset.sessId || prefs.selectedThreadId || '';
+        const tid = bgActBtn.dataset.taskId || '';
+        const prov = bgActBtn.dataset.prov || '';
+        if (act === 'open-popover') {
+          const ctxPop = $('ctx-popover');
+          if (ctxPop) ctxPop.hidden = true;
+          const bgPop = $('bg-tasks-popover');
+          if (bgPop) bgPop.hidden = false;
+          renderChatView();
+          return;
+        }
+        if (act === 'refresh-log' && sid && tid) {
+          openBgTaskDetails.add(`${sid}:${tid}`);
+          const out = await fetchBgTaskLiveLog(sid, tid, prov);
+          showToast(out ? 'Refreshed live task log' : 'Synced latest task snapshot');
+          fetchThreadDetail(sid, prov).catch(() => {});
+          return;
+        }
+        if (act === 'stop-task' && sid && tid) {
+          await cancelSingleBgTask(sid, tid, prov);
+          return;
+        }
+        if (act === 'stop-session-all' && sid) {
+          await cancelAllSessionBgTasks(sid, prov);
+          return;
+        }
+        if (act === 'stop-all-global') {
+          const rows = (appState?.rows || []).filter((r) => r && r.id && !r.archived);
+          for (const r of rows) {
+            const { runningCount } = getSessionBackgroundTasks(r, threadsCache[r.id]);
+            if (runningCount > 0) {
+              await cancelAllSessionBgTasks(r.id, r.provider);
+            }
+          }
+          return;
+        }
+        return;
+      }
+
       const openChat = e.target.closest('[data-open-chat]');
       if (openChat && openChat.dataset.openChat) {
         clearPinnedNav();
@@ -8804,6 +9272,13 @@
           syncData({ toast: true });
         } else if (act === 'push-test') {
           await sendTestPush(false);
+        } else if (act === 'bgtasks') {
+          switchTab('chat');
+          const ctxPop = $('ctx-popover');
+          if (ctxPop) ctxPop.hidden = true;
+          const bgPop = $('bg-tasks-popover');
+          if (bgPop) bgPop.hidden = false;
+          renderChatView();
         } else if (act === 'compact') {
           dispatchRemoteCommand({ type: 'sessionAction', action: 'compact', subAction: 'compact', id: prefs.selectedThreadId });
           showToast('Dispatched /compact');
@@ -8829,10 +9304,71 @@
     $('mobile-sync-btn')?.addEventListener('click', () => syncData({ toast: true }));
     $('btn-refresh-git')?.addEventListener('click', () => renderWorkspacesView());
 
-    // Context Window Popover
+    // Background Tasks & Context Window Popovers
+    $('btn-bg-tasks')?.addEventListener('click', () => {
+      const bgPop = $('bg-tasks-popover');
+      const ctxPop = $('ctx-popover');
+      if (!bgPop) return;
+      const nextOpen = bgPop.hidden;
+      bgPop.hidden = !nextOpen;
+      if (nextOpen && ctxPop) ctxPop.hidden = true;
+      renderChatView();
+      if (nextOpen && prefs.selectedThreadId && !isNewSessionMode()) {
+        fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
+      }
+    });
+    $('btn-close-bgtasks')?.addEventListener('click', () => {
+      const bgPop = $('bg-tasks-popover');
+      if (bgPop) bgPop.hidden = true;
+      $('btn-bg-tasks')?.classList.remove('active');
+      $('btn-bg-tasks')?.setAttribute('aria-expanded', 'false');
+    });
+    $('btn-refresh-bgtasks')?.addEventListener('click', async () => {
+      if (!prefs.selectedThreadId || isNewSessionMode()) return;
+      const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId);
+      const prov = activeRow?.provider || pinnedNavProvider || 'antigravity';
+      await fetchThreadDetail(prefs.selectedThreadId, prov);
+      for (const key of openBgTaskDetails) {
+        if (key.startsWith(`${prefs.selectedThreadId}:`)) {
+          const tid = key.slice(prefs.selectedThreadId.length + 1);
+          await fetchBgTaskLiveLog(prefs.selectedThreadId, tid, prov);
+        }
+      }
+      showToast('Refreshed background tasks & logs');
+    });
+    $('btn-stop-all-bgtasks')?.addEventListener('click', async () => {
+      if (!prefs.selectedThreadId || isNewSessionMode()) return;
+      const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId);
+      await cancelAllSessionBgTasks(prefs.selectedThreadId, activeRow?.provider || 'antigravity');
+    });
+    $('bg-tasks-popover-list')?.addEventListener(
+      'toggle',
+      (ev) => {
+        const det = ev.target?.closest?.('details.bg-task-item[data-bg-detail-key]');
+        if (!det) return;
+        const key = det.dataset.bgDetailKey;
+        if (det.open) {
+          openBgTaskDetails.add(key);
+          const sid = det.dataset.sessId;
+          const tid = det.dataset.taskId;
+          const prov = det.dataset.prov || '';
+          if (sid && tid) {
+            fetchBgTaskLiveLog(sid, tid, prov).catch(() => {});
+          }
+        } else {
+          openBgTaskDetails.delete(key);
+        }
+      },
+      true
+    );
+
     $('btn-ctx-window')?.addEventListener('click', () => {
       const pop = $('ctx-popover');
-      if (pop) pop.hidden = !pop.hidden;
+      const bgPop = $('bg-tasks-popover');
+      if (pop) {
+        pop.hidden = !pop.hidden;
+        if (!pop.hidden && bgPop) bgPop.hidden = true;
+      }
     });
     $('btn-close-ctx')?.addEventListener('click', () => {
       const pop = $('ctx-popover');

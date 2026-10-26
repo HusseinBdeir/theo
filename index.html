@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/theo.css?v=43">
+  <link rel="stylesheet" href="css/theo.css?v=44">
   <script id="pre">
     (() => {
       try {
@@ -219,6 +219,21 @@
             <div id="approvals-list" class="approvals-grid"></div>
           </div>
 
+          <!-- Live Background Tasks & Subagents across Antigravity + Claude Code -->
+          <div class="section-block" id="pulse-bgtasks-section" hidden>
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">Live Background Tasks &amp; Subagents</h2>
+                <div class="brass-rule-single"></div>
+              </div>
+              <div class="pulse-bgtasks-head-actions">
+                <span class="pill-count emerald tabular" id="pulse-bgtasks-count-pill">0 Running</span>
+                <button type="button" class="btn-ghost-sm" id="btn-pulse-stop-all-bg" data-bg-act="stop-all-global" hidden>■ Stop All</button>
+              </div>
+            </div>
+            <div id="pulse-bgtasks-list" class="pulse-bgtasks-grid"></div>
+          </div>
+
           <!-- Dual-Provider Quota & Rate Limits -->
           <div class="section-block">
             <div class="section-head">
@@ -336,6 +351,15 @@
                 <svg class="icon-stop-sm" viewBox="0 0 20 20"><rect x="4.5" y="4.5" width="11" height="11" rx="2.4" fill="currentColor"/></svg>
                 <span>Stop</span>
               </button>
+              <!-- Background Tasks & Subagents Trigger Pill -->
+              <button type="button" class="bg-tasks-pill tabular" id="btn-bg-tasks" title="Inspect Background Tasks &amp; Subagents" aria-expanded="false" hidden>
+                <span class="bg-pill-dot" id="bg-pill-dot" hidden></span>
+                <svg class="bg-pill-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="1.5" y="2.5" width="13" height="11" rx="2"/>
+                  <path d="M4.5 6.2l2.3 1.8-2.3 1.8M8.4 9.8h3"/>
+                </svg>
+                <span id="bg-tasks-pill-label">0</span>
+              </button>
               <!-- Context Window Breakdown Trigger Pill -->
               <button type="button" class="ctx-window-pill tabular" id="btn-ctx-window" title="Inspect Context Window Breakdown &amp; /compact">
                 <span class="ctx-ring-wrap">
@@ -350,6 +374,22 @@
                 Open on Laptop
               </button>
             </div>
+          </div>
+
+          <!-- Background Tasks & Subagents Popover Drawer -->
+          <div class="ctx-Popover bg-tasks-popover" id="bg-tasks-popover" hidden>
+            <div class="ctx-popover-head">
+              <div>
+                <div class="eyebrow">BACKGROUND TASKS &amp; SUBAGENTS</div>
+                <h3 id="bg-popover-title">Background Tasks</h3>
+              </div>
+              <div class="bg-popover-head-btns">
+                <button type="button" class="btn-ghost-sm" id="btn-refresh-bgtasks" title="Refresh live task &amp; subagent logs">↻ Refresh</button>
+                <button type="button" class="btn-ghost-sm bg-stop-all-btn" id="btn-stop-all-bgtasks" hidden>■ Stop All</button>
+                <button type="button" class="icon-btn-sm" id="btn-close-bgtasks" aria-label="Close Background Tasks">✕</button>
+              </div>
+            </div>
+            <div class="bg-popover-list" id="bg-tasks-popover-list"></div>
           </div>
 
           <!-- Context Window Popover Drawer -->
@@ -373,6 +413,9 @@
 
           <!-- Conversation Stream -->
           <div class="chat-stream" id="chat-stream"></div>
+
+          <!-- Live Active Background Tasks Strip -->
+          <div class="chat-live-bgtasks" id="chat-live-bgtasks" hidden></div>
 
           <!-- Docked Prompt & File Composer -->
           <form class="chat-composer" id="chat-composer-form">
@@ -546,7 +589,7 @@
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=43"></script>
-  <script src="js/app.js?v=43"></script>
+  <script src="js/endpoints.js?v=44"></script>
+  <script src="js/app.js?v=44"></script>
 </body>
 </html>

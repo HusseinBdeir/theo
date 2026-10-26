@@ -4741,7 +4741,441 @@ html[data-theme="light"] .disc-bar-midline {
   background: rgba(16, 185, 129, 0.12);
 }
 
+/* =========================================================================
+   Background Tasks & Subagents (Antigravity Overview Parity + Claude Code)
+   ========================================================================= */
+#pulse-bgtasks-section[hidden],
+.bg-tasks-pill[hidden],
+.bg-tasks-popover[hidden],
+.chat-live-bgtasks[hidden],
+.bg-stop-all-btn[hidden],
+.bg-pill-dot[hidden],
+#btn-pulse-stop-all-bg[hidden] {
+  display: none !important;
+}
 
+.pulse-bgtasks-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 
+.pulse-bgtasks-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr));
+  gap: 10px;
+}
 
+.pulse-bgtask-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--bg-plate);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.15s ease;
+}
+
+.pulse-bgtask-card:hover {
+  border-color: var(--brass);
+}
+
+.pulse-bgtask-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pulse-bgtask-sess {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.pulse-bgtask-sess:hover {
+  color: var(--brass);
+}
+
+.pulse-bgtask-sess-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bg-kind-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.bg-kind-badge svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.bg-kind-badge.is-running {
+  color: var(--emerald);
+  border-color: rgba(16, 185, 129, 0.38);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.bg-kind-badge.is-stalled,
+.bg-kind-badge.is-interrupted,
+.bg-kind-badge.is-failed {
+  color: var(--crimson);
+  border-color: rgba(239, 68, 68, 0.36);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.pulse-bgtask-summary {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.38;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.pulse-bgtask-cmd {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-ink);
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  padding: 5px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.pulse-bgtask-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pulse-bgtask-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Session Card Background Tasks Pill */
+.sess-bgtask-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  cursor: pointer;
+  max-width: 220px;
+  min-width: 0;
+  transition: border-color 0.14s ease, color 0.14s ease;
+}
+
+.sess-bgtask-pill:hover {
+  border-color: var(--brass);
+  color: var(--text-primary);
+}
+
+.sess-bgtask-pill.is-running {
+  color: var(--emerald);
+  border-color: rgba(16, 185, 129, 0.42);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.sess-bgtask-pill svg {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+}
+
+.sess-bgtask-pill-txt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Chat Workbench Header Pill & Popover Drawer */
+.bg-tasks-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
+}
+
+.bg-tasks-pill:hover,
+.bg-tasks-pill.active {
+  border-color: var(--brass);
+  color: var(--text-primary);
+}
+
+.bg-tasks-pill.has-running {
+  color: var(--emerald);
+  border-color: rgba(16, 185, 129, 0.48);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.bg-pill-ico {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.bg-pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--emerald);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.22);
+  animation: bgTaskPulse 1.6s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes bgTaskPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.84); }
+}
+
+.bg-popover-head-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.bg-stop-all-btn,
+.bg-stop-task-btn {
+  color: var(--crimson);
+  border-color: rgba(239, 68, 68, 0.38);
+}
+
+.bg-stop-all-btn:hover,
+.bg-stop-task-btn:hover {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: var(--crimson);
+}
+
+.bg-popover-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(50vh, 360px);
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.bg-task-item {
+  border-radius: 10px;
+  background: var(--bg-ink);
+  border: 1px solid var(--border-subtle);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.bg-task-item.is-running {
+  border-color: rgba(16, 185, 129, 0.42);
+}
+
+.bg-task-item[open] {
+  border-color: var(--brass);
+}
+
+.bg-task-summary {
+  list-style: none;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 11px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.bg-task-summary::-webkit-details-marker {
+  display: none;
+}
+
+.bg-task-ico {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--bg-plate);
+  border: 1px solid var(--border-subtle);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.bg-task-item.is-running .bg-task-ico {
+  color: var(--emerald);
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+.bg-task-ico svg {
+  width: 13px;
+  height: 13px;
+}
+
+.bg-task-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bg-task-expl {
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.32;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.bg-task-meta {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.bg-task-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.bg-stop-task-btn {
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--bg-plate);
+  border: 1px solid rgba(239, 68, 68, 0.38);
+}
+
+.bg-task-detail-body {
+  padding: 0 11px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 9px;
+}
+
+.bg-detail-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.bg-detail-pre {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-plate);
+  border: 1px solid var(--border-subtle);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* Live Active Background Tasks Strip above Chat Composer */
+.chat-live-bgtasks {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 11px;
+  margin-bottom: 7px;
+  border-radius: 10px;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.34);
+  min-width: 0;
+}
+
+.chat-live-bg-text {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-live-bg-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .chat-header-actions {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .bg-tasks-pill,
+  .ctx-window-pill,
+  #btn-chat-open-vscode {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+  .sess-bgtask-pill {
+    max-width: 170px;
+  }
+}
 
