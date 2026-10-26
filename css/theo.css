@@ -4358,7 +4358,40 @@ html[data-theme="light"] .disc-bar-midline {
   border-color: rgba(16, 185, 129, 0.38);
   background: rgba(16, 185, 129, 0.06);
   padding: 11px 13px;
+  gap: 7px;
+}
+
+.vs-q-answered-prompts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 2px;
+}
+
+.vs-q-answered-item {
+  display: flex;
+  align-items: baseline;
   gap: 6px;
+  font-size: 12.2px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.vs-q-answered-num {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--emerald);
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  border-radius: 5px;
+  padding: 0 5px;
+  flex-shrink: 0;
+}
+
+.vs-q-answered-qtext {
+  font-weight: 500;
+  color: var(--text-secondary);
+  word-break: break-word;
 }
 
 .vs-q-card-top {

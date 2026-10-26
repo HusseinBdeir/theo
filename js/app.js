@@ -12,7 +12,8 @@
     COMMAND: 'theo_command_state_v1',
     CONSUMED_NOTIF: 'theo_remote_consumed_notif_v1',
     NOTIFS: 'theo_remote_notifications_v1',
-    CHECKED_NOTIFS: 'theo_remote_checked_notifs_v1'
+    CHECKED_NOTIFS: 'theo_remote_checked_notifs_v1',
+    ANSWERED_QUESTIONS: 'theo_remote_answered_questions_v1'
   };
   const PINNED_NAV_SESSION_KEY = 'theo_pinned_nav_v1';
   const NAV_HANDOFF_CACHE = 'theo-nav-handoff-v1';
@@ -2820,6 +2821,7 @@
           const st = JSON.parse(ev.data);
           if (st) {
             applyStoppedSessionOverrides(st);
+            applyAnsweredQuestionOverrides(st);
             applyPendingLocalOverrides(st);
             checkLiveStateNotifications(st);
             appState = st;
@@ -2853,12 +2855,32 @@
       const existing = threadsCache[tid];
       const remoteMsgs = Array.isArray(remoteThread.messages) ? [...remoteThread.messages] : [];
       if (existing && Array.isArray(existing.messages)) {
-        const optimisticMsgs = existing.messages.filter(
-          (m) =>
-            m.optimistic &&
-            now - Number(m.optimisticAt || 0) < 45000 &&
-            !remoteMsgs.some((rm) => rm.role === 'user' && String(rm.text || '').trim() === String(m.text || '').trim())
-        );
+        const optimisticMsgs = existing.messages.filter((m) => {
+          if (!m || !m.optimistic) return false;
+          const optAt = Number(m.optimisticAt || 0);
+          if (now - optAt >= 45000) return false;
+          const cleanOptText = String(m.text || '').trim();
+          const exactMatch = remoteMsgs.some(
+            (rm) => rm && rm.role === 'user' && String(rm.text || '').trim() === cleanOptText
+          );
+          if (exactMatch) return false;
+          if (m.optimisticQuestionAnswer) {
+            const baseCount = Number(m.baseMsgCount || 0);
+            const hasServerQuestionReply = remoteMsgs.some((rm) => {
+              if (!rm || rm.role !== 'user') return false;
+              const rid = String(rm.id || '');
+              if (rid.startsWith('agy-q-') || rid.startsWith('claude-qa-')) {
+                const rmTs = rm.createdAt ? Date.parse(rm.createdAt) : 0;
+                if (!rmTs || rmTs >= optAt - 20000 || remoteMsgs.length > baseCount) return true;
+              }
+              return false;
+            });
+            if (hasServerQuestionReply || (baseCount > 0 && remoteMsgs.length > baseCount)) {
+              return false;
+            }
+          }
+          return true;
+        });
         if (optimisticMsgs.length) {
           remoteMsgs.push(...optimisticMsgs);
         }
@@ -2896,6 +2918,7 @@
             if (payload?.state) {
               connMode = 'local';
               applyStoppedSessionOverrides(payload.state);
+              applyAnsweredQuestionOverrides(payload.state);
               applyPendingLocalOverrides(payload.state);
               checkLiveStateNotifications(payload.state);
               appState = payload.state;
@@ -2946,6 +2969,7 @@
             }
             if (store?.state?.snapshot) {
               applyStoppedSessionOverrides(store.state.snapshot);
+              applyAnsweredQuestionOverrides(store.state.snapshot);
               applyPendingLocalOverrides(store.state.snapshot);
               checkLiveStateNotifications(store.state.snapshot);
               appState = store.state.snapshot;
@@ -3840,6 +3864,220 @@
   // ---------- Interactive Question & Recommendation Cards (VS Code Parity) ----------
   const questionDrafts = new Map();
   const renderedQuestionsByCardKey = new Map();
+  const pendingAnsweredSessions = new Map();
+  let answeredQuestionsLedger = loadJson(STORAGE_KEYS.ANSWERED_QUESTIONS, {});
+  if (!answeredQuestionsLedger || typeof answeredQuestionsLedger !== 'object') {
+    answeredQuestionsLedger = {};
+  }
+  for (const [k, v] of Object.entries(answeredQuestionsLedger)) {
+    if (k.startsWith('sess:') && v && Date.now() - Number(v.at || 0) < 240000) {
+      const sid = k.slice(5);
+      if (sid) pendingAnsweredSessions.set(sid, v);
+    }
+  }
+
+  function buildQuestionPromptSignature(questions = []) {
+    if (!Array.isArray(questions) || questions.length === 0) return '';
+    return questions
+      .map((q) => String(q?.question || q?.prompt || '').trim().toLowerCase())
+      .filter(Boolean)
+      .join('||')
+      .slice(0, 320);
+  }
+
+  function extractQuestionsStepIndex(questions = [], fallbackStep = null) {
+    if (Array.isArray(questions)) {
+      for (const q of questions) {
+        if (q && q.stepIndex !== undefined && q.stepIndex !== null && Number.isFinite(Number(q.stepIndex))) {
+          return Number(q.stepIndex);
+        }
+      }
+    }
+    if (fallbackStep !== undefined && fallbackStep !== null && Number.isFinite(Number(fallbackStep))) {
+      return Number(fallbackStep);
+    }
+    return null;
+  }
+
+  function recordQuestionAnswered({
+    sessionId = '',
+    approvalId = '',
+    turnId = '',
+    stepIndex = null,
+    questions = [],
+    summary = '',
+    skipped = false
+  } = {}) {
+    const cleanSess = String(sessionId || '').trim();
+    if (!cleanSess) return;
+    const cleanApp = String(approvalId || '').trim();
+    const cleanTurn = String(turnId || '').trim();
+    const resolvedStep = extractQuestionsStepIndex(questions, stepIndex);
+    const sig = buildQuestionPromptSignature(questions);
+    const now = Date.now();
+    const entry = {
+      summary: String(summary || '').trim(),
+      skipped: Boolean(skipped),
+      stepIndex: resolvedStep,
+      at: now
+    };
+
+    if (cleanTurn) {
+      answeredQuestionsLedger[`turn:${cleanSess}:${cleanTurn}`] = entry;
+    }
+    if (cleanApp && cleanApp !== cleanSess) {
+      answeredQuestionsLedger[`approval:${cleanSess}:${cleanApp}`] = entry;
+    }
+    if (resolvedStep !== null && resolvedStep >= 0) {
+      answeredQuestionsLedger[`step:${cleanSess}:${resolvedStep}`] = entry;
+    }
+    if (sig) {
+      answeredQuestionsLedger[`sig:${cleanSess}:${sig}`] = entry;
+    }
+    const sessOverrideEntry = {
+      approvalId: cleanApp,
+      stepIndex: resolvedStep ?? 0,
+      sig,
+      summary: entry.summary,
+      skipped: entry.skipped,
+      at: now
+    };
+    answeredQuestionsLedger[`sess:${cleanSess}`] = sessOverrideEntry;
+
+    const keys = Object.keys(answeredQuestionsLedger);
+    if (keys.length > 260) {
+      keys
+        .sort((a, b) => Number(answeredQuestionsLedger[a]?.at || 0) - Number(answeredQuestionsLedger[b]?.at || 0))
+        .slice(0, keys.length - 220)
+        .forEach((k) => delete answeredQuestionsLedger[k]);
+    }
+    saveJson(STORAGE_KEYS.ANSWERED_QUESTIONS, answeredQuestionsLedger);
+
+    pendingAnsweredSessions.set(cleanSess, sessOverrideEntry);
+
+    // Also mark any matching in-memory questionDrafts entries for this session so Pulse & Workbench stay in sync
+    for (const [k, meta] of renderedQuestionsByCardKey.entries()) {
+      if (meta && meta.sessionId === cleanSess) {
+        const metaSig = buildQuestionPromptSignature(meta.questions);
+        if (!sig || !metaSig || metaSig === sig || (cleanApp && meta.approvalId === cleanApp)) {
+          const d = getQuestionDraft(k);
+          d.submitted = true;
+          d.submittedSkipped = Boolean(skipped);
+          d.submittedSummary = entry.summary;
+        }
+      }
+    }
+  }
+
+  function lookupAnsweredQuestionState({
+    sessionId = '',
+    approvalId = '',
+    turnId = '',
+    questions = [],
+    isLastTurn = true
+  } = {}) {
+    const qs = Array.isArray(questions) ? questions : [];
+    if (qs.length > 0 && qs.some((q) => Boolean(q?.answered))) {
+      const allSkipped = qs.every((q) => Boolean(q?.skipped));
+      const srvSummary = qs.map((q) => String(q?.answerSummary || '').trim()).find(Boolean) || '';
+      return {
+        answered: true,
+        skipped: allSkipped,
+        summary: srvSummary
+      };
+    }
+
+    if (!isLastTurn) {
+      return {
+        answered: true,
+        skipped: false,
+        summary: ''
+      };
+    }
+
+    const cleanSess = String(sessionId || '').trim();
+    if (!cleanSess) return null;
+    const cleanTurn = String(turnId || '').trim();
+    const cleanApp = String(approvalId || '').trim();
+    const qStep = extractQuestionsStepIndex(qs, null);
+    const sig = buildQuestionPromptSignature(qs);
+
+    if (cleanTurn && answeredQuestionsLedger[`turn:${cleanSess}:${cleanTurn}`]) {
+      return { answered: true, ...answeredQuestionsLedger[`turn:${cleanSess}:${cleanTurn}`] };
+    }
+    if (cleanApp && cleanApp !== cleanSess && answeredQuestionsLedger[`approval:${cleanSess}:${cleanApp}`]) {
+      return { answered: true, ...answeredQuestionsLedger[`approval:${cleanSess}:${cleanApp}`] };
+    }
+    if (qStep !== null && qStep >= 0 && answeredQuestionsLedger[`step:${cleanSess}:${qStep}`]) {
+      return { answered: true, ...answeredQuestionsLedger[`step:${cleanSess}:${qStep}`] };
+    }
+    if (sig && answeredQuestionsLedger[`sig:${cleanSess}:${sig}`]) {
+      const sigEntry = answeredQuestionsLedger[`sig:${cleanSess}:${sig}`];
+      const stepAllowsMatch =
+        qStep === null ||
+        sigEntry.stepIndex === null ||
+        sigEntry.stepIndex === undefined ||
+        Number(sigEntry.stepIndex) >= qStep;
+      if (stepAllowsMatch && Date.now() - Number(sigEntry.at || 0) < 24 * 3600 * 1000) {
+        return { answered: true, ...sigEntry };
+      }
+    }
+    return null;
+  }
+
+  function applyAnsweredQuestionOverrides(stateObj) {
+    if (!stateObj || typeof stateObj !== 'object') return;
+    const now = Date.now();
+    if (pendingAnsweredSessions.size === 0) return;
+    const rows = Array.isArray(stateObj.rows) ? stateObj.rows : [];
+
+    for (const [sessId, rec] of Array.from(pendingAnsweredSessions.entries())) {
+      if (!rec || now - Number(rec.at || 0) > 240000) {
+        pendingAnsweredSessions.delete(sessId);
+        continue;
+      }
+      let strippedAny = false;
+      if (Array.isArray(stateObj.approvals) && stateObj.approvals.length > 0) {
+        const beforeLen = stateObj.approvals.length;
+        stateObj.approvals = stateObj.approvals.filter((a) => {
+          if (!a || a.sessionId !== sessId) return true;
+          if (rec.approvalId && (a.approvalId === rec.approvalId || a.id === rec.approvalId)) {
+            return false;
+          }
+          const aStep = Number(a.stepIndex || 0);
+          const recStep = Number(rec.stepIndex || 0);
+          if (recStep > 0 && aStep > recStep) {
+            return true;
+          }
+          const aSig = buildQuestionPromptSignature(a.questions || []);
+          if (rec.sig && aSig && aSig !== rec.sig && aStep > recStep) {
+            return true;
+          }
+          return false;
+        });
+        if (stateObj.approvals.length !== beforeLen) strippedAny = true;
+      }
+
+      const row = rows.find((r) => r && r.id === sessId);
+      if (row && row.pendingQuestion) {
+        const pqStep = Number(row.pendingQuestion.stepIndex || 0);
+        const recStep = Number(rec.stepIndex || 0);
+        if (!recStep || !pqStep || pqStep <= recStep) {
+          row.pendingQuestion = null;
+          if (row.status === 'waiting' && now - Number(rec.at || 0) < 90000) {
+            row.status = 'working';
+            row.statusLabel = 'Running';
+            row.dot = 'running';
+          }
+          strippedAny = true;
+        }
+      }
+
+      if (!strippedAny && now - Number(rec.at || 0) > 12000) {
+        pendingAnsweredSessions.delete(sessId);
+      }
+    }
+  }
 
   function getQuestionDraft(cardKey) {
     let draft = questionDrafts.get(cardKey);
@@ -3939,6 +4177,14 @@
           isToolPermission: Boolean(q.isToolPermission),
           writeInPlaceholder: String(q.writeInPlaceholder || '').trim(),
           isMultiSelect: Boolean(explicitMulti),
+          stepIndex:
+            q.stepIndex !== undefined && q.stepIndex !== null && Number.isFinite(Number(q.stepIndex))
+              ? Number(q.stepIndex)
+              : null,
+          toolUseId: String(q.toolUseId || '').trim(),
+          answered: Boolean(q.answered),
+          skipped: Boolean(q.skipped),
+          answerSummary: String(q.answerSummary || '').trim(),
           options
         });
       }
@@ -4140,10 +4386,14 @@
     const sessionId = String(opts.sessionId || '').trim();
     const provider = opts.provider === 'claude' ? 'claude' : 'antigravity';
     const approvalId = String(opts.approvalId || sessionId || '').trim();
+    const turnId = String(opts.turnId || '').trim();
+    const stepIndex = opts.stepIndex ?? null;
     const selector = String(opts.selector || '').trim();
     const sessionTitle = String(opts.sessionTitle || '').trim();
     const showInspectBtn = Boolean(opts.showInspectBtn);
     const plainQuestionFallback = Boolean(opts.plainQuestionFallback);
+    const isLastTurn = opts.isLastTurn !== false;
+    const hasFollowingTurn = Boolean(opts.hasFollowingTurn || !isLastTurn);
     const questions = Array.isArray(opts.questions) ? opts.questions : [];
 
     renderedQuestionsByCardKey.set(cardKey, {
@@ -4151,6 +4401,8 @@
       sessionId,
       provider,
       approvalId,
+      turnId,
+      stepIndex: extractQuestionsStepIndex(questions, stepIndex),
       selector,
       questions,
       plainQuestionFallback
@@ -4161,17 +4413,47 @@
     const anyMulti = questions.some((q) => q.isMultiSelect);
     const anyToolPerm = questions.some((q) => q.isToolPermission);
 
-    if (draft.submitted) {
+    const answeredState =
+      opts.answeredState ||
+      lookupAnsweredQuestionState({
+        sessionId,
+        approvalId,
+        turnId,
+        questions,
+        isLastTurn
+      });
+    const isAlreadyAnswered = Boolean(draft.submitted || answeredState?.answered);
+
+    if (isAlreadyAnswered) {
+      const isSkipped = Boolean(draft.submittedSkipped || answeredState?.skipped);
+      const summaryText = String(draft.submittedSummary || answeredState?.summary || '').trim();
+      const promptsListHtml = questions
+        .map((q, idx) => {
+          const qTitle = String(q?.question || '').trim();
+          if (!qTitle) return '';
+          return `
+            <div class="vs-q-answered-item">
+              ${questions.length > 1 ? `<span class="vs-q-answered-num tabular">Q${idx + 1}</span>` : ''}
+              <span class="vs-q-answered-qtext">${esc(qTitle)}</span>
+            </div>
+          `;
+        })
+        .filter(Boolean)
+        .join('');
+      const showSummaryLine = Boolean(summaryText && (!hasFollowingTurn || isSkipped || anyToolPerm));
+
       return `
         <div class="vs-question-card is-answered" data-q-card="${esc(cardKey)}">
           <div class="vs-q-card-top">
             <span class="approval-prov">
               <span class="prov-glyph">${PROVIDER_ICONS[provider]}</span>
-              <span>${provider === 'claude' ? 'Claude Code' : 'Antigravity'} · ${anyToolPerm ? 'Resolved' : 'Answered'}</span>
+              <span>${provider === 'claude' ? 'Claude Code' : 'Antigravity'} · ${anyToolPerm ? 'Tool Permission' : questions.length > 1 ? `${questions.length} Questions` : 'Question'}</span>
             </span>
-            <span class="pill-count emerald">✓ Dispatched</span>
+            <span class="pill-count ${isSkipped ? '' : 'emerald'}">${isSkipped ? 'Skipped' : anyToolPerm ? '✓ Resolved' : '✓ Answered'}</span>
           </div>
-          <div class="vs-q-answered-summary">${esc(draft.submittedSummary || 'Response sent to VS Code')}</div>
+          ${sessionTitle ? `<div class="approval-title">${esc(sessionTitle)}</div>` : ''}
+          ${promptsListHtml ? `<div class="vs-q-answered-prompts">${promptsListHtml}</div>` : ''}
+          ${showSummaryLine ? `<div class="vs-q-answered-summary">${esc(summaryText)}</div>` : ''}
         </div>
       `;
     }
@@ -4874,7 +5156,9 @@
     for (const m of rawMessages) {
       if (!m) continue;
       const prev = merged[merged.length - 1];
-      if (prev && prev.role === 'assistant' && m.role === 'assistant') {
+      const prevHasAnsweredQuestion =
+        Array.isArray(prev?.questions) && prev.questions.some((q) => q && q.answered);
+      if (prev && prev.role === 'assistant' && m.role === 'assistant' && !prevHasAnsweredQuestion) {
         if (m.text) {
           prev.text = prev.text ? `${prev.text}\n\n${m.text}` : m.text;
         }
@@ -5327,12 +5611,26 @@
             `;
           }
 
+          const turnQuestionsAlreadyServerAnswered =
+            Array.isArray(m.questions) && m.questions.length > 0 && m.questions.some((q) => Boolean(q?.answered));
+          const effectiveTurnApproval =
+            isLastTurn && !turnQuestionsAlreadyServerAnswered ? matchingQuestionApproval : null;
           const { questions: turnQuestions, cleanedText } = resolveQuestionsForTurn(
             m,
-            isLastTurn ? matchingQuestionApproval : null
+            effectiveTurnApproval
           );
           const hasTurnQuestions = turnQuestions.length > 0;
-          if (isLastTurn && hasTurnQuestions) {
+          const turnIdKey = String(m.id || `turn-${msgIdx}`);
+          const turnAnsweredState = hasTurnQuestions
+            ? lookupAnsweredQuestionState({
+                sessionId: prefs.selectedThreadId,
+                approvalId: effectiveTurnApproval?.approvalId || '',
+                turnId: turnIdKey,
+                questions: turnQuestions,
+                isLastTurn
+              })
+            : null;
+          if (isLastTurn && hasTurnQuestions && !turnAnsweredState?.answered) {
             questionRenderedInTurn = true;
           }
 
@@ -5359,16 +5657,21 @@
           const questionCardHtml = hasTurnQuestions
             ? renderInteractiveQuestionCardHtml({
                 cardKey:
-                  isLastTurn && matchingQuestionApproval
-                    ? `q-chat-${prefs.selectedThreadId}-${matchingQuestionApproval.approvalId || 'active'}`
-                    : `q-turn-${prefs.selectedThreadId}-${m.id || msgIdx}`,
+                  isLastTurn && effectiveTurnApproval
+                    ? `q-chat-${prefs.selectedThreadId}-${effectiveTurnApproval.approvalId || 'active'}`
+                    : `q-turn-${prefs.selectedThreadId}-${turnIdKey}`,
                 sessionId: prefs.selectedThreadId,
                 provider: provKey,
                 approvalId:
-                  (isLastTurn && matchingQuestionApproval?.approvalId) || prefs.selectedThreadId,
-                selector: (isLastTurn && matchingQuestionApproval?.selector) || '',
+                  (isLastTurn && effectiveTurnApproval?.approvalId) || prefs.selectedThreadId,
+                turnId: turnIdKey,
+                stepIndex: effectiveTurnApproval?.stepIndex ?? null,
+                selector: (isLastTurn && effectiveTurnApproval?.selector) || '',
+                isLastTurn,
+                hasFollowingTurn: !isLastTurn,
+                answeredState: turnAnsweredState,
                 plainQuestionFallback:
-                  !matchingQuestionApproval && (!Array.isArray(m.questions) || m.questions.length === 0),
+                  !effectiveTurnApproval && (!Array.isArray(m.questions) || m.questions.length === 0),
                 questions: turnQuestions
               })
             : '';
@@ -7439,7 +7742,26 @@
       : summaryParts.join('\n') || writeIns.join('; ') || allSelectedTexts.join('; ') || 'Submitted answer';
 
     draft.submitted = true;
+    draft.submittedSkipped = Boolean(skipped);
     draft.submittedSummary = humanSummary;
+
+    const row = (appState?.rows || []).find((r) => r.id === sessId);
+    const resolvedStepIdx = extractQuestionsStepIndex(
+      questions,
+      meta.stepIndex ?? row?.pendingQuestion?.stepIndex ?? row?.stepCount ?? null
+    );
+
+    if (sessId) {
+      recordQuestionAnswered({
+        sessionId: sessId,
+        approvalId: meta.approvalId || '',
+        turnId: meta.turnId || '',
+        stepIndex: resolvedStepIdx,
+        questions,
+        summary: humanSummary,
+        skipped
+      });
+    }
 
     haptic(20);
     playChime('approve');
@@ -7453,11 +7775,11 @@
       markNotificationsCheckedForSession(sessId);
     }
 
-    const row = (appState?.rows || []).find((r) => r.id === sessId);
     if (row) {
       row.pendingQuestion = null;
       row.status = 'working';
       row.statusLabel = 'Running';
+      row.dot = 'running';
     }
 
     if (sessId && !skipped) {
@@ -7472,12 +7794,15 @@
       if (!Array.isArray(threadsCache[sessId].messages)) {
         threadsCache[sessId].messages = [];
       }
+      const baseCountBeforePush = threadsCache[sessId].messages.filter((m) => !m?.optimistic).length;
       threadsCache[sessId].messages.push({
         id: `opt-ans-${Date.now()}`,
         role: 'user',
         text: humanSummary,
         createdAt: new Date().toISOString(),
         optimistic: true,
+        optimisticQuestionAnswer: true,
+        baseMsgCount: baseCountBeforePush,
         optimisticAt: Date.now()
       });
     }
@@ -9016,13 +9341,42 @@
       renderChatView(true);
     } else if (targetId) {
       stoppedSessionsById.delete(targetId);
+      const hadPendingQ = Boolean(
+        activeRow?.pendingQuestion ||
+          (Array.isArray(appState?.approvals) && appState.approvals.some((a) => a && a.sessionId === targetId))
+      );
+      const existingMsgs = coalesceThreadMessages(threadsCache[targetId]?.messages || []);
+      const lastExistingMsg = existingMsgs.length > 0 ? existingMsgs[existingMsgs.length - 1] : null;
+      const lastTurnQs =
+        lastExistingMsg && lastExistingMsg.role === 'assistant'
+          ? resolveQuestionsForTurn(lastExistingMsg, null).questions
+          : [];
+      if (hadPendingQ || lastTurnQs.length > 0) {
+        const matchedApp = (appState?.approvals || []).find((a) => a && a.sessionId === targetId);
+        recordQuestionAnswered({
+          sessionId: targetId,
+          approvalId: matchedApp?.approvalId || '',
+          turnId: String(lastExistingMsg?.id || ''),
+          stepIndex: activeRow?.pendingQuestion?.stepIndex ?? activeRow?.stepCount ?? null,
+          questions: lastTurnQs.length > 0 ? lastTurnQs : normalizeFrontendQuestions(activeRow?.pendingQuestion?.questions),
+          summary: `${rawText || text}`,
+          skipped: false
+        });
+        if (Array.isArray(appState?.approvals)) {
+          appState.approvals = appState.approvals.filter((a) => a && a.sessionId !== targetId);
+        }
+        markNotificationsCheckedForSession(targetId);
+      }
       if (activeRow) {
+        activeRow.pendingQuestion = null;
         activeRow.status = 'working';
+        activeRow.statusLabel = 'Running';
         activeRow.dot = 'running';
       }
       if (!threadsCache[targetId]) {
         threadsCache[targetId] = { id: targetId, provider, messages: [] };
       }
+      const baseCountBeforePush = (threadsCache[targetId].messages || []).filter((m) => !m?.optimistic).length;
       threadsCache[targetId].messages.push({
         id: `local-${Date.now()}`,
         role: 'user',
@@ -9030,10 +9384,12 @@
         text: `${rawText || text}${attachDisplayLine}`,
         toolCalls: [],
         optimistic: true,
+        optimisticQuestionAnswer: hadPendingQ,
+        baseMsgCount: baseCountBeforePush,
         optimisticAt: Date.now()
       });
       persistCache();
-      renderChatView(true);
+      renderAll();
     }
 
     const res = await dispatchRemoteCommand({
@@ -9451,6 +9807,9 @@
       switchTab(startTab);
     }
 
+    if (appState) {
+      applyAnsweredQuestionOverrides(appState);
+    }
     renderAll();
     consumePendingNotificationNav({ allowUnseenPush: true });
     syncData();
