@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/theo.css?v=45">
+  <link rel="stylesheet" href="css/theo.css?v=46">
   <script id="pre">
     (() => {
       try {
@@ -166,9 +166,9 @@
                 <span class="mobile-wordmark">THEO</span>
                 <div class="brass-double-rule compact"></div>
               </div>
-              <button type="button" class="conn-pill" id="mobile-conn-pill" title="Inspect VS Code connection &amp; sync status">
+              <button type="button" class="conn-pill" id="mobile-conn-pill" hidden title="Offline — tap to inspect connection &amp; retry sync">
                 <span class="conn-dot" id="mobile-conn-dot"></span>
-                <span id="mobile-conn-text">Syncing</span>
+                <span id="mobile-conn-text">Offline</span>
               </button>
             </div>
           </div>
@@ -589,7 +589,7 @@
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=45"></script>
-  <script src="js/app.js?v=45"></script>
+  <script src="js/endpoints.js?v=46"></script>
+  <script src="js/app.js?v=46"></script>
 </body>
 </html>

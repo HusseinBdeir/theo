@@ -3224,12 +3224,12 @@
     const dotRail = $('rail-conn-dot');
     const titleRail = $('rail-conn-title');
     const subRail = $('rail-conn-sub');
+    const pillMob = $('mobile-conn-pill');
     const dotMob = $('mobile-conn-dot');
     const textMob = $('mobile-conn-text');
 
     if (overrideState === 'syncing') {
       if (titleRail) titleRail.textContent = 'Syncing Bridge…';
-      if (textMob) textMob.textContent = 'Syncing…';
       return;
     }
 
@@ -3240,20 +3240,23 @@
       if (dotRail) dotRail.className = 'conn-dot live';
       if (titleRail) titleRail.textContent = 'Direct Bridge · Live SSE';
       if (subRail) subRail.textContent = `${localBridgeBase.replace(/^https?:\/\//, '')} · ${rowCount} sess`;
+      if (pillMob) pillMob.hidden = true;
       if (dotMob) dotMob.className = 'conn-dot live';
       if (textMob) textMob.textContent = 'Direct SSE';
     } else if (connMode === 'cloud') {
       if (dotRail) dotRail.className = 'conn-dot cloud';
       if (titleRail) titleRail.textContent = 'Cloud Relay · Connected';
       if (subRail) subRail.textContent = `VS Code Sync ${snapAge || 'live'} · ${rowCount} sess`;
+      if (pillMob) pillMob.hidden = true;
       if (dotMob) dotMob.className = 'conn-dot cloud';
       if (textMob) textMob.textContent = snapAge ? `Live · ${snapAge.replace(' ago', '')}` : 'Cloud Live';
     } else {
       if (dotRail) dotRail.className = 'conn-dot';
       if (titleRail) titleRail.textContent = 'Offline Snapshot';
       if (subRail) subRail.textContent = snapAge ? `Cached ${snapAge}` : 'Waiting for connection';
+      if (pillMob) pillMob.hidden = connMode === 'probing' && navigator.onLine !== false;
       if (dotMob) dotMob.className = 'conn-dot';
-      if (textMob) textMob.textContent = 'Cached';
+      if (textMob) textMob.textContent = outbox.length > 0 ? `Offline · ${outbox.length}` : 'Offline';
     }
 
     const pushDot = $('mobile-push-dot');

@@ -105,6 +105,10 @@ button {
   background: none;
 }
 
+[hidden], .hidden {
+  display: none !important;
+}
+
 /* Signature Accountant's Brass Rules (Rev 10 Ledger) */
 .brass-double-rule {
   height: 5px;
