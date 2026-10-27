@@ -13,7 +13,8 @@
     CONSUMED_NOTIF: 'theo_remote_consumed_notif_v1',
     NOTIFS: 'theo_remote_notifications_v1',
     CHECKED_NOTIFS: 'theo_remote_checked_notifs_v1',
-    ANSWERED_QUESTIONS: 'theo_remote_answered_questions_v1'
+    ANSWERED_QUESTIONS: 'theo_remote_answered_questions_v1',
+    SEEN_QUOTA_ALERTS: 'theo_remote_seen_quota_alerts_v1'
   };
   const PINNED_NAV_SESSION_KEY = 'theo_pinned_nav_v1';
   const NAV_HANDOFF_CACHE = 'theo-nav-handoff-v1';
@@ -278,6 +279,201 @@
   const prevRowAts = new Map();
   const pendingThreadRequests = new Map();
   const alertedReminderIds = new Set();
+  const seenQuotaAlertIds = new Set(
+    Array.isArray(loadJson(STORAGE_KEYS.SEEN_QUOTA_ALERTS, []))
+      ? loadJson(STORAGE_KEYS.SEEN_QUOTA_ALERTS, [])
+      : []
+  );
+
+  function saveSeenQuotaAlerts() {
+    const nowMin = Math.floor(Date.now() / 60000);
+    const keep = [];
+    for (const key of seenQuotaAlertIds) {
+      if (typeof key !== 'string') continue;
+      if (key.startsWith('quota90:')) {
+        const lastColon = key.lastIndexOf(':');
+        const stamp = lastColon > 0 ? Number(key.slice(lastColon + 1)) : 0;
+        if (Number.isFinite(stamp) && stamp > 0 && stamp < nowMin) {
+          seenQuotaAlertIds.delete(key);
+          continue;
+        }
+      }
+      keep.push(key);
+    }
+    saveJson(STORAGE_KEYS.SEEN_QUOTA_ALERTS, keep.slice(-120));
+  }
+
+  function collectHighUsageQuotaAlerts(stateObj, nowMs = Date.now()) {
+    const highAlerts = [];
+    const allActiveBuckets = [];
+    if (!stateObj || typeof stateObj !== 'object') {
+      return { highAlerts, allActiveBuckets };
+    }
+
+    for (const provKey of ['antigravity', 'claude']) {
+      const provLabel = provKey === 'claude' ? 'Claude Code' : 'Antigravity';
+      let provInfo = stateObj.providers?.[provKey] || null;
+      if (!provInfo && provKey === 'antigravity' && stateObj.usage) {
+        provInfo = {
+          id: 'antigravity',
+          label: 'Antigravity',
+          account: stateObj.account || {},
+          usage: stateObj.usage
+        };
+      }
+      if (
+        provKey === 'claude' &&
+        (!provInfo?.usage?.limits || !provInfo.usage.limits.length) &&
+        Number(stateObj.claudeUsage?.fiveHourPct || 0) > 0
+      ) {
+        provInfo = {
+          ...(provInfo || {}),
+          id: 'claude',
+          label: 'Claude Code',
+          account: provInfo?.account || { name: 'Claude Account', email: '' },
+          usage: {
+            at: nowMs,
+            limits: [
+              {
+                label: 'Session (5hr)',
+                pct: Number(stateObj.claudeUsage.fiveHourPct || 0),
+                reset: Number(stateObj.claudeUsage.fiveHourResetsAt || 0),
+                resetText: ''
+              }
+            ]
+          }
+        };
+      }
+      if (!provInfo) continue;
+
+      const rawAccounts =
+        Array.isArray(provInfo.accounts) && provInfo.accounts.length > 0
+          ? provInfo.accounts
+          : null;
+      const activeAccounts = rawAccounts
+        ? rawAccounts.filter((a) => a && a.active)
+        : [];
+      const targetAccounts =
+        activeAccounts.length > 0
+          ? activeAccounts
+          : rawAccounts
+            ? [rawAccounts[0]]
+            : [
+                {
+                  id: provInfo.account?.email
+                    ? `${provKey}:${String(provInfo.account.email).trim().toLowerCase()}`
+                    : `${provKey}:default`,
+                  provider: provKey,
+                  label: provLabel,
+                  nickname: provInfo.account?.nickname || '',
+                  active: true,
+                  account: provInfo.account || {},
+                  usage: provInfo.usage
+                }
+              ];
+
+      for (const acct of targetAccounts) {
+        if (!acct) continue;
+        const acctObj = acct.account || provInfo.account || {};
+        const acctEmail = String(acctObj.email || '').trim();
+        const acctNick = String(acct.nickname || acctObj.nickname || '').trim();
+        const acctId = String(
+          acct.id || (acctEmail ? `${provKey}:${acctEmail.toLowerCase()}` : `${provKey}:default`)
+        )
+          .trim()
+          .toLowerCase();
+        const acctSlug =
+          acctId.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || provKey;
+        const acctDisplay = acctNick
+          ? acctEmail
+            ? `${acctNick} (${acctEmail})`
+            : acctNick
+          : acctEmail || '';
+
+        const rawLimits =
+          Array.isArray(acct.usage?.limits) && acct.usage.limits.length > 0
+            ? acct.usage.limits
+            : Array.isArray(provInfo.usage?.limits)
+              ? provInfo.usage.limits
+              : [];
+
+        for (const bar of rawLimits) {
+          if (!bar || typeof bar !== 'object') continue;
+          const resetMs = Number(bar.reset || 0);
+          const isExpired = Boolean(bar.expired || (resetMs > 0 && resetMs <= nowMs));
+          const pct = isExpired
+            ? 0
+            : Math.max(0, Math.min(100, Math.round(Number(bar.pct || 0))));
+          const barLabel = String(bar.label || 'Usage Quota').trim() || 'Usage Quota';
+          const barSlug =
+            barLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'quota';
+          const bucketKey = `${provKey}:${acctSlug}:${barSlug}`;
+          const windowStamp =
+            resetMs > 0
+              ? Math.round(resetMs / 60000)
+              : Math.floor(nowMs / (4 * 3600 * 1000)) * 240 + 240;
+          const alertId = `quota90:${bucketKey}:${windowStamp}`;
+          const tag = `theo-quota-${provKey}-${acctSlug}-${barSlug}`;
+          const resetText = String(bar.resetText || '').trim();
+
+          const bucketInfo = {
+            id: alertId,
+            tag,
+            bucketKey,
+            windowStamp,
+            provider: provKey,
+            providerLabel: provLabel,
+            accountId: acctId,
+            accountDisplay: acctDisplay,
+            barLabel,
+            pct,
+            resetMs,
+            resetText,
+            expired: isExpired
+          };
+          allActiveBuckets.push(bucketInfo);
+
+          if (!isExpired && pct >= 90) {
+            const title = `⚠️ ${provLabel} Usage at ${pct}% — ${barLabel}`;
+            const resetClause = resetText ? ` (${resetText})` : '';
+            const acctPrefix = acctDisplay ? `${acctDisplay} · ` : '';
+            const body = `${acctPrefix}${barLabel} reached ${pct}% usage${resetClause}. Tap to inspect quota & switch account if needed.`;
+            highAlerts.push({
+              ...bucketInfo,
+              title,
+              body,
+              tab: 'pulse',
+              url: './?tab=pulse'
+            });
+          }
+        }
+      }
+    }
+
+    return { highAlerts, allActiveBuckets };
+  }
+
+  function hasQuotaAlertForWindow(alertSet, bucketKey, windowStamp, nowMs = Date.now()) {
+    if (!alertSet || typeof alertSet[Symbol.iterator] !== 'function') return false;
+    const prefix = `quota90:${bucketKey}:`;
+    const targetStamp = Number(windowStamp || 0);
+    const nowMin = Math.floor(nowMs / 60000);
+    for (const key of alertSet) {
+      if (typeof key !== 'string' || !key.startsWith(prefix)) continue;
+      const prevStamp = Number(key.slice(prefix.length));
+      if (!Number.isFinite(prevStamp) || !Number.isFinite(targetStamp)) {
+        if (key === `${prefix}${windowStamp}`) return true;
+        continue;
+      }
+      if (prevStamp > 0 && prevStamp < nowMin) {
+        continue;
+      }
+      if (Math.abs(targetStamp - prevStamp) <= 30) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   let pinnedNavThreadId = '';
   let pinnedNavProvider = '';
@@ -1688,6 +1884,19 @@
         liveExtra++;
       }
     }
+    if (prefs.notif?.quota !== false) {
+      const { highAlerts } = collectHighUsageQuotaAlerts(appState);
+      for (const alert of highAlerts) {
+        if (
+          !seenApprovalTags.has(alert.tag) &&
+          !seenApprovalTags.has(alert.id) &&
+          !checkedSet.has(alert.tag) &&
+          !checkedSet.has(alert.id)
+        ) {
+          liveExtra++;
+        }
+      }
+    }
     return uniqueUncheckedKeys.size + liveExtra;
   }
 
@@ -1880,6 +2089,54 @@
       }
     }
 
+    // Seed active usage rate >= 90% alerts if not already represented or checked, and auto-clear if dropped < 90%
+    if (prefs.notif?.quota !== false && appState) {
+      const { highAlerts, allActiveBuckets } = collectHighUsageQuotaAlerts(appState);
+      const activeQuotaTags = new Set(highAlerts.map((q) => q.tag));
+      for (const alert of highAlerts) {
+        if (checkedSet.has(alert.id) || checkedSet.has(alert.tag)) continue;
+        const existingQuota = next.find(
+          (x) => x && (x.id === alert.id || x.tag === alert.tag)
+        );
+        if (!existingQuota) {
+          next.unshift({
+            id: alert.id,
+            tag: alert.tag,
+            title: alert.title,
+            body: alert.body,
+            tab: 'pulse',
+            threadId: '',
+            provider: alert.provider,
+            reminderId: '',
+            sessionTitle: '',
+            url: './?tab=pulse',
+            ts: Date.now(),
+            checked: false
+          });
+          changed = true;
+        } else if (existingQuota.title !== alert.title || existingQuota.body !== alert.body) {
+          existingQuota.title = alert.title;
+          existingQuota.body = alert.body;
+          changed = true;
+        }
+      }
+      if (allActiveBuckets.length > 0) {
+        for (const it of next) {
+          if (
+            it &&
+            !it.checked &&
+            String(it.tag || '').startsWith('theo-quota-') &&
+            !activeQuotaTags.has(it.tag)
+          ) {
+            it.checked = true;
+            it.checkedAt = Date.now();
+            rememberCheckedNotifKeys(it.id, it.tag);
+            changed = true;
+          }
+        }
+      }
+    }
+
     if (changed) {
       saveNotifLog(next.slice(0, 60));
     }
@@ -1997,6 +2254,9 @@
       if (r && r.id && r.unread) {
         rememberCheckedNotifKeys(`theo-unread-${r.id}-${r.stepCount || r.at || 0}`);
       }
+    }
+    for (const q of collectHighUsageQuotaAlerts(appState).highAlerts) {
+      if (q) rememberCheckedNotifKeys(q.id, q.tag);
     }
     saveNotifLog(next);
     updateAppBadgeCount(true, checkedTags);
@@ -2482,6 +2742,64 @@
     const rows = Array.isArray(nextState.rows) ? nextState.rows : [];
 
     checkServerLastNotificationOnResume(nextState);
+
+    // Evaluate live usage rate >= 90% alerts across Antigravity & Claude Code (even on initial load if not yet seen in this reset window)
+    if (nf.quota !== false) {
+      const nowMs = Date.now();
+      const { highAlerts, allActiveBuckets } = collectHighUsageQuotaAlerts(nextState, nowMs);
+      let quotaChanged = false;
+      for (const b of allActiveBuckets) {
+        if (b.pct < 85 || b.expired) {
+          const prefix = `quota90:${b.bucketKey}:`;
+          for (const k of Array.from(seenQuotaAlertIds)) {
+            if (typeof k === 'string' && k.startsWith(prefix)) {
+              seenQuotaAlertIds.delete(k);
+              quotaChanged = true;
+            }
+          }
+        }
+      }
+      for (const alert of highAlerts) {
+        if (!hasQuotaAlertForWindow(seenQuotaAlertIds, alert.bucketKey, alert.windowStamp, nowMs)) {
+          seenQuotaAlertIds.add(alert.id);
+          quotaChanged = true;
+          const navTarget = {
+            id: alert.id,
+            tag: alert.tag,
+            tab: 'pulse',
+            threadId: '',
+            provider: alert.provider,
+            url: './?tab=pulse'
+          };
+          recordTheoNotification(
+            {
+              title: alert.title,
+              body: alert.body,
+              ...navTarget
+            },
+            { force: false, checked: false }
+          );
+          playChime('approve');
+          showToast(`${alert.title} — tap to inspect`, navTarget);
+          if (
+            nf.enabled &&
+            nf.quota !== false &&
+            !(pushSub && pushSub.endpoint) &&
+            (document.hidden || !document.hasFocus()) &&
+            notifPerm() === 'granted'
+          ) {
+            swLocalNotif({
+              title: alert.title,
+              body: alert.body,
+              ...navTarget
+            });
+          }
+        }
+      }
+      if (quotaChanged) {
+        saveSeenQuotaAlerts();
+      }
+    }
 
     if (!statePrimed) {
       statePrimed = true;
@@ -3574,8 +3892,8 @@
             <label class="push-pref-label">
               <input type="checkbox" data-nf="quota" ${nf.quota !== false ? 'checked' : ''}>
               <div class="push-pref-text">
-                <strong>Quota threshold (≥90%) &amp; stalled-task watchdog alerts</strong>
-                <span>Alerts if a 5-hour/weekly quota window reaches 90% or if a background task stalls</span>
+                <strong>Usage rate threshold (≥90%) &amp; stalled-task watchdog alerts</strong>
+                <span>Alerts immediately when any Antigravity or Claude Code quota window reaches 90% or if a task stalls</span>
               </div>
             </label>
           </div>
@@ -10053,10 +10371,21 @@
       window.location.href = `https://husseinbdeir.github.io/planner/${reminderId ? `?tab=tasks&taskId=${encodeURIComponent(reminderId)}` : ''}`;
       return true;
     } else if (tab) {
+      if (String(notifTag || '').startsWith('theo-quota-') && nav.provider) {
+        if (!prefs.collapsedQuotaCards || typeof prefs.collapsedQuotaCards !== 'object') {
+          prefs.collapsedQuotaCards = {};
+        }
+        prefs.collapsedQuotaCards[nav.provider] = false;
+      }
       prefs.activeTab = tab;
       saveJson(STORAGE_KEYS.PREFS, prefs);
       switchTab(tab);
       renderAll();
+      if (String(notifTag || '').startsWith('theo-quota-')) {
+        setTimeout(() => {
+          $('pulse-quota-grid')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 80);
+      }
     }
 
     syncData({ force: true }).catch(() => {});
@@ -10156,7 +10485,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=41', { updateViaCache: 'none' })
+        .register('sw.js?v=47', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
