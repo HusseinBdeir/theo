@@ -5404,9 +5404,14 @@
       const claude = appState?.providers?.claude;
       const agyList = Array.isArray(agy?.accounts) && agy.accounts.length ? agy.accounts : [agy || {}];
       const claudeList = Array.isArray(claude?.accounts) && claude.accounts.length ? claude.accounts : [claude || {}];
+      const agySignedIn = agyList.filter(isSignedInQuotaCard);
+      const claudeSignedIn = claudeList.filter(isSignedInQuotaCard);
+      const totalSignedIn = agySignedIn.length + claudeSignedIn.length;
+      const visAgy = totalSignedIn > 0 ? agySignedIn : agyList;
+      const visClaude = totalSignedIn > 0 ? claudeSignedIn : claudeList;
       quotaGrid.innerHTML =
-        agyList.map((a) => renderQuotaCardHtml(a, 'antigravity', agyList.length)).join('') +
-        claudeList.map((a) => renderQuotaCardHtml(a, 'claude', claudeList.length)).join('');
+        visAgy.map((a) => renderQuotaCardHtml(a, 'antigravity', visAgy.length)).join('') +
+        visClaude.map((a) => renderQuotaCardHtml(a, 'claude', visClaude.length)).join('');
     }
 
     // Repo Quick Launchers
@@ -5441,9 +5446,33 @@
     }
   }
 
+  function isSignedInQuotaCard(provInfo) {
+    const a = provInfo?.account;
+    if (!a || a.signedOut) return false;
+    return Boolean(a.available || a.email);
+  }
+
   function renderQuotaCardHtml(provInfo, key, sameProvCount = 1) {
     const acctId = provInfo?.id || `${key}:default`;
     const label = key === 'claude' ? 'Claude Code' : 'Google Antigravity';
+    if (!isSignedInQuotaCard(provInfo)) {
+      return `
+        <div class="quota-card is-secondary">
+          <div class="quota-card-head">
+            <div class="quota-prov-title">
+              <span class="prov-glyph">${PROVIDER_ICONS[key]}</span>
+              <div>
+                <div class="quota-title-line"><span>${esc(label)}</span></div>
+                <div class="meta-timestamp">Not signed in</div>
+              </div>
+            </div>
+            <div class="quota-head-actions">
+              <button type="button" class="quota-switch-btn" data-account-add-remote="${key}">+ Sign in</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
     const plan = provInfo?.account?.plan || (key === 'claude' ? 'Claude Max' : 'Google AI Pro');
     const email = provInfo?.account?.email || '';
     const nick = String(provInfo?.nickname || provInfo?.account?.nickname || '').trim();
@@ -5458,7 +5487,7 @@
       ? provInfo.usage.limits
       : provInfo?.usage?.allLimits || [];
 
-    if (!limits.length && key === 'claude' && isActive) {
+    if (!limits.length && key === 'claude' && isActive && isSignedInQuotaCard(provInfo)) {
       const claudeSum = appState?.summaryByProvider?.claude || appState?.summary || {};
       const tok5h = Number(claudeSum.today?.tokens || 0);
       const tok7d = Number(claudeSum.week?.tokens || 0);
@@ -5541,6 +5570,7 @@
             ${statusControlHtml}
             <span class="plan-pill">${esc(plan)}</span>
             <button type="button" class="quota-nick-btn" data-account-label="${esc(acctId)}" data-account-prov="${key}" data-account-nick="${esc(nick)}" title="${nick ? 'Edit account label' : 'Set account label (e.g. Friend, Work)'}">✎</button>
+            <button type="button" class="quota-nick-btn" data-account-remove="${esc(acctId)}" data-account-prov="${key}" data-account-email="${esc(email)}" title="${multi ? 'Disconnect account' : 'Sign out account'}">✕</button>
           </div>
         </div>
         ${isCollapsed ? '' : `<div class="quota-bars-stack">${barsHtml}</div>`}
@@ -8950,12 +8980,64 @@
         return;
       }
 
+      const acctRemoveBtn = e.target.closest('[data-account-remove]');
+      if (acctRemoveBtn) {
+        e.stopPropagation();
+        const accountId = acctRemoveBtn.dataset.accountRemove;
+        const provider = acctRemoveBtn.dataset.accountProv === 'claude' ? 'claude' : 'antigravity';
+        const email = acctRemoveBtn.dataset.accountEmail || accountId;
+        const provLabel = provider === 'claude' ? 'Claude Code' : 'Antigravity';
+        const provList = appState?.providers?.[provider]?.accounts;
+        const signedInCount = Array.isArray(provList)
+          ? provList.filter(isSignedInQuotaCard).length
+          : 1;
+        const okConfirm = confirm(
+          signedInCount <= 1
+            ? `Sign out ${email} from ${provLabel}? Your other connected accounts will remain signed in.`
+            : `Disconnect ${email} from THEO? Your other connected accounts will remain signed in.`
+        );
+        if (!okConfirm) return;
+        if (Array.isArray(provList)) {
+          appState.providers[provider].accounts = provList.filter((x) => x && x.id !== accountId);
+          if (appState.providers[provider].accounts.length === 0) {
+            appState.providers[provider].accounts = [
+              {
+                id: `${provider}:default`,
+                provider,
+                active: false,
+                account: { available: false, signedOut: true, email: '', name: provLabel, plan: '' },
+                usage: null
+              }
+            ];
+          }
+          persistCache();
+          renderPulseView();
+        }
+        await dispatchRemoteCommand({
+          type: 'sessionAction',
+          action: 'accountRemove',
+          subAction: 'accountRemove',
+          accountId,
+          provider,
+          confirm: false
+        });
+        showToast(`${signedInCount <= 1 ? 'Signed out' : 'Disconnected'} ${email}`);
+        return;
+      }
+
       const addAcctRemoteBtn = e.target.closest('[data-account-add-remote]');
       if (addAcctRemoteBtn) {
         e.stopPropagation();
+        const hintProv = addAcctRemoteBtn.dataset.accountAddRemote;
+        const defaultPromptVal =
+          hintProv === 'claude'
+            ? 'claude'
+            : hintProv === 'antigravity'
+              ? 'antigravity'
+              : 'antigravity:Friend';
         const rawChoice = prompt(
           'Add another account on your desktop workstation (existing accounts stay signed in).\nEnter "antigravity" or "claude" (optionally add a label after a colon, e.g. "antigravity:Friend" or "claude:Work"):',
-          'antigravity:Friend'
+          defaultPromptVal
         );
         if (!rawChoice || !rawChoice.trim()) return;
         const [rawProv, ...rest] = rawChoice.trim().split(':');

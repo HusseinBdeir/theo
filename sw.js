@@ -1,7 +1,7 @@
-/* THEO Remote PWA Service Worker, v47 (2026-10-27).
+/* THEO Remote PWA Service Worker, v48 (2026-11-04).
    App shell: network-first (cache: no-cache) for HTML/JS/CSS, cache-first for static assets.
    Web Push: RFC 8291 aes128gcm push listener + synchronous in-memory & serialized push deduplication + W3C Badging API (navigator.setAppBadge) + durable Cache Storage & postMessage notificationclick handoff. */
-const CACHE_NAME = 'theo-remote-v47';
+const CACHE_NAME = 'theo-remote-v48';
 const NAV_CACHE = 'theo-nav-handoff-v1';
 const PENDING_NAV_URL = './__theo_pending_nav.json';
 const LAST_PUSH_NAV_URL = './__theo_last_push_nav.json';
@@ -50,9 +50,9 @@ function checkAndMarkInMemoryNotif(tag, title) {
 const APP_SHELL = [
   './',
   './index.html',
-  './css/theo.css?v=47',
-  './js/endpoints.js?v=47',
-  './js/app.js?v=47',
+  './css/theo.css?v=48',
+  './js/endpoints.js?v=48',
+  './js/app.js?v=48',
   './manifest.json',
   './icon.svg',
   './icon-180.png',
