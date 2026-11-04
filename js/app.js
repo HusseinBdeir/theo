@@ -5452,6 +5452,42 @@
     return Boolean(a.available || a.email);
   }
 
+  function hasSignedInProviderRemote(provKey) {
+    if (!appState?.providers) return true;
+    const prov = provKey === 'claude' ? 'claude' : 'antigravity';
+    const raw = appState.providers[prov];
+    const list = Array.isArray(raw?.accounts) && raw.accounts.length ? raw.accounts : [raw || {}];
+    return list.some(isSignedInQuotaCard);
+  }
+
+  function syncProviderNewSessionButtons() {
+    const hasAgy = hasSignedInProviderRemote('antigravity');
+    const hasClaude = hasSignedInProviderRemote('claude');
+    const sessRow = $('sess-new-btns') || document.querySelector('#view-sessions .toolbar-new-btns');
+    const sessAgyBtn = $('btn-sess-new-agy') || document.querySelector('[data-quick-new="antigravity"]');
+    const sessClaudeBtn = $('btn-sess-new-claude') || document.querySelector('[data-quick-new="claude"]');
+    if (sessAgyBtn) sessAgyBtn.hidden = !hasAgy;
+    if (sessClaudeBtn) sessClaudeBtn.hidden = !hasClaude;
+    if (sessRow) {
+      sessRow.classList.toggle('single-prov', (hasAgy && !hasClaude) || (!hasAgy && hasClaude));
+      sessRow.classList.toggle('no-prov', !hasAgy && !hasClaude);
+    }
+    const compPills = $('composer-mode-pills') || document.querySelector('.composer-mode-pills');
+    const compAgyBtn = $('comp-mode-new-agy');
+    const compClaudeBtn = $('comp-mode-new-claude');
+    if (compAgyBtn) compAgyBtn.hidden = !hasAgy;
+    if (compClaudeBtn) compClaudeBtn.hidden = !hasClaude;
+    if (compPills) {
+      compPills.classList.toggle('single-prov', (hasAgy && !hasClaude) || (!hasAgy && hasClaude));
+      compPills.classList.toggle('no-prov', !hasAgy && !hasClaude);
+    }
+    if (prefs.composerMode === 'new-claude' && !hasClaude) {
+      prefs.composerMode = hasAgy ? 'new-antigravity' : 'reply';
+    } else if (prefs.composerMode === 'new-antigravity' && !hasAgy) {
+      prefs.composerMode = hasClaude ? 'new-claude' : 'reply';
+    }
+  }
+
   function renderQuotaCardHtml(provInfo, key, sameProvCount = 1) {
     const acctId = provInfo?.id || `${key}:default`;
     const label = key === 'claude' ? 'Claude Code' : 'Google Antigravity';
@@ -5724,6 +5760,7 @@
 
   // VIEW 2: Render Sessions List
   function renderSessionsView() {
+    syncProviderNewSessionButtons();
     const container = $('sessions-full-list');
     if (!container) return;
     const rows = (appState?.rows || []).filter((r) => r.id);
@@ -6048,10 +6085,18 @@
       ) {
         topRows.unshift(activeRow);
       }
-      const newOptionsHtml = [
-        `<option value="__new_antigravity__" ${isNewDraft && newProv === 'antigravity' ? 'selected' : ''}>✨ + New Antigravity Session (Unrelated)</option>`,
-        `<option value="__new_claude__" ${isNewDraft && newProv === 'claude' ? 'selected' : ''}>✨ + New Claude Code Session (Unrelated)</option>`
-      ].join('');
+      const newOptionsList = [];
+      if (hasSignedInProviderRemote('antigravity')) {
+        newOptionsList.push(
+          `<option value="__new_antigravity__" ${isNewDraft && newProv === 'antigravity' ? 'selected' : ''}>✨ + New Antigravity Session (Unrelated)</option>`
+        );
+      }
+      if (hasSignedInProviderRemote('claude')) {
+        newOptionsList.push(
+          `<option value="__new_claude__" ${isNewDraft && newProv === 'claude' ? 'selected' : ''}>✨ + New Claude Code Session (Unrelated)</option>`
+        );
+      }
+      const newOptionsHtml = newOptionsList.join('');
       selectEl.innerHTML =
         newOptionsHtml +
         topRows
@@ -8302,8 +8347,12 @@
     const items = [
       { title: '📎 Attach File or Photo to Prompt', sub: 'Workbench Composer', act: 'attach-file' },
       { title: '📁 Attach Workspace / Modified Git File (@Repo)', sub: 'Workbench Composer', act: 'pick-repo-file' },
-      { title: '+ New Google Antigravity Session', sub: 'Action', act: 'new-agy' },
-      { title: '+ New Claude Code Session', sub: 'Action', act: 'new-claude' },
+      ...(hasSignedInProviderRemote('antigravity')
+        ? [{ title: '+ New Google Antigravity Session', sub: 'Action', act: 'new-agy' }]
+        : []),
+      ...(hasSignedInProviderRemote('claude')
+        ? [{ title: '+ New Claude Code Session', sub: 'Action', act: 'new-claude' }]
+        : []),
       { title: 'Sync with VS Code & Cloud Relay Now', sub: 'Connectivity', act: 'sync' },
       { title: 'Enable / Test Web Push Notifications', sub: 'Notifications', act: 'push-test' },
       { title: 'Inspect Background Tasks & Subagents', sub: 'Workbench Overview', act: 'bgtasks' },
@@ -9265,7 +9314,10 @@
           return;
         }
         if (act === 'new-in-group') {
-          enterNewSessionMode('antigravity', { groupId: gId });
+          enterNewSessionMode(
+            hasSignedInProviderRemote('antigravity') ? 'antigravity' : 'claude',
+            { groupId: gId }
+          );
           return;
         }
         if (act === 'archive-closed') {
@@ -10172,6 +10224,7 @@
   }
 
   function updateComposerModePills() {
+    syncProviderNewSessionButtons();
     document.querySelectorAll('[data-comp-mode]').forEach((b) => {
       b.classList.toggle('active', b.dataset.compMode === prefs.composerMode);
     });

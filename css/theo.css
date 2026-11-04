@@ -3199,6 +3199,12 @@ html[data-theme="light"] .mobile-bottom-dock {
     gap: 6px;
     width: 100%;
   }
+  .toolbar-new-btns.single-prov {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .toolbar-new-btns.no-prov {
+    grid-template-columns: 1fr;
+  }
   .toolbar-new-btns .btn-primary {
     padding: 7px 9px;
     font-size: 11.5px;
@@ -3318,6 +3324,12 @@ html[data-theme="light"] .mobile-bottom-dock {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 5px;
+  }
+  .composer-mode-pills.single-prov {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .composer-mode-pills.no-prov {
+    grid-template-columns: 1fr;
   }
   .target-pill {
     font-size: 10.5px;

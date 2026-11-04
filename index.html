@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/theo.css?v=48">
+  <link rel="stylesheet" href="css/theo.css?v=49">
   <script id="pre">
     (() => {
       try {
@@ -288,12 +288,12 @@
                 </div>
                 <div class="brass-rule-single"></div>
               </div>
-              <div class="toolbar-new-btns">
-                <button type="button" class="btn-primary agy" data-quick-new="antigravity">
+              <div class="toolbar-new-btns" id="sess-new-btns">
+                <button type="button" class="btn-primary agy" id="btn-sess-new-agy" data-quick-new="antigravity">
                   <span class="prov-glyph" data-prov-icon="antigravity"></span>
                   <span>+ Antigravity</span>
                 </button>
-                <button type="button" class="btn-primary claude" data-quick-new="claude">
+                <button type="button" class="btn-primary claude" id="btn-sess-new-claude" data-quick-new="claude">
                   <span class="prov-glyph" data-prov-icon="claude"></span>
                   <span>+ Claude Code</span>
                 </button>
@@ -421,7 +421,7 @@
           <form class="chat-composer" id="chat-composer-form">
             <div class="composer-box">
               <div class="composer-target-bar">
-                <div class="composer-mode-pills">
+                <div class="composer-mode-pills" id="composer-mode-pills">
                   <button type="button" class="target-pill active" id="comp-mode-reply" data-comp-mode="reply">Reply to Current</button>
                   <button type="button" class="target-pill" id="comp-mode-new-agy" data-comp-mode="new-antigravity">+ New Antigravity</button>
                   <button type="button" class="target-pill" id="comp-mode-new-claude" data-comp-mode="new-claude">+ New Claude</button>
@@ -589,7 +589,7 @@
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=48"></script>
-  <script src="js/app.js?v=48"></script>
+  <script src="js/endpoints.js?v=49"></script>
+  <script src="js/app.js?v=49"></script>
 </body>
 </html>
