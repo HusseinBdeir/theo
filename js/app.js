@@ -5784,6 +5784,19 @@
       antigravity: rows.filter((r) => !r.archived && r.provider !== 'claude').length,
       claude: rows.filter((r) => !r.archived && r.provider === 'claude').length
     };
+    const showAgySeg = provCounts.antigravity > 0;
+    const showClaudeSeg = provCounts.claude > 0;
+    if (
+      (prefs.sessProvider === 'claude' && !showClaudeSeg) ||
+      (prefs.sessProvider === 'antigravity' && !showAgySeg)
+    ) {
+      prefs.sessProvider = 'all';
+      saveJson(STORAGE_KEYS.PREFS, prefs);
+    }
+    const provSegEl = $('sess-provider-seg');
+    if (provSegEl) {
+      provSegEl.hidden = !(showAgySeg && showClaudeSeg);
+    }
     document.querySelectorAll('#sess-provider-seg .seg-btn').forEach((b) => {
       const p = b.dataset.prov;
       b.classList.toggle('active', p === prefs.sessProvider);
