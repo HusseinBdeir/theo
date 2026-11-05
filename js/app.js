@@ -5400,18 +5400,15 @@
         : 'Live telemetry';
     }
     if (quotaGrid) {
-      const agy = appState?.providers?.antigravity;
-      const claude = appState?.providers?.claude;
-      const agyList = Array.isArray(agy?.accounts) && agy.accounts.length ? agy.accounts : [agy || {}];
-      const claudeList = Array.isArray(claude?.accounts) && claude.accounts.length ? claude.accounts : [claude || {}];
-      const agySignedIn = agyList.filter(isSignedInQuotaCard);
-      const claudeSignedIn = claudeList.filter(isSignedInQuotaCard);
-      const totalSignedIn = agySignedIn.length + claudeSignedIn.length;
-      const visAgy = totalSignedIn > 0 ? agySignedIn : agyList;
-      const visClaude = totalSignedIn > 0 ? claudeSignedIn : claudeList;
-      quotaGrid.innerHTML =
-        visAgy.map((a) => renderQuotaCardHtml(a, 'antigravity', visAgy.length)).join('') +
-        visClaude.map((a) => renderQuotaCardHtml(a, 'claude', visClaude.length)).join('');
+      const { ordered, sameProvCounts } = getOrderedPulseQuotaCards();
+      quotaGrid.innerHTML = ordered
+        .map(({ acct, provKey }, index) =>
+          renderQuotaCardHtml(acct, provKey, sameProvCounts[provKey] || 1, {
+            index,
+            totalCards: ordered.length
+          })
+        )
+        .join('');
     }
 
     // Repo Quick Launchers
@@ -5488,17 +5485,123 @@
     }
   }
 
-  function renderQuotaCardHtml(provInfo, key, sameProvCount = 1) {
+  function getOrderedPulseQuotaCards() {
+    const agy = appState?.providers?.antigravity;
+    const claude = appState?.providers?.claude;
+    const agyList = Array.isArray(agy?.accounts) && agy.accounts.length ? agy.accounts : [agy || {}];
+    const claudeList = Array.isArray(claude?.accounts) && claude.accounts.length ? claude.accounts : [claude || {}];
+    const agySignedIn = agyList.filter(isSignedInQuotaCard);
+    const claudeSignedIn = claudeList.filter(isSignedInQuotaCard);
+    const totalSignedIn = agySignedIn.length + claudeSignedIn.length;
+    const visAgy = totalSignedIn > 0 ? agySignedIn : agyList;
+    const visClaude = totalSignedIn > 0 ? claudeSignedIn : claudeList;
+    const combined = [
+      ...visAgy.map((acct) => ({ acct, provKey: 'antigravity', id: acct?.id || 'antigravity:default' })),
+      ...visClaude.map((acct) => ({ acct, provKey: 'claude', id: acct?.id || 'claude:default' }))
+    ];
+    const orderSource =
+      Array.isArray(appState?.accountOrder) && appState.accountOrder.length
+        ? appState.accountOrder
+        : Array.isArray(prefs.accountOrder)
+          ? prefs.accountOrder
+          : [];
+    const orderMap = new Map();
+    orderSource.forEach((id, idx) => {
+      if (id && !orderMap.has(id)) orderMap.set(id, idx);
+    });
+    const ordered = combined
+      .map((entry, fallbackIdx) => ({ entry, fallbackIdx }))
+      .sort((a, b) => {
+        const ia = orderMap.has(a.entry.id)
+          ? orderMap.get(a.entry.id)
+          : Number.isFinite(Number(a.entry.acct?.sortOrder))
+            ? 1000 + Number(a.entry.acct.sortOrder)
+            : 2000 + a.fallbackIdx;
+        const ib = orderMap.has(b.entry.id)
+          ? orderMap.get(b.entry.id)
+          : Number.isFinite(Number(b.entry.acct?.sortOrder))
+            ? 1000 + Number(b.entry.acct.sortOrder)
+            : 2000 + b.fallbackIdx;
+        return ia - ib;
+      })
+      .map((x) => x.entry);
+    return {
+      ordered,
+      sameProvCounts: {
+        antigravity: visAgy.length,
+        claude: visClaude.length
+      }
+    };
+  }
+
+  async function reorderPulseQuotaCard(accountId, opts = {}) {
+    if (!accountId) return;
+    const { ordered } = getOrderedPulseQuotaCards();
+    const ids = ordered.map((x) => x.id).filter(Boolean);
+    const fromIdx = ids.indexOf(accountId);
+    if (fromIdx === -1) return;
+    const nextIds = [...ids];
+    if (opts.targetAccountId && opts.targetAccountId !== accountId) {
+      nextIds.splice(fromIdx, 1);
+      const targetIdx = nextIds.indexOf(opts.targetAccountId);
+      if (targetIdx === -1) return;
+      const insertAt = opts.position === 'after' ? targetIdx + 1 : targetIdx;
+      nextIds.splice(insertAt, 0, accountId);
+    } else {
+      const delta = opts.direction === 'up' ? -1 : opts.direction === 'down' ? 1 : 0;
+      const toIdx = fromIdx + delta;
+      if (!delta || toIdx < 0 || toIdx >= nextIds.length) return;
+      const [moved] = nextIds.splice(fromIdx, 1);
+      nextIds.splice(toIdx, 0, moved);
+    }
+    const existingExtra = (Array.isArray(appState?.accountOrder) ? appState.accountOrder : []).filter(
+      (id) => id && !nextIds.includes(id)
+    );
+    const fullOrder = [...nextIds, ...existingExtra];
+    prefs.accountOrder = fullOrder;
+    saveJson(STORAGE_KEYS.PREFS, prefs);
+    if (appState) {
+      appState.accountOrder = fullOrder;
+      for (const pk of ['antigravity', 'claude']) {
+        const list = appState.providers?.[pk]?.accounts;
+        if (Array.isArray(list)) {
+          list.sort((a, b) => {
+            const ia = fullOrder.indexOf(a?.id);
+            const ib = fullOrder.indexOf(b?.id);
+            return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+          });
+          list.forEach((item, idx) => {
+            if (item) item.sortOrder = idx;
+          });
+        }
+      }
+      persistCache();
+    }
+    renderPulseView();
+    await dispatchRemoteCommand({
+      type: 'sessionAction',
+      action: 'accountReorder',
+      subAction: 'accountReorder',
+      accountId,
+      provider: opts.provider || (accountId.startsWith('claude:') ? 'claude' : 'antigravity'),
+      direction: opts.direction || '',
+      targetAccountId: opts.targetAccountId || '',
+      position: opts.position || '',
+      orderedIds: fullOrder
+    });
+  }
+
+  function renderQuotaCardHtml(provInfo, key, sameProvCount = 1, orderCtx = null) {
     const acctId = provInfo?.id || `${key}:default`;
-    const label = key === 'claude' ? 'Claude Code' : 'Google Antigravity';
+    const label = key === 'claude' ? 'Claude Code' : 'Antigravity';
     if (!isSignedInQuotaCard(provInfo)) {
       return `
-        <div class="quota-card is-secondary">
+        <div class="quota-card is-secondary" data-quota-card-id="${esc(acctId)}">
           <div class="quota-card-head">
             <div class="quota-prov-title">
               <span class="prov-glyph">${PROVIDER_ICONS[key]}</span>
               <div>
-                <div class="quota-title-line"><span>${esc(label)}</span></div>
+                <div class="quota-title-line"><span class="quota-title-name">${esc(label)}</span></div>
                 <div class="meta-timestamp">Not signed in</div>
               </div>
             </div>
@@ -5519,6 +5622,11 @@
       prefs.collapsedQuotaCards &&
         (prefs.collapsedQuotaCards[collapseKey] ?? prefs.collapsedQuotaCards[acctId])
     );
+    const cardIndex = typeof orderCtx?.index === 'number' ? orderCtx.index : 0;
+    const totalCards = typeof orderCtx?.totalCards === 'number' ? orderCtx.totalCards : sameProvCount;
+    const canReorder = totalCards > 1;
+    const canMoveUp = canReorder && cardIndex > 0;
+    const canMoveDown = canReorder && cardIndex < totalCards - 1;
     let limits = provInfo?.usage?.limits?.length
       ? provInfo.usage.limits
       : provInfo?.usage?.allLimits || [];
@@ -5577,11 +5685,16 @@
       : `<div class="meta-timestamp">${esc(provInfo?.usageMessage || (isActive ? 'Quota telemetry ready.' : 'Signed in · Standby'))}</div>`;
 
     const shortEmail = email.includes('@') ? email.split('@')[0] : email;
-    const nickHtml = nick
+    const collapsedNickHtml = isCollapsed
+      ? nick
+        ? `<span class="quota-nick-pill${key === 'claude' ? ' claude' : ''}">${esc(nick)}</span>`
+        : multi && shortEmail
+          ? `<span class="quota-nick-pill${key === 'claude' ? ' claude' : ''}">${esc(shortEmail)}</span>`
+          : ''
+      : '';
+    const subNickHtml = !isCollapsed && nick
       ? `<span class="quota-nick-pill${key === 'claude' ? ' claude' : ''}">${esc(nick)}</span>`
-      : isCollapsed && multi && shortEmail
-        ? `<span class="quota-nick-pill${key === 'claude' ? ' claude' : ''}">${esc(shortEmail)}</span>`
-        : '';
+      : '';
 
     const statusControlHtml = !isActive
       ? `<button type="button" class="quota-switch-btn" data-account-switch="${esc(acctId)}" data-account-prov="${key}" title="Switch active ${esc(label)} account to ${esc(email || label)} (keeps other accounts signed in)">⇄ Use</button>`
@@ -5589,22 +5702,32 @@
         ? `<span class="quota-active-pill" title="Currently active for new ${esc(label)} sessions"><span class="quota-active-dot"></span>Active</span>`
         : '';
 
+    const moveBtnsHtml = canReorder
+      ? `<button type="button" class="quota-nick-btn" data-account-move="up" data-account-id="${esc(acctId)}" data-account-prov="${key}" ${canMoveUp ? '' : 'disabled'} title="Move account up">↑</button>` +
+        `<button type="button" class="quota-nick-btn" data-account-move="down" data-account-id="${esc(acctId)}" data-account-prov="${key}" ${canMoveDown ? '' : 'disabled'} title="Move account down">↓</button>`
+      : '';
+
     return `
-      <div class="quota-card${isCollapsed ? ' collapsed' : ''}${isActive ? ' is-active' : ' is-secondary'}${multi ? ' multi' : ''}">
+      <div class="quota-card${isCollapsed ? ' collapsed' : ''}${isActive ? ' is-active' : ' is-secondary'}${multi ? ' multi' : ''}" data-quota-card-id="${esc(acctId)}" ${canReorder ? 'draggable="true"' : ''}>
         <div class="quota-card-head">
           <button type="button" class="quota-card-toggle" data-quota-collapse="${esc(collapseKey)}" aria-expanded="${!isCollapsed}" title="${isCollapsed ? 'Show' : 'Hide'} ${esc(email || label)} usage">
             <div class="quota-prov-title">
               <svg class="quota-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg>
               <span class="prov-glyph">${PROVIDER_ICONS[key]}</span>
-              <div>
-                <div class="quota-title-line"><span>${esc(label)}</span>${nickHtml}</div>
-                ${!isCollapsed && email ? `<div class="meta-timestamp">${esc(email)}</div>` : ''}
+              <div class="quota-title-stack">
+                <div class="quota-title-line"><span class="quota-title-name">${esc(label)}</span>${collapsedNickHtml}</div>
+                ${
+                  !isCollapsed
+                    ? `<div class="quota-sub-line">${email ? `<span class="meta-timestamp">${esc(email)}</span>` : ''}${subNickHtml}<span class="plan-pill">${esc(plan)}</span></div>`
+                    : ''
+                }
               </div>
             </div>
           </button>
           <div class="quota-head-actions">
             ${statusControlHtml}
-            <span class="plan-pill">${esc(plan)}</span>
+            ${isCollapsed ? `<span class="plan-pill">${esc(plan)}</span>` : ''}
+            ${moveBtnsHtml}
             <button type="button" class="quota-nick-btn" data-account-label="${esc(acctId)}" data-account-prov="${key}" data-account-nick="${esc(nick)}" title="${nick ? 'Edit account label' : 'Set account label (e.g. Friend, Work)'}">✎</button>
             <button type="button" class="quota-nick-btn" data-account-remove="${esc(acctId)}" data-account-prov="${key}" data-account-email="${esc(email)}" title="${multi ? 'Disconnect account' : 'Sign out account'}">✕</button>
           </div>
@@ -9004,6 +9127,18 @@
           provider
         });
         showToast(`⇄ Switched active ${provider === 'claude' ? 'Claude Code' : 'Antigravity'} account`);
+        return;
+      }
+
+      const acctMoveBtn = e.target.closest('[data-account-move]');
+      if (acctMoveBtn) {
+        e.stopPropagation();
+        const dir = acctMoveBtn.dataset.accountMove;
+        const accountId = acctMoveBtn.dataset.accountId;
+        const provider = acctMoveBtn.dataset.accountProv === 'claude' ? 'claude' : 'antigravity';
+        if (accountId && (dir === 'up' || dir === 'down')) {
+          await reorderPulseQuotaCard(accountId, { direction: dir, provider });
+        }
         return;
       }
 

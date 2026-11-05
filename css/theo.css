@@ -878,11 +878,35 @@ html[data-theme="light"] .kpi-tile {
   flex-shrink: 0;
 }
 
+.quota-title-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
 .quota-title-line {
   display: flex;
   align-items: center;
   gap: 7px;
+  min-width: 0;
+}
+
+.quota-title-name {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.quota-sub-line {
+  display: flex;
+  align-items: center;
   flex-wrap: wrap;
+  gap: 4px 6px;
+}
+
+.quota-nick-btn:disabled {
+  opacity: 0.25;
+  cursor: default;
 }
 
 .quota-nick-pill {
