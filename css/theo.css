@@ -851,8 +851,8 @@ html[data-theme="light"] .kpi-tile {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 14px;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .quota-card.collapsed .quota-card-head {
@@ -874,7 +874,7 @@ html[data-theme="light"] .kpi-tile {
 .quota-head-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   flex-shrink: 0;
 }
 
@@ -888,7 +888,7 @@ html[data-theme="light"] .kpi-tile {
 .quota-title-line {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -900,8 +900,18 @@ html[data-theme="light"] .kpi-tile {
 .quota-sub-line {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 6px;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  gap: 8px;
+  margin-bottom: 10px;
+  min-width: 0;
+}
+
+.quota-sub-line .meta-timestamp {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .quota-nick-btn:disabled {
@@ -1016,7 +1026,7 @@ html[data-theme="light"] .kpi-tile {
 .quota-bars-stack {
   display: flex;
   flex-direction: column;
-  gap: 11px;
+  gap: 9px;
 }
 
 .q-bar-row {
@@ -1028,8 +1038,23 @@ html[data-theme="light"] .kpi-tile {
 .q-bar-labels {
   display: flex;
   justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
   font-size: 12px;
   font-weight: 600;
+}
+
+.q-bar-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.q-pct {
+  font-weight: 700;
+  color: var(--text-primary);
 }
 
 .q-track {

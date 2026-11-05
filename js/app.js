@@ -5672,12 +5672,11 @@
               <div class="q-bar-row tabular">
                 <div class="q-bar-labels">
                   <span>${esc(l.label)}</span>
-                  <span>${pct}% used</span>
+                  <span class="q-bar-meta">${resetTxt ? `<span class="q-reset">${esc(resetTxt)}</span>` : ''}<span class="q-pct">${pct}%</span></span>
                 </div>
                 <div class="q-track">
                   <div class="q-fill ${cls}" style="width:${pct}%"></div>
                 </div>
-                ${resetTxt ? `<span class="q-reset">${esc(resetTxt)}</span>` : ''}
               </div>
             `;
           })
@@ -5685,16 +5684,12 @@
       : `<div class="meta-timestamp">${esc(provInfo?.usageMessage || (isActive ? 'Quota telemetry ready.' : 'Signed in · Standby'))}</div>`;
 
     const shortEmail = email.includes('@') ? email.split('@')[0] : email;
-    const collapsedNickHtml = isCollapsed
-      ? nick
-        ? `<span class="quota-nick-pill${key === 'claude' ? ' claude' : ''}">${esc(nick)}</span>`
-        : multi && shortEmail
-          ? `<span class="quota-nick-pill${key === 'claude' ? ' claude' : ''}">${esc(shortEmail)}</span>`
-          : ''
-      : '';
-    const subNickHtml = !isCollapsed && nick
+    const shortPlan = /^Google AI\s+/i.test(plan) ? plan.replace(/^Google AI\s+/i, '') : plan;
+    const headerNickHtml = nick
       ? `<span class="quota-nick-pill${key === 'claude' ? ' claude' : ''}">${esc(nick)}</span>`
-      : '';
+      : multi && shortEmail
+        ? `<span class="quota-nick-pill${key === 'claude' ? ' claude' : ''}">${esc(shortEmail)}</span>`
+        : '';
 
     const statusControlHtml = !isActive
       ? `<button type="button" class="quota-switch-btn" data-account-switch="${esc(acctId)}" data-account-prov="${key}" title="Switch active ${esc(label)} account to ${esc(email || label)} (keeps other accounts signed in)">⇄ Use</button>`
@@ -5702,9 +5697,9 @@
         ? `<span class="quota-active-pill" title="Currently active for new ${esc(label)} sessions"><span class="quota-active-dot"></span>Active</span>`
         : '';
 
-    const moveBtnsHtml = canReorder
-      ? `<button type="button" class="quota-nick-btn" data-account-move="up" data-account-id="${esc(acctId)}" data-account-prov="${key}" ${canMoveUp ? '' : 'disabled'} title="Move account up">↑</button>` +
-        `<button type="button" class="quota-nick-btn" data-account-move="down" data-account-id="${esc(acctId)}" data-account-prov="${key}" ${canMoveDown ? '' : 'disabled'} title="Move account down">↓</button>`
+    const moveBtnsHtml = canReorder && (canMoveUp || canMoveDown)
+      ? (canMoveUp ? `<button type="button" class="quota-nick-btn" data-account-move="up" data-account-id="${esc(acctId)}" data-account-prov="${key}" title="Move account up">↑</button>` : '') +
+        (canMoveDown ? `<button type="button" class="quota-nick-btn" data-account-move="down" data-account-id="${esc(acctId)}" data-account-prov="${key}" title="Move account down">↓</button>` : '')
       : '';
 
     return `
@@ -5715,24 +5710,23 @@
               <svg class="quota-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg>
               <span class="prov-glyph">${PROVIDER_ICONS[key]}</span>
               <div class="quota-title-stack">
-                <div class="quota-title-line"><span class="quota-title-name">${esc(label)}</span>${collapsedNickHtml}</div>
-                ${
-                  !isCollapsed
-                    ? `<div class="quota-sub-line">${email ? `<span class="meta-timestamp">${esc(email)}</span>` : ''}${subNickHtml}<span class="plan-pill">${esc(plan)}</span></div>`
-                    : ''
-                }
+                <div class="quota-title-line"><span class="quota-title-name">${esc(label)}</span>${headerNickHtml}</div>
               </div>
             </div>
           </button>
           <div class="quota-head-actions">
             ${statusControlHtml}
-            ${isCollapsed ? `<span class="plan-pill">${esc(plan)}</span>` : ''}
+            ${isCollapsed && !multi ? `<span class="plan-pill">${esc(shortPlan)}</span>` : ''}
             ${moveBtnsHtml}
             <button type="button" class="quota-nick-btn" data-account-label="${esc(acctId)}" data-account-prov="${key}" data-account-nick="${esc(nick)}" title="${nick ? 'Edit account label' : 'Set account label (e.g. Friend, Work)'}">✎</button>
             <button type="button" class="quota-nick-btn" data-account-remove="${esc(acctId)}" data-account-prov="${key}" data-account-email="${esc(email)}" title="${multi ? 'Disconnect account' : 'Sign out account'}">✕</button>
           </div>
         </div>
-        ${isCollapsed ? '' : `<div class="quota-bars-stack">${barsHtml}</div>`}
+        ${
+          isCollapsed
+            ? ''
+            : `<div class="quota-sub-line">${email ? `<span class="meta-timestamp">${esc(email)}</span>` : '<span></span>'}<span class="plan-pill">${esc(shortPlan)}</span></div><div class="quota-bars-stack">${barsHtml}</div>`
+        }
       </div>
     `;
   }
