@@ -23,15 +23,9 @@ if (-not $localZip) {
 }
 if (-not $localZip) {
     $tmpZip = Join-Path $env:TEMP "theo-hub-bundle.zip"
-    try {
-        Write-Host "Downloading THEO bundle from local LAN (192.168.3.129) ..." -ForegroundColor Yellow
-        Invoke-WebRequest -Uri "http://192.168.3.129:8844/theo-hub-bundle.zip" -OutFile $tmpZip -UseBasicParsing -TimeoutSec 4
-        $localZip = $tmpZip
-    } catch {
-        Write-Host "Downloading THEO bundle from https://husseinbdeir.github.io/theo/theo-hub-bundle.zip ..." -ForegroundColor Yellow
-        Invoke-WebRequest -Uri "https://husseinbdeir.github.io/theo/theo-hub-bundle.zip" -OutFile $tmpZip -UseBasicParsing
-        $localZip = $tmpZip
-    }
+    Write-Host "Downloading THEO bundle ..." -ForegroundColor Yellow
+    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/HusseinBdeir/theo/main/theo-hub-bundle.zip" -OutFile $tmpZip -UseBasicParsing
+    $localZip = $tmpZip
 }
 
 # Extract to both ~/.vscode/extensions/bhfirms.theo-hub-0.1.0 and ~/bhfirms/theo-hub
@@ -65,13 +59,13 @@ if (-not $nodeExe) {
     throw "Could not find Node.js or VS Code executable to register THEO bridge."
 }
 
-# Register in ~/.vscode/extensions/extensions.json and patch Google Antigravity + Claude Code
-$jsScript = @"
+# Single-quoted here-string so PowerShell does not expand $mid or anything inside JS
+$jsScript = @'
 const fs = require('fs');
 const path = require('path');
 
-const vscodeExtDir = process.argv[1];
-const targetDir = process.argv[2];
+const vscodeExtDir = process.argv[2];
+const targetDir = process.argv[3];
 const extId = 'bhfirms.theo-hub';
 const legacyId = 'bhfirms.antigravity-hub';
 const version = '0.1.0';
@@ -121,7 +115,7 @@ for (const entry of fs.readdirSync(vscodeExtDir, { withFileTypes: true })) {
     console.log('[OK] Patched Claude Code in ' + fullDir + ' (installed=' + Boolean(res && res.installed) + ')');
   }
 }
-"@
+'@
 
 $tmpJs = Join-Path $env:TEMP "theo_register_bridge.cjs"
 Set-Content -Path $tmpJs -Value $jsScript -Encoding UTF8
