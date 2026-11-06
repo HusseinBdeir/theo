@@ -115,6 +115,26 @@ for (const entry of fs.readdirSync(vscodeExtDir, { withFileTypes: true })) {
     console.log('[OK] Patched Claude Code in ' + fullDir + ' (installed=' + Boolean(res && res.installed) + ')');
   }
 }
+
+(async () => {
+  try {
+    const os = require('os');
+    const { AntigravityDataStore } = require(path.join(targetDir, 'store.js'));
+    const st = new AntigravityDataStore();
+    const fresh = await st.fetchCloudRelaySnapshotDirect();
+    if (fresh && fresh.snapshot && Array.isArray(fresh.snapshot.rows) && fresh.snapshot.rows.length > 0) {
+      const claudeDir = path.join(os.homedir(), '.claude');
+      fs.mkdirSync(claudeDir, { recursive: true });
+      const cachePath = path.join(claudeDir, '.theo-cloud-sessions-cache.json');
+      fs.writeFileSync(cachePath, JSON.stringify({
+        savedAt: Date.now(),
+        snapshot: fresh.snapshot,
+        threads: fresh.threads || {}
+      }), 'utf8');
+      console.log('[OK] Synced ' + fresh.snapshot.rows.length + ' sessions & groups from THEO Cloud Relay');
+    }
+  } catch (e) {}
+})();
 '@
 
 $tmpJs = Join-Path $env:TEMP "theo_register_bridge.cjs"
