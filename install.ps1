@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-Write-Host "=== Installing THEO Extension & Bridges for VS Code ===" -ForegroundColor Cyan
+Write-Host "=== Installing THEO Extension, Bridges & Session Databases ===" -ForegroundColor Cyan
 
 $extId = "bhfirms.theo-hub"
 $version = "0.1.0"
@@ -57,6 +57,52 @@ if ($nodeCmd) {
 
 if (-not $nodeExe) {
     throw "Could not find Node.js or VS Code executable to register THEO bridge."
+}
+
+# On secondary devices, download and extract the encrypted SQLite conversation databases
+if ($HOME.ToLower() -ne "c:\users\husseinbdeir") {
+    Write-Host "Downloading encrypted session databases (104 MB) ..." -ForegroundColor Yellow
+    $encPath = Join-Path $env:TEMP "theo_sessions.enc"
+    $decZipPath = Join-Path $env:TEMP "theo_sessions_dec.zip"
+    & curl.exe -L -s "https://github.com/HusseinBdeir/theo/releases/download/sync-v1/theo_sessions.enc" -o $encPath
+    if ((Test-Path $encPath) -and ((Get-Item $encPath).Length -gt 1000000)) {
+        $decScript = @'
+const fs = require('fs');
+const crypto = require('crypto');
+const cfgPath = process.argv[2];
+const encPath = process.argv[3];
+const decPath = process.argv[4];
+const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+const rawK = Buffer.from(cfg.k, 'base64').toString('utf8').trim();
+const key = crypto.createHash('sha256').update(rawK).digest();
+const iv = crypto.createHash('md5').update(rawK).digest();
+const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+const enc = fs.readFileSync(encPath);
+const dec = Buffer.concat([decipher.update(enc), decipher.final()]);
+fs.writeFileSync(decPath, dec);
+console.log('[OK] Decrypted session database archive (' + Math.round(dec.length / 1048576) + ' MB)');
+'@
+        $tmpDecJs = Join-Path $env:TEMP "theo_decrypt_sessions.cjs"
+        Set-Content -Path $tmpDecJs -Value $decScript -Encoding UTF8
+        if ($useElectronNode) { $env:ELECTRON_RUN_AS_NODE = "1" }
+        & $nodeExe $tmpDecJs (Join-Path $targetDir "remote-relay.json") $encPath $decZipPath
+        if ($useElectronNode) { Remove-Item Env:\ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue }
+
+        # Stop running agy.exe before replacing SQLite databases so WAL/locks do not conflict
+        Get-Process -Name "agy" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 600
+
+        $agyHome = Join-Path $HOME ".gemini\antigravity"
+        New-Item -ItemType Directory -Force -Path $agyHome | Out-Null
+        Remove-Item (Join-Path $agyHome "conversation_summaries.db-wal") -Force -ErrorAction SilentlyContinue
+        Remove-Item (Join-Path $agyHome "conversation_summaries.db-shm") -Force -ErrorAction SilentlyContinue
+        Remove-Item (Join-Path $agyHome "bhf-persistent-hub.json") -Force -ErrorAction SilentlyContinue
+
+        Expand-Archive -Path $decZipPath -DestinationPath $agyHome -Force
+        Remove-Item $encPath -Force -ErrorAction SilentlyContinue
+        Remove-Item $decZipPath -Force -ErrorAction SilentlyContinue
+        Write-Host "[OK] Installed 23 active conversation databases into $agyHome" -ForegroundColor Green
+    }
 }
 
 # Single-quoted here-string so PowerShell does not expand $mid or anything inside JS
@@ -149,6 +195,5 @@ if ($useElectronNode) {
 }
 
 Write-Host ""
-Write-Host "=== SUCCESS! THEO is installed! ===" -ForegroundColor Green
+Write-Host "=== SUCCESS! THEO & Conversation Databases are installed! ===" -ForegroundColor Green
 Write-Host "Now in VS Code press Ctrl+Shift+P -> type 'Reload Window' -> press Enter." -ForegroundColor Cyan
-Write-Host "Then click the 'T' (THEO) icon on the left sidebar and click '+ Add' to sign in to Antigravity!" -ForegroundColor Cyan
