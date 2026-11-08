@@ -230,6 +230,11 @@
     return { url, key, port: cfg.port || 4318 };
   }
 
+  const isHeadlessBrowser = Boolean(
+    (typeof navigator !== 'undefined' && navigator.webdriver) ||
+      (typeof window !== 'undefined' && window.__THEO_HEADLESS_TEST)
+  );
+
   const cloudCfg = getCloudConfig();
   const prefs = loadJson(STORAGE_KEYS.PREFS, {
     theme: 'light',
@@ -238,6 +243,11 @@
     activeTab: 'pulse',
     sessProvider: 'all',
     sessStatus: 'all',
+    selectedDeviceFilter: 'all',
+    composerTargetDevice: 'auto',
+    composerDirectStream: true,
+    edgeRelayUrl: '',
+    freqUsage: { devices: {}, repos: {} },
     telemetryProv: 'all',
     selectedThreadId: '',
     selectedRepoId: 'resort-operations',
@@ -251,7 +261,44 @@
   if (!prefs.themeUserSet) {
     prefs.theme = 'light';
   }
+  if (!prefs.selectedDeviceFilter) prefs.selectedDeviceFilter = 'all';
+  if (!prefs.composerTargetDevice) prefs.composerTargetDevice = 'auto';
+  prefs.composerDirectStream = prefs.composerDirectStream !== false;
+  prefs.freqUsage = Object.assign(
+    { devices: {}, repos: {} },
+    prefs.freqUsage && typeof prefs.freqUsage === 'object' ? prefs.freqUsage : {}
+  );
+  prefs.freqUsage.devices = Object.assign({}, prefs.freqUsage.devices || {});
+  prefs.freqUsage.repos = Object.assign({}, prefs.freqUsage.repos || {});
   prefs.notif = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
+
+  // Frequency-First Search & Comboboxes (THEO.md Rule 11: strictly usage frequency descending, never alphabetical override)
+  function recordFreqUsage(bucket, rawKey) {
+    const key = String(rawKey || '').trim();
+    if (!key || key === 'auto' || key === 'all') return;
+    if (!prefs.freqUsage || typeof prefs.freqUsage !== 'object') {
+      prefs.freqUsage = { devices: {}, repos: {} };
+    }
+    if (!prefs.freqUsage[bucket] || typeof prefs.freqUsage[bucket] !== 'object') {
+      prefs.freqUsage[bucket] = {};
+    }
+    prefs.freqUsage[bucket][key] = Number(prefs.freqUsage[bucket][key] || 0) + 1;
+    saveJson(STORAGE_KEYS.PREFS, prefs);
+  }
+
+  function rankByFreq(items, bucket, idFn, baselineWeightFn = null) {
+    const list = Array.isArray(items) ? items : [];
+    const map = (prefs.freqUsage && prefs.freqUsage[bucket]) || {};
+    return list
+      .map((item, idx) => {
+        const key = String(idFn(item) || '').trim();
+        const userCount = Number(map[key] || 0);
+        const baseWeight = typeof baselineWeightFn === 'function' ? Number(baselineWeightFn(item) || 0) : 0;
+        return { item, idx, score: userCount * 10000 + baseWeight };
+      })
+      .sort((a, b) => (b.score !== a.score ? b.score - a.score : a.idx - b.idx))
+      .map((x) => x.item);
+  }
 
   const cachedStore = loadJson(STORAGE_KEYS.CACHE, {
     state: null,
@@ -264,9 +311,27 @@
   let threadsCache = cachedStore.threads || {};
   let workspacesDetailCache = cachedStore.workspacesDetail || {};
   let outbox = loadJson(STORAGE_KEYS.OUTBOX, []);
-  let connMode = 'probing'; // 'local' | 'cloud' | 'offline'
+  let connMode = 'probing'; // 'local' | 'edge' | 'cloud' | 'offline'
   let localBridgeBase = '';
   let sseSource = null;
+  let localWs = null;
+  let localWsAuthed = false;
+  let localWsRttMs = 0;
+  let localWsDevice = null;
+  let localWsPingTimer = null;
+  let localWsReconnectTimer = null;
+  let edgeWs = null;
+  let edgeWsAuthed = false;
+  let edgeWsRttMs = 0;
+  let edgeWsUrlConnected = '';
+  let edgeWsPingTimer = null;
+  let edgeWsReconnectTimer = null;
+  let discoveredEdgeUrl = prefs.edgeRelayUrl || '';
+  const wsPendingRpcs = new Map();
+  const fleetDevicesMap = new Map();
+  const liveStreamsByThreadId = new Map();
+  let streamDomRafId = 0;
+  let streamDomTargetTid = '';
   let lastRenderedThreadId = '';
   let lastRenderedMsgCount = 0;
   let pushSub = null;
@@ -3111,6 +3176,13 @@
           if (data && data.ok) {
             localBridgeBase = base;
             lastLocalProbeFailedAt = 0;
+            if (data.device && data.device.id) {
+              localWsDevice = data.device;
+              updateFleetDevices([{ ...data.device, online: true, local: true, lastSeen: Date.now() }]);
+            }
+            if (data.edgeRelayUrl && !prefs.edgeRelayUrl) {
+              discoveredEdgeUrl = String(data.edgeRelayUrl).trim();
+            }
             return base;
           }
         }
@@ -3122,10 +3194,632 @@
 
   const initialNoSse = location.search.includes('nosse=1');
 
+  async function deriveEdgeAuthTokenHex(rawKey) {
+    const clean = String(rawKey || '').trim();
+    if (!clean || !window.crypto || !window.crypto.subtle) return '';
+    const bytes = new TextEncoder().encode(`theo-edge-v1:${clean}`);
+    const digest = await window.crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  }
+
+  function updateFleetDevices(list) {
+    if (!Array.isArray(list)) return;
+    for (const d of list) {
+      if (!d || !d.id) continue;
+      const prev = fleetDevicesMap.get(d.id) || {};
+      fleetDevicesMap.set(d.id, {
+        ...prev,
+        ...d,
+        id: d.id,
+        name: d.name || prev.name || d.hostname || d.id,
+        online: d.online !== undefined ? Boolean(d.online) : Boolean(prev.online),
+        lastSeen: Number(d.lastSeen || d.updatedAt || prev.lastSeen || Date.now()),
+        sessionCount: Number(
+          d.sessionCount !== undefined ? d.sessionCount : prev.sessionCount || 0
+        )
+      });
+    }
+  }
+
+  function getUnifiedFleetDevices() {
+    if (Array.isArray(appState?.devices)) {
+      updateFleetDevices(appState.devices);
+    }
+    if (appState?.device && appState.device.id) {
+      updateFleetDevices([
+        {
+          ...appState.device,
+          online: connMode === 'local' || connMode === 'edge' ? true : Boolean(appState.device.online),
+          sessionCount: (appState.rows || []).filter(
+            (r) => !r.archived && (!r.deviceId || r.deviceId === appState.device.id)
+          ).length
+        }
+      ]);
+    }
+    const all = Array.from(fleetDevicesMap.values());
+    return rankByFreq(
+      all,
+      'devices',
+      (d) => d.id,
+      (d) => (d.local ? 500 : d.online ? 300 : 100) + Math.min(99, Number(d.sessionCount || 0))
+    );
+  }
+
+  function mergeDeviceSnapshotRows(targetState, incomingSnap, devId, devName) {
+    if (!targetState || !incomingSnap || typeof incomingSnap !== 'object') return;
+    const cleanId = String(devId || incomingSnap?.device?.id || '').trim();
+    const cleanName = String(
+      devName || incomingSnap?.device?.name || incomingSnap?.connection?.hostname || cleanId || 'Host'
+    ).trim();
+    if (cleanId) {
+      updateFleetDevices([
+        {
+          ...(incomingSnap.device || {}),
+          id: cleanId,
+          name: cleanName,
+          hostname: incomingSnap?.connection?.hostname || incomingSnap?.device?.hostname || '',
+          sessionCount: Array.isArray(incomingSnap.rows)
+            ? incomingSnap.rows.filter((r) => r && !r.archived).length
+            : 0,
+          lastSeen: Number(incomingSnap.generatedAt || Date.now())
+        }
+      ]);
+    }
+
+    const rowMap = new Map();
+    for (const r of targetState.rows || []) {
+      if (r && r.id) rowMap.set(r.id, r);
+    }
+    for (const r of incomingSnap.rows || []) {
+      if (!r || !r.id) continue;
+      const tagged = {
+        ...r,
+        deviceId: r.deviceId || cleanId,
+        deviceName: r.deviceName || cleanName
+      };
+      const prev = rowMap.get(r.id);
+      if (
+        !prev ||
+        (tagged.status === 'working' && prev.status !== 'working') ||
+        Number(tagged.at || 0) >= Number(prev.at || 0)
+      ) {
+        rowMap.set(r.id, tagged);
+      }
+    }
+    targetState.rows = Array.from(rowMap.values()).sort(
+      (a, b) => Number(b.at || 0) - Number(a.at || 0)
+    );
+
+    if (Array.isArray(incomingSnap.approvals) && incomingSnap.approvals.length > 0) {
+      const appMap = new Map();
+      for (const a of targetState.approvals || []) {
+        if (a && a.id) appMap.set(a.id, a);
+      }
+      for (const a of incomingSnap.approvals) {
+        if (a && a.id && !appMap.has(a.id)) {
+          appMap.set(a.id, { ...a, deviceId: a.deviceId || cleanId, deviceName: a.deviceName || cleanName });
+        }
+      }
+      targetState.approvals = Array.from(appMap.values());
+    }
+
+    if (Array.isArray(incomingSnap.workspaces) && incomingSnap.workspaces.length > 0) {
+      const wsMap = new Map();
+      for (const w of targetState.workspaces || []) {
+        if (w && w.id) wsMap.set(w.id, w);
+      }
+      for (const w of incomingSnap.workspaces) {
+        if (w && w.id && !wsMap.has(w.id)) wsMap.set(w.id, w);
+      }
+      targetState.workspaces = Array.from(wsMap.values());
+    }
+  }
+
+  function ingestIncomingHostState(st, sourceDeviceId = '') {
+    if (!st || typeof st !== 'object') return;
+    if (Array.isArray(st.devices)) {
+      updateFleetDevices(st.devices);
+    }
+    const devId = String(sourceDeviceId || st?.device?.id || '').trim();
+    const devName = String(st?.device?.name || st?.connection?.hostname || devId || '').trim();
+    if (devId && Array.isArray(st.rows)) {
+      for (const r of st.rows) {
+        if (r && !r.deviceId) r.deviceId = devId;
+        if (r && !r.deviceName && devName) r.deviceName = devName;
+      }
+    }
+
+    let nextState = st;
+    if (appState && devId && appState?.device?.id && appState.device.id !== devId) {
+      nextState = {
+        ...appState,
+        generatedAt: Math.max(Number(appState.generatedAt || 0), Number(st.generatedAt || Date.now()))
+      };
+      mergeDeviceSnapshotRows(nextState, st, devId, devName);
+    }
+
+    // Re-apply active live CLI stream overlays so snapshots never flicker mid-stream
+    for (const [tid, live] of liveStreamsByThreadId.entries()) {
+      if (live && live.status === 'working' && Date.now() - Number(live.receivedAt || 0) < 45000) {
+        const matchRow = (nextState.rows || []).find((r) => r && r.id === tid);
+        if (matchRow) {
+          matchRow.status = 'working';
+          matchRow.statusLabel = 'Streaming Live';
+          matchRow.dot = 'running';
+        }
+      }
+    }
+
+    applyStoppedSessionOverrides(nextState);
+    applyAnsweredQuestionOverrides(nextState);
+    applyPendingLocalOverrides(nextState);
+    checkLiveStateNotifications(nextState);
+    appState = nextState;
+    reconcilePendingNewSessionBind(nextState);
+    if (st.personalLedger) {
+      mergePersonalLedger(st.personalLedger);
+    }
+    persistCache();
+    renderAll();
+  }
+
+  function patchLiveStreamingDom(tid) {
+    streamDomRafId = 0;
+    if (prefs.activeTab !== 'chat' || prefs.selectedThreadId !== tid) {
+      return;
+    }
+    const streamEl = $('chat-stream');
+    if (!streamEl) return;
+    const turnEl = streamEl.querySelector('[data-streaming-turn="1"]');
+    const live = liveStreamsByThreadId.get(tid);
+    if (!turnEl || !live) {
+      renderChatView();
+      return;
+    }
+    const wasNearBottom = streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight < 120;
+    const thinkWrap = turnEl.querySelector('[data-stream-think-wrap]');
+    const thinkBody = turnEl.querySelector('[data-stream-think-body]');
+    const textWrap = turnEl.querySelector('[data-stream-text-body]');
+    const toolSlot = turnEl.querySelector('[data-stream-tool-slot]');
+    const statusLbl = turnEl.querySelector('[data-stream-status-lbl]');
+
+    if (thinkWrap && thinkBody) {
+      if (live.fullThinking) {
+        thinkWrap.hidden = false;
+        thinkBody.textContent = live.fullThinking;
+      } else {
+        thinkWrap.hidden = true;
+      }
+    }
+    if (toolSlot) {
+      if (live.activeTool && live.status === 'working') {
+        toolSlot.hidden = false;
+        toolSlot.textContent = `⚡ ${live.activeTool}`;
+      } else {
+        toolSlot.hidden = true;
+      }
+    }
+    if (textWrap) {
+      const rendered = live.fullText ? formatTurnMarkdown(live.fullText) : '';
+      const cursor = live.status === 'working' ? '<span class="stream-cursor"></span>' : '';
+      textWrap.innerHTML = rendered + cursor;
+    }
+    if (statusLbl) {
+      statusLbl.textContent =
+        live.status === 'working'
+          ? `⚡ Live Stream${live.deviceName ? ` · ${live.deviceName}` : ''}`
+          : '✓ Stream Complete';
+    }
+    if (live.status !== 'working') {
+      turnEl.classList.remove('is-streaming');
+    }
+    if (wasNearBottom) {
+      streamEl.scrollTop = streamEl.scrollHeight;
+    }
+    updateComposerActionButton();
+  }
+
+  function handleStreamDelta(rawDelta) {
+    const delta = rawDelta?.delta && typeof rawDelta.delta === 'object' ? rawDelta.delta : rawDelta;
+    if (!delta || typeof delta !== 'object') return;
+    const prov = delta.provider === 'claude' ? 'claude' : 'antigravity';
+    const realId = cleanTargetThreadId(delta.realThreadId || delta.threadId || '');
+    const draftId = String(delta.draftThreadId || delta.draftId || '').trim();
+
+    if (realId && pendingNewSessionBind) {
+      const matchesDraft =
+        (draftId && pendingNewSessionBind.draftThreadId === draftId) ||
+        (pendingNewSessionBind.provider === prov &&
+          Date.now() - Number(pendingNewSessionBind.createdAt || 0) < 35000 &&
+          !(pendingNewSessionBind.knownIds && pendingNewSessionBind.knownIds.has(realId)));
+      if (matchesDraft) {
+        bindDraftThreadToRealSession(pendingNewSessionBind.draftThreadId, realId, prov);
+      }
+    }
+
+    const tid = realId || draftId || String(delta.runKey || delta.runId || '').trim();
+    if (!tid) return;
+
+    const mergedDelta = {
+      ...(liveStreamsByThreadId.get(tid) || {}),
+      ...delta,
+      provider: prov,
+      receivedAt: Date.now()
+    };
+    liveStreamsByThreadId.set(tid, mergedDelta);
+
+    // Ensure session row reflects live streaming immediately
+    if (appState && Array.isArray(appState.rows)) {
+      let row = appState.rows.find((r) => r && r.id === tid);
+      if (!row && realId) {
+        row = {
+          id: realId,
+          title: String(delta.prompt || delta.title || 'Live Session').slice(0, 64),
+          provider: prov,
+          folder: delta.folder || delta.workspaceName || '',
+          model: delta.model || '',
+          deviceId: delta.deviceId || '',
+          deviceName: delta.deviceName || '',
+          status: 'working',
+          statusLabel: 'Streaming Live',
+          dot: 'running',
+          at: Date.now()
+        };
+        appState.rows.unshift(row);
+      } else if (row) {
+        row.at = Date.now();
+        if (delta.deviceId) row.deviceId = delta.deviceId;
+        if (delta.deviceName) row.deviceName = delta.deviceName;
+        if (delta.status === 'working') {
+          row.status = 'working';
+          row.statusLabel = 'Streaming Live';
+          row.dot = 'running';
+        } else if (delta.status === 'done' || delta.status === 'completed') {
+          row.status = 'completed';
+          row.statusLabel = 'Completed';
+          row.dot = row.open ? 'idle' : null;
+        }
+      }
+    }
+
+    if (!threadsCache[tid]) {
+      threadsCache[tid] = {
+        id: tid,
+        provider: prov,
+        title: String(delta.title || 'Live Session').slice(0, 64),
+        messages: []
+      };
+    }
+    const msgs = Array.isArray(threadsCache[tid].messages) ? threadsCache[tid].messages : [];
+    const streamMsgId = `stream-${delta.runKey || delta.runId || tid}`;
+    let streamMsg = msgs.find((m) => m && (m.id === streamMsgId || m.isStreaming));
+    const isWorking = delta.status === 'working';
+    if (!streamMsg) {
+      streamMsg = {
+        id: streamMsgId,
+        role: 'assistant',
+        createdAt: new Date().toISOString(),
+        text: mergedDelta.fullText || '',
+        thinking: mergedDelta.fullThinking || '',
+        toolCalls: Array.isArray(mergedDelta.toolSteps) ? mergedDelta.toolSteps : [],
+        activeTool: mergedDelta.activeTool || '',
+        deviceName: mergedDelta.deviceName || '',
+        isStreaming: isWorking
+      };
+      msgs.push(streamMsg);
+    } else {
+      if (mergedDelta.fullText !== undefined) streamMsg.text = mergedDelta.fullText;
+      if (mergedDelta.fullThinking !== undefined) streamMsg.thinking = mergedDelta.fullThinking;
+      if (Array.isArray(mergedDelta.toolSteps)) streamMsg.toolCalls = mergedDelta.toolSteps;
+      streamMsg.activeTool = isWorking ? mergedDelta.activeTool || '' : '';
+      streamMsg.isStreaming = isWorking;
+      if (mergedDelta.deviceName) streamMsg.deviceName = mergedDelta.deviceName;
+    }
+    threadsCache[tid].messages = msgs;
+
+    if (!isWorking) {
+      setTimeout(() => {
+        fetchThreadDetail(tid, prov).catch(() => {});
+        renderPulseView();
+        renderSessionsView();
+      }, 450);
+    }
+
+    if (prefs.activeTab === 'chat' && prefs.selectedThreadId === tid) {
+      streamDomTargetTid = tid;
+      if (!streamDomRafId) {
+        streamDomRafId = requestAnimationFrame(() => patchLiveStreamingDom(streamDomTargetTid));
+      }
+    } else if (!isWorking) {
+      renderPulseView();
+      renderSessionsView();
+    }
+  }
+
+  function sendWsRpc(wsConn, framePayload, timeoutMs = 9000) {
+    return new Promise((resolve, reject) => {
+      if (!wsConn || wsConn.readyState !== 1) {
+        reject(new Error('ws_not_open'));
+        return;
+      }
+      const reqId = `rpc-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`;
+      const timer = setTimeout(() => {
+        wsPendingRpcs.delete(reqId);
+        reject(new Error('ws_rpc_timeout'));
+      }, timeoutMs);
+      wsPendingRpcs.set(reqId, { resolve, reject, timer });
+      try {
+        wsConn.send(JSON.stringify({ ...framePayload, reqId }));
+      } catch (err) {
+        clearTimeout(timer);
+        wsPendingRpcs.delete(reqId);
+        reject(err);
+      }
+    });
+  }
+
+  function connectLocalWs(base) {
+    if (initialNoSse || location.search.includes('nosse=1') || !base || typeof WebSocket === 'undefined') {
+      return;
+    }
+    const wsUrl = `${base.replace(/^http/i, 'ws').replace(/\/+$/, '')}/ws`;
+    if (localWs && (localWs.readyState === 0 || localWs.readyState === 1)) {
+      return;
+    }
+    if (localWsReconnectTimer) {
+      clearTimeout(localWsReconnectTimer);
+      localWsReconnectTimer = null;
+    }
+    try {
+      const ws = new WebSocket(wsUrl);
+      localWs = ws;
+      ws.addEventListener('open', () => {
+        localWsAuthed = true;
+        connMode = 'local';
+        try {
+          ws.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
+        } catch {}
+        if (localWsPingTimer) clearInterval(localWsPingTimer);
+        localWsPingTimer = setInterval(() => {
+          if (ws.readyState === 1) {
+            try {
+              ws.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
+            } catch {}
+          }
+        }, 20000);
+        updateConnectionBanner();
+      });
+      ws.addEventListener('message', (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (!msg || typeof msg !== 'object') return;
+          if (msg.type === 'welcome') {
+            const wDev = msg.device || msg.status?.device;
+            if (wDev) {
+              localWsDevice = wDev;
+              updateFleetDevices([{ ...wDev, online: true, local: true, lastSeen: Date.now() }]);
+            }
+            if (Array.isArray(msg.devices)) updateFleetDevices(msg.devices);
+            const wEdge = msg.edgeRelayUrl || msg.status?.edgeRelayUrl;
+            if (wEdge && !prefs.edgeRelayUrl) {
+              discoveredEdgeUrl = String(wEdge).trim();
+            }
+            const wSnap = msg.state || msg.snapshot;
+            if (wSnap) ingestIncomingHostState(wSnap, wDev?.id || '');
+            updateConnectionBanner();
+          } else if (msg.type === 'pong') {
+            const sentTs = Number(msg.echoTs || msg.ts || 0);
+            if (sentTs) localWsRttMs = Math.max(1, Date.now() - sentTs);
+            updateConnectionBanner();
+          } else if (msg.type === 'state' || msg.type === 'host_state') {
+            const snap = msg.state || msg.snapshot;
+            if (snap) ingestIncomingHostState(snap, msg.deviceId || localWsDevice?.id || '');
+          } else if (msg.type === 'devices_presence') {
+            if (Array.isArray(msg.devices)) {
+              updateFleetDevices(msg.devices);
+              updateConnectionBanner();
+              renderPulseView();
+              renderSessionsView();
+            }
+          } else if (msg.type === 'stream_delta') {
+            handleStreamDelta(msg);
+          } else if (msg.type === 'rpc_res' && msg.reqId && wsPendingRpcs.has(msg.reqId)) {
+            const p = wsPendingRpcs.get(msg.reqId);
+            clearTimeout(p.timer);
+            wsPendingRpcs.delete(msg.reqId);
+            p.resolve(msg);
+          }
+        } catch {}
+      });
+      ws.addEventListener('close', () => {
+        if (localWs === ws) {
+          localWs = null;
+          localWsAuthed = false;
+        }
+        if (localWsPingTimer) {
+          clearInterval(localWsPingTimer);
+          localWsPingTimer = null;
+        }
+        updateConnectionBanner();
+        if (!initialNoSse && localBridgeBase) {
+          localWsReconnectTimer = setTimeout(() => connectLocalWs(localBridgeBase), 3500);
+        }
+      });
+    } catch {}
+  }
+
+  function normalizeEdgeWsUrl(rawUrl) {
+    let u = String(rawUrl || '').trim();
+    if (!u) return '';
+    u = u.replace(/^https:\/\//i, 'wss://').replace(/^http:\/\//i, 'ws://').replace(/\/+$/, '');
+    if (!/\/ws(\?|$)/i.test(u)) u += '/ws';
+    u += u.includes('?') ? '&role=client' : '?role=client';
+    return u;
+  }
+
+  function connectEdgeWs(rawUrl) {
+    const cleanTarget = normalizeEdgeWsUrl(rawUrl || prefs.edgeRelayUrl || discoveredEdgeUrl);
+    if (
+      initialNoSse ||
+      location.search.includes('nosse=1') ||
+      !cleanTarget ||
+      !cloudCfg.key ||
+      typeof WebSocket === 'undefined'
+    ) {
+      return;
+    }
+    if (edgeWs && edgeWsUrlConnected === cleanTarget && (edgeWs.readyState === 0 || edgeWs.readyState === 1)) {
+      return;
+    }
+    if (edgeWs) {
+      try {
+        edgeWs.close();
+      } catch {}
+      edgeWs = null;
+      edgeWsAuthed = false;
+    }
+    if (edgeWsReconnectTimer) {
+      clearTimeout(edgeWsReconnectTimer);
+      edgeWsReconnectTimer = null;
+    }
+
+    try {
+      const ws = new WebSocket(cleanTarget);
+      edgeWs = ws;
+      edgeWsUrlConnected = cleanTarget;
+      ws.addEventListener('open', async () => {
+        try {
+          const token = await deriveEdgeAuthTokenHex(cloudCfg.key);
+          ws.send(
+            JSON.stringify({
+              type: 'auth_client',
+              token,
+              clientLabel: (navigator.userAgent || 'THEO Studio PWA').slice(0, 64)
+            })
+          );
+        } catch {}
+      });
+      ws.addEventListener('message', (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (!msg || typeof msg !== 'object') return;
+          if (msg.type === 'auth_ok') {
+            edgeWsAuthed = true;
+            if (!localWsAuthed) connMode = 'edge';
+            if (Array.isArray(msg.devices)) updateFleetDevices(msg.devices);
+            if (msg.cachedSnapshots && typeof msg.cachedSnapshots === 'object') {
+              for (const [devId, entry] of Object.entries(msg.cachedSnapshots)) {
+                const snap = entry?.snapshot || entry?.state || entry;
+                if (snap) ingestIncomingHostState(snap, devId);
+              }
+            }
+            try {
+              ws.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
+            } catch {}
+            if (edgeWsPingTimer) clearInterval(edgeWsPingTimer);
+            edgeWsPingTimer = setInterval(() => {
+              if (ws.readyState === 1) {
+                try {
+                  ws.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
+                } catch {}
+              }
+            }, 22000);
+            flushOutbox().catch(() => {});
+            updateConnectionBanner();
+            renderAll();
+          } else if (msg.type === 'pong') {
+            const sentTs = Number(msg.echoTs || msg.ts || 0);
+            if (sentTs) edgeWsRttMs = Math.max(1, Date.now() - sentTs);
+            updateConnectionBanner();
+          } else if (msg.type === 'devices_presence') {
+            if (Array.isArray(msg.devices)) {
+              updateFleetDevices(msg.devices);
+              updateConnectionBanner();
+              renderPulseView();
+              renderSessionsView();
+            }
+          } else if (msg.type === 'host_state') {
+            const snap = msg.snapshot || msg.state;
+            if (snap) ingestIncomingHostState(snap, msg.deviceId || '');
+          } else if (msg.type === 'stream_delta') {
+            handleStreamDelta(msg);
+          } else if (msg.type === 'rpc_res' && msg.reqId && wsPendingRpcs.has(msg.reqId)) {
+            const p = wsPendingRpcs.get(msg.reqId);
+            clearTimeout(p.timer);
+            wsPendingRpcs.delete(msg.reqId);
+            p.resolve(msg);
+          }
+        } catch {}
+      });
+      ws.addEventListener('close', () => {
+        if (edgeWs === ws) {
+          edgeWs = null;
+          edgeWsAuthed = false;
+          if (connMode === 'edge') connMode = appState ? 'cloud' : 'offline';
+        }
+        if (edgeWsPingTimer) {
+          clearInterval(edgeWsPingTimer);
+          edgeWsPingTimer = null;
+        }
+        updateConnectionBanner();
+        const retryUrl = prefs.edgeRelayUrl || discoveredEdgeUrl;
+        if (!initialNoSse && retryUrl) {
+          edgeWsReconnectTimer = setTimeout(() => connectEdgeWs(retryUrl), 4000);
+        }
+      });
+    } catch {}
+  }
+
+  async function saveEdgeRelayConfig(nextUrl) {
+    const clean = String(nextUrl || '').trim();
+    prefs.edgeRelayUrl = clean;
+    discoveredEdgeUrl = clean;
+    saveJson(STORAGE_KEYS.PREFS, prefs);
+    if (isHeadlessBrowser) return true;
+    if (localBridgeBase) {
+      try {
+        await fetch(`${localBridgeBase}/api/edge-config`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: clean })
+        });
+      } catch {}
+    }
+    if (cloudCfg.url && cloudCfg.key) {
+      try {
+        await fetch(cloudCfg.url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+          body: JSON.stringify({
+            key: cloudCfg.key,
+            op: 'patch',
+            ackOnly: true,
+            patch: { edge_relay: { url: clean, updatedAt: Date.now() } }
+          })
+        });
+      } catch {}
+    }
+    if (clean) {
+      connectEdgeWs(clean);
+    } else if (edgeWs) {
+      try {
+        edgeWs.close();
+      } catch {}
+      edgeWs = null;
+      edgeWsAuthed = false;
+    }
+    updateConnectionBanner();
+    renderAnalyticsView();
+    return true;
+  }
+
   function connectSse(base) {
     if (initialNoSse || location.search.includes('nosse=1')) {
       return;
     }
+    connectLocalWs(base);
     if (sseSource) {
       try {
         sseSource.close();
@@ -3138,18 +3832,13 @@
         try {
           const st = JSON.parse(ev.data);
           if (st) {
-            applyStoppedSessionOverrides(st);
-            applyAnsweredQuestionOverrides(st);
-            applyPendingLocalOverrides(st);
-            checkLiveStateNotifications(st);
-            appState = st;
-            reconcilePendingNewSessionBind(st);
-            if (st.personalLedger) {
-              mergePersonalLedger(st.personalLedger);
-            }
-            persistCache();
-            renderAll();
+            ingestIncomingHostState(st, localWsDevice?.id || '');
           }
+        } catch {}
+      });
+      es.addEventListener('stream_delta', (ev) => {
+        try {
+          handleStreamDelta(JSON.parse(ev.data));
         } catch {}
       });
       sseSource = es;
@@ -3235,18 +3924,11 @@
             const payload = await res.json();
             if (payload?.state) {
               connMode = 'local';
-              applyStoppedSessionOverrides(payload.state);
-              applyAnsweredQuestionOverrides(payload.state);
-              applyPendingLocalOverrides(payload.state);
-              checkLiveStateNotifications(payload.state);
-              appState = payload.state;
-              reconcilePendingNewSessionBind(payload.state);
-              if (payload.state.personalLedger) {
-                mergePersonalLedger(payload.state.personalLedger);
-              }
+              ingestIncomingHostState(payload.state, payload.state?.device?.id || localWsDevice?.id || '');
               if (!sseSource) connectSse(bridgeBase);
-              persistCache();
-              renderAll();
+              else connectLocalWs(bridgeBase);
+              const candidateEdge = prefs.edgeRelayUrl || discoveredEdgeUrl;
+              if (candidateEdge) connectEdgeWs(candidateEdge);
               if (pushSub && prefs.notif && prefs.notif.enabled && Date.now() - lastPushScheduleSyncAt > 10 * 60 * 1000) {
                 schedulePushSync();
               }
@@ -3259,7 +3941,7 @@
                 fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
               }
               if (options.toast) {
-                showToast(`Connected to VS Code Direct Bridge (${(appState.rows || []).length} sessions)`);
+                showToast(`Connected to Direct Studio Host (${(appState?.rows || []).length} sessions)`);
               }
               return true;
             }
@@ -3269,7 +3951,7 @@
         }
       }
 
-      // 2. Fallback to Dataverse Cloud Relay (Zero-VPN worldwide access)
+      // 2. Fallback / Worldwide Multi-Device Sync via Cloud Relay + Cloudflare Edge WS
       if (cloudCfg.url && cloudCfg.key) {
         try {
           const res = await fetch(cloudCfg.url, {
@@ -3281,17 +3963,53 @@
             const rawStore = await res.json();
             const store =
               rawStore?.docs && typeof rawStore.docs === 'object' ? rawStore.docs : rawStore || {};
-            connMode = 'cloud';
+            connMode = edgeWsAuthed ? 'edge' : 'cloud';
+            if (store?.edge_relay?.url && !prefs.edgeRelayUrl) {
+              discoveredEdgeUrl = String(store.edge_relay.url).trim();
+            }
+            const candidateEdge = prefs.edgeRelayUrl || discoveredEdgeUrl;
+            if (candidateEdge) {
+              connectEdgeWs(candidateEdge);
+            }
             if (store?.threads && typeof store.threads === 'object') {
               mergeRemoteThreads(store.threads);
             }
-            if (store?.state?.snapshot) {
-              applyStoppedSessionOverrides(store.state.snapshot);
-              applyAnsweredQuestionOverrides(store.state.snapshot);
-              applyPendingLocalOverrides(store.state.snapshot);
-              checkLiveStateNotifications(store.state.snapshot);
-              appState = store.state.snapshot;
-              reconcilePendingNewSessionBind(store.state.snapshot, store?.queue);
+            let baseSnap = store?.state?.snapshot ? { ...store.state.snapshot } : null;
+            if (store?.device_states && typeof store.device_states === 'object') {
+              for (const [devId, entry] of Object.entries(store.device_states)) {
+                if (!entry || typeof entry !== 'object') continue;
+                const dInfo = entry.device || { id: devId, name: devId };
+                const ageMs = Date.now() - Number(entry.updatedAt || 0);
+                updateFleetDevices([
+                  {
+                    ...dInfo,
+                    id: devId,
+                    online: Boolean(fleetDevicesMap.get(devId)?.online) || ageMs < 90000,
+                    lastSeen: Number(entry.updatedAt || Date.now()),
+                    sessionCount: Array.isArray(entry?.snapshot?.rows)
+                      ? entry.snapshot.rows.filter((r) => r && !r.archived).length
+                      : 0
+                  }
+                ]);
+                if (entry.threads && typeof entry.threads === 'object') {
+                  mergeRemoteThreads(entry.threads);
+                }
+                if (entry.snapshot) {
+                  if (!baseSnap) {
+                    baseSnap = { ...entry.snapshot };
+                  } else {
+                    mergeDeviceSnapshotRows(baseSnap, entry.snapshot, devId, dInfo.name || devId);
+                  }
+                }
+              }
+            }
+            if (baseSnap) {
+              applyStoppedSessionOverrides(baseSnap);
+              applyAnsweredQuestionOverrides(baseSnap);
+              applyPendingLocalOverrides(baseSnap);
+              checkLiveStateNotifications(baseSnap);
+              appState = baseSnap;
+              reconcilePendingNewSessionBind(baseSnap, store?.queue);
             }
             if (store?.personal_ledger && typeof store.personal_ledger === 'object') {
               mergePersonalLedger(store.personal_ledger);
@@ -3317,7 +4035,7 @@
               fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
             }
             if (options.toast) {
-              showToast(`Synced with VS Code Cloud Relay (${(appState?.rows || []).length} sessions)`);
+              showToast(`Synced Multi-Device Fleet (${(appState?.rows || []).length} sessions)`);
             }
             return true;
           }
@@ -3343,7 +4061,13 @@
 
   async function fetchThreadDetail(threadId, providerHint = '') {
     if (!threadId) return null;
-    if (connMode === 'local' && localBridgeBase) {
+    const matchedRow = (appState?.rows || []).find((r) => r && r.id === threadId);
+    const rowDeviceId = matchedRow?.deviceId || '';
+    const isRemoteDeviceSession = Boolean(
+      rowDeviceId && localWsDevice?.id && rowDeviceId !== localWsDevice.id
+    );
+
+    if (connMode === 'local' && localBridgeBase && !isRemoteDeviceSession) {
       try {
         const res = await fetch(
           `${localBridgeBase}/api/thread?id=${encodeURIComponent(threadId)}&provider=${encodeURIComponent(providerHint)}`
@@ -3360,7 +4084,33 @@
           }
         }
       } catch {}
-    } else if (connMode === 'cloud' && cloudCfg.url && cloudCfg.key) {
+    }
+
+    // Fast <40ms Edge WS RPC thread fetch across any connected PC
+    if (edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
+      try {
+        const rpcOut = await sendWsRpc(
+          edgeWs,
+          {
+            type: 'rpc_cmd',
+            targetDeviceId: rowDeviceId,
+            cmd: { type: 'getThread', id: threadId, threadId, provider: providerHint }
+          },
+          5500
+        );
+        const threadObj = rpcOut?.result?.thread || rpcOut?.thread || null;
+        if (threadObj) {
+          mergeRemoteThreads({ [threadId]: threadObj });
+          persistCache();
+          if (prefs.activeTab === 'chat' && prefs.selectedThreadId === threadId) {
+            renderChatView(true);
+          }
+          return threadsCache[threadId];
+        }
+      } catch {}
+    }
+
+    if (cloudCfg.url && cloudCfg.key) {
       const cached = threadsCache[threadId];
       const hasMessages = Array.isArray(cached?.messages) && cached.messages.length > 0;
       const lastReq = pendingThreadRequests.get(threadId) || 0;
@@ -3373,6 +4123,7 @@
           type: 'requestThread',
           id: threadId,
           threadId,
+          targetDeviceId: rowDeviceId,
           provider: providerHint
         })
           .then(() => {
@@ -3416,6 +4167,27 @@
   async function dispatchRemoteCommand(cmdObj) {
     const targetThreadId =
       cleanTargetThreadId(cmdObj?.threadId) || cleanTargetThreadId(cmdObj?.id);
+    const matchedRow = targetThreadId
+      ? (appState?.rows || []).find((r) => r && r.id === targetThreadId)
+      : null;
+    const resolvedTargetDevice =
+      cmdObj?.targetDeviceId !== undefined
+        ? String(cmdObj.targetDeviceId || '').trim()
+        : matchedRow?.deviceId
+          ? String(matchedRow.deviceId).trim()
+          : cmdObj?.newSession && prefs.composerTargetDevice && prefs.composerTargetDevice !== 'auto'
+            ? String(prefs.composerTargetDevice).trim()
+            : '';
+    const resolvedWorkspace =
+      cmdObj?.workspace !== undefined
+        ? String(cmdObj.workspace || '').trim()
+        : String(prefs.composerRepoPrefix || '').trim();
+    const resolvedExecMode =
+      cmdObj?.executionMode || (prefs.composerDirectStream !== false ? 'direct' : 'ide');
+
+    if (resolvedTargetDevice) recordFreqUsage('devices', resolvedTargetDevice);
+    if (resolvedWorkspace) recordFreqUsage('repos', resolvedWorkspace);
+
     const cmd = {
       ...cmdObj,
       id:
@@ -3423,11 +4195,68 @@
           ? cmdObj.id
           : `cmd-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
       threadId: targetThreadId,
+      targetDeviceId: resolvedTargetDevice || undefined,
+      workspace: resolvedWorkspace || undefined,
+      executionMode: resolvedExecMode,
       createdAt: cmdObj?.createdAt || Date.now(),
       status: 'pending'
     };
 
-    // 1. Direct Local Bridge
+    if (isHeadlessBrowser) {
+      return { ok: true, mode: 'quarantined', id: cmd.id };
+    }
+
+    const targetsAnotherHost = Boolean(
+      resolvedTargetDevice &&
+        localWsDevice?.id &&
+        resolvedTargetDevice !== localWsDevice.id
+    );
+
+    // 1. Direct Local WebSocket RPC (<5ms local + automatic peer forwarding)
+    if (localWsAuthed && localWs && localWs.readyState === 1 && !targetsAnotherHost) {
+      try {
+        const wsRes = await sendWsRpc(
+          localWs,
+          {
+            type: 'rpc',
+            targetDeviceId: resolvedTargetDevice || '',
+            cmd: {
+              ...cmd,
+              id: cmd.newSession ? '' : targetThreadId,
+              threadId: cmd.newSession ? '' : targetThreadId
+            }
+          },
+          10000
+        );
+        if (wsRes && wsRes.ok !== false) {
+          return { ok: true, mode: 'local_ws', id: cmd.id, out: wsRes.result || wsRes };
+        }
+      } catch {}
+    }
+
+    // 2. Cloudflare Edge WebSocket RPC (<25ms worldwide to ANY online PC)
+    if (edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
+      try {
+        const edgeRes = await sendWsRpc(
+          edgeWs,
+          {
+            type: 'rpc_cmd',
+            targetDeviceId: resolvedTargetDevice || '',
+            cmd: {
+              ...cmd,
+              id: cmd.newSession ? '' : targetThreadId,
+              threadId: cmd.newSession ? '' : targetThreadId
+            }
+          },
+          10000
+        );
+        if (edgeRes && edgeRes.ok !== false) {
+          return { ok: true, mode: 'edge_ws', id: cmd.id, out: edgeRes.result || edgeRes };
+        }
+      } catch {}
+    }
+
+    // 3. Direct Local HTTP Bridge (also proxies cross-device commands via remote.js v3)
     if (connMode === 'local' && localBridgeBase) {
       try {
         const endpoint =
@@ -3553,18 +4382,41 @@
 
     const rowCount = (appState?.rows || []).length;
     const snapAge = appState?.generatedAt ? timeAgo(appState.generatedAt) : '';
+    const fleetList = getUnifiedFleetDevices();
+    const onlineHosts = fleetList.filter((d) => d.online).length;
+    const hostLabel =
+      localWsDevice?.name ||
+      appState?.device?.name ||
+      appState?.connection?.hostname ||
+      'Local Host';
 
     if (connMode === 'local') {
+      const wsBadge = localWsAuthed
+        ? `WS${localWsRttMs > 0 ? ` ${localWsRttMs}ms` : ''}`
+        : 'Live SSE';
       if (dotRail) dotRail.className = 'conn-dot live';
-      if (titleRail) titleRail.textContent = 'Direct Bridge · Live SSE';
-      if (subRail) subRail.textContent = `${localBridgeBase.replace(/^https?:\/\//, '')} · ${rowCount} sess`;
+      if (titleRail) titleRail.textContent = `${hostLabel} · ${wsBadge}`;
+      if (subRail) {
+        subRail.textContent = `${fleetList.length > 1 ? `${fleetList.length} hosts · ` : ''}${rowCount} sess`;
+      }
       if (pillMob) pillMob.hidden = true;
       if (dotMob) dotMob.className = 'conn-dot live';
-      if (textMob) textMob.textContent = 'Direct SSE';
+      if (textMob) textMob.textContent = localWsAuthed ? 'Direct WS' : 'Direct SSE';
+    } else if (connMode === 'edge' || edgeWsAuthed) {
+      const rttTxt = edgeWsRttMs > 0 ? ` · ${edgeWsRttMs}ms` : '';
+      if (dotRail) dotRail.className = 'conn-dot live';
+      if (titleRail) titleRail.textContent = `Edge WS · ${Math.max(1, onlineHosts)} Host${onlineHosts === 1 ? '' : 's'} Live`;
+      if (subRail) subRail.textContent = `Cloudflare DO${rttTxt} · ${rowCount} sess`;
+      if (pillMob) pillMob.hidden = true;
+      if (dotMob) dotMob.className = 'conn-dot live';
+      if (textMob) textMob.textContent = `Edge WS${rttTxt}`;
     } else if (connMode === 'cloud') {
       if (dotRail) dotRail.className = 'conn-dot cloud';
-      if (titleRail) titleRail.textContent = 'Cloud Relay · Connected';
-      if (subRail) subRail.textContent = `VS Code Sync ${snapAge || 'live'} · ${rowCount} sess`;
+      if (titleRail) {
+        titleRail.textContent =
+          fleetList.length > 1 ? `Cloud Fleet · ${fleetList.length} Hosts` : 'Cloud Relay · Connected';
+      }
+      if (subRail) subRail.textContent = `Sync ${snapAge || 'live'} · ${rowCount} sess`;
       if (pillMob) pillMob.hidden = true;
       if (dotMob) dotMob.className = 'conn-dot cloud';
       if (textMob) textMob.textContent = snapAge ? `Live · ${snapAge.replace(' ago', '')}` : 'Cloud Live';
@@ -3733,30 +4585,44 @@
     const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
     const pushActive = Boolean(nf.enabled && pushSub && notifPerm() === 'granted');
 
+    const fleetList = getUnifiedFleetDevices();
     if (dotEl) {
-      dotEl.className = `conn-dot ${connMode === 'local' ? 'live' : connMode === 'cloud' ? 'cloud' : ''}`;
+      dotEl.className = `conn-dot ${connMode === 'local' || connMode === 'edge' || edgeWsAuthed ? 'live' : connMode === 'cloud' ? 'cloud' : ''}`;
     }
     if (titleEl) {
       titleEl.textContent =
         connMode === 'local'
-          ? 'Connected · Direct Wi-Fi Bridge (SSE)'
-          : connMode === 'cloud'
-            ? 'Connected · Dataverse Cloud Relay'
-            : 'Offline · Local Snapshot Cache';
+          ? `Connected · Direct Host WebSocket (${localWsRttMs ? `${localWsRttMs}ms` : 'Live'})`
+          : connMode === 'edge' || edgeWsAuthed
+            ? `Connected · Cloudflare Edge WebSocket (${edgeWsRttMs ? `${edgeWsRttMs}ms` : 'Live'})`
+            : connMode === 'cloud'
+              ? 'Connected · Multi-Device Cloud Relay'
+              : 'Offline · Local Snapshot Cache';
     }
+
+    const fleetRowsHtml = fleetList.length
+      ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0">
+          ${fleetList
+            .map(
+              (d) =>
+                `<span class="sess-device-badge ${d.online ? 'is-online' : ''}">${d.online ? '●' : '◐'} ${esc(d.name || d.id)}${d.sessionCount ? ` · ${d.sessionCount}` : ''}</span>`
+            )
+            .join('')}
+        </div>`
+      : '';
 
     bodyEl.innerHTML = `
       <div class="conn-stat-grid tabular">
         <div class="conn-stat-box">
-          <span class="conn-stat-lbl">VS Code Host</span>
-          <span class="conn-stat-val">${esc(hostName)}</span>
+          <span class="conn-stat-lbl">Active Host</span>
+          <span class="conn-stat-val">${esc(localWsDevice?.name || hostName)}</span>
         </div>
         <div class="conn-stat-box">
-          <span class="conn-stat-lbl">Last VS Code Sync</span>
-          <span class="conn-stat-val">${esc(snapTime)}</span>
+          <span class="conn-stat-lbl">Transport</span>
+          <span class="conn-stat-val">${localWsAuthed ? `⚡ Local WS (${localWsRttMs || 2}ms)` : edgeWsAuthed ? `⚡ Edge WS (${edgeWsRttMs || 18}ms)` : esc(snapTime)}</span>
         </div>
         <div class="conn-stat-box">
-          <span class="conn-stat-lbl">Synced Sessions</span>
+          <span class="conn-stat-lbl">Fleet Sessions</span>
           <span class="conn-stat-val">${runningCount} running · ${activeCount} sessions</span>
         </div>
         <div class="conn-stat-box">
@@ -3764,6 +4630,7 @@
           <span class="conn-stat-val" style="color:${pushActive ? 'var(--emerald)' : 'var(--amber)'}">${pushActive ? '🔔 Active' : 'Off'}</span>
         </div>
       </div>
+      ${fleetRowsHtml}
       <div class="meta-timestamp" style="line-height:1.45">
         ${
           connMode === 'local'
@@ -5261,8 +6128,62 @@
       bannerEl.innerHTML = renderPulseNotifBannerHtml();
     }
 
-    const rows = appState?.rows || [];
-    const approvals = appState?.approvals || [];
+    const fleetEl = $('pulse-fleet-strip');
+    const fleetDevices = getUnifiedFleetDevices();
+    if (
+      prefs.selectedDeviceFilter &&
+      prefs.selectedDeviceFilter !== 'all' &&
+      fleetDevices.length > 0 &&
+      !fleetDevices.some((d) => d.id === prefs.selectedDeviceFilter)
+    ) {
+      prefs.selectedDeviceFilter = 'all';
+    }
+    const allRows = appState?.rows || [];
+    if (fleetEl) {
+      if (fleetDevices.length === 0 && !localWsAuthed && !edgeWsAuthed) {
+        fleetEl.hidden = true;
+      } else {
+        fleetEl.hidden = false;
+        const activeTotalAll = allRows.filter((r) => r.id && !r.archived).length;
+        const transportHtml = localWsAuthed
+          ? `<span class="fleet-latency-badge tabular">⚡ ${localWsRttMs || 2}ms Direct WS</span>`
+          : edgeWsAuthed
+            ? `<span class="fleet-latency-badge tabular">⚡ ${edgeWsRttMs || 18}ms Edge WS</span>`
+            : `<span class="fleet-latency-badge cloud-mode tabular">☁ Cloud Relay</span>`;
+        fleetEl.innerHTML = `
+          <span class="fleet-strip-head">Connected Fleet</span>
+          <button type="button" class="fleet-chip ${prefs.selectedDeviceFilter === 'all' ? 'active' : ''}" data-fleet-filter="all">
+            <span>All Hosts</span>
+            <span class="fleet-chip-meta tabular">${activeTotalAll}</span>
+          </button>
+          ${fleetDevices
+            .map((d) => {
+              const cnt = allRows.filter((r) => !r.archived && r.deviceId === d.id).length || Number(d.sessionCount || 0);
+              const isAct = prefs.selectedDeviceFilter === d.id;
+              return `
+                <button type="button" class="fleet-chip ${isAct ? 'active' : ''}" data-fleet-filter="${esc(d.id)}" title="${esc(d.hostname || d.name || d.id)} · ${d.online ? 'Live WebSocket / Bridge' : 'Synced via Cloud Relay'}">
+                  <span class="fleet-chip-dot ${d.online ? 'online' : 'synced'}"></span>
+                  <span>${esc(d.name || d.id)}</span>
+                  <span class="fleet-chip-meta tabular">${cnt}</span>
+                </button>
+              `;
+            })
+            .join('')}
+          ${transportHtml}
+        `;
+      }
+    }
+
+    const rows =
+      prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
+        ? allRows.filter((r) => !r.deviceId || r.deviceId === prefs.selectedDeviceFilter)
+        : allRows;
+    const approvals =
+      prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
+        ? (appState?.approvals || []).filter(
+            (a) => !a.deviceId || a.deviceId === prefs.selectedDeviceFilter
+          )
+        : appState?.approvals || [];
     const activeTotal = rows.filter((r) => r.id && !r.archived).length;
     const workingCount = rows.filter((r) => r.status === 'working' && !r.archived).length;
     const waitingCount = approvals.length;
@@ -5772,6 +6693,11 @@
       sessBgRunning > 0
         ? `<button type="button" class="sess-bgtask-pill tabular is-running" data-open-bgtasks="${esc(r.id || '')}" data-session-prov="${provKey}" aria-label="Inspect running background tasks">${getBgKindSvg(sessBgRunningTasks[0]?.kind || 'task')}<span class="sess-bgtask-pill-txt">${sessBgRunning} live${sessBgRunningTasks[0]?.summary ? ` · ${esc(sessBgRunningTasks[0].summary)}` : ''}</span></button>`
         : '';
+    const devEntry = r.deviceId ? fleetDevicesMap.get(r.deviceId) : null;
+    const devLabel = r.deviceName || devEntry?.name || '';
+    const devBadgeHtml = devLabel
+      ? `<span class="sess-device-badge ${devEntry?.online ? 'is-online' : ''}" title="Host machine: ${esc(devLabel)}">${devEntry?.online ? '●' : '◐'} ${esc(devLabel)}</span>`
+      : '';
     return `
       <div class="session-card ${statusCls}" data-session-id="${esc(r.id || '')}" data-session-prov="${provKey}">
         <div class="sess-left">
@@ -5782,6 +6708,7 @@
               <span class="sess-title">${esc(r.title || 'Untitled Session')}</span>
             </div>
             <div class="sess-sub-row tabular">
+              ${devBadgeHtml}
               ${r.folder ? `<span class="tag-pill">${esc(r.folder)}</span>` : ''}
               ${r.branch ? `<span>⎇ ${esc(r.branch)}</span>` : ''}
               <span>${esc(displayModel)}</span>
@@ -5927,9 +6854,32 @@
       }
     });
 
-    const provRows = rows.filter(
+    const provOnlyRows = rows.filter(
       (r) => prefs.sessProvider === 'all' || r.provider === prefs.sessProvider
     );
+    const fleetDevices = getUnifiedFleetDevices();
+    const devChipsEl = $('sess-device-chips');
+    if (devChipsEl) {
+      if (fleetDevices.length <= 1) {
+        devChipsEl.hidden = true;
+      } else {
+        devChipsEl.hidden = false;
+        const allDevCnt = provOnlyRows.filter((r) => !r.archived).length;
+        devChipsEl.innerHTML =
+          `<button type="button" class="chip ${prefs.selectedDeviceFilter === 'all' ? 'active' : ''}" data-fleet-filter="all"><span class="chip-label">All Hosts</span><span class="chip-count tabular">${allDevCnt}</span></button>` +
+          fleetDevices
+            .map((d) => {
+              const cnt = provOnlyRows.filter((r) => !r.archived && r.deviceId === d.id).length;
+              return `<button type="button" class="chip ${prefs.selectedDeviceFilter === d.id ? 'active' : ''}" data-fleet-filter="${esc(d.id)}"><span class="chip-label">${d.online ? '● ' : ''}${esc(d.name || d.id)}</span><span class="chip-count tabular">${cnt}</span></button>`;
+            })
+            .join('');
+      }
+    }
+
+    const provRows =
+      prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
+        ? provOnlyRows.filter((r) => !r.deviceId || r.deviceId === prefs.selectedDeviceFilter)
+        : provOnlyRows;
     const chipCounts = {
       all: provRows.filter((r) => !r.archived).length,
       needs_input: provRows.filter((r) => !r.archived && r.status === 'waiting').length,
@@ -5966,7 +6916,7 @@
       }
       if (q) {
         const grpName = r.group ? groups.find((g) => g.id === r.group)?.name || '' : '';
-        const hay = `${r.title} ${r.folder} ${r.branch} ${r.model} ${r.provider} ${grpName}`.toLowerCase();
+        const hay = `${r.title} ${r.folder} ${r.branch} ${r.model} ${r.provider} ${r.deviceName || ''} ${grpName}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -6164,6 +7114,58 @@
     return `<div class="code-step-card">${headInner}</div>`;
   }
 
+  function syncComposerRoutingSelectors(activeRow, isNewDraft) {
+    const devSel = $('composer-device-select');
+    const repoSel = $('composer-repo-select');
+    const directBtn = $('composer-direct-toggle');
+    const fleetDevices = getUnifiedFleetDevices();
+
+    if (devSel && document.activeElement !== devSel) {
+      const wantDev = !isNewDraft && activeRow?.deviceId
+        ? activeRow.deviceId
+        : prefs.composerTargetDevice || 'auto';
+      const opts = [
+        `<option value="auto" ${wantDev === 'auto' ? 'selected' : ''}>Auto (${localWsDevice?.name || 'Active Host'})</option>`
+      ];
+      for (const d of fleetDevices) {
+        const sel = wantDev === d.id ? 'selected' : '';
+        opts.push(
+          `<option value="${esc(d.id)}" ${sel}>${d.online ? '● ' : '◐ '}${esc(d.name || d.id)}</option>`
+        );
+      }
+      devSel.innerHTML = opts.join('');
+      devSel.disabled = Boolean(!isNewDraft && activeRow?.deviceId);
+    }
+
+    if (repoSel && document.activeElement !== repoSel) {
+      const rawWorkspaces = Array.isArray(appState?.workspaces) ? appState.workspaces : [];
+      const rankedWorkspaces = rankByFreq(
+        rawWorkspaces,
+        'repos',
+        (w) => w.name || w.id,
+        (w) => Number(w.dirtyCount || 0) * 10
+      );
+      const curRepo = String(prefs.composerRepoPrefix || '').trim();
+      const repoOpts = [
+        `<option value="" ${!curRepo ? 'selected' : ''}>Default Workspace</option>`
+      ];
+      for (const w of rankedWorkspaces) {
+        const val = w.name || w.id;
+        const sel = curRepo.toLowerCase() === String(val).toLowerCase() ? 'selected' : '';
+        repoOpts.push(
+          `<option value="${esc(val)}" ${sel}>${esc(w.name)}${w.branch ? ` (${esc(w.branch)})` : ''}</option>`
+        );
+      }
+      repoSel.innerHTML = repoOpts.join('');
+    }
+
+    if (directBtn) {
+      const isDirect = prefs.composerDirectStream !== false;
+      directBtn.classList.toggle('active', isDirect);
+      directBtn.textContent = isDirect ? '⚡ Direct Stream' : '🪟 VS Code Tab';
+    }
+  }
+
   // VIEW 3: Render Live Chat Workbench
   function renderChatView(forceScroll = false) {
     ensureSelectedThread();
@@ -6173,6 +7175,7 @@
     const newProv = prefs.composerMode === 'new-claude' ? 'claude' : 'antigravity';
     const threadDetail = isNewDraft ? null : threadsCache[prefs.selectedThreadId] || null;
     const matchedRow = isNewDraft ? null : rows.find((r) => r.id === prefs.selectedThreadId);
+    syncComposerRoutingSelectors(matchedRow, isNewDraft);
     const activeRow = isNewDraft
       ? {
           id: '__new__',
@@ -6588,10 +7591,28 @@
               })
             : '';
 
+          const isLiveStreamingTurn = Boolean(isLastTurn && m.isStreaming);
+          const liveHeadHtml = isLiveStreamingTurn
+            ? `<div class="stream-live-head"><span data-stream-status-lbl="1">⚡ Live Stream${m.deviceName ? ` · ${esc(m.deviceName)}` : ''}</span></div>`
+            : '';
+          const liveToolHtml = isLiveStreamingTurn
+            ? `<div class="live-tool-chip mono" data-stream-tool-slot="1" ${m.activeTool ? '' : 'hidden'}>${m.activeTool ? `⚡ ${esc(m.activeTool)}` : ''}</div>`
+            : '';
+          const streamThinkHtml = isLiveStreamingTurn
+            ? `<details class="thinking-details is-streaming" data-stream-think-wrap="1" open ${m.thinking ? '' : 'hidden'}><summary>Live Reasoning &amp; Thought</summary><div class="turn-text mono" data-stream-think-body="1" style="margin-top:6px">${esc(m.thinking || '')}</div></details>`
+            : thinkHtml;
+          const streamTextHtml = isLiveStreamingTurn
+            ? `<div class="turn-text md-rich" data-stream-text-body="1">${cleanedText ? formatTurnMarkdown(cleanedText) : ''}<span class="stream-cursor"></span></div>`
+            : cleanedText
+              ? `<div class="turn-text md-rich">${formatTurnMarkdown(cleanedText)}</div>`
+              : '';
+
           return `
-            <div class="turn-bubble assistant">
-              ${thinkHtml}
-              ${cleanedText ? `<div class="turn-text md-rich">${formatTurnMarkdown(cleanedText)}</div>` : ''}
+            <div class="turn-bubble assistant ${isLiveStreamingTurn ? 'is-streaming' : ''}" ${isLiveStreamingTurn ? 'data-streaming-turn="1"' : ''}>
+              ${liveHeadHtml}
+              ${streamThinkHtml}
+              ${liveToolHtml}
+              ${streamTextHtml}
               ${artifactsHtml}
               ${toolsHtml}
               ${questionCardHtml}
@@ -7033,10 +8054,39 @@
       const pwaUrl = conn.pwaUrl || 'https://husseinbdeir.github.io/theo/';
       const hasPin = Boolean(localStorage.getItem(STORAGE_KEYS.PIN));
 
+      const fleetDevices = getUnifiedFleetDevices();
+      const effectiveEdgeUrl = prefs.edgeRelayUrl || discoveredEdgeUrl || '';
+
       pairingGrid.innerHTML = `
         <div class="pairing-card">
+          <div class="eyebrow">MULTI-DEVICE FLEET &amp; CLOUDFLARE EDGE WS (OPTION A · $0)</div>
+          <p class="meta-timestamp" style="margin:6px 0">Connects all your PCs simultaneously over persistent outbound WebSockets (&lt;25ms token streaming, headless CLI execution even with VS Code closed).</p>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0">
+            ${
+              fleetDevices.length > 0
+                ? fleetDevices
+                    .map(
+                      (d) =>
+                        `<span class="sess-device-badge ${d.online ? 'is-online' : ''}">${d.online ? '●' : '◐'} ${esc(d.name || d.id)}${d.sessionCount ? ` (${d.sessionCount})` : ''}</span>`
+                    )
+                    .join('')
+                : `<span class="meta-timestamp">Probing connected hosts…</span>`
+            }
+          </div>
+          <label style="display:block;font-size:11.5px;margin-top:8px;color:var(--text-muted)">
+            Cloudflare Edge Relay URL (<code>wss://...</code> — auto-synced across all PCs):
+            <input type="url" class="input-field mono" id="input-edge-relay-url" value="${esc(effectiveEdgeUrl)}" placeholder="wss://theo-edge-relay.<subdomain>.workers.dev">
+          </label>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+            <button type="button" class="btn-brass-sm" id="btn-save-edge-relay">Save &amp; Broadcast Edge URL</button>
+            <button type="button" class="btn-ghost-sm" id="btn-copy-edge-deploy" title="Copy 1-line PowerShell command to deploy Option A Cloudflare Worker ($0 Free Plan)">Copy Option A Deploy Cmd</button>
+            <button type="button" class="btn-ghost-sm" id="btn-copy-pc-install" title="Copy 1-line PowerShell installer to add any Windows PC to your THEO fleet">Copy PC Fleet Installer</button>
+          </div>
+        </div>
+
+        <div class="pairing-card">
           <div class="eyebrow">HYBRID BRIDGE ENDPOINTS</div>
-          <p class="meta-timestamp" style="margin:6px 0">Automatic switch between local Wi-Fi SSE (:4318) and zero-VPN Dataverse Cloud Relay.</p>
+          <p class="meta-timestamp" style="margin:6px 0">Automatic switch between local Wi-Fi WebSocket (:4318/ws), Cloudflare Edge WS, and Cloud Relay.</p>
           <div class="mono" style="font-size:11.5px;margin-top:8px">
             <div><strong>Hosted PWA:</strong> ${esc(pwaUrl)}</div>
             <div style="margin-top:4px"><strong>LAN Direct:</strong> ${esc(lanUrl)}</div>
@@ -9676,12 +10726,41 @@
         return;
       }
 
+      const fleetFilterBtn = e.target.closest('[data-fleet-filter]');
+      if (fleetFilterBtn) {
+        const devId = fleetFilterBtn.dataset.fleetFilter || 'all';
+        prefs.selectedDeviceFilter = devId;
+        if (devId && devId !== 'all') {
+          prefs.composerTargetDevice = devId;
+          recordFreqUsage('devices', devId);
+        }
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        renderPulseView();
+        renderSessionsView();
+        if (prefs.activeTab === 'chat') renderChatView();
+        return;
+      }
+
+      if (e.target.closest('#composer-direct-toggle')) {
+        prefs.composerDirectStream = !(prefs.composerDirectStream !== false);
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        syncComposerRoutingSelectors(null, isNewSessionMode());
+        showToast(
+          prefs.composerDirectStream
+            ? '⚡ Direct CLI Stream enabled (<25ms live tokens, works without VS Code)'
+            : '🪟 VS Code IDE Tab dispatch enabled'
+        );
+        return;
+      }
+
       if (e.target.closest('#btn-reset-sess-filters')) {
         prefs.sessProvider = 'all';
         prefs.sessStatus = 'all';
+        prefs.selectedDeviceFilter = 'all';
         saveJson(STORAGE_KEYS.PREFS, prefs);
         const sInput = $('sess-search-input');
         if (sInput) sInput.value = '';
+        renderPulseView();
         renderSessionsView();
         return;
       }
@@ -9767,6 +10846,39 @@
           b.classList.toggle('active', b === telSeg)
         );
         renderAnalyticsView();
+        return;
+      }
+
+      if (e.target.closest('#btn-save-edge-relay')) {
+        const val = ($('input-edge-relay-url')?.value || '').trim();
+        await saveEdgeRelayConfig(val);
+        showToast(
+          val
+            ? '⚡ Saved & broadcast Cloudflare Edge WS URL to all hosts'
+            : 'Cleared custom Edge Relay URL'
+        );
+        return;
+      }
+
+      if (e.target.closest('#btn-copy-edge-deploy')) {
+        const cmd = `powershell -ExecutionPolicy Bypass -File "$HOME\\bhfirms\\theo-hub\\cloudflare-relay\\deploy_edge_relay.ps1"`;
+        try {
+          await navigator.clipboard.writeText(cmd);
+          showToast('📋 Copied Option A Cloudflare Edge deploy command');
+        } catch {
+          prompt('Copy Option A deploy command:', cmd);
+        }
+        return;
+      }
+
+      if (e.target.closest('#btn-copy-pc-install')) {
+        const cmd = `irm https://raw.githubusercontent.com/HusseinBdeir/theo/main/install.ps1 | iex`;
+        try {
+          await navigator.clipboard.writeText(cmd);
+          showToast('📋 Copied 1-line PC Fleet Installer command');
+        } catch {
+          prompt('Run this in PowerShell on any PC to add it to THEO Fleet:', cmd);
+        }
         return;
       }
 
@@ -10045,6 +11157,27 @@
     // Search in Sessions
     $('sess-search-input')?.addEventListener('input', () => renderSessionsView());
 
+    // Composer Multi-Device Host & Repo Selectors (Frequency-First)
+    $('composer-device-select')?.addEventListener('change', (e) => {
+      const val = e.target.value || 'auto';
+      prefs.composerTargetDevice = val;
+      if (val !== 'auto') recordFreqUsage('devices', val);
+      saveJson(STORAGE_KEYS.PREFS, prefs);
+      const dev = fleetDevicesMap.get(val);
+      showToast(
+        val === 'auto'
+          ? 'Target host set to Auto (Active Host)'
+          : `Target host set to ${dev?.name || val}`
+      );
+    });
+    $('composer-repo-select')?.addEventListener('change', (e) => {
+      const val = e.target.value || '';
+      prefs.composerRepoPrefix = val;
+      if (val) recordFreqUsage('repos', val);
+      saveJson(STORAGE_KEYS.PREFS, prefs);
+      if (isNewSessionMode()) renderChatView();
+    });
+
     // Composer File Attachments & @Repo Picker
     $('btn-composer-attach')?.addEventListener('click', () => {
       $('composer-file-input')?.click();
@@ -10279,6 +11412,10 @@
       }
     }
 
+    const liveStream = liveStreamsByThreadId.get(cleanId);
+    if (liveStream && liveStream.status === 'working' && Date.now() - Number(liveStream.receivedAt || 0) < 45000) {
+      return true;
+    }
     if (row?.status === 'working' || row?.dot === 'running' || row?.bgTask?.state === 'running') {
       return true;
     }
@@ -10337,6 +11474,7 @@
       msgCount: msgs.length,
       lastMsgId: lastMsg?.id || ''
     });
+    liveStreamsByThreadId.delete(tid);
 
     if (row) {
       row.status = 'completed';
@@ -10521,6 +11659,7 @@
       type: 'send',
       id: targetId,
       threadId: targetId,
+      draftThreadId: draftId || undefined,
       provider,
       prompt: text,
       group: targetGroupId || undefined,
@@ -10583,11 +11722,13 @@
     }
 
     showToast(
-      res.mode === 'cloud'
-        ? `Dispatched via THEO Cloud Relay`
-        : res.mode === 'local'
-          ? `Sent to ${provider === 'claude' ? 'Claude Code' : 'Antigravity'} (Direct Bridge)`
-          : `Queued in Outbox (will send when online)`
+      res.mode === 'local_ws' || res.mode === 'edge_ws'
+        ? `⚡ Streaming live from ${provider === 'claude' ? 'Claude Code' : 'Antigravity'} (${res.mode === 'edge_ws' ? 'Edge WS' : 'Direct WS'})`
+        : res.mode === 'cloud'
+          ? `Dispatched via THEO Cloud Relay`
+          : res.mode === 'local'
+            ? `Sent to ${provider === 'claude' ? 'Claude Code' : 'Antigravity'} (Direct Host)`
+            : `Queued in Outbox (will send when online)`
     );
   }
 
@@ -10762,7 +11903,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=47', { updateViaCache: 'none' })
+        .register('sw.js?v=54', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

@@ -28,20 +28,57 @@ if (-not $localZip) {
     $localZip = $tmpZip
 }
 
-# Extract to both ~/.vscode/extensions/bhfirms.theo-hub-0.1.0 and ~/bhfirms/theo-hub
+# Extract to ~/.vscode/extensions/bhfirms.theo-hub-0.1.0, ~/bhfirms/theo-hub, and ~/.antigravity/extensions if present
 if (Test-Path $targetDir) { Remove-Item -Recurse -Force $targetDir }
 New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
 Expand-Archive -Path $localZip -DestinationPath $targetDir -Force
 Expand-Archive -Path $localZip -DestinationPath $repoDir -Force
-Write-Host "[OK] Extracted THEO files to $targetDir" -ForegroundColor Green
+$agyExtRoot = Join-Path $HOME ".antigravity\extensions"
+if (Test-Path $agyExtRoot) {
+    $agyTargetDir = Join-Path $agyExtRoot $folderName
+    if (Test-Path $agyTargetDir) { Remove-Item -Recurse -Force $agyTargetDir }
+    New-Item -ItemType Directory -Force -Path $agyTargetDir | Out-Null
+    Expand-Archive -Path $localZip -DestinationPath $agyTargetDir -Force
+}
+Write-Host "[OK] Extracted THEO v3 Multi-Device Studio files to $targetDir and $repoDir" -ForegroundColor Green
 
-# Find Node runtime (system node or VS Code's built-in Electron runtime)
+# Find or bootstrap Node v22+ runtime (needed for native WebSocket Edge Relay & standalone theo-agent)
 $nodeExe = $null
 $useElectronNode = $false
-$nodeCmd = Get-Command node -ErrorAction SilentlyContinue
-if ($nodeCmd) {
-    $nodeExe = $nodeCmd.Source
+$portableNode = Join-Path $HOME ".local\node\node.exe"
+if (Test-Path $portableNode) {
+    $nodeExe = $portableNode
 } else {
+    $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+    if ($nodeCmd) {
+        $nodeExe = $nodeCmd.Source
+    } elseif (Test-Path "C:\Program Files\nodejs\node.exe") {
+        $nodeExe = "C:\Program Files\nodejs\node.exe"
+    }
+}
+
+if (-not $nodeExe) {
+    try {
+        Write-Host "Bootstrapping portable Node.js v22.15.0 into $HOME\.local\node (for native WebSocket & headless theo-agent) ..." -ForegroundColor Yellow
+        $nZip = Join-Path $env:TEMP "node-v22.15.0-win-x64.zip"
+        $nExtract = Join-Path $HOME ".local"
+        New-Item -ItemType Directory -Force -Path $nExtract | Out-Null
+        & curl.exe -L -s "https://nodejs.org/dist/v22.15.0/node-v22.15.0-win-x64.zip" -o $nZip
+        if ((Test-Path $nZip) -and ((Get-Item $nZip).Length -gt 10000000)) {
+            $nTarget = Join-Path $HOME ".local\node"
+            if (Test-Path $nTarget) { Remove-Item -Recurse -Force $nTarget }
+            Expand-Archive -Path $nZip -DestinationPath $nExtract -Force
+            Rename-Item -Path (Join-Path $nExtract "node-v22.15.0-win-x64") -NewName "node" -Force
+            Remove-Item $nZip -Force -ErrorAction SilentlyContinue
+            if (Test-Path $portableNode) {
+                $nodeExe = $portableNode
+                Write-Host "[OK] Installed portable Node.js v22.15.0 at $portableNode" -ForegroundColor Green
+            }
+        }
+    } catch {}
+}
+
+if (-not $nodeExe) {
     $vsCodeCandidates = @(
         "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe",
         "$env:ProgramFiles\Microsoft VS Code\Code.exe"
@@ -194,6 +231,17 @@ if ($useElectronNode) {
     Remove-Item Env:\ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
 }
 
+# Launch standalone multi-device theo-agent daemon in background (works even when VS Code is closed)
+$agentStarter = Join-Path $repoDir "scripts\theo_agent_start.ps1"
+if (Test-Path $agentStarter) {
+    try {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $agentStarter -Restart
+        Write-Host "[OK] Started standalone THEO Multi-Device Agent (background WMI daemon + :4318/ws + Edge WS)" -ForegroundColor Green
+    } catch {
+        Write-Host "[WARN] Could not auto-start theo-agent daemon: $_" -ForegroundColor Yellow
+    }
+}
+
 Write-Host ""
-Write-Host "=== SUCCESS! THEO & Conversation Databases are installed! ===" -ForegroundColor Green
-Write-Host "Now in VS Code press Ctrl+Shift+P -> type 'Reload Window' -> press Enter." -ForegroundColor Cyan
+Write-Host "=== SUCCESS! THEO Studio Host v3 & Multi-Device Agent are installed! ===" -ForegroundColor Green
+Write-Host "This PC is now live in your THEO Fleet (even when VS Code is closed)." -ForegroundColor Cyan

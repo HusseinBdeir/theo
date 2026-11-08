@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/theo.css?v=53">
+  <link rel="stylesheet" href="css/theo.css?v=54">
   <script id="pre">
     (() => {
       try {
@@ -72,9 +72,9 @@
           <div class="brand-text">
             <div class="brand-name-row">
               <span class="brand-wordmark">THEO</span>
-              <span class="brand-rev-pill">REV 10</span>
+              <span class="brand-rev-pill">REV 11</span>
             </div>
-            <span class="brand-sub">REMOTE WORKBENCH</span>
+            <span class="brand-sub">STUDIO WORKBENCH</span>
           </div>
         </div>
         <div class="brass-double-rule"></div>
@@ -200,12 +200,15 @@
 
           <div class="ledger-hero">
             <div class="hero-left">
-              <div class="eyebrow">BHFIRMS EXECUTIVE AI WORKBENCH</div>
-              <h1 class="hero-headline">THEO Workbench Pulse</h1>
-              <p class="hero-desc" id="pulse-subtitle">Unified remote bridge to VS Code — Google Antigravity &amp; Claude Code.</p>
+              <div class="eyebrow">BHFIRMS MULTI-DEVICE AI STUDIO</div>
+              <h1 class="hero-headline">THEO Studio Pulse</h1>
+              <p class="hero-desc" id="pulse-subtitle">Real-time WebSocket streaming &amp; headless multi-device fleet across Antigravity &amp; Claude Code.</p>
             </div>
             <div class="hero-kpis" id="pulse-kpis"></div>
           </div>
+
+          <!-- Multi-Device Fleet Bar (All Connected PCs + Edge/Direct WS Latency) -->
+          <div class="fleet-strip" id="pulse-fleet-strip" hidden></div>
 
           <!-- 1-Tap Remote Approvals & Waiting Sessions -->
           <div class="section-block" id="approvals-section">
@@ -324,6 +327,8 @@
               <button type="button" class="chip" data-status-filter="open">Open Tabs</button>
               <button type="button" class="chip" data-status-filter="archived">Archived</button>
             </div>
+
+            <div class="status-chips-row fleet-chips-row" id="sess-device-chips" hidden></div>
           </div>
 
           <div id="sessions-full-list" class="sessions-grouped-container"></div>
@@ -427,6 +432,23 @@
                   <button type="button" class="target-pill" id="comp-mode-new-claude" data-comp-mode="new-claude">+ New Claude</button>
                 </div>
                 <span class="outbox-indicator tabular" id="outbox-indicator" hidden>0 queued</span>
+              </div>
+              <div class="composer-routing-row" id="composer-routing-row">
+                <label class="composer-route-pill" title="Select target machine (ranked by usage frequency)">
+                  <span class="route-pill-lbl">Host</span>
+                  <select id="composer-device-select" class="composer-route-select" aria-label="Target device">
+                    <option value="auto">Auto (Active Host)</option>
+                  </select>
+                </label>
+                <label class="composer-route-pill" title="Select working directory / BHFIRMS repo (ranked by usage frequency)">
+                  <span class="route-pill-lbl">Repo</span>
+                  <select id="composer-repo-select" class="composer-route-select" aria-label="Target workspace">
+                    <option value="">Default Workspace</option>
+                  </select>
+                </label>
+                <button type="button" class="direct-stream-pill active" id="composer-direct-toggle" title="Direct CLI Stream runs agy.exe / claude.exe headlessly with &lt;25ms live token streaming (no VS Code window required)">
+                  ⚡ Direct Stream
+                </button>
               </div>
               <div class="composer-attachments" id="composer-attachments" hidden></div>
               <div class="composer-input-row">
@@ -589,7 +611,7 @@
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=53"></script>
-  <script src="js/app.js?v=53"></script>
+  <script src="js/endpoints.js?v=54"></script>
+  <script src="js/app.js?v=54"></script>
 </body>
 </html>
