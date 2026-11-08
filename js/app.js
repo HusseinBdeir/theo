@@ -324,9 +324,11 @@
   let edgeWsAuthed = false;
   let edgeWsRttMs = 0;
   let edgeWsUrlConnected = '';
+  const DEFAULT_EDGE_RELAY_URL = 'wss://theo-edge-relay.husseinbdeir.workers.dev/ws';
   let edgeWsPingTimer = null;
   let edgeWsReconnectTimer = null;
-  let discoveredEdgeUrl = prefs.edgeRelayUrl || '';
+  let discoveredEdgeUrl = prefs.edgeRelayUrl || DEFAULT_EDGE_RELAY_URL;
+  let lastCloudBackstopAt = 0;
   const wsPendingRpcs = new Map();
   const fleetDevicesMap = new Map();
   const liveStreamsByThreadId = new Map();
@@ -3951,7 +3953,25 @@
         }
       }
 
-      // 2. Fallback / Worldwide Multi-Device Sync via Cloud Relay + Cloudflare Edge WS
+      // 2. Fallback / Worldwide Multi-Device Sync via Cloudflare Edge WS (<70ms) + Cloud Relay 60s Backstop
+      const candidateEdgeBoot = prefs.edgeRelayUrl || discoveredEdgeUrl;
+      if (candidateEdgeBoot && !isHeadlessBrowser) {
+        connectEdgeWs(candidateEdgeBoot);
+      }
+      if (
+        edgeWsAuthed &&
+        edgeWs &&
+        edgeWs.readyState === 1 &&
+        appState &&
+        !options.force &&
+        !options.toast &&
+        Date.now() - lastCloudBackstopAt < 60000
+      ) {
+        connMode = 'edge';
+        updateConnectionBanner();
+        flushOutbox().catch(() => {});
+        return true;
+      }
       if (cloudCfg.url && cloudCfg.key) {
         try {
           const res = await fetch(cloudCfg.url, {
@@ -3960,6 +3980,7 @@
             body: JSON.stringify({ key: cloudCfg.key, op: 'get_theo' })
           });
           if (res.ok) {
+            lastCloudBackstopAt = Date.now();
             const rawStore = await res.json();
             const store =
               rawStore?.docs && typeof rawStore.docs === 'object' ? rawStore.docs : rawStore || {};
@@ -4004,12 +4025,20 @@
               }
             }
             if (baseSnap) {
-              applyStoppedSessionOverrides(baseSnap);
-              applyAnsweredQuestionOverrides(baseSnap);
-              applyPendingLocalOverrides(baseSnap);
-              checkLiveStateNotifications(baseSnap);
-              appState = baseSnap;
-              reconcilePendingNewSessionBind(baseSnap, store?.queue);
+              if (edgeWsAuthed && appState && Array.isArray(appState.rows) && appState.rows.length > 0) {
+                mergeDeviceSnapshotRows(appState, baseSnap, '', '');
+                applyStoppedSessionOverrides(appState);
+                applyAnsweredQuestionOverrides(appState);
+                applyPendingLocalOverrides(appState);
+                reconcilePendingNewSessionBind(appState, store?.queue);
+              } else {
+                applyStoppedSessionOverrides(baseSnap);
+                applyAnsweredQuestionOverrides(baseSnap);
+                applyPendingLocalOverrides(baseSnap);
+                checkLiveStateNotifications(baseSnap);
+                appState = baseSnap;
+                reconcilePendingNewSessionBind(baseSnap, store?.queue);
+              }
             }
             if (store?.personal_ledger && typeof store.personal_ledger === 'object') {
               mergePersonalLedger(store.personal_ledger);
@@ -11903,7 +11932,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=54', { updateViaCache: 'none' })
+        .register('sw.js?v=55', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
@@ -12089,6 +12118,9 @@
     }
     renderAll();
     consumePendingNotificationNav({ allowUnseenPush: true });
+    if (!isHeadlessBrowser && (prefs.edgeRelayUrl || discoveredEdgeUrl)) {
+      connectEdgeWs(prefs.edgeRelayUrl || discoveredEdgeUrl);
+    }
     syncData();
     if (!initialNoSse) {
       setInterval(() => {
