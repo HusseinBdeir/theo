@@ -121,10 +121,10 @@ if (!parsed) {
 const existing = loadTheoCredentials();
 saveTheoCredentials({
   ...existing,
-  cloudUrl: parsed.cloudUrl || existing.cloudUrl,
+  cloudUrl: parsed.cloudKey && parsed.cloudUrl ? parsed.cloudUrl : existing.cloudUrl,
   cloudKey: parsed.cloudKey || existing.cloudKey,
-  edgeAccessKey: parsed.edgeAccessKey || existing.edgeAccessKey,
-  edgeRelayUrl: parsed.edgeRelayUrl || existing.edgeRelayUrl,
+  edgeAccessKey: parsed.edgeAccessKey ? parsed.edgeAccessKey : (parsed.cloudKey ? '' : existing.edgeAccessKey),
+  edgeRelayUrl: (parsed.edgeAccessKey || parsed.cloudKey) && parsed.edgeRelayUrl ? parsed.edgeRelayUrl : existing.edgeRelayUrl,
   port: parsed.port || existing.port || 4318
 });
 console.log('[OK] Provisioned ~/.theo/credentials.json from THEO_PAIR_TOKEN');

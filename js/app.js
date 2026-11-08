@@ -213,13 +213,35 @@
     return s;
   }
 
+  function isSafeCloudEndpointUrl(rawUrl) {
+    const u = String(rawUrl || '').trim();
+    if (!u) return true;
+    return /^https:\/\/[^\s]+$/i.test(u) || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/i.test(u);
+  }
+
+  function isSafeEdgeEndpointUrl(rawUrl) {
+    const u = String(rawUrl || '').trim();
+    if (!u) return true;
+    return (
+      /^(wss|https):\/\/[^\s]+$/i.test(u) ||
+      /^(ws|http):\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/i.test(u)
+    );
+  }
+
   function decodePairTokenString(rawInput) {
-    let token = String(rawInput || '').trim();
-    if (!token) return null;
-    const hashIdx = token.toLowerCase().indexOf('#pair=');
-    if (hashIdx >= 0) token = token.slice(hashIdx + 6);
-    else if (/^#?pair=/i.test(token)) token = token.replace(/^#?pair=/i, '');
-    token = token.split('&')[0].trim();
+    const text = String(rawInput || '').trim();
+    if (!text) return null;
+    const hashMatch = text.match(/#pair=([A-Za-z0-9_=-]{16,8192})/i);
+    const envMatch =
+      !hashMatch && text.match(/THEO_PAIR_TOKEN\s*=\s*['"]?([A-Za-z0-9_=-]{16,8192})['"]?/i);
+    const token = hashMatch
+      ? hashMatch[1]
+      : envMatch
+        ? envMatch[1]
+        : text
+            .replace(/^#?pair=/i, '')
+            .split(/[\s&'"]+/)[0]
+            .trim();
     if (!token) return null;
     try {
       const b64 = token.replace(/-/g, '+').replace(/_/g, '/');
@@ -229,12 +251,15 @@
       const cloudUrl = decodeMaybeB64Field(obj.u || obj.cloudUrl || '');
       const cloudKey = decodeMaybeB64Field(obj.k || obj.cloudKey || '');
       const edgeAccessKey = String(obj.e || obj.edgeAccessKey || '').trim();
-      if (!cloudUrl && !cloudKey && !edgeAccessKey) return null;
+      const edgeRelayUrl = String(obj.r || obj.w || obj.edgeRelayUrl || '').trim();
+      if (!cloudKey && !edgeAccessKey) return null;
+      if (cloudUrl && !cloudKey) return null;
+      if (!isSafeCloudEndpointUrl(cloudUrl) || !isSafeEdgeEndpointUrl(edgeRelayUrl)) return null;
       return {
         cloudUrl,
         cloudKey,
         edgeAccessKey,
-        edgeRelayUrl: String(obj.r || obj.w || obj.edgeRelayUrl || '').trim(),
+        edgeRelayUrl,
         port: Number(obj.p || obj.port || 4318) || 4318
       };
     } catch {
@@ -262,26 +287,115 @@
   }
 
   function applyPairPayloadToPrefs(parsed) {
-    if (!parsed) return false;
-    if (parsed.cloudUrl) prefs.cloudUrl = parsed.cloudUrl;
-    if (parsed.cloudKey) prefs.cloudKey = parsed.cloudKey;
-    if (parsed.edgeAccessKey) prefs.edgeAccessKey = parsed.edgeAccessKey;
-    if (parsed.edgeRelayUrl) prefs.edgeRelayUrl = parsed.edgeRelayUrl;
+    if (!parsed || (!parsed.cloudKey && !parsed.edgeAccessKey)) return false;
+    if (parsed.cloudKey) {
+      prefs.cloudKey = parsed.cloudKey;
+      if (parsed.cloudUrl && isSafeCloudEndpointUrl(parsed.cloudUrl)) {
+        prefs.cloudUrl = parsed.cloudUrl;
+      }
+    }
+    if (parsed.edgeAccessKey) {
+      prefs.edgeAccessKey = parsed.edgeAccessKey;
+    } else if (parsed.cloudKey) {
+      prefs.edgeAccessKey = '';
+    }
+    if (parsed.edgeRelayUrl && isSafeEdgeEndpointUrl(parsed.edgeRelayUrl)) {
+      prefs.edgeRelayUrl = parsed.edgeRelayUrl;
+    }
     if (parsed.port) prefs.port = parsed.port;
     saveJson(STORAGE_KEYS.PREFS, prefs);
     return true;
   }
 
-  try {
-    if (location.hash && location.hash.includes('pair=')) {
-      const parsedBootPair = decodePairTokenString(location.hash);
-      if (parsedBootPair) {
-        applyPairPayloadToPrefs(parsedBootPair);
-      }
-      const cleanHashUrl = location.pathname + (location.search || '');
-      history.replaceState(null, '', cleanHashUrl);
+  let pairClaimInFlight = false;
+  let pairCodeGenInFlight = false;
+  let activeGeneratedPairCode = null;
+  let showQuickPairLinkFallback = false;
+  let pinLockInitialized = false;
+  let pendingPinPairPayload = null;
+
+  function isSessionCurrentlyPinLocked() {
+    if (!pinLockInitialized) {
+      return Boolean(
+        document.documentElement.classList.contains('pin-locked-boot') ||
+          localStorage.getItem(STORAGE_KEYS.PIN_HASH) ||
+          localStorage.getItem(STORAGE_KEYS.PIN) ||
+          prefs.pin ||
+          prefs.pinHash
+      );
     }
-  } catch {}
+    const overlay = $('pin-overlay');
+    return Boolean(
+      document.documentElement.classList.contains('pin-locked-boot') ||
+        (overlay && !overlay.hidden)
+    );
+  }
+
+  function resetTransportsForFreshPairing() {
+    lastLocalProbeFailedAt = 0;
+    cachedBridgeTokenHex = '';
+    cachedBridgeTokenSrc = '';
+    edgeReconnectAttempts = 0;
+    localWsReconnectAttempts = 0;
+    showQuickPairLinkFallback = false;
+    if (edgeWs) {
+      try {
+        edgeWs.close();
+      } catch {}
+      edgeWs = null;
+      edgeWsAuthed = false;
+      edgeWsUrlConnected = '';
+      edgeWsTokenConnected = '';
+    }
+    if (localWs) {
+      try {
+        localWs.close();
+      } catch {}
+      localWs = null;
+      localWsAuthed = false;
+    }
+    if (
+      document.activeElement &&
+      typeof document.activeElement.blur === 'function' &&
+      document.activeElement.closest?.('.quick-pair-card, #pairing-grid')
+    ) {
+      document.activeElement.blur();
+    }
+  }
+
+  function ingestLocationPairHash(triggerLiveConnect = false) {
+    try {
+      if (!location.hash || !/pair=/i.test(location.hash)) return false;
+      const parsedBootPair = decodePairTokenString(location.hash);
+      const cleanHashUrl = location.pathname + (location.search || '');
+      history.replaceState(history.state || null, '', cleanHashUrl);
+      if (!parsedBootPair) return false;
+      if (isSessionCurrentlyPinLocked()) {
+        pendingPinPairPayload = parsedBootPair;
+        return false;
+      }
+      applyPairPayloadToPrefs(parsedBootPair);
+      if (triggerLiveConnect) {
+        refreshCloudConfig();
+        resetTransportsForFreshPairing();
+        const targetEdge = prefs.edgeRelayUrl || discoveredEdgeUrl || DEFAULT_EDGE_RELAY_URL;
+        if (!isHeadlessBrowser && targetEdge) {
+          connectEdgeWs(targetEdge).catch(() => {});
+        }
+        if (!isHeadlessBrowser) {
+          syncData({ force: true, toast: true }).catch(() => {});
+        }
+        updateConnectionBanner();
+        renderAll();
+        showToast('✓ Device paired & connected to THEO Fleet');
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  ingestLocationPairHash(false);
 
   const cloudCfg = { url: '', key: '', edgeAccessKey: '', port: 4318 };
   function refreshCloudConfig() {
@@ -299,6 +413,24 @@
     return cloudCfg;
   }
   refreshCloudConfig();
+
+  function hasAnyPairingCredentials() {
+    refreshCloudConfig();
+    return Boolean(
+      localBridgeBase ||
+        (localBootInfo && localBootInfo.token) ||
+        cloudCfg.edgeAccessKey ||
+        (cloudCfg.url && cloudCfg.key) ||
+        cachedPairingInfo?.pairUrl ||
+        cachedPairingInfo?.mobilePairUrl
+    );
+  }
+
+  function isFocusInsideContainerInputs(containerEl) {
+    const active = document.activeElement;
+    if (!containerEl || !active || !containerEl.contains(active)) return false;
+    return /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName);
+  }
 
   // Frequency-First Search & Comboboxes (THEO.md Rule 11: strictly usage frequency descending, never alphabetical override)
   function recordFreqUsage(bucket, rawKey) {
@@ -352,6 +484,7 @@
   let edgeWsAuthed = false;
   let edgeWsRttMs = 0;
   let edgeWsUrlConnected = '';
+  let edgeWsTokenConnected = '';
   const DEFAULT_EDGE_RELAY_URL = 'wss://theo-edge-relay.husseinbdeir.workers.dev/ws';
   let edgeWsPingTimer = null;
   let edgeWsReconnectTimer = null;
@@ -2207,7 +2340,7 @@
   }
 
   async function probeLocalBridge(force = false) {
-    if (isHeadlessBrowser) return '';
+    if (isHeadlessBrowser && !window.__THEO_ALLOW_PROBE_MOCK_FETCH) return '';
     refreshCloudConfig();
     const candidates = [];
     const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
@@ -2248,14 +2381,19 @@
         if (res.ok) {
           const data = await res.json();
           if (data && data.ok) {
+            if (data.edgeRelayUrl && !prefs.edgeRelayUrl && isSafeEdgeEndpointUrl(data.edgeRelayUrl)) {
+              discoveredEdgeUrl = String(data.edgeRelayUrl).trim();
+            }
+            const isAuthedPing =
+              data.authenticated !== false && !(data.authRequired && !data.localUrl);
+            if (!isAuthedPing) {
+              continue;
+            }
             localBridgeBase = base;
             lastLocalProbeFailedAt = 0;
             if (data.device && data.device.id) {
               localWsDevice = data.device;
               updateFleetDevices([{ ...data.device, online: true, local: true, lastSeen: Date.now() }]);
-            }
-            if (data.edgeRelayUrl && !prefs.edgeRelayUrl) {
-              discoveredEdgeUrl = String(data.edgeRelayUrl).trim();
             }
             fetchPairingInfoFromBridge().catch(() => {});
             return base;
@@ -2767,8 +2905,18 @@
       return;
     }
     const wsUrl = `${base.replace(/^http/i, 'ws').replace(/\/+$/, '')}/ws`;
-    if (localWs && (localWs.readyState === 0 || localWs.readyState === 1)) {
+    if (localWs && localWsAuthed && (localWs.readyState === 0 || localWs.readyState === 1)) {
       return;
+    }
+    if (localWs && localWs.readyState === 0) {
+      return;
+    }
+    if (localWs) {
+      try {
+        localWs.close();
+      } catch {}
+      localWs = null;
+      localWsAuthed = false;
     }
     if (localWsReconnectTimer) {
       clearTimeout(localWsReconnectTimer);
@@ -2881,7 +3029,12 @@
     ) {
       return;
     }
-    if (edgeWs && edgeWsUrlConnected === cleanTarget && (edgeWs.readyState === 0 || edgeWs.readyState === 1)) {
+    if (
+      edgeWs &&
+      edgeWsUrlConnected === cleanTarget &&
+      edgeWsTokenConnected === token &&
+      (edgeWs.readyState === 0 || edgeWs.readyState === 1)
+    ) {
       return;
     }
     if (edgeWs) {
@@ -2890,6 +3043,7 @@
       } catch {}
       edgeWs = null;
       edgeWsAuthed = false;
+      edgeWsTokenConnected = '';
     }
     if (edgeWsReconnectTimer) {
       clearTimeout(edgeWsReconnectTimer);
@@ -2900,6 +3054,7 @@
       const ws = new WebSocket(cleanTarget);
       edgeWs = ws;
       edgeWsUrlConnected = cleanTarget;
+      edgeWsTokenConnected = token;
       ws.addEventListener('open', async () => {
         try {
           const freshToken = await getBridgeAuthTokenHex();
@@ -2975,6 +3130,7 @@
         if (edgeWs === ws) {
           edgeWs = null;
           edgeWsAuthed = false;
+          edgeWsTokenConnected = '';
           if (connMode === 'edge') connMode = appState ? 'cloud' : 'offline';
         }
         if (edgeWsPingTimer) {
@@ -3154,7 +3310,7 @@
   }
 
   async function syncData(options = {}) {
-    if (isHeadlessBrowser) return false;
+    if (isHeadlessBrowser && !window.__THEO_ALLOW_PROBE_MOCK_FETCH) return false;
     refreshCloudConfig();
     if (syncInFlight) {
       if (options.force || options.toast) {
@@ -3218,6 +3374,9 @@
               }
               return true;
             }
+          } else if (res.status === 401 || res.status === 403) {
+            localBridgeBase = '';
+            lastLocalProbeFailedAt = Date.now();
           }
         } catch {
           localBridgeBase = '';
@@ -3344,12 +3503,20 @@
       connMode = edgeWsAuthed ? 'edge' : 'offline';
       renderAll();
       if (options.toast && connMode === 'offline') {
-        const hasCreds = Boolean(cloudCfg.url || cloudCfg.edgeAccessKey || localBootInfo?.token);
-        showToast(
-          hasCreds
-            ? 'Offline — showing cached snapshot'
-            : 'Open Settings to pair this device with your THEO Pair Link'
-        );
+        const hasCreds = hasAnyPairingCredentials();
+        if (hasCreds) {
+          showToast('Offline — showing cached snapshot');
+        } else {
+          const activeViewInput = document.querySelector(
+            '.view-pane.active [data-pair-code-input], #conn-modal:not([hidden]) [data-pair-code-input]'
+          );
+          if (activeViewInput) {
+            setTimeout(() => activeViewInput.focus({ preventScroll: false }), 20);
+          } else {
+            openConnModal();
+          }
+          showToast('Enter your 6-digit pairing code to connect live');
+        }
       }
       return false;
     } finally {
@@ -3831,12 +3998,25 @@
       if (dotMob) dotMob.className = 'conn-dot cloud';
       if (textMob) textMob.textContent = snapAge ? `Live · ${snapAge.replace(' ago', '')}` : 'Cloud Live';
     } else {
+      const paired = hasAnyPairingCredentials();
       if (dotRail) dotRail.className = 'conn-dot';
-      if (titleRail) titleRail.textContent = 'Offline Snapshot';
-      if (subRail) subRail.textContent = snapAge ? `Cached ${snapAge}` : 'Waiting for connection';
-      if (pillMob) pillMob.hidden = connMode === 'probing' && navigator.onLine !== false;
+      if (titleRail) titleRail.textContent = paired ? 'Offline Snapshot' : 'Pair This Device';
+      if (subRail) {
+        subRail.textContent = !paired
+          ? 'Enter 6-digit code or pair link'
+          : snapAge
+            ? `Cached ${snapAge}`
+            : 'Waiting for connection';
+      }
+      if (pillMob) pillMob.hidden = paired && connMode === 'probing' && navigator.onLine !== false;
       if (dotMob) dotMob.className = 'conn-dot';
-      if (textMob) textMob.textContent = outbox.length > 0 ? `Offline · ${outbox.length}` : 'Offline';
+      if (textMob) {
+        textMob.textContent = !paired
+          ? 'Pair Device'
+          : outbox.length > 0
+            ? `Offline · ${outbox.length}`
+            : 'Offline';
+      }
     }
 
     const pushDot = $('mobile-push-dot');
@@ -3989,11 +4169,203 @@
     if (modal) modal.hidden = true;
   }
 
+  function getEdgeHttpBaseUrl() {
+    const raw = String(prefs.edgeRelayUrl || discoveredEdgeUrl || DEFAULT_EDGE_RELAY_URL).trim();
+    if (!raw) return '';
+    return raw
+      .replace(/^wss:\/\//i, 'https://')
+      .replace(/^ws:\/\//i, 'http://')
+      .replace(/[?#].*$/, '')
+      .replace(/\/+$/, '')
+      .replace(/\/ws$/i, '')
+      .replace(/\/+$/, '');
+  }
+
+  async function finalizeInteractivePairSuccess(parsed) {
+    if (!applyPairPayloadToPrefs(parsed)) return false;
+    refreshCloudConfig();
+    resetTransportsForFreshPairing();
+    const targetEdge = prefs.edgeRelayUrl || discoveredEdgeUrl || DEFAULT_EDGE_RELAY_URL;
+    if (!isHeadlessBrowser && targetEdge) {
+      connectEdgeWs(targetEdge).catch(() => {});
+    }
+    if (!isHeadlessBrowser) {
+      await syncData({ force: true, toast: false });
+    }
+    closeConnModal();
+    updateConnectionBanner();
+    renderAll();
+    showToast('✓ Device paired & connected to THEO Fleet');
+    return true;
+  }
+
+  async function claimSixDigitPairCode(rawCode) {
+    if (pairClaimInFlight) return false;
+    const digits = String(rawCode || '').replace(/\D+/g, '');
+    if (digits.length !== 6) {
+      showToast('Enter the 6-digit pairing code shown on your PC');
+      return false;
+    }
+    if (isHeadlessBrowser && !window.__THEO_ALLOW_PAIR_MOCK_FETCH) {
+      showToast('Headless quarantine active');
+      return false;
+    }
+    const httpBase = getEdgeHttpBaseUrl();
+    if (!httpBase) {
+      showToast('Edge Relay URL is not configured');
+      return false;
+    }
+    pairClaimInFlight = true;
+    let timer = null;
+    try {
+      const ctrl = new AbortController();
+      timer = setTimeout(() => ctrl.abort(), 10000);
+      const res = await fetch(`${httpBase}/pair/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: digits }),
+        signal: ctrl.signal
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok || !data?.bundle) {
+        showToast(data?.error || 'Invalid or expired 6-digit code');
+        return false;
+      }
+      const parsed = decodePairTokenString(data.bundle);
+      if (!parsed) {
+        showToast('Invalid pairing bundle returned by relay');
+        return false;
+      }
+      return await finalizeInteractivePairSuccess(parsed);
+    } catch {
+      showToast('Could not reach Edge Relay — check internet connection');
+      return false;
+    } finally {
+      if (timer) clearTimeout(timer);
+      pairClaimInFlight = false;
+    }
+  }
+
+  async function generateSixDigitPairCode() {
+    if (pairCodeGenInFlight) return null;
+    if (isHeadlessBrowser && !window.__THEO_ALLOW_PAIR_MOCK_FETCH) return null;
+    pairCodeGenInFlight = true;
+    let timer = null;
+    try {
+      if (localBridgeBase) {
+        const res = await authFetchLocal(`${localBridgeBase}/api/pair-code`, { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data?.ok && data?.code) {
+          activeGeneratedPairCode = {
+            code: data.code,
+            formatted: data.formatted || `${data.code.slice(0, 3)}-${data.code.slice(3)}`,
+            expiresAt: Number(data.expiresAt || Date.now() + 600000)
+          };
+          renderAnalyticsView();
+          renderConnModal();
+          showToast(`🔢 6-Digit Phone Code: ${activeGeneratedPairCode.formatted} (valid 10m)`);
+          return activeGeneratedPairCode;
+        }
+      }
+      refreshCloudConfig();
+      const bearer = await getBridgeAuthTokenHex();
+      const bundle = encodePairTokenString({
+        cloudUrl: cloudCfg.url,
+        cloudKey: cloudCfg.key,
+        edgeAccessKey: cloudCfg.edgeAccessKey,
+        edgeRelayUrl: prefs.edgeRelayUrl || discoveredEdgeUrl || DEFAULT_EDGE_RELAY_URL,
+        port: cloudCfg.port
+      });
+      const httpBase = getEdgeHttpBaseUrl();
+      if (!bearer || !bundle || !httpBase) {
+        showToast('Open Settings on your paired PC (http://127.0.0.1:4318) to generate a 6-digit code');
+        return null;
+      }
+      const ctrl = new AbortController();
+      timer = setTimeout(() => ctrl.abort(), 10000);
+      const res = await fetch(`${httpBase}/pair/create`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${bearer}`
+        },
+        body: JSON.stringify({ bundle, ttlSec: 600 }),
+        signal: ctrl.signal
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok || !data?.code) {
+        showToast(data?.error || 'Could not generate 6-digit code');
+        return null;
+      }
+      activeGeneratedPairCode = {
+        code: data.code,
+        formatted: data.formatted || `${data.code.slice(0, 3)}-${data.code.slice(3)}`,
+        expiresAt: Number(data.expiresAt || Date.now() + 600000)
+      };
+      renderAnalyticsView();
+      renderConnModal();
+      showToast(`🔢 6-Digit Phone Code: ${activeGeneratedPairCode.formatted} (valid 10m)`);
+      return activeGeneratedPairCode;
+    } catch {
+      showToast('Failed to contact Edge Relay to mint 6-digit code');
+      return null;
+    } finally {
+      if (timer) clearTimeout(timer);
+      pairCodeGenInFlight = false;
+    }
+  }
+
+  function renderQuickPairOnboardingCardHtml(surfaceKey = 'main') {
+    return `
+      <div class="quick-pair-card" data-quick-pair-surface="${esc(surfaceKey)}">
+        <div class="quick-pair-head">
+          <div>
+            <div class="eyebrow">ZERO-SECRET DEVICE PAIRING</div>
+            <div class="quick-pair-title">Pair This iPhone / Browser</div>
+          </div>
+          <span class="pill-count amber">One-Time Setup</span>
+        </div>
+        <p class="meta-timestamp quick-pair-desc">
+          Enter the <strong>6-digit code</strong> from your PC (works directly inside iOS Home Screen apps), or paste your <code>#pair=</code> link.
+        </p>
+        <div class="quick-pair-row">
+          <input
+            type="text"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            maxlength="24"
+            class="input-field mono quick-pair-code-input"
+            data-pair-code-input
+            placeholder="6-digit code (e.g. 482-917)"
+            aria-label="6-digit device pairing code"
+          >
+          <button type="button" class="btn-brass-sm quick-pair-btn" data-pair-code-submit>Connect</button>
+        </div>
+        <div class="quick-pair-subrow">
+          <button type="button" class="btn-ghost-sm" data-pair-paste-clipboard>📋 Paste Pair Link</button>
+          <button type="button" class="btn-ghost-sm" data-pair-toggle-link-box>${showQuickPairLinkFallback ? 'Hide Link Box' : 'Type / Paste Manually'}</button>
+        </div>
+        <div class="quick-pair-manual" data-pair-manual-wrap ${showQuickPairLinkFallback ? '' : 'hidden'}>
+          <input
+            type="text"
+            class="input-field mono pin-masked"
+            data-pair-link-input
+            placeholder="Paste https://.../#pair=... or 64-hex key"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="Paste pairing URL or access key"
+          >
+          <button type="button" class="btn-brass-sm" data-pair-link-submit>Apply Link</button>
+        </div>
+      </div>
+    `;
+  }
+
   function renderConnModal() {
     const dotEl = $('conn-modal-dot');
     const titleEl = $('conn-modal-title');
     const bodyEl = $('conn-modal-body');
-    if (!bodyEl) return;
+    if (!bodyEl || isFocusInsideContainerInputs(bodyEl)) return;
 
     const conn = appState?.connection || {};
     const lanUrl = conn.lanUrl || '';
@@ -4010,6 +4382,7 @@
     if (dotEl) {
       dotEl.className = `conn-dot ${connMode === 'local' || connMode === 'edge' || edgeWsAuthed ? 'live' : connMode === 'cloud' ? 'cloud' : ''}`;
     }
+    const isPairedNow = hasAnyPairingCredentials();
     if (titleEl) {
       titleEl.textContent =
         connMode === 'local'
@@ -4018,7 +4391,9 @@
             ? `Connected · Cloudflare Edge WebSocket (${edgeWsRttMs ? `${edgeWsRttMs}ms` : 'Live'})`
             : connMode === 'cloud'
               ? 'Connected · Multi-Device Cloud Relay'
-              : 'Offline · Local Snapshot Cache';
+              : isPairedNow
+                ? 'Offline · Local Snapshot Cache'
+                : 'Pair This Device · Zero-Secret Setup';
     }
 
     const fleetRowsHtml = fleetList.length
@@ -4033,6 +4408,7 @@
       : '';
 
     bodyEl.innerHTML = `
+      ${!isPairedNow ? renderQuickPairOnboardingCardHtml('conn-modal') : ''}
       <div class="conn-stat-grid tabular">
         <div class="conn-stat-box">
           <span class="conn-stat-lbl">Active Host</span>
@@ -4076,6 +4452,14 @@
   }
 
   function renderPulseNotifBannerHtml() {
+    if (
+      !hasAnyPairingCredentials() &&
+      connMode !== 'local' &&
+      connMode !== 'edge' &&
+      connMode !== 'cloud'
+    ) {
+      return renderQuickPairOnboardingCardHtml('pulse');
+    }
     const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
     const perm = notifPerm();
     const active = Boolean(nf.enabled && pushSub && perm === 'granted');
@@ -5579,7 +5963,7 @@
   // VIEW 1: Render Pulse
   function renderPulseView() {
     const bannerEl = $('pulse-notif-banner');
-    if (bannerEl) {
+    if (bannerEl && !isFocusInsideContainerInputs(bannerEl)) {
       bannerEl.innerHTML = renderPulseNotifBannerHtml();
     }
 
@@ -6407,9 +6791,23 @@
         })()
       : rawFiltered;
 
+    if (isFocusInsideContainerInputs(container)) return;
+    const unpairedBannerHtml =
+      !hasAnyPairingCredentials() &&
+      connMode !== 'local' &&
+      connMode !== 'edge' &&
+      connMode !== 'cloud'
+        ? renderQuickPairOnboardingCardHtml('sessions')
+        : '';
+
+    if (rows.length === 0 && unpairedBannerHtml) {
+      container.innerHTML = unpairedBannerHtml;
+      return;
+    }
+
     if (filtered.length === 0 && (q || prefs.sessStatus !== 'all' || groups.length === 0)) {
       const hasActiveFilters = prefs.sessProvider !== 'all' || prefs.sessStatus !== 'all' || Boolean(q);
-      container.innerHTML = `
+      container.innerHTML = `${unpairedBannerHtml}
         <div class="ledger-panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
           <div class="meta-timestamp">
             ${
@@ -6434,7 +6832,7 @@
     // Render collapsible Group sections at top when not searching and not in Archived-only mode
     if (!q && groups.length > 0 && prefs.sessStatus !== 'archived') {
       const groupPalette = ['blue', 'green', 'amber', 'purple', 'steel'];
-      let sectionsHtml = '';
+      let sectionsHtml = unpairedBannerHtml;
       groups.forEach((g, idx) => {
         const gItems = filtered.filter((r) => r.group === g.id);
         if ((q || prefs.sessStatus !== 'all') && gItems.length === 0) {
@@ -6485,7 +6883,8 @@
       return;
     }
 
-    container.innerHTML = filtered.map((r) => renderSessionCardHtml(r)).join('');
+    container.innerHTML =
+      unpairedBannerHtml + filtered.map((r) => renderSessionCardHtml(r)).join('');
   }
 
   function coalesceThreadMessages(rawMessages) {
@@ -7564,17 +7963,19 @@
       const hasPin = Boolean(
         localStorage.getItem(STORAGE_KEYS.PIN_HASH) || localStorage.getItem(STORAGE_KEYS.PIN)
       );
-      const isPaired = Boolean(
-        cloudCfg.edgeAccessKey || cloudCfg.key || localBootInfo?.token || cachedPairingInfo?.mobilePairUrl
-      );
+      const isPaired = hasAnyPairingCredentials();
 
       const fleetDevices = getUnifiedFleetDevices();
       const effectiveEdgeUrl = prefs.edgeRelayUrl || discoveredEdgeUrl || '';
+      const liveCode =
+        activeGeneratedPairCode && Number(activeGeneratedPairCode.expiresAt || 0) > Date.now()
+          ? activeGeneratedPairCode
+          : null;
 
       pairingGrid.innerHTML = `
         <div class="pairing-card">
           <div class="eyebrow">MULTI-DEVICE FLEET &amp; ZERO-SECRET PAIRING</div>
-          <p class="meta-timestamp" style="margin:6px 0">Zero secrets in git/bundle. Pair phones via 1-tap hash link or workstations via 1-line PowerShell.</p>
+          <p class="meta-timestamp" style="margin:6px 0">Zero secrets in git/bundle. Pair iOS Home Screen apps via 6-digit code, browsers via 1-tap hash link, or PCs via 1-line PowerShell.</p>
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0">
             ${
               fleetDevices.length > 0
@@ -7584,15 +7985,28 @@
                         `<span class="sess-device-badge ${d.online ? 'is-online' : ''}">${d.online ? '●' : '◐'} ${esc(d.name || d.id)}${d.sessionCount ? ` (${d.sessionCount})` : ''}</span>`
                     )
                     .join('')
-                : `<span class="meta-timestamp">${isPaired ? 'Probing connected hosts…' : 'Not paired yet — paste Pair Link below'}</span>`
+                : `<span class="meta-timestamp">${isPaired ? 'Probing connected hosts…' : 'Not paired yet — enter 6-digit code or paste Pair Link below'}</span>`
             }
           </div>
+          ${
+            liveCode
+              ? `<div class="pair-code-live-banner mono">🔢 iPhone 6-Digit Code: <strong>${esc(liveCode.formatted)}</strong> <span class="meta-timestamp">(10m single-use)</span></div>`
+              : ''
+          }
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-            <button type="button" class="btn-brass-sm" id="btn-copy-mobile-pair" aria-label="Copy 1-tap mobile pairing URL">📱 Copy Mobile Pair URL</button>
+            <button type="button" class="btn-brass-sm" id="btn-gen-pair-code" aria-label="Generate 6-digit pairing code for iPhone Home Screen app">🔢 6-Digit Phone Code</button>
+            <button type="button" class="btn-ghost-sm" id="btn-copy-mobile-pair" aria-label="Copy 1-tap mobile pairing URL">📱 Copy Mobile Pair URL</button>
             <button type="button" class="btn-ghost-sm" id="btn-copy-pc-install" aria-label="Copy 1-line PowerShell installer with pairing token">💻 Copy Workstation Pair PS1</button>
           </div>
           <label style="display:block;font-size:11.5px;margin-top:10px;color:var(--text-muted)">
-            Pair This Device (paste <code>#pair=...</code> URL or Access Key):
+            Pair via 6-Digit Code (from PC):
+            <div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap">
+              <input type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="24" class="input-field mono" id="input-pair-six-code" style="flex:1;min-width:140px" value="" placeholder="e.g. 482-917">
+              <button type="button" class="btn-brass-sm" id="btn-claim-six-code">Connect Code</button>
+            </div>
+          </label>
+          <label style="display:block;font-size:11.5px;margin-top:10px;color:var(--text-muted)">
+            Or Paste <code>#pair=...</code> URL / Access Key:
             <input type="text" class="input-field mono pin-masked" id="input-pair-token" value="" placeholder="${isPaired ? '✓ Paired (paste new link to rotate)' : 'Paste #pair=... link or 64-hex key'}" autocomplete="off" spellcheck="false">
           </label>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
@@ -7959,6 +8373,7 @@
 
   // PIN Lock Check (#17)
   function initPinLock() {
+    pinLockInitialized = true;
     const legacyPin = localStorage.getItem(STORAGE_KEYS.PIN);
     const savedHash = localStorage.getItem(STORAGE_KEYS.PIN_HASH);
     if (legacyPin && !savedHash && /^\d{4}$/.test(legacyPin)) {
@@ -7976,6 +8391,11 @@
     if ((!savedHash && !legacyPin) || !overlay) {
       if (appShell) appShell.inert = false;
       document.documentElement.classList.remove('pin-locked-boot');
+      if (pendingPinPairPayload) {
+        const deferred = pendingPinPairPayload;
+        pendingPinPairPayload = null;
+        finalizeInteractivePairSuccess(deferred).catch(() => {});
+      }
       return;
     }
     overlay.hidden = false;
@@ -8004,6 +8424,11 @@
           overlay.hidden = true;
           if (appShell) appShell.inert = false;
           playChime('confirm');
+          if (pendingPinPairPayload) {
+            const deferred = pendingPinPairPayload;
+            pendingPinPairPayload = null;
+            await finalizeInteractivePairSuccess(deferred);
+          }
         } else {
           entered = '';
           updateDots();
@@ -9141,9 +9566,103 @@
         return;
       }
 
+      if (e.target.closest('#btn-gen-pair-code')) {
+        await generateSixDigitPairCode();
+        return;
+      }
+
+      if (e.target.closest('#btn-claim-six-code')) {
+        const val = ($('input-pair-six-code')?.value || '').trim();
+        const ok = await claimSixDigitPairCode(val);
+        if (ok && $('input-pair-six-code')) $('input-pair-six-code').value = '';
+        return;
+      }
+
+      const quickCodeBtn = e.target.closest('[data-pair-code-submit]');
+      if (quickCodeBtn) {
+        const card = quickCodeBtn.closest('.quick-pair-card');
+        const inp = card?.querySelector('[data-pair-code-input]');
+        await claimSixDigitPairCode(inp?.value || '');
+        return;
+      }
+
+      const quickToggleBtn = e.target.closest('[data-pair-toggle-link-box]');
+      if (quickToggleBtn) {
+        showQuickPairLinkFallback = !showQuickPairLinkFallback;
+        const card = quickToggleBtn.closest('.quick-pair-card');
+        const wrap = card?.querySelector('[data-pair-manual-wrap]');
+        if (wrap) {
+          wrap.hidden = !showQuickPairLinkFallback;
+          quickToggleBtn.textContent = showQuickPairLinkFallback ? 'Hide Link Box' : 'Type / Paste Manually';
+          if (showQuickPairLinkFallback) {
+            const inp = wrap.querySelector('[data-pair-link-input]');
+            setTimeout(() => inp?.focus({ preventScroll: true }), 15);
+          }
+        } else {
+          renderAll();
+        }
+        return;
+      }
+
+      const quickPasteBtn = e.target.closest('[data-pair-paste-clipboard]');
+      if (quickPasteBtn) {
+        let clipText = '';
+        try {
+          if (navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
+            clipText = String((await navigator.clipboard.readText()) || '').trim();
+          }
+        } catch {}
+        if (clipText) {
+          const onlyDigits = clipText.replace(/\D+/g, '');
+          if (onlyDigits.length === 6 && /^[\d\s-]+$/.test(clipText)) {
+            await claimSixDigitPairCode(onlyDigits);
+            return;
+          }
+          const parsedClip = decodePairTokenString(clipText);
+          if (parsedClip) {
+            await finalizeInteractivePairSuccess(parsedClip);
+            return;
+          }
+        }
+        showQuickPairLinkFallback = true;
+        const card = quickPasteBtn.closest('.quick-pair-card');
+        const wrap = card?.querySelector('[data-pair-manual-wrap]');
+        if (wrap) {
+          wrap.hidden = false;
+          const toggleBtn = card?.querySelector('[data-pair-toggle-link-box]');
+          if (toggleBtn) toggleBtn.textContent = 'Hide Link Box';
+          const inp = wrap.querySelector('[data-pair-link-input]');
+          setTimeout(() => inp?.focus({ preventScroll: true }), 15);
+        }
+        showToast(
+          clipText
+            ? 'Clipboard did not contain a #pair= link — paste it below'
+            : 'Paste your #pair= link or 6-digit code below'
+        );
+        return;
+      }
+
+      const quickLinkSubmitBtn = e.target.closest('[data-pair-link-submit]');
+      if (quickLinkSubmitBtn) {
+        const card = quickLinkSubmitBtn.closest('.quick-pair-card');
+        const raw = (card?.querySelector('[data-pair-link-input]')?.value || '').trim();
+        const onlyDigits = raw.replace(/\D+/g, '');
+        if (onlyDigits.length === 6 && /^[\d\s-]+$/.test(raw)) {
+          await claimSixDigitPairCode(onlyDigits);
+          return;
+        }
+        const parsed = decodePairTokenString(raw);
+        if (!parsed) {
+          showToast('Invalid #pair= URL or Access Key');
+          return;
+        }
+        await finalizeInteractivePairSuccess(parsed);
+        return;
+      }
+
       if (e.target.closest('#btn-copy-mobile-pair')) {
         const info = await fetchPairingInfoFromBridge();
-        let pairUrl = info?.mobilePairUrl || '';
+        let pairUrl = info?.pairUrl || info?.mobilePairUrl || '';
         if (!pairUrl) {
           refreshCloudConfig();
           const tok = encodePairTokenString({
@@ -9170,7 +9689,7 @@
 
       if (e.target.closest('#btn-copy-pc-install')) {
         const info = await fetchPairingInfoFromBridge();
-        let cmd = info?.workstationBootstrapPs1 || '';
+        let cmd = info?.workstationCmd || info?.workstationBootstrapPs1 || '';
         if (!cmd) {
           refreshCloudConfig();
           const tok = encodePairTokenString({
@@ -9195,22 +9714,19 @@
 
       if (e.target.closest('#btn-apply-pair-token')) {
         const raw = ($('input-pair-token')?.value || '').trim();
-        const parsed = decodePairTokenString(raw);
-        if (!parsed) {
-          showToast('Invalid Pair URL or Access Key');
+        const onlyDigits = raw.replace(/\D+/g, '');
+        if (onlyDigits.length === 6 && /^[\d\s-]+$/.test(raw)) {
+          const ok = await claimSixDigitPairCode(onlyDigits);
+          if (ok && $('input-pair-token')) $('input-pair-token').value = '';
           return;
         }
-        applyPairPayloadToPrefs(parsed);
-        refreshCloudConfig();
-        cachedBridgeTokenHex = '';
-        cachedBridgeTokenSrc = '';
-        if ($('input-pair-token')) $('input-pair-token').value = '';
-        if (prefs.edgeRelayUrl || discoveredEdgeUrl) {
-          connectEdgeWs(prefs.edgeRelayUrl || discoveredEdgeUrl).catch(() => {});
+        const parsed = decodePairTokenString(raw);
+        if (!parsed) {
+          showToast('Invalid Pair URL, 6-Digit Code, or Access Key');
+          return;
         }
-        await syncData({ force: true, toast: true });
-        renderAnalyticsView();
-        showToast('✓ Device paired & connected to THEO Fleet');
+        if ($('input-pair-token')) $('input-pair-token').value = '';
+        await finalizeInteractivePairSuccess(parsed);
         return;
       }
 
@@ -9608,11 +10124,27 @@
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         openCommandPalette();
+      } else if (e.key === 'Enter' && !e.shiftKey) {
+        const t = e.target;
+        if (t && t.matches && t.matches('[data-pair-code-input], #input-pair-six-code')) {
+          e.preventDefault();
+          claimSixDigitPairCode(t.value || '');
+        } else if (t && t.matches && t.matches('[data-pair-link-input]')) {
+          e.preventDefault();
+          t.closest('.quick-pair-card')?.querySelector('[data-pair-link-submit]')?.click();
+        } else if (t && t.id === 'input-pair-token') {
+          e.preventDefault();
+          $('btn-apply-pair-token')?.click();
+        }
       } else if (e.key === 'Escape') {
         closeCommandPalette();
         closeConnModal();
         closeNotifModal();
       }
+    });
+
+    window.addEventListener('hashchange', () => {
+      ingestLocationPairHash(true);
     });
 
     window.addEventListener('popstate', (ev) => {
@@ -10337,7 +10869,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=56', { updateViaCache: 'none' })
+        .register('sw.js?v=57', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
@@ -10569,6 +11101,9 @@
         setInterval(() => {
           if (document.hidden) return;
           if (localWsAuthed && localWs && localWs.readyState === 1) return;
+          if (!hasAnyPairingCredentials() && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '')) {
+            return;
+          }
           syncData();
         }, 4500);
       }

@@ -334,6 +334,32 @@ function buildSeedCachePayload() {
 }
 
 async function main() {
+  // Static Lockstep Cache-Version Check (PWA.md §3.1 / Red-Team M-2):
+  // index.html (?v=N), sw.js (CACHE_NAME + CORE_SHELL ?v=N), manifest.json (?v=N), and js/app.js (register('sw.js?v=N')) MUST match.
+  const indexSrc = fs.readFileSync(path.join(REPO_ROOT, 'index.html'), 'utf8');
+  const swSrc = fs.readFileSync(path.join(REPO_ROOT, 'sw.js'), 'utf8');
+  const manifestSrc = fs.readFileSync(path.join(REPO_ROOT, 'manifest.json'), 'utf8');
+  const appJsSrc = fs.readFileSync(path.join(REPO_ROOT, 'js', 'app.js'), 'utf8');
+
+  const swCacheMatch = swSrc.match(/CACHE_NAME\s*=\s*['"]theo-remote-v(\d+)['"]/);
+  assert.ok(swCacheMatch, 'sw.js must define CACHE_NAME = theo-remote-vN');
+  const expectedVer = swCacheMatch[1];
+  for (const [label, src, regex] of [
+    ['index.html css', indexSrc, /css\/theo\.css\?v=(\d+)/g],
+    ['index.html app.js', indexSrc, /js\/app\.js\?v=(\d+)/g],
+    ['index.html manifest', indexSrc, /manifest\.json\?v=(\d+)/g],
+    ['sw.js shell assets', swSrc, /\?v=(\d+)/g],
+    ['manifest.json icons', manifestSrc, /\?v=(\d+)/g],
+    ['js/app.js registerServiceWorker', appJsSrc, /serviceWorker\s*\.register\(\s*['"]sw\.js\?v=(\d+)['"]/g]
+  ]) {
+    const matches = [...src.matchAll(regex)];
+    assert.ok(matches.length > 0, `${label} must include ?v=${expectedVer}`);
+    for (const m of matches) {
+      assert.strictEqual(m[1], expectedVer, `Lockstep ?v= mismatch in ${label}: found v=${m[1]}, expected v=${expectedVer}`);
+    }
+  }
+  console.log(`[PASS] Lockstep SW/Shell version parity verified (v${expectedVer})`);
+
   const edgeExe = findEdgeBinary();
   const cdpPort = await getFreePort();
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'theo-cdp-verify-'));
@@ -684,6 +710,348 @@ async function main() {
       assert.strictEqual(bootNav.selectedThreadId, '__new__', `Expected __new__ thread on cold boot`);
     }
     console.log('[PASS] Adversarial #3: Cold-boot ?tab=chat&new=claude|antigravity beats stale pinnedNav & unhydrated providers');
+
+    // Adversarial Check #5: Cold Unpaired iOS Standalone / Browser Onboarding, Focus Guard, Multi-line #pair= & 6-Digit /pair/claim Lock
+    await evalJs(`(() => {
+      localStorage.removeItem('theo_remote_cache_v3');
+      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify({
+        theme: 'light',
+        themeUserSet: true,
+        sound: false,
+        activeTab: 'sessions'
+      }));
+    })()`);
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 500));
+
+    for (const uVp of [
+      { w: 320, h: 568, mobile: true, label: '320x568-unpaired' },
+      { w: 390, h: 844, mobile: true, label: '390x844-unpaired' },
+      { w: 740, h: 360, mobile: true, label: '740x360-unpaired' },
+      { w: 1440, h: 900, mobile: false, label: '1440x900-unpaired' }
+    ]) {
+      await cdp.send(
+        'Emulation.setDeviceMetricsOverride',
+        { width: uVp.w, height: uVp.h, deviceScaleFactor: 2, mobile: uVp.mobile },
+        sessionId
+      );
+      const uLayout = await evalJs(`(async () => {
+        const res = {};
+        for (const t of ['pulse', 'sessions']) {
+          document.querySelector('[data-tab="' + t + '"]')?.click();
+          await new Promise((r) => setTimeout(r, 35));
+          res[t + 'ScrollW'] = document.documentElement.scrollWidth;
+          res[t + 'HasCard'] = Boolean(document.querySelector('#view-' + t + ' .quick-pair-card'));
+        }
+        document.getElementById('rail-conn-btn')?.click();
+        await new Promise((r) => setTimeout(r, 30));
+        res.connHasCard = Boolean(document.querySelector('#conn-modal .quick-pair-card'));
+        res.connScrollW = document.documentElement.scrollWidth;
+        document.getElementById('conn-modal-close')?.click();
+        res.sessText = document.getElementById('sessions-full-list')?.textContent || '';
+        res.mobConnTxt = document.getElementById('mobile-conn-text')?.textContent || '';
+        res.railConnTxt = document.getElementById('rail-conn-title')?.textContent || '';
+        res.vw = window.innerWidth;
+        return res;
+      })()`);
+      assert.strictEqual(uLayout.pulseHasCard, true, `Pulse must render .quick-pair-card on ${uVp.label}`);
+      assert.strictEqual(uLayout.sessionsHasCard, true, `Sessions must render .quick-pair-card on ${uVp.label}`);
+      assert.strictEqual(uLayout.connHasCard, true, `#conn-modal must render .quick-pair-card on ${uVp.label}`);
+      assert.ok(uLayout.pulseScrollW <= uLayout.vw + 1, `Unpaired Pulse overflow on ${uVp.label}`);
+      assert.ok(uLayout.sessionsScrollW <= uLayout.vw + 1, `Unpaired Sessions overflow on ${uVp.label}`);
+      assert.ok(uLayout.connScrollW <= uLayout.vw + 1, `Unpaired #conn-modal overflow on ${uVp.label}`);
+      assert.strictEqual(
+        uLayout.sessText.includes('Syncing live sessions from VS Code'),
+        false,
+        'Unpaired Sessions view must NEVER show misleading "Syncing live sessions from VS Code…" empty state'
+      );
+      assert.strictEqual(uLayout.mobConnTxt, 'Pair Device', 'Unpaired mobile pill must read "Pair Device"');
+      assert.strictEqual(uLayout.railConnTxt, 'Pair This Device', 'Unpaired rail card must read "Pair This Device"');
+    }
+
+    await cdp.send(
+      'Emulation.setDeviceMetricsOverride',
+      { width: 390, height: 844, deviceScaleFactor: 2, mobile: true },
+      sessionId
+    );
+    const pairFlowRes = await evalJs(`(async () => {
+      document.querySelector('[data-tab="sessions"]')?.click();
+      await new Promise((r) => setTimeout(r, 30));
+      const codeInput = document.querySelector('#view-sessions [data-pair-code-input]');
+      codeInput.focus();
+      codeInput.value = '482';
+      codeInput.dispatchEvent(new Event('input', { bubbles: true }));
+      // Trigger re-renders while focused — input focus & partial digits must survive (PWA.md §3.9)
+      document.querySelector('[data-status-filter="all"]')?.click();
+      await new Promise((r) => setTimeout(r, 30));
+      const focusSurvived = document.activeElement === codeInput && codeInput.value === '482';
+
+      // Mock fetch locally inside page (zero external network traffic) to test 6-digit claim negative & concurrency locks
+      const origFetch = window.fetch;
+      let claimCalls = 0;
+      let releaseSlowClaim = null;
+      const samplePayload = {
+        v: 1,
+        u: 'https://relay.example.invalid/api',
+        k: 'mock-cloud-key',
+        e: 'b'.repeat(64),
+        r: 'wss://edge.example.invalid/ws',
+        p: 4318
+      };
+      const validBundle = btoa(JSON.stringify(samplePayload))
+        .replace(/\\+/g, '-')
+        .replace(/\\//g, '_')
+        .replace(/=+$/, '');
+
+      window.__THEO_ALLOW_PAIR_MOCK_FETCH = true;
+      window.fetch = async (url, init) => {
+        if (String(url).endsWith('/pair/claim')) {
+          claimCalls += 1;
+          const body = JSON.parse(init?.body || '{}');
+          if (body.code === '000000') {
+            return new Response(JSON.stringify({ ok: false, error: 'Invalid or expired 6-digit code' }), {
+              status: 401,
+              headers: { 'Content-Type': 'application/json' }
+            });
+          }
+          if (body.code === '482917') {
+            await new Promise((resolve) => { releaseSlowClaim = resolve; });
+            return new Response(JSON.stringify({ ok: true, bundle: validBundle }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' }
+            });
+          }
+        }
+        return new Response('{}', { status: 200 });
+      };
+
+      let result;
+      try {
+        const submitBtn = document.querySelector('#view-sessions [data-pair-code-submit]');
+        // 1) Short 3-digit code ('482') must be rejected client-side with 0 network calls
+        submitBtn.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const callsAfterShort = claimCalls;
+
+        // 2) Wrong 6-digit code ('000000') must reject cleanly & leave credentials empty
+        codeInput.value = '000-000';
+        submitBtn.click();
+        await new Promise((r) => setTimeout(r, 50));
+        const callsAfterWrong = claimCalls;
+        const prefsAfterWrong = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+
+        // 3) Double-click valid code ('482-917') while in-flight -> pairClaimInFlight lock allows only 1 request
+        codeInput.value = '482-917';
+        submitBtn.click();
+        submitBtn.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const callsDuringDoubleClick = claimCalls;
+        if (releaseSlowClaim) releaseSlowClaim();
+        await new Promise((r) => setTimeout(r, 60));
+        const prefsAfterValid = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+        const cardGoneAfterPair = !document.querySelector('#view-sessions .quick-pair-card');
+
+        // 4) Reset prefs & test live hashchange #pair= ingestion + URL hash scrubbing + multi-line paste
+        localStorage.setItem('theo_remote_prefs_v1', JSON.stringify({ theme: 'light', themeUserSet: true, activeTab: 'sessions' }));
+        const hashPayload = { ...samplePayload, e: 'c'.repeat(64) };
+        const hashBundle = btoa(JSON.stringify(hashPayload))
+          .replace(/\\+/g, '-')
+          .replace(/\\//g, '_')
+          .replace(/=+$/, '');
+        location.hash = '#pair=' + hashBundle;
+        await new Promise((r) => setTimeout(r, 60));
+        const hashScrubbed = location.hash === '';
+        const prefsAfterHash = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+
+        // 5) Multi-line mobile-pair-url.txt paste via manual link box
+        const multiPayload = { ...samplePayload, e: 'd'.repeat(64) };
+        const multiBundle = btoa(JSON.stringify(multiPayload))
+          .replace(/\\+/g, '-')
+          .replace(/\\//g, '_')
+          .replace(/=+$/, '');
+        document.querySelector('[data-tab="analytics"]')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+        const tokInp = document.getElementById('input-pair-token');
+        tokInp.value = '=== Header ===\\nhttps://husseinbdeir.github.io/theo/#pair=' + multiBundle + '\\n$env:FOO=1';
+        document.getElementById('btn-apply-pair-token')?.click();
+        await new Promise((r) => setTimeout(r, 50));
+        const prefsAfterMulti = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+
+        result = {
+          focusSurvived,
+          callsAfterShort,
+          callsAfterWrong,
+          emptyKeyAfterWrong: !prefsAfterWrong.edgeAccessKey,
+          callsDuringDoubleClick,
+          keyAfterValid: prefsAfterValid.edgeAccessKey,
+          cardGoneAfterPair,
+          hashScrubbed,
+          keyAfterHash: prefsAfterHash.edgeAccessKey,
+          keyAfterMulti: prefsAfterMulti.edgeAccessKey
+        };
+      } finally {
+        window.__THEO_ALLOW_PAIR_MOCK_FETCH = false;
+        window.fetch = origFetch;
+      }
+      return result;
+    })()`);
+
+    assert.strictEqual(pairFlowRes.focusSurvived, true, 'Typing 6-digit code must preserve input focus across re-renders');
+    assert.strictEqual(pairFlowRes.callsAfterShort, 0, 'Short <6-digit code must not fire /pair/claim');
+    assert.strictEqual(pairFlowRes.callsAfterWrong, 1, 'Wrong 6-digit code must hit /pair/claim once');
+    assert.strictEqual(pairFlowRes.emptyKeyAfterWrong, true, 'Rejected 6-digit code must not persist credentials');
+    assert.strictEqual(pairFlowRes.callsDuringDoubleClick, 2, 'Duplicate click while /pair/claim in-flight must be blocked by pairClaimInFlight');
+    assert.strictEqual(pairFlowRes.keyAfterValid, 'b'.repeat(64), 'Valid 6-digit code must persist decoded edgeAccessKey');
+    assert.strictEqual(pairFlowRes.cardGoneAfterPair, true, '.quick-pair-card must disappear immediately once paired');
+    assert.strictEqual(pairFlowRes.hashScrubbed, true, 'hashchange #pair= must scrub secret fragment via history.replaceState');
+    assert.strictEqual(pairFlowRes.keyAfterHash, 'c'.repeat(64), 'hashchange #pair= must apply credentials immediately without reload');
+    assert.strictEqual(pairFlowRes.keyAfterMulti, 'd'.repeat(64), 'Multi-line mobile-pair-url.txt paste must decode cleanly');
+    console.log('[PASS] Adversarial #5: Unpaired onboarding, focus guard, 6-digit single-flight/401, hashchange #pair=, & multi-line paste');
+
+    // Adversarial Check #6: Red-Team C-1 (partial #pair= exfil block), H-1 (unauthed /api/ping), & H-2 (PIN-locked #pair= deferral)
+    await evalJs(`(() => {
+      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify({
+        theme: 'light',
+        themeUserSet: true,
+        activeTab: 'sessions',
+        cloudUrl: 'https://legit.example.invalid/relay',
+        cloudKey: 'legit-cloud-secret',
+        edgeAccessKey: 'e'.repeat(64)
+      }));
+    })()`);
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 400));
+    const secCheck = await evalJs(`(async () => {
+      // C-1: Inject hostile partial #pair= (u without k, and secret-less u) against live hydrated prefs
+      const encodeJson = (o) => btoa(JSON.stringify(o)).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+      location.hash = '#pair=' + encodeJson({ v: 1, u: 'https://evil.example/steal', k: '', e: '' });
+      await new Promise((r) => setTimeout(r, 45));
+      location.hash = '#pair=' + encodeJson({ v: 1, u: 'https://evil.example/steal', k: '', e: 'f'.repeat(64) });
+      await new Promise((r) => setTimeout(r, 45));
+      const prefsAfterHostile = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+
+      // C-1r: Cloud-only #pair= (k present, e empty, custom r) MUST clear pre-existing edgeAccessKey so old edgeAccessKey is never sent to r
+      location.hash = '#pair=' + encodeJson({
+        v: 1,
+        u: 'https://dummy.example.invalid/x',
+        k: 'dummy-cloud-key',
+        e: '',
+        r: 'wss://evil.example.invalid/ws'
+      });
+      await new Promise((r) => setTimeout(r, 45));
+      const prefsAfterCloudOnlyPair = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+
+      // Clear credentials for H-1 test next
+      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify({
+        theme: 'light',
+        themeUserSet: true,
+        activeTab: 'sessions'
+      }));
+      return {
+        cloudUrlIntact: prefsAfterHostile.cloudUrl === 'https://legit.example.invalid/relay',
+        edgeKeyNotOverwrittenByPartial: prefsAfterHostile.edgeAccessKey === 'e'.repeat(64),
+        edgeKeyClearedOnCloudOnlyPair: prefsAfterCloudOnlyPair.edgeAccessKey === ''
+      };
+    })()`);
+    assert.strictEqual(secCheck.cloudUrlIntact, true, 'Hostile partial #pair= must NOT overwrite stored cloudUrl (C-1)');
+    assert.strictEqual(
+      secCheck.edgeKeyNotOverwrittenByPartial,
+      true,
+      'Hostile partial #pair= with cloudUrl+no cloudKey must be rejected atomically (C-1)'
+    );
+    assert.strictEqual(
+      secCheck.edgeKeyClearedOnCloudOnlyPair,
+      true,
+      'Cloud-only #pair= with empty edgeAccessKey MUST clear prior edgeAccessKey so it cannot leak to new edgeRelayUrl (C-1r)'
+    );
+
+    // Reload unpaired & test H-1 (unauthenticated /api/ping must not suppress .quick-pair-card)
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 400));
+    const h1Check = await evalJs(`(async () => {
+      const origFetch = window.fetch;
+      let pingHitCount = 0;
+      window.__THEO_ALLOW_PROBE_MOCK_FETCH = true;
+      window.fetch = async (url) => {
+        if (String(url).endsWith('/api/ping')) {
+          pingHitCount += 1;
+          return new Response(JSON.stringify({
+            ok: true,
+            authenticated: false,
+            authRequired: true,
+            service: 'THEO Remote Bridge'
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response('{}', { status: 401 });
+      };
+      try {
+        document.querySelector('[data-tab="sessions"]')?.click();
+        document.getElementById('mobile-sync-btn')?.click();
+        await new Promise((r) => setTimeout(r, 90));
+        return {
+          pingHitCount,
+          cardStillVisible: Boolean(document.querySelector('#view-sessions .quick-pair-card')),
+          mobPill: document.getElementById('mobile-conn-text')?.textContent || ''
+        };
+      } finally {
+        window.__THEO_ALLOW_PROBE_MOCK_FETCH = false;
+        window.fetch = origFetch;
+      }
+    })()`);
+    assert.ok(h1Check.pingHitCount >= 1, 'probeLocalBridge must hit mocked /api/ping');
+    assert.strictEqual(h1Check.cardStillVisible, true, 'Unauthenticated /api/ping must NOT hide .quick-pair-card (H-1)');
+    assert.strictEqual(h1Check.mobPill, 'Pair Device', 'Unauthenticated /api/ping must keep Pair Device pill (H-1)');
+
+    // H-2: Boot with PIN lock active AND #pair= fragment -> URL hash scrubbed immediately, credentials deferred until PIN unlock
+    const pinPairBundle = Buffer.from(
+      JSON.stringify({
+        v: 1,
+        u: 'https://relay.example.invalid/api',
+        k: 'pin-unlocked-cloud-key',
+        e: '9'.repeat(64),
+        r: 'wss://edge.example.invalid/ws',
+        p: 4318
+      }),
+      'utf8'
+    )
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/g, '');
+    await evalJs(`(() => {
+      localStorage.removeItem('theo_remote_pin_hash_v1');
+      localStorage.setItem('theo_remote_pin_v1', '2468');
+      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify({
+        theme: 'light',
+        themeUserSet: true,
+        activeTab: 'sessions'
+      }));
+    })()`);
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1&pinboot=1#pair=${pinPairBundle}` }, sessionId);
+    await new Promise((r) => setTimeout(r, 450));
+    const h2Check = await evalJs(`(async () => {
+      const hashWhileLocked = location.hash;
+      const overlayLocked = !document.getElementById('pin-overlay')?.hidden;
+      const prefsWhileLocked = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+      for (const d of ['2', '4', '6', '8']) {
+        document.querySelector('#pin-pad button[data-digit="' + d + '"]')?.click();
+      }
+      await new Promise((r) => setTimeout(r, 90));
+      const prefsAfterUnlock = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+      return {
+        hashWhileLocked,
+        overlayLocked,
+        emptyWhileLocked: !prefsWhileLocked.edgeAccessKey && !prefsWhileLocked.cloudKey,
+        keyAfterUnlock: prefsAfterUnlock.edgeAccessKey,
+        cloudKeyAfterUnlock: prefsAfterUnlock.cloudKey
+      };
+    })()`);
+    assert.strictEqual(h2Check.overlayLocked, true, 'PIN overlay must be locked on boot');
+    assert.strictEqual(h2Check.hashWhileLocked, '', '#pair= hash must be scrubbed from address bar even while PIN-locked (H-2)');
+    assert.strictEqual(h2Check.emptyWhileLocked, true, '#pair= credentials must NOT write to localStorage before PIN unlock (H-2)');
+    assert.strictEqual(h2Check.keyAfterUnlock, '9'.repeat(64), 'Deferred #pair= edgeAccessKey must apply immediately on PIN unlock (H-2)');
+    assert.strictEqual(h2Check.cloudKeyAfterUnlock, 'pin-unlocked-cloud-key', 'Deferred #pair= cloudKey must apply on PIN unlock (H-2)');
+    console.log('[PASS] Adversarial #6: C-1 partial #pair= block, H-1 unauthed /api/ping guard, & H-2 PIN-locked #pair= deferral');
 
     // Final error & network quarantine assertions (#18)
     assert.strictEqual(pageExceptions.length, 0, `Uncaught page exceptions: ${JSON.stringify(pageExceptions)}`);
