@@ -154,9 +154,15 @@
   const DEFAULT_PREFS = {
     theme: 'dark',
     themeUserSet: false,
+    palette: 'graphite',
+    lastDarkPalette: 'graphite',
     sidebarCollapsed: false,
     sidebarFilter: 'all',
     openEditorTabs: [],
+    inspectorOpen: false,
+    inspectorTab: 'code',
+    inspectorViewMode: 'source',
+    pinnedBgSessionId: '',
     sound: true,
     activeTab: 'pulse',
     sessProvider: 'all',
@@ -189,7 +195,27 @@
   if (!prefs.themeUserSet) {
     prefs.theme = 'dark';
   }
+  if (!['graphite', 'velvet', 'espresso', 'daylight'].includes(prefs.palette)) {
+    prefs.palette = prefs.theme === 'light' ? 'daylight' : 'graphite';
+  }
+  if (!['graphite', 'velvet', 'espresso'].includes(prefs.lastDarkPalette)) {
+    prefs.lastDarkPalette = prefs.palette !== 'daylight' ? prefs.palette : 'graphite';
+  }
+  if (prefs.theme === 'light') {
+    prefs.palette = 'daylight';
+  } else if (prefs.palette === 'daylight') {
+    prefs.palette = prefs.lastDarkPalette || 'graphite';
+  }
   prefs.sidebarCollapsed = Boolean(prefs.sidebarCollapsed);
+  prefs.inspectorOpen = Boolean(prefs.inspectorOpen);
+  if (!['code', 'agents', 'outline'].includes(prefs.inspectorTab)) {
+    prefs.inspectorTab = 'code';
+  }
+  if (!['source', 'diff'].includes(prefs.inspectorViewMode)) {
+    prefs.inspectorViewMode = 'source';
+  }
+  prefs.pinnedBgSessionId =
+    typeof prefs.pinnedBgSessionId === 'string' ? prefs.pinnedBgSessionId.trim() : '';
   if (!['all', 'working', 'needs_input', 'unread', 'open'].includes(prefs.sidebarFilter)) {
     prefs.sidebarFilter = 'all';
   }
@@ -2276,19 +2302,86 @@
     );
   }
 
-  // Theme & IDE Sidebar management
+  // Theme, Studio Palettes & IDE Sidebar management
+  let sidebarHoverTimer = null;
+
+  function closeFloatingUiMenus() {
+    if (sidebarHoverTimer) {
+      clearTimeout(sidebarHoverTimer);
+      sidebarHoverTimer = null;
+    }
+    const palPop = $('theme-palette-popover');
+    if (palPop) palPop.hidden = true;
+    $('btn-palette-picker')?.setAttribute('aria-expanded', 'false');
+    const hoverCard = $('ide-hover-card');
+    if (hoverCard) {
+      hoverCard.hidden = true;
+      hoverCard.innerHTML = '';
+    }
+    const ctxMenu = $('ide-context-menu');
+    if (ctxMenu) {
+      ctxMenu.hidden = true;
+      ctxMenu.innerHTML = '';
+    }
+  }
+
+  function syncPalettePickerUi() {
+    const activePal = prefs.theme === 'light' ? 'daylight' : prefs.palette || 'graphite';
+    document.querySelectorAll('#palette-grid [data-set-palette]').forEach((btn) => {
+      const match = btn.dataset.setPalette === activePal;
+      btn.classList.toggle('active', match);
+      btn.setAttribute('aria-pressed', match ? 'true' : 'false');
+    });
+  }
+
   function applyTheme(theme, userExplicit = false) {
     prefs.theme = theme === 'dark' ? 'dark' : 'light';
     if (userExplicit) {
       prefs.themeUserSet = true;
     }
+    if (prefs.theme === 'light') {
+      if (['graphite', 'velvet', 'espresso'].includes(prefs.palette)) {
+        prefs.lastDarkPalette = prefs.palette;
+      }
+      prefs.palette = 'daylight';
+    } else {
+      const darkPal = ['graphite', 'velvet', 'espresso'].includes(prefs.palette)
+        ? prefs.palette
+        : ['graphite', 'velvet', 'espresso'].includes(prefs.lastDarkPalette)
+          ? prefs.lastDarkPalette
+          : 'graphite';
+      prefs.palette = darkPal;
+      prefs.lastDarkPalette = darkPal;
+    }
     document.documentElement.setAttribute('data-theme', prefs.theme);
+    document.documentElement.setAttribute('data-palette', prefs.palette);
     document.documentElement.classList.toggle('sidebar-collapsed', Boolean(prefs.sidebarCollapsed));
     const meta = $('meta-theme-color');
     if (meta) {
-      meta.setAttribute('content', prefs.theme === 'light' ? '#F3F5F9' : '#0D0F14');
+      const metaHex =
+        prefs.theme === 'light'
+          ? '#F6F5F0'
+          : prefs.palette === 'velvet'
+            ? '#0C0D12'
+            : prefs.palette === 'espresso'
+              ? '#191614'
+              : '#141417';
+      meta.setAttribute('content', metaHex);
     }
+    syncPalettePickerUi();
     saveJson(STORAGE_KEYS.PREFS, prefs);
+  }
+
+  function applyPalette(palName) {
+    const clean = String(palName || '').trim().toLowerCase();
+    if (!['graphite', 'velvet', 'espresso', 'daylight'].includes(clean)) return;
+    if (clean === 'daylight') {
+      applyTheme('light', true);
+    } else {
+      prefs.palette = clean;
+      prefs.lastDarkPalette = clean;
+      applyTheme('dark', true);
+    }
   }
 
   function toggleIdeSidebar(forceCollapsed) {
@@ -2709,6 +2802,15 @@
       if (live.fullThinking) {
         thinkWrap.hidden = false;
         thinkBody.textContent = live.fullThinking;
+        const thinkPrev = turnEl.querySelector('[data-stream-think-preview]');
+        if (thinkPrev) {
+          const lastLine = String(live.fullThinking)
+            .trim()
+            .split(/\n+/)
+            .filter(Boolean)
+            .pop() || '';
+          thinkPrev.textContent = lastLine.replace(/`+/g, '').slice(0, 96);
+        }
       } else {
         thinkWrap.hidden = true;
       }
@@ -2739,6 +2841,11 @@
     }
     if (live.status !== 'working') {
       turnEl.classList.remove('is-streaming');
+      if (thinkWrap) {
+        thinkWrap.classList.remove('is-streaming');
+        const lbl = thinkWrap.querySelector('.vs-thought-lbl');
+        if (lbl) lbl.textContent = 'Thought process';
+      }
     }
     if (wasNearBottom) {
       streamEl.scrollTop = streamEl.scrollHeight;
@@ -4649,6 +4756,7 @@
       window.open('https://husseinbdeir.github.io/planner/', '_blank', 'noopener');
       return;
     }
+    closeFloatingUiMenus();
     const valid = ['pulse', 'sessions', 'chat', 'workspaces', 'analytics'];
     const target = valid.includes(tabName) ? tabName : 'pulse';
     const prevTab = prefs.activeTab;
@@ -4826,11 +4934,15 @@
                 ? 'unread'
                 : '';
         const rawTitle = String(r.title || threadsCache[id]?.title || 'Untitled Session').trim();
+        const qCnt = getSessionPendingQuestionCount(r);
+        const bgBadge = getSessionRunningBgBadge(r);
         return `
           <div class="ide-editor-tab${isActive ? ' active' : ''}" role="tab" tabindex="0" aria-selected="${isActive}" data-editor-tab-id="${esc(id)}" data-session-prov="${provKey}">
             ${stCls ? `<span class="ide-dot ${stCls}"></span>` : ''}
             <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
             <span class="ide-tab-title">${esc(rawTitle)}</span>
+            ${qCnt > 0 ? `<span class="ide-row-pill q-pill tabular">?${qCnt}</span>` : ''}
+            ${bgBadge ? `<span class="ide-row-pill bg-pill tabular">${esc(bgBadge)}</span>` : ''}
             <button type="button" class="ide-tab-close" data-close-editor-tab="${esc(id)}" aria-label="Close ${esc(rawTitle)}">×</button>
           </div>
         `;
@@ -4859,9 +4971,179 @@
     return raw.replace(/\s*ago$/i, '');
   }
 
+  function getSessionPendingQuestionsMeta(r) {
+    const sid = String(r?.id || '').trim();
+    if (!sid) return null;
+    const provKey = r?.provider === 'claude' ? 'claude' : 'antigravity';
+    const sessMsgs = coalesceThreadMessages(threadsCache[sid]?.messages || []);
+    const lastTurn = sessMsgs.length > 0 ? sessMsgs[sessMsgs.length - 1] : null;
+    const lastTurnId = lastTurn && lastTurn.role === 'assistant' ? String(lastTurn.id || '') : '';
+    const qApproval = (Array.isArray(appState?.approvals) ? appState.approvals : []).find(
+      (a) =>
+        a &&
+        a.sessionId === sid &&
+        (a.kind === 'question' ||
+          Boolean(a.isToolPermission) ||
+          /question/i.test(String(a.toolName || '')) ||
+          (Array.isArray(a.questions) && a.questions.length > 0) ||
+          (Array.isArray(a.options) && a.options.length > 0))
+    );
+    let qList = [];
+    if (qApproval) {
+      qList = resolveQuestionsForApproval(qApproval, sessMsgs);
+    } else if (r?.pendingQuestion?.questions?.length) {
+      qList = normalizeFrontendQuestions(r.pendingQuestion.questions);
+    } else if (lastTurn && lastTurn.role === 'assistant') {
+      const alreadySrvAns =
+        Array.isArray(lastTurn.questions) && lastTurn.questions.some((q) => Boolean(q?.answered));
+      if (!alreadySrvAns) {
+        qList = resolveQuestionsForTurn(lastTurn, null).questions;
+      }
+    }
+    if (!qList.length) return null;
+    const answered = lookupAnsweredQuestionState({
+      sessionId: sid,
+      approvalId: qApproval?.approvalId || '',
+      turnId: lastTurnId,
+      questions: qList,
+      isLastTurn: true
+    });
+    if (answered?.answered) return null;
+    const cardKey = `q-side-${sid}-${qApproval?.approvalId || lastTurnId || 'active'}`;
+    if (getQuestionDraft(cardKey).submitted) return null;
+    return {
+      cardKey,
+      sessionId: sid,
+      sessionTitle: String(r?.title || qApproval?.title || 'Session').trim(),
+      provider: provKey,
+      approvalId: qApproval?.approvalId || sid,
+      turnId: lastTurnId,
+      stepIndex: qApproval?.stepIndex ?? r?.pendingQuestion?.stepIndex ?? null,
+      selector: qApproval?.selector || '',
+      questions: qList
+    };
+  }
+
+  function getSessionPendingQuestionCount(r) {
+    const meta = getSessionPendingQuestionsMeta(r);
+    return meta ? meta.questions.length : 0;
+  }
+
+  function getSessionRunningBgBadge(r) {
+    if (!r?.id) return '';
+    const { runningTasks, runningCount } = getSessionBackgroundTasks(r, threadsCache[r.id]);
+    if (runningCount <= 0) return '';
+    const hasAgent = runningTasks.some((t) => t.kind === 'subagent');
+    if (hasAgent) return runningCount > 1 ? `${runningCount} Agents` : 'Agent';
+    return runningCount > 1 ? `${runningCount} Tasks` : 'Task';
+  }
+
+  function openSessionContextMenu(sessionId, clientX, clientY) {
+    if (isPinLocked() || !sessionId) return;
+    const menuEl = $('ide-context-menu');
+    if (!menuEl) return;
+    const hoverCard = $('ide-hover-card');
+    if (hoverCard) hoverCard.hidden = true;
+    const r = (appState?.rows || []).find((x) => x && x.id === sessionId);
+    if (!r) return;
+    const provKey = r.provider === 'claude' ? 'claude' : 'antigravity';
+    const isRunning = isSessionActivelyRunning(r.id);
+    const isPinnedBg = prefs.pinnedBgSessionId === r.id;
+    menuEl.innerHTML = `
+      <button type="button" class="ctx-menu-item" data-ctx-menu-act="open" data-id="${esc(r.id)}" data-prov="${provKey}">
+        <span>Open in Workbench</span><span class="meta-timestamp">↵</span>
+      </button>
+      <button type="button" class="ctx-menu-item" data-ctx-menu-act="inspect-outline" data-id="${esc(r.id)}" data-prov="${provKey}">
+        <span>Inspect Outline &amp; Files</span><span class="meta-timestamp">⌘I</span>
+      </button>
+      <button type="button" class="ctx-menu-item" data-ctx-menu-act="pin-bg" data-id="${esc(r.id)}">
+        <span>${isPinnedBg ? 'Unpin Side Agents' : 'Pin Side Agents in Sidebar'}</span>
+      </button>
+      <button type="button" class="ctx-menu-item" data-ctx-menu-act="open-vscode" data-id="${esc(r.id)}" data-prov="${provKey}">
+        <span>Reveal in Desktop VS Code</span>
+      </button>
+      <button type="button" class="ctx-menu-item" data-sess-act="group" data-id="${esc(r.id)}">
+        <span>Move to Group…</span>
+      </button>
+      <button type="button" class="ctx-menu-item" data-sess-act="unread" data-id="${esc(r.id)}" data-val="${r.unread ? 'false' : 'true'}">
+        <span>${r.unread ? 'Mark as Read' : 'Mark as Unread'}</span>
+      </button>
+      ${
+        isRunning
+          ? `<button type="button" class="ctx-menu-item danger" data-sess-act="stop" data-id="${esc(r.id)}"><span>■ Stop Running Session</span></button>`
+          : ''
+      }
+      <button type="button" class="ctx-menu-item danger" data-sess-act="archive" data-id="${esc(r.id)}" data-val="true">
+        <span>Archive Session</span>
+      </button>
+    `;
+    menuEl.hidden = false;
+    const vw = window.innerWidth || 1280;
+    const vh = window.innerHeight || 800;
+    const rect = menuEl.getBoundingClientRect();
+    const left = Math.max(8, Math.min(clientX, vw - (rect.width || 210) - 8));
+    const top = Math.max(8, Math.min(clientY, vh - (rect.height || 240) - 8));
+    menuEl.style.left = `${left}px`;
+    menuEl.style.top = `${top}px`;
+  }
+
+  function showSidebarHoverCard(rowEl) {
+    if (isPinLocked() || !rowEl || window.innerWidth <= 1024) return;
+    const ctxMenu = $('ide-context-menu');
+    if (ctxMenu && !ctxMenu.hidden) return;
+    const sid = rowEl.dataset.ideOpenSession;
+    const card = $('ide-hover-card');
+    if (!sid || !card) return;
+    const r = (appState?.rows || []).find((x) => x && x.id === sid);
+    if (!r) return;
+    const td = threadsCache[sid];
+    const msgs = coalesceThreadMessages(td?.messages || []);
+    const lastAsst = [...msgs].reverse().find((m) => m && m.role === 'assistant' && m.text);
+    const snippet = String(lastAsst?.text || r.preview || r.summary || '')
+      .replace(/```[\s\S]*?```/g, '[code]')
+      .replace(/[#*`_>\[\]]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 180);
+    const { runningCount, totalCount } = getSessionBackgroundTasks(r, td);
+    const qCnt = getSessionPendingQuestionCount(r);
+    card.innerHTML = `
+      <div class="hc-title">${esc(r.title || 'Untitled Session')}</div>
+      <div class="hc-meta tabular">
+        <span>${r.provider === 'claude' ? 'Claude Code' : 'Antigravity'}</span>
+        ${r.folder ? `<span>· ${esc(r.folder)}</span>` : ''}
+        ${r.branch ? `<span>· ⎇ ${esc(r.branch)}</span>` : ''}
+        ${r.at ? `<span>· ${esc(timeAgo(r.at))}</span>` : ''}
+      </div>
+      ${
+        qCnt > 0 || runningCount > 0 || totalCount > 0
+          ? `<div class="hc-meta tabular">${qCnt > 0 ? `<span style="color:var(--amber)">? ${qCnt} Question${qCnt > 1 ? 's' : ''}</span>` : ''}${runningCount > 0 ? `<span style="color:var(--emerald)">● ${runningCount} Live Agent/Task</span>` : totalCount > 0 ? `<span>${totalCount} Side Agent/Task</span>` : ''}</div>`
+          : ''
+      }
+      ${snippet ? `<div class="hc-snippet">${esc(snippet)}</div>` : ''}
+    `;
+    card.hidden = false;
+    const rRect = rowEl.getBoundingClientRect();
+    const vh = window.innerHeight || 800;
+    const vw = window.innerWidth || 1280;
+    const left = Math.min(vw - 304, Math.max(12, rRect.right + 10));
+    const top = Math.min(vh - 150, Math.max(12, rRect.top - 4));
+    card.style.left = `${left}px`;
+    card.style.top = `${top}px`;
+  }
+
   function renderIdeSidebar() {
     const accountsEl = $('ide-sidebar-accounts');
     const approvalsEl = $('ide-sidebar-approvals');
+    const secQuestionsEl = $('ide-sec-questions');
+    const questionsCountEl = $('ide-questions-count');
+    const sidebarQuestionsEl = $('ide-sidebar-questions');
+    const secBgTasksEl = $('ide-sec-bgtasks');
+    const bgHeadingEl = $('ide-bgtasks-heading');
+    const bgCountEl = $('ide-bgtasks-count');
+    const bgUnpinBtn = $('ide-bgtasks-unpin');
+    const bgStopAllBtn = $('ide-bgtasks-stop-all');
+    const sidebarBgEl = $('ide-sidebar-bgtasks');
     const countEl = $('ide-sidebar-count');
     const treeEl = $('ide-sidebar-tree');
     if (!treeEl) return;
@@ -5006,11 +5288,185 @@
       }
     }
 
-    // 3. Session Manager Tree
+    // 3. Session Manager Tree + Interactive QUESTIONS & SIDE AGENTS Sections
     const allRows = (appState?.rows || []).filter(
       (r) => r && r.id && !r.archived && (!devFilter || !r.deviceId || r.deviceId === devFilter)
     );
     if (countEl) countEl.textContent = String(allRows.length);
+
+    // 3A. Sidebar Interactive QUESTIONS Section (VS Code Hub Parity)
+    if (secQuestionsEl && sidebarQuestionsEl) {
+      const qMetas = [];
+      const seenQSess = new Set();
+      for (const r of allRows) {
+        const meta = getSessionPendingQuestionsMeta(r);
+        if (meta && !seenQSess.has(meta.sessionId)) {
+          seenQSess.add(meta.sessionId);
+          qMetas.push(meta);
+        }
+      }
+      const totalQItems = qMetas.reduce((acc, m) => acc + m.questions.length, 0);
+      if (questionsCountEl) questionsCountEl.textContent = String(totalQItems);
+      if (qMetas.length === 0) {
+        secQuestionsEl.hidden = true;
+        sidebarQuestionsEl.innerHTML = '';
+      } else {
+        secQuestionsEl.hidden = false;
+        const activeInSidebarQ =
+          document.activeElement &&
+          sidebarQuestionsEl.contains(document.activeElement) &&
+          document.activeElement.matches('[data-q-writein-input]');
+        const focusedCardKey = activeInSidebarQ ? document.activeElement.dataset.cardKey || '' : '';
+        const focusedStillActive = Boolean(
+          focusedCardKey && qMetas.some((m) => m.cardKey === focusedCardKey)
+        );
+        if (!focusedStillActive) {
+          sidebarQuestionsEl.innerHTML = qMetas
+            .slice(0, 5)
+            .map((meta) => {
+              renderedQuestionsByCardKey.set(meta.cardKey, {
+                cardKey: meta.cardKey,
+                sessionId: meta.sessionId,
+                provider: meta.provider,
+                approvalId: meta.approvalId,
+                turnId: meta.turnId,
+                stepIndex: extractQuestionsStepIndex(meta.questions, meta.stepIndex),
+                selector: meta.selector,
+                questions: meta.questions,
+                plainQuestionFallback: false
+              });
+              const draft = getQuestionDraft(meta.cardKey);
+              const selectedCount = countDraftSelections(draft, meta.questions.length);
+              const anyToolPerm = meta.questions.some((q) => q.isToolPermission);
+              const qBlocks = meta.questions
+                .map((qItem, qIdx) => {
+                  const selSet = draft.selectedByQ[qIdx] || new Set();
+                  const writeVal = String(draft.writeInByQ[qIdx] || '');
+                  const opts = Array.isArray(qItem.options) ? qItem.options : [];
+                  return `
+                    <div data-q-block="${qIdx}" style="display:flex;flex-direction:column;gap:4px">
+                      <div class="sb-q-text">${meta.questions.length > 1 ? `<span class="tabular" style="color:var(--amber);font-weight:700">Q${qIdx + 1}.</span> ` : ''}${esc(qItem.question || 'Question')}</div>
+                      ${
+                        opts.length > 0
+                          ? `<div class="sb-q-opts">${opts
+                              .map((opt, oIdx) => {
+                                const isSel = selSet.has(String(oIdx));
+                                return `<button type="button" class="sb-q-opt${isSel ? ' selected is-selected' : ''}" data-q-opt-toggle="1" data-card-key="${esc(meta.cardKey)}" data-q-idx="${qIdx}" data-opt-idx="${oIdx}" aria-pressed="${isSel ? 'true' : 'false'}"><span class="sb-q-num">${oIdx + 1}</span><span>${esc(opt.cleanText || opt.text)}</span>${opt.isRecommended && !qItem.isToolPermission ? `<span class="sb-q-rec">★ Rec</span>` : ''}</button>`;
+                              })
+                              .join('')}</div>`
+                          : ''
+                      }
+                      <input type="text" class="sb-q-other" data-q-writein-input="1" data-card-key="${esc(meta.cardKey)}" data-q-idx="${qIdx}" placeholder="${esc(opts.length > 0 ? 'Other (custom answer)…' : 'Type your answer…')}" value="${esc(writeVal)}" autocomplete="off">
+                    </div>
+                  `;
+                })
+                .join('');
+              return `
+                <div class="sb-q-card" data-q-card="${esc(meta.cardKey)}">
+                  <div class="sb-q-head" role="button" tabindex="0" data-ide-open-session="${esc(meta.sessionId)}" data-session-prov="${meta.provider}">
+                    <span class="sb-q-sess">
+                      <span class="prov-glyph">${PROVIDER_ICONS[meta.provider]}</span>
+                      <span>${esc(meta.sessionTitle)}</span>
+                    </span>
+                    <span class="ide-side-count amber tabular">${meta.questions.length}Q</span>
+                  </div>
+                  ${qBlocks}
+                  <div class="sb-q-actions">
+                    <button type="button" class="sb-q-btn" data-q-skip="1" data-card-key="${esc(meta.cardKey)}">${anyToolPerm ? 'Deny' : 'Skip'}</button>
+                    <button type="button" class="sb-q-btn primary" data-q-submit="1" data-card-key="${esc(meta.cardKey)}">✓ ${anyToolPerm ? (selectedCount > 0 ? `Confirm (${selectedCount})` : 'Yes (Allow)') : `Submit Answer${selectedCount > 0 ? ` (${selectedCount})` : ''}`}</button>
+                  </div>
+                </div>
+              `;
+            })
+            .join('');
+        }
+      }
+    }
+
+    // 3B. Sidebar SIDE AGENTS & TASKS Section (VS Code Hub Parity + Pinning)
+    const curSelected = isNewSessionMode() ? '' : String(prefs.selectedThreadId || '');
+    if (secBgTasksEl && sidebarBgEl) {
+      let pinnedRow = prefs.pinnedBgSessionId
+        ? allRows.find((r) => r.id === prefs.pinnedBgSessionId)
+        : null;
+      if (prefs.pinnedBgSessionId && !pinnedRow) {
+        prefs.pinnedBgSessionId = '';
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+      }
+      const bgEntries = [];
+      if (pinnedRow) {
+        const { allTasks } = getSessionBackgroundTasks(pinnedRow, threadsCache[pinnedRow.id]);
+        for (const t of allTasks.slice(0, 12)) {
+          bgEntries.push({ row: pinnedRow, task: t });
+        }
+      } else {
+        const seenEntryKeys = new Set();
+        for (const r of allRows) {
+          const { allTasks } = getSessionBackgroundTasks(r, threadsCache[r.id]);
+          for (const t of allTasks) {
+            const isActiveTask =
+              t.state === 'running' || t.state === 'stalled' || t.state === 'interrupted';
+            const isSelectedSubagent = r.id === curSelected && t.kind === 'subagent';
+            if (isActiveTask || isSelectedSubagent) {
+              const eKey = `${r.id}:${t.id}`;
+              if (!seenEntryKeys.has(eKey)) {
+                seenEntryKeys.add(eKey);
+                bgEntries.push({ row: r, task: t });
+              }
+            }
+          }
+        }
+      }
+      const runningBgCount = bgEntries.filter((e) => e.task.state === 'running').length;
+      if (bgHeadingEl) {
+        bgHeadingEl.textContent = pinnedRow
+          ? `PINNED · ${String(pinnedRow.title || 'Session').slice(0, 14)}`
+          : 'SIDE AGENTS & TASKS';
+      }
+      if (bgUnpinBtn) bgUnpinBtn.hidden = !pinnedRow;
+      if (bgStopAllBtn) bgStopAllBtn.hidden = runningBgCount === 0;
+      if (bgCountEl) {
+        bgCountEl.textContent = String(runningBgCount > 0 ? runningBgCount : bgEntries.length);
+      }
+
+      if (!pinnedRow && bgEntries.length === 0) {
+        secBgTasksEl.hidden = true;
+        sidebarBgEl.innerHTML = '';
+      } else {
+        secBgTasksEl.hidden = false;
+        if (bgEntries.length === 0) {
+          sidebarBgEl.innerHTML = `<div class="ide-tree-empty" style="padding:6px 4px">No side agents or tasks in pinned session.</div>`;
+        } else {
+          sidebarBgEl.innerHTML = bgEntries
+            .slice(0, 10)
+            .map(({ row, task }) => {
+              const provKey = row.provider === 'claude' ? 'claude' : 'antigravity';
+              const isRun = task.state === 'running';
+              const titleTxt = task.subagentRole || task.summary || task.command || task.id || 'Side Agent';
+              const subTxt = `${getBgKindLabel(task.kind)} · ${row.title || 'Session'}`;
+              const ageStr = task.startedAt ? shortSidebarAge(task.startedAt) : isRun ? 'live' : 'done';
+              return `
+                <div class="ide-bg-row${isRun ? ' is-running' : ''}" role="button" tabindex="0" data-insp-open-agent="${esc(task.id)}" data-sess-id="${esc(row.id)}" data-session-prov="${provKey}">
+                  <span class="ide-bg-ico">${isRun ? '●' : task.kind === 'subagent' ? '◈' : '▪'}</span>
+                  <span class="ide-bg-copy">
+                    <span class="ide-bg-title">${esc(titleTxt)}</span>
+                    <span class="ide-bg-sub">${esc(subTxt)}</span>
+                  </span>
+                  <span class="ide-bg-right tabular">
+                    <span class="ide-bg-age">${esc(ageStr)}</span>
+                    ${
+                      isRun
+                        ? `<button type="button" class="ide-bg-stop" data-bg-act="stop-task" data-sess-id="${esc(row.id)}" data-task-id="${esc(task.fullId || task.id)}" data-prov="${provKey}" aria-label="Stop ${esc(titleTxt)}">■</button>`
+                        : ''
+                    }
+                  </span>
+                </div>
+              `;
+            })
+            .join('');
+        }
+      }
+    }
 
     document.querySelectorAll('#ide-sidebar-filters .ide-fchip').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.sideFilter === prefs.sidebarFilter);
@@ -5046,8 +5502,6 @@
         })()
       : rankByFreq(rawFiltered, 'threads', (r) => r.id, rowBaseWeight);
 
-    const curSelected = isNewSessionMode() ? '' : String(prefs.selectedThreadId || '');
-
     const renderTreeRow = (r) => {
       const provKey = r.provider === 'claude' ? 'claude' : 'antigravity';
       const isSelected = r.id === curSelected;
@@ -5062,11 +5516,15 @@
                 ? 'open'
                 : 'idle';
       const age = shortSidebarAge(r.at);
+      const qCnt = getSessionPendingQuestionCount(r);
+      const bgBadge = getSessionRunningBgBadge(r);
       return `
         <div class="ide-tree-row${isSelected ? ' active' : ''}${r.unread ? ' is-unread' : ''}" role="button" tabindex="0" data-ide-open-session="${esc(r.id)}" data-session-prov="${provKey}">
           <span class="ide-dot ${dotCls}"></span>
           <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
           <span class="ide-tree-title">${esc(r.title || 'Untitled Session')}</span>
+          ${qCnt > 0 ? `<span class="ide-row-pill q-pill tabular">?${qCnt}</span>` : ''}
+          ${bgBadge ? `<span class="ide-row-pill bg-pill tabular">${esc(bgBadge)}</span>` : ''}
           <span class="ide-tree-age tabular">${esc(age)}</span>
           <span class="ide-tree-acts">
             ${
@@ -5074,6 +5532,7 @@
                 ? `<button type="button" class="ide-row-act stop" data-sess-act="stop" data-id="${esc(r.id)}" aria-label="Stop session">■</button>`
                 : ''
             }
+            <button type="button" class="ide-row-act" data-sess-ctx-menu="${esc(r.id)}" aria-label="Session actions">⋯</button>
             <button type="button" class="ide-row-act" data-sess-act="archive" data-id="${esc(r.id)}" data-val="true" aria-label="Archive session">✕</button>
           </span>
         </div>
@@ -5951,6 +6410,7 @@
     if (isAlreadyAnswered) {
       const isSkipped = Boolean(draft.submittedSkipped || answeredState?.skipped);
       const summaryText = String(draft.submittedSummary || answeredState?.summary || '').trim();
+      const firstPrompt = String(questions[0]?.question || (anyToolPerm ? 'Tool Permission' : 'Question')).trim();
       const promptsListHtml = questions
         .map((q, idx) => {
           const qTitle = String(q?.question || '').trim();
@@ -5965,20 +6425,24 @@
         .filter(Boolean)
         .join('');
       const showSummaryLine = Boolean(summaryText && (!hasFollowingTurn || isSkipped || anyToolPerm));
+      const ansDetailKey = `${cardKey}:ans`;
+      const savedMap = getThreadOpenDetailsMap(sessionId, false);
+      const isAnsOpen = Boolean(savedMap && savedMap.get(ansDetailKey) === true);
 
       return `
-        <div class="vs-question-card is-answered" data-q-card="${esc(cardKey)}">
-          <div class="vs-q-card-top">
-            <span class="approval-prov">
-              <span class="prov-glyph">${PROVIDER_ICONS[provider]}</span>
-              <span>${provider === 'claude' ? 'Claude Code' : 'Antigravity'} · ${anyToolPerm ? 'Tool Permission' : questions.length > 1 ? `${questions.length} Questions` : 'Question'}</span>
-            </span>
-            <span class="pill-count ${isSkipped ? '' : 'emerald'}">${isSkipped ? 'Skipped' : anyToolPerm ? '✓ Resolved' : '✓ Answered'}</span>
+        <details class="vs-answered-q vs-question-card is-answered" data-q-card="${esc(cardKey)}" data-chat-detail-key="${esc(ansDetailKey)}" data-rendered-open="${isAnsOpen ? '1' : '0'}"${isAnsOpen ? ' open' : ''}>
+          <summary>
+            <span class="vs-answered-badge">${isSkipped ? 'Skipped' : anyToolPerm ? '✓ Resolved' : '✓ Answered'}</span>
+            <span style="font-weight:500;color:var(--text-heading);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1">${esc(questions.length > 1 ? `${questions.length} Questions · ${firstPrompt}` : firstPrompt)}</span>
+            ${summaryText ? `<span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:38%">${esc(summaryText)}</span>` : ''}
+            <span class="vs-thought-chev" aria-hidden="true">›</span>
+          </summary>
+          <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border-hairline)">
+            ${sessionTitle ? `<div class="approval-title">${esc(sessionTitle)}</div>` : ''}
+            ${promptsListHtml ? `<div class="vs-q-answered-prompts">${promptsListHtml}</div>` : ''}
+            ${showSummaryLine || summaryText ? `<div class="vs-q-answered-summary">${esc(summaryText)}</div>` : ''}
           </div>
-          ${sessionTitle ? `<div class="approval-title">${esc(sessionTitle)}</div>` : ''}
-          ${promptsListHtml ? `<div class="vs-q-answered-prompts">${promptsListHtml}</div>` : ''}
-          ${showSummaryLine ? `<div class="vs-q-answered-summary">${esc(summaryText)}</div>` : ''}
-        </div>
+        </details>
       `;
     }
 
@@ -6121,7 +6585,10 @@
     const rawDetail = Array.isArray(threadDetail?.backgroundTasks)
       ? threadDetail.backgroundTasks
       : [];
-    const rawRow = Array.isArray(row?.bgTasks) ? row.bgTasks : [];
+    const rawRow = [
+      ...(Array.isArray(row?.bgTasks) ? row.bgTasks : []),
+      ...(Array.isArray(row?.backgroundTasks) ? row.backgroundTasks : [])
+    ];
     const byId = new Map();
     for (const item of rawRow) {
       if (!item || !item.id) continue;
@@ -6131,6 +6598,34 @@
       if (!item || !item.id) continue;
       const prev = byId.get(String(item.id)) || {};
       byId.set(String(item.id), { ...prev, ...item });
+    }
+    if (Array.isArray(threadDetail?.messages)) {
+      for (const m of threadDetail.messages) {
+        if (!Array.isArray(m?.toolCalls)) continue;
+        for (let idx = 0; idx < m.toolCalls.length; idx++) {
+          const tc = m.toolCalls[idx];
+          if (!tc || tc.kind !== 'subagent') continue;
+          const synthId = String(
+            tc.subagentConversationId || tc.id || `subagent-${m.id || 'turn'}-${idx}`
+          );
+          if (!byId.has(synthId)) {
+            byId.set(synthId, {
+              id: synthId,
+              kind: 'subagent',
+              state: 'completed',
+              subagentRole: tc.subagentRole || '',
+              subagentType: tc.subagentType || '',
+              subagentConversationId: tc.subagentConversationId || '',
+              summary: tc.subagentRole
+                ? `${tc.subagentRole}${tc.subagentType ? ` (${tc.subagentType})` : ''}`
+                : tc.summary || tc.label || 'Side Agent',
+              command: tc.subagentPrompt || tc.command || '',
+              outputPreview: tc.snippet || '',
+              startedAt: m.createdAt ? Date.parse(m.createdAt) || 0 : 0
+            });
+          }
+        }
+      }
     }
     const allTasks = Array.from(byId.values()).map((t) => {
       const cancelKey = `${sid}:${t.id}`;
@@ -6169,8 +6664,11 @@
           const data = await res.json();
           if (typeof data?.output === 'string' && data.output.trim()) {
             bgTaskLogsCache.set(cacheKey, data.output);
-            const preEl = document.querySelector(`[data-bg-log-key="${CSS.escape(cacheKey)}"]`);
-            if (preEl) preEl.textContent = data.output;
+            document
+              .querySelectorAll(`[data-bg-log-key="${CSS.escape(cacheKey)}"]`)
+              .forEach((preEl) => {
+                preEl.textContent = data.output;
+              });
             return data.output;
           }
         }
@@ -6191,8 +6689,11 @@
         const outStr = rpcOut?.result?.output ?? rpcOut?.output ?? '';
         if (typeof outStr === 'string' && outStr.trim()) {
           bgTaskLogsCache.set(cacheKey, outStr);
-          const preEl = document.querySelector(`[data-bg-log-key="${CSS.escape(cacheKey)}"]`);
-          if (preEl) preEl.textContent = outStr;
+          document
+            .querySelectorAll(`[data-bg-log-key="${CSS.escape(cacheKey)}"]`)
+            .forEach((preEl) => {
+              preEl.textContent = outStr;
+            });
           return outStr;
         }
       } catch {}
@@ -6207,13 +6708,20 @@
     const shortId = String(taskId).split('/').pop();
     if (shortId) locallyCancelledBgTasks.set(`${sessionId}:${shortId}`, now);
     const row = (appState?.rows || []).find((r) => r.id === sessionId);
-    if (row && Array.isArray(row.bgTasks)) {
-      for (const t of row.bgTasks) {
+    for (const list of [row?.bgTasks, row?.backgroundTasks]) {
+      if (!Array.isArray(list)) continue;
+      for (const t of list) {
         if (t && (t.id === taskId || t.fullId === taskId || t.id === shortId)) {
           t.state = 'cancelled';
         }
       }
-      row.bgRunningCount = row.bgTasks.filter((t) => t && t.state === 'running').length;
+    }
+    if (row) {
+      const mergedList = [
+        ...(Array.isArray(row.bgTasks) ? row.bgTasks : []),
+        ...(Array.isArray(row.backgroundTasks) ? row.backgroundTasks : [])
+      ];
+      row.bgRunningCount = mergedList.filter((t) => t && t.state === 'running').length;
     }
     const td = threadsCache[sessionId];
     if (td && Array.isArray(td.backgroundTasks)) {
@@ -6242,7 +6750,7 @@
     const now = Date.now();
     const row = (appState?.rows || []).find((r) => r.id === sessionId);
     const td = threadsCache[sessionId];
-    for (const list of [row?.bgTasks, td?.backgroundTasks]) {
+    for (const list of [row?.bgTasks, row?.backgroundTasks, td?.backgroundTasks]) {
       if (!Array.isArray(list)) continue;
       for (const t of list) {
         if (t && t.state === 'running') {
@@ -7416,10 +7924,29 @@
     const merged = [];
     for (const m of rawMessages) {
       if (!m) continue;
+      if (m.role === 'checkpoint') {
+        merged.push({ ...m, toolCalls: [], questions: [], artifacts: [], thoughtBlocks: [] });
+        continue;
+      }
       const prev = merged[merged.length - 1];
       const prevHasAnsweredQuestion =
         Array.isArray(prev?.questions) && prev.questions.some((q) => q && q.answered);
       if (prev && prev.role === 'assistant' && m.role === 'assistant' && !prevHasAnsweredQuestion) {
+        const prevBlocks =
+          Array.isArray(prev.thoughtBlocks) && prev.thoughtBlocks.length
+            ? [...prev.thoughtBlocks]
+            : prev.thinking
+              ? [{ text: prev.thinking, durationSec: Number(prev.thinkingDurationSec || 0) }]
+              : [];
+        const nextBlocks =
+          Array.isArray(m.thoughtBlocks) && m.thoughtBlocks.length
+            ? m.thoughtBlocks.map((b) => ({ ...b }))
+            : m.thinking
+              ? [{ text: m.thinking, durationSec: Number(m.thinkingDurationSec || 0) }]
+              : [];
+        if (nextBlocks.length) {
+          prev.thoughtBlocks = [...prevBlocks, ...nextBlocks].slice(-18);
+        }
         if (m.text) {
           prev.text = prev.text ? `${prev.text}\n\n${m.text}` : m.text;
         }
@@ -7429,8 +7956,12 @@
         if (m.latestThinking) {
           prev.latestThinking = m.latestThinking;
         }
+        prev.thinkingDurationSec =
+          Number(prev.thinkingDurationSec || 0) + Number(m.thinkingDurationSec || 0);
+        prev.turnDurationSec =
+          Number(prev.turnDurationSec || 0) + Number(m.turnDurationSec || 0);
         if (Array.isArray(m.toolCalls) && m.toolCalls.length) {
-          prev.toolCalls = [...(prev.toolCalls || []), ...m.toolCalls].slice(-28);
+          prev.toolCalls = [...(prev.toolCalls || []), ...m.toolCalls].slice(-32);
         }
         if (Array.isArray(m.questions) && m.questions.length) {
           prev.questions = [...(prev.questions || []), ...m.questions];
@@ -7449,6 +7980,11 @@
       } else {
         merged.push({
           ...m,
+          thoughtBlocks: Array.isArray(m.thoughtBlocks)
+            ? m.thoughtBlocks.map((b) => ({ ...b }))
+            : m.thinking
+              ? [{ text: m.thinking, durationSec: Number(m.thinkingDurationSec || 0) }]
+              : [],
           toolCalls: Array.isArray(m.toolCalls) ? [...m.toolCalls] : [],
           questions: Array.isArray(m.questions) ? [...m.questions] : [],
           artifacts: Array.isArray(m.artifacts) ? [...m.artifacts] : []
@@ -7459,6 +7995,12 @@
   }
 
   const chatOpenDetailsByThread = new Map();
+  const filePreviewCache = new Map();
+  const activeDockStepByCardKey = new Map();
+  let activeInspectorFileTarget = '';
+  let activeInspectorAgentId = '';
+  let lastScrolledInspectorHlKey = '';
+  let inspectorFetchSeq = 0;
 
   function getThreadOpenDetailsMap(threadId, create = false) {
     const clean = String(threadId || '').trim();
@@ -7469,6 +8011,797 @@
       chatOpenDetailsByThread.set(clean, map);
     }
     return map || null;
+  }
+
+  function parsePreviewTargetClient(rawTarget) {
+    let raw = String(rawTarget || '').trim();
+    if (!raw) return { filePath: '', startLine: 0, endLine: 0, displayBase: '' };
+    if (/^file:\/\//i.test(raw)) {
+      raw = raw.replace(/^file:\/\/\/?/i, '');
+      try {
+        raw = decodeURIComponent(raw);
+      } catch {}
+      if (/^[a-zA-Z]:\//.test(raw) === false && /^[a-zA-Z]:\\/.test(raw) === false && /^\/[a-zA-Z]:\//.test(`/${raw}`)) {
+        raw = raw.replace(/^\/+/, '');
+      }
+    }
+    let filePath = raw;
+    let startLine = 0;
+    let endLine = 0;
+    const hashIdx = raw.indexOf('#');
+    if (hashIdx >= 0) {
+      filePath = raw.slice(0, hashIdx).trim();
+      const frag = raw.slice(hashIdx + 1).trim();
+      const m = frag.match(/^L?(\d+)(?:\s*-\s*L?(\d+))?$/i);
+      if (m) {
+        startLine = Math.max(1, Number(m[1]) || 0);
+        endLine = Math.max(startLine, Number(m[2] || m[1]) || startLine);
+      }
+    }
+    const displayBase = filePath.split(/[\\/]/).pop() || filePath;
+    return { filePath, startLine, endLine, displayBase };
+  }
+
+  function collectSessionTouchedFiles(messages) {
+    const map = new Map();
+    for (const m of messages || []) {
+      if (!m) continue;
+      for (const tc of m.toolCalls || []) {
+        if (!tc) continue;
+        const targetRaw = String(tc.relPath || tc.file || '').trim();
+        if (!targetRaw) continue;
+        const parsed = parsePreviewTargetClient(
+          tc.lineRange && !targetRaw.includes('#') ? `${targetRaw}#${tc.lineRange}` : targetRaw
+        );
+        if (!parsed.filePath) continue;
+        const key = parsed.filePath.replace(/\\/g, '/').toLowerCase();
+        const isEdit = tc.kind === 'edit' || tc.kind === 'write';
+        const prev = map.get(key);
+        map.set(key, {
+          key,
+          target: parsed.startLine
+            ? `${parsed.filePath}#L${parsed.startLine}${parsed.endLine > parsed.startLine ? `-L${parsed.endLine}` : ''}`
+            : parsed.filePath,
+          filePath: parsed.filePath,
+          displayBase: parsed.displayBase,
+          isEdit: Boolean(prev?.isEdit || isEdit),
+          snippet: String(tc.snippet || tc.diff || prev?.snippet || '').trim(),
+          added: Number(tc.addedLines ?? tc.added ?? prev?.added ?? 0),
+          removed: Number(tc.removedLines ?? tc.removed ?? prev?.removed ?? 0)
+        });
+      }
+      const txt = String(m.text || '');
+      const linkRe = /\[`?([^`\]\n]+)`?\]\((file:\/\/[^)\s]+)\)/gi;
+      let lm;
+      while ((lm = linkRe.exec(txt)) !== null) {
+        const parsed = parsePreviewTargetClient(lm[2]);
+        if (!parsed.filePath) continue;
+        const key = parsed.filePath.replace(/\\/g, '/').toLowerCase();
+        if (!map.has(key)) {
+          map.set(key, {
+            key,
+            target: lm[2],
+            filePath: parsed.filePath,
+            displayBase: parsed.displayBase || lm[1],
+            isEdit: false,
+            snippet: '',
+            added: 0,
+            removed: 0
+          });
+        }
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => Number(b.isEdit) - Number(a.isEdit));
+  }
+
+  function buildOfflinePreviewFallback(parsed, activeRow) {
+    const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
+    const msgs = coalesceThreadMessages(threadsCache[sid]?.messages || []);
+    const touched = collectSessionTouchedFiles(msgs);
+    const normWant = parsed.filePath.replace(/\\/g, '/').toLowerCase();
+    const baseWant = parsed.displayBase.toLowerCase();
+    const match = touched.find(
+      (t) =>
+        t.key === normWant ||
+        t.key.endsWith(`/${normWant}`) ||
+        normWant.endsWith(`/${t.key}`) ||
+        t.displayBase.toLowerCase() === baseWant
+    );
+    if (match?.snippet) {
+      return {
+        ok: true,
+        relPath: match.filePath,
+        content: '',
+        diffPatch: match.snippet,
+        lineCount: 0,
+        startLine: parsed.startLine || 0,
+        endLine: parsed.endLine || 0,
+        fallbackOnly: true
+      };
+    }
+    return {
+      ok: false,
+      relPath: parsed.filePath,
+      error: isHeadlessBrowser
+        ? 'Live workstation bridge preview ready when connected to :4318 or Edge WS.'
+        : 'Connect to workstation bridge (:4318 or Edge WS) to stream full file contents.'
+    };
+  }
+
+  async function fetchSafeFilePreview(rawTarget, activeRow = null, forceRefresh = false) {
+    const parsed = parsePreviewTargetClient(rawTarget);
+    if (!parsed.filePath) return null;
+    const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
+    const wsId = String(prefs.selectedRepoId || activeRow?.folder || '').trim();
+    const cacheKey = `${sid || wsId || 'global'}::${parsed.filePath.replace(/\\/g, '/')}`;
+    const seq = ++inspectorFetchSeq;
+    if (!forceRefresh && filePreviewCache.has(cacheKey)) {
+      return filePreviewCache.get(cacheKey);
+    }
+
+    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid);
+    const targetDeviceId = matchedRow?.deviceId || '';
+    const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
+    let result = null;
+
+    const effectiveLocalBase =
+      connMode === 'local' && localBridgeBase
+        ? localBridgeBase
+        : !isRemote && prefs.customBridgeUrl
+          ? String(prefs.customBridgeUrl).trim().replace(/\/+$/, '')
+          : '';
+    const allowProbeHttp =
+      !isHeadlessBrowser || Boolean(prefs.customBridgeUrl) || Boolean(window.__THEO_ALLOW_PROBE_MOCK_FETCH);
+
+    if (effectiveLocalBase && allowProbeHttp) {
+      try {
+        const q = `path=${encodeURIComponent(rawTarget)}&sessionId=${encodeURIComponent(sid)}&workspaceId=${encodeURIComponent(wsId)}`;
+        const res = await authFetchLocal(`${effectiveLocalBase}/api/file-preview?${q}`);
+        const data = await res.json().catch(() => null);
+        if (data && typeof data === 'object') {
+          result = data;
+        }
+      } catch {}
+    }
+
+    if (!result && !isHeadlessBrowser && edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
+      try {
+        const rpcOut = await sendWsRpc(
+          edgeWs,
+          {
+            type: 'rpc_cmd',
+            targetDeviceId,
+            cmd: { type: 'getFilePreview', path: rawTarget, sessionId: sid, workspaceId: wsId }
+          },
+          6500
+        );
+        const payload = rpcOut?.result && typeof rpcOut.result === 'object' ? rpcOut.result : rpcOut;
+        if (payload && typeof payload === 'object' && ('ok' in payload || 'content' in payload || 'error' in payload)) {
+          result = payload;
+        }
+      } catch {}
+    }
+
+    if (!result) {
+      result = buildOfflinePreviewFallback(parsed, matchedRow);
+    }
+
+    if (seq === inspectorFetchSeq || !filePreviewCache.has(cacheKey)) {
+      if (filePreviewCache.size >= 40 && !filePreviewCache.has(cacheKey)) {
+        const oldest = filePreviewCache.keys().next().value;
+        if (oldest) filePreviewCache.delete(oldest);
+      }
+      filePreviewCache.set(cacheKey, result);
+    }
+
+    const activeParsed = parsePreviewTargetClient(activeInspectorFileTarget);
+    if (
+      seq === inspectorFetchSeq &&
+      prefs.inspectorOpen &&
+      prefs.activeTab === 'chat' &&
+      sid === String(prefs.selectedThreadId || '').trim() &&
+      activeParsed.filePath.replace(/\\/g, '/').toLowerCase() === parsed.filePath.replace(/\\/g, '/').toLowerCase()
+    ) {
+      const td = threadsCache[sid] || null;
+      const msgs = coalesceThreadMessages(td?.messages || []);
+      const provKey = (td?.provider || matchedRow?.provider) === 'claude' ? 'claude' : 'antigravity';
+      renderSplitInspector(matchedRow, td, msgs, provKey, isNewSessionMode());
+    }
+    return result;
+  }
+
+  function setInspectorOpen(openBool, tab = '', opts = {}) {
+    if (isPinLocked()) return;
+    prefs.inspectorOpen = Boolean(openBool);
+    if (!prefs.inspectorOpen || opts.fileTarget !== undefined) {
+      ++inspectorFetchSeq;
+    }
+    if (tab && ['code', 'agents', 'outline'].includes(tab)) {
+      prefs.inspectorTab = tab;
+    }
+    if (opts.fileTarget !== undefined) {
+      activeInspectorFileTarget = String(opts.fileTarget || '');
+      if (opts.viewMode && ['source', 'diff'].includes(opts.viewMode)) {
+        prefs.inspectorViewMode = opts.viewMode;
+      }
+    }
+    if (opts.agentId !== undefined) {
+      activeInspectorAgentId = String(opts.agentId || '');
+    }
+    saveJson(STORAGE_KEYS.PREFS, prefs);
+    const sid = prefs.selectedThreadId || '';
+    const row = (appState?.rows || []).find((r) => r && r.id === sid) || null;
+    const td = isNewSessionMode() ? null : threadsCache[sid] || null;
+    const msgs = coalesceThreadMessages(td?.messages || []);
+    const provKey = (td?.provider || row?.provider) === 'claude' ? 'claude' : 'antigravity';
+    renderSplitInspector(row, td, msgs, provKey, isNewSessionMode());
+    if (prefs.inspectorOpen && prefs.inspectorTab === 'code' && activeInspectorFileTarget) {
+      fetchSafeFilePreview(activeInspectorFileTarget, row, Boolean(opts.forceRefresh)).catch(() => {});
+    }
+    if (prefs.inspectorOpen && prefs.inspectorTab === 'agents' && sid && activeInspectorAgentId) {
+      fetchBgTaskLiveLog(sid, activeInspectorAgentId, provKey).catch(() => {});
+    }
+  }
+
+  function formatInspectorDiffHtml(diffText) {
+    return String(diffText || '')
+      .split('\n')
+      .map((ln) => {
+        const cls =
+          ln.startsWith('+') && !ln.startsWith('+++')
+            ? 'add'
+            : ln.startsWith('-') && !ln.startsWith('---')
+              ? 'del'
+              : ln.startsWith('@@')
+                ? 'hunk'
+                : '';
+        return `<span class="insp-diff-ln${cls ? ` ${cls}` : ''}">${esc(ln)}</span>`;
+      })
+      .join('');
+  }
+
+  function renderSplitInspector(activeRow, threadDetail, messages, provKey, isNewDraft) {
+    const paneEl = $('ide-inspector-pane');
+    const backdropEl = $('ide-inspector-backdrop');
+    const toggleBtn = $('btn-toggle-inspector');
+    const pillBadge = $('inspector-pill-count');
+    const agentsBadge = $('insp-agents-badge');
+    const subbarEl = $('ide-inspector-subbar');
+    const bodyEl = $('ide-inspector-body');
+    if (!paneEl || !bodyEl) return;
+
+    const { allTasks, runningCount } = isNewDraft
+      ? { allTasks: [], runningCount: 0 }
+      : getSessionBackgroundTasks(activeRow, threadDetail);
+    const touchedFiles = isNewDraft ? [] : collectSessionTouchedFiles(messages);
+
+    if (toggleBtn) {
+      toggleBtn.setAttribute('aria-expanded', prefs.inspectorOpen ? 'true' : 'false');
+    }
+    if (pillBadge) {
+      const badgeNum = runningCount > 0 ? runningCount : allTasks.length > 0 ? allTasks.length : touchedFiles.length;
+      if (badgeNum > 0) {
+        pillBadge.hidden = false;
+        pillBadge.textContent = String(badgeNum);
+      } else {
+        pillBadge.hidden = true;
+      }
+    }
+    if (agentsBadge) {
+      if (allTasks.length > 0) {
+        agentsBadge.hidden = false;
+        agentsBadge.textContent = String(runningCount > 0 ? runningCount : allTasks.length);
+      } else {
+        agentsBadge.hidden = true;
+      }
+    }
+
+    document.querySelectorAll('#ide-inspector-tabs [data-insp-tab]').forEach((btn) => {
+      const isAct = btn.dataset.inspTab === prefs.inspectorTab;
+      btn.classList.toggle('active', isAct);
+      btn.setAttribute('aria-selected', isAct ? 'true' : 'false');
+    });
+
+    if (!prefs.inspectorOpen) {
+      paneEl.hidden = true;
+      if (backdropEl) backdropEl.hidden = true;
+      if (subbarEl) subbarEl.hidden = true;
+      return;
+    }
+
+    paneEl.hidden = false;
+    if (backdropEl) {
+      backdropEl.hidden = window.innerWidth > 1024;
+    }
+
+    const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
+
+    if (prefs.inspectorTab === 'code') {
+      if (!activeInspectorFileTarget && touchedFiles.length > 0) {
+        activeInspectorFileTarget = touchedFiles[0].target;
+      }
+      const parsed = parsePreviewTargetClient(activeInspectorFileTarget);
+      const wsId = String(prefs.selectedRepoId || activeRow?.folder || '').trim();
+      const cacheKey = parsed.filePath
+        ? `${sid || wsId || 'global'}::${parsed.filePath.replace(/\\/g, '/')}`
+        : '';
+      const cached = cacheKey ? filePreviewCache.get(cacheKey) : null;
+      if (parsed.filePath && !cached) {
+        fetchSafeFilePreview(activeInspectorFileTarget, activeRow).catch(() => {});
+      }
+
+      const pillsHtml = touchedFiles.length
+        ? `<div class="insp-file-pills">${touchedFiles
+            .slice(0, 14)
+            .map((tf) => {
+              const isCur =
+                parsed.filePath &&
+                tf.filePath.replace(/\\/g, '/').toLowerCase() ===
+                  parsed.filePath.replace(/\\/g, '/').toLowerCase();
+              return `<button type="button" class="insp-mini-btn${isCur ? ' active' : ''}" data-preview-file="${esc(tf.target)}">${esc(tf.displayBase)}${tf.added || tf.removed ? ` <span class="tabular" style="opacity:0.8">${tf.added ? `+${tf.added}` : ''}${tf.removed ? ` -${tf.removed}` : ''}</span>` : ''}</button>`;
+            })
+            .join('')}</div>`
+        : '';
+
+      if (!parsed.filePath) {
+        if (subbarEl) subbarEl.hidden = true;
+        bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">Click any file chip in the conversation or work steps to inspect its source code and live git diff right beside your chat.</div>`;
+        return;
+      }
+
+      const displayPath = String(cached?.relPath || parsed.filePath);
+      const rangeSuffix = parsed.startLine
+        ? `#L${parsed.startLine}${parsed.endLine > parsed.startLine ? `-L${parsed.endLine}` : ''}`
+        : '';
+      const diffText = String(cached?.gitDiff ?? cached?.diffPatch ?? cached?.diff ?? '');
+      const hasDiff = Boolean(diffText.trim());
+      const hasSource = Boolean(cached && cached.ok && typeof cached.content === 'string' && !cached.fallbackOnly);
+      const effectiveMode =
+        prefs.inspectorViewMode === 'diff' && hasDiff
+          ? 'diff'
+          : hasSource
+            ? 'source'
+            : hasDiff
+              ? 'diff'
+              : 'source';
+
+      if (subbarEl) {
+        subbarEl.hidden = false;
+        subbarEl.innerHTML = `
+          <span class="insp-sub-path">
+            <span class="insp-sub-path-txt">${esc(displayPath)}${esc(rangeSuffix)}</span>
+          </span>
+          <span class="insp-sub-actions">
+            <button type="button" class="insp-mini-btn${effectiveMode === 'source' ? ' active' : ''}" data-insp-view-mode="source">Source</button>
+            <button type="button" class="insp-mini-btn${effectiveMode === 'diff' ? ' active' : ''}" data-insp-view-mode="diff" ${hasDiff ? '' : 'disabled'}>Diff</button>
+            <button type="button" class="insp-mini-btn" data-step-mention-file="${esc(displayPath)}">@ Mention</button>
+            <button type="button" class="insp-mini-btn" data-insp-copy-code="${esc(cacheKey)}">Copy</button>
+          </span>
+        `;
+      }
+
+      if (!cached) {
+        bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">Loading preview for <span class="mono">${esc(displayPath)}</span>…</div>`;
+        return;
+      }
+
+      if (!cached.ok && !hasDiff) {
+        bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">${esc(cached.error || 'Unable to preview this file path.')}</div>`;
+        return;
+      }
+
+      if (effectiveMode === 'diff' && hasDiff) {
+        bodyEl.innerHTML = `${pillsHtml}<div class="insp-code-surface"><pre class="insp-diff-pre mono">${formatInspectorDiffHtml(diffText)}</pre></div>`;
+        return;
+      }
+
+      const rawLines = String(cached.content || '').replace(/\r\n/g, '\n').split('\n');
+      const maxRenderLines = 900;
+      const hlStart = Number(parsed.startLine || cached.startLine || 0);
+      const hlEnd = Math.max(hlStart, Number(parsed.endLine || cached.endLine || hlStart));
+      let sliceStart = 0;
+      if (rawLines.length > maxRenderLines && hlStart > maxRenderLines - 80) {
+        sliceStart = Math.max(0, hlStart - 120);
+      }
+      const visibleLines = rawLines.slice(sliceStart, sliceStart + maxRenderLines);
+      const rowsHtml = visibleLines
+        .map((txt, idx) => {
+          const ln = sliceStart + idx + 1;
+          const isHl = hlStart > 0 && ln >= hlStart && ln <= hlEnd;
+          return `<div class="insp-code-row${isHl ? ' is-hl' : ''}" data-ln="${ln}"><span class="insp-ln tabular">${ln}</span><span class="insp-code-txt">${esc(txt)}</span></div>`;
+        })
+        .join('');
+      const truncNote =
+        cached.truncated || rawLines.length > maxRenderLines
+          ? `<div class="meta-timestamp tabular" style="padding:2px 4px">Showing lines ${sliceStart + 1}–${sliceStart + visibleLines.length} of ${cached.lineCount || rawLines.length}</div>`
+          : '';
+      bodyEl.innerHTML = `${pillsHtml}<div class="insp-code-surface">${rowsHtml}</div>${truncNote}`;
+
+      const hlScrollKey = `${cacheKey}#${hlStart}-${hlEnd}`;
+      if (hlStart > 0 && lastScrolledInspectorHlKey !== hlScrollKey) {
+        lastScrolledInspectorHlKey = hlScrollKey;
+        const firstHl = bodyEl.querySelector('.insp-code-row.is-hl');
+        if (firstHl) {
+          firstHl.scrollIntoView({ block: 'center' });
+        }
+      }
+      return;
+    }
+
+    if (prefs.inspectorTab === 'agents') {
+      if (subbarEl) {
+        subbarEl.hidden = false;
+        subbarEl.innerHTML = `
+          <span class="insp-sub-path"><span class="insp-sub-path-txt">${allTasks.length} Side Agent${allTasks.length === 1 ? '' : 's'} &amp; Task${allTasks.length === 1 ? '' : 's'}${runningCount > 0 ? ` · ${runningCount} Live` : ''}</span></span>
+          <span class="insp-sub-actions">
+            ${sid && !isNewDraft ? `<button type="button" class="insp-mini-btn" data-insp-refresh-agents="1">↻ Refresh</button>` : ''}
+            ${runningCount > 0 && sid ? `<button type="button" class="insp-mini-btn" style="color:var(--crimson)" data-bg-act="stop-session-all" data-sess-id="${esc(sid)}" data-prov="${provKey}">■ Stop All</button>` : ''}
+          </span>
+        `;
+      }
+      if (allTasks.length === 0) {
+        bodyEl.innerHTML = `<div class="insp-empty">No Side Agents or background tasks recorded in this session yet.<br>Subagents spawned via <code class="md-inline-code">invoke_subagent</code> or Claude <code class="md-inline-code">Task</code> appear here with live trace output.</div>`;
+        return;
+      }
+      bodyEl.innerHTML = allTasks
+        .map((t) => {
+          const stInfo = getBgStateBadgeInfo(t.state);
+          const cacheKey = `${sid}:${t.id}`;
+          const isFocused = activeInspectorAgentId && (t.id === activeInspectorAgentId || t.fullId === activeInspectorAgentId);
+          const titleTxt = t.subagentRole || t.summary || t.command || t.id || 'Side Agent';
+          const liveOut =
+            bgTaskLogsCache.get(cacheKey) ||
+            t.outputPreview ||
+            (t.state === 'running'
+              ? 'Agent/task is running — click Refresh to tail live output.'
+              : 'Completed cleanly.');
+          const linkedConvId = String(t.subagentConversationId || '').trim();
+          const hasLinkedSession = Boolean(
+            linkedConvId && (appState?.rows || []).some((r) => r && r.id === linkedConvId)
+          );
+          return `
+            <div class="insp-agent-card${t.state === 'running' ? ' is-running' : ''}" ${isFocused ? 'style="border-color:var(--brass)"' : ''}>
+              <div class="insp-agent-head">
+                <span class="insp-agent-title">${esc(titleTxt)}</span>
+                <span class="bg-kind-badge ${stInfo.cls}">${esc(getBgKindLabel(t.kind))} · ${esc(stInfo.label)}</span>
+              </div>
+              ${t.command ? `<div class="meta-timestamp mono" style="white-space:pre-wrap;word-break:break-word">${esc(String(t.command).slice(0, 260))}</div>` : ''}
+              <pre class="insp-agent-log mono" data-bg-log-key="${esc(cacheKey)}">${esc(liveOut)}</pre>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:6px">
+                <span class="meta-timestamp tabular">${esc(t.id)}${t.startedAt ? ` · ${esc(timeAgo(t.startedAt))}` : ''}</span>
+                <span style="display:inline-flex;gap:5px">
+                  <button type="button" class="insp-mini-btn" data-bg-act="refresh-log" data-sess-id="${esc(sid)}" data-task-id="${esc(t.id)}" data-prov="${provKey}">↻ Tail</button>
+                  ${hasLinkedSession ? `<button type="button" class="insp-mini-btn" data-open-conv="${esc(linkedConvId)}">Open Thread</button>` : ''}
+                  ${t.state === 'running' ? `<button type="button" class="ide-bg-stop" style="display:inline-flex" data-bg-act="stop-task" data-sess-id="${esc(sid)}" data-task-id="${esc(t.fullId || t.id)}" data-prov="${provKey}">■ Stop</button>` : ''}
+                </span>
+              </div>
+            </div>
+          `;
+        })
+        .join('');
+      return;
+    }
+
+    // Tab 3: Outline (Prompts, Checkpoints & Artifacts)
+    if (subbarEl) {
+      subbarEl.hidden = false;
+      subbarEl.innerHTML = `<span class="insp-sub-path"><span class="insp-sub-path-txt">Session Prompts, Checkpoints &amp; Artifacts</span></span>`;
+    }
+    const outlineItems = [];
+    let promptNum = 0;
+    (messages || []).forEach((m, idx) => {
+      if (!m) return;
+      const anchor = String(m.id || `turn-${idx}`);
+      if (m.role === 'user') {
+        promptNum += 1;
+        outlineItems.push({
+          kicker: `Prompt #${promptNum}`,
+          title: String(m.text || '').replace(/\s+/g, ' ').trim().slice(0, 140) || 'User prompt',
+          anchor,
+          detailKey: ''
+        });
+      } else if (m.role === 'checkpoint') {
+        outlineItems.push({
+          kicker: '✦ Checkpoint',
+          title: String(m.text || 'Context compacted').replace(/\s+/g, ' ').trim().slice(0, 140),
+          anchor,
+          detailKey: `${anchor}:checkpoint`
+        });
+      } else if (Array.isArray(m.artifacts) && m.artifacts.length > 0) {
+        m.artifacts.forEach((art, aIdx) => {
+          if (!art) return;
+          outlineItems.push({
+            kicker: '📄 Artifact',
+            title: String(art.title || art.file || 'Walkthrough').trim(),
+            anchor,
+            detailKey: `${anchor}:art:${aIdx}`
+          });
+        });
+      }
+    });
+
+    if (outlineItems.length === 0) {
+      bodyEl.innerHTML = `<div class="insp-empty">Prompts, <code class="md-inline-code">/compact</code> checkpoints, and Walkthrough/Plan artifacts will appear here for 1-click navigation.</div>`;
+      return;
+    }
+    bodyEl.innerHTML = outlineItems
+      .map(
+        (it) => `
+        <button type="button" class="insp-outline-item" data-outline-jump="${esc(it.anchor)}" ${it.detailKey ? `data-outline-detail="${esc(it.detailKey)}"` : ''}>
+          <span class="insp-outline-kicker tabular">${esc(it.kicker)}</span>
+          <span class="insp-outline-title">${esc(it.title)}</span>
+        </button>
+      `
+      )
+      .join('');
+  }
+
+  function renderCompactedThoughtHtml({ m, turnIdKey, isLastTurn, isActivelyWorking, cleanedText, hasTurnQuestions, savedOpenMap }) {
+    const rawBlocks =
+      Array.isArray(m?.thoughtBlocks) && m.thoughtBlocks.length
+        ? m.thoughtBlocks.filter((b) => b && String(b.text || '').trim())
+        : m?.thinking
+          ? [{ text: String(m.thinking), durationSec: Number(m.thinkingDurationSec || 0) }]
+          : !cleanedText && !hasTurnQuestions && m?.latestThinking
+            ? [{ text: String(m.latestThinking), durationSec: 0 }]
+            : [];
+    if (!rawBlocks.length) return '';
+
+    const thinkKey = `${turnIdKey}:think`;
+    const isThinkOpen = Boolean(savedOpenMap && savedOpenMap.get(thinkKey) === true);
+    const isLiveThinking = Boolean(isLastTurn && isActivelyWorking && !cleanedText && !hasTurnQuestions);
+    const totalSec = Math.max(
+      0,
+      Math.round(
+        Number(
+          m?.thinkingDurationSec ||
+            rawBlocks.reduce((acc, b) => acc + Number(b.durationSec || 0), 0) ||
+            0
+        )
+      )
+    );
+    const labelTxt = isLiveThinking
+      ? 'Thinking…'
+      : totalSec > 0
+        ? `Thought for ${totalSec}s`
+        : rawBlocks.length > 1
+          ? `Thought (${rawBlocks.length} steps)`
+          : 'Thought process';
+
+    const lastBlockTxt = String(rawBlocks[rawBlocks.length - 1]?.text || '').trim();
+    const previewLine = (lastBlockTxt.split(/\n+/).filter(Boolean).pop() || '')
+      .replace(/[*`#_>]+/g, '')
+      .trim()
+      .slice(0, 96);
+
+    const stepsBodyHtml =
+      rawBlocks.length > 1
+        ? rawBlocks
+            .map(
+              (b, idx) => `
+              <div class="vs-thought-step">
+                <span class="vs-thought-step-meta tabular">Step ${idx + 1}${b.durationSec ? ` · ${Math.round(Number(b.durationSec))}s` : ''}</span>
+                <div class="vs-thought-step-text">${esc(String(b.text || '').trim())}</div>
+              </div>
+            `
+            )
+            .join('')
+        : `<div class="vs-thought-step-text">${esc(lastBlockTxt)}</div>`;
+
+    return `
+      <details class="vs-thought-card thinking-details" data-chat-detail-key="${esc(thinkKey)}" data-rendered-open="${isThinkOpen ? '1' : '0'}"${isThinkOpen ? ' open' : ''}>
+        <summary class="vs-thought-summary">
+          ${
+            isLiveThinking
+              ? '<span class="vs-thought-live-dot" aria-hidden="true"></span>'
+              : '<svg class="vs-thought-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.8v3.4l2.2 1.3"/></svg>'
+          }
+          <span class="vs-thought-lbl tabular">${esc(labelTxt)}</span>
+          ${previewLine ? `<span class="vs-thought-preview">${esc(previewLine)}</span>` : ''}
+          <span class="vs-thought-chev" aria-hidden="true">›</span>
+        </summary>
+        <div class="vs-thought-body">${stepsBodyHtml}</div>
+      </details>
+    `;
+  }
+
+  function renderInlineSubagentsHtml(toolCalls, sessionBgTasks, sessionId, provKey) {
+    const subCalls = (Array.isArray(toolCalls) ? toolCalls : []).filter(
+      (tc) => tc && tc.kind === 'subagent'
+    );
+    if (!subCalls.length) return '';
+    const allTasks = sessionBgTasks?.allTasks || [];
+    const cards = subCalls
+      .map((sc, idx) => {
+        const rawName = String(sc.name || '').toLowerCase();
+        const isDefine = rawName === 'define_subagent';
+        const isSendMsg = rawName === 'send_message';
+        const convId = String(sc.subagentConversationId || '').trim();
+        const matchedTask = allTasks.find(
+          (t) =>
+            (convId && (t.id === convId || t.subagentConversationId === convId)) ||
+            (sc.id && t.id === sc.id) ||
+            (sc.subagentRole && t.subagentRole === sc.subagentRole)
+        );
+        const isRunning = matchedTask?.state === 'running';
+        const roleTitle =
+          sc.subagentRole ||
+          matchedTask?.subagentRole ||
+          sc.summary ||
+          sc.label ||
+          (isDefine ? 'Defined Subagent' : 'Side Agent');
+        const agentType = sc.subagentType || matchedTask?.subagentType || '';
+        const promptPreview = String(sc.subagentPrompt || sc.command || matchedTask?.command || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 190);
+        const inspectTargetId = String(matchedTask?.id || convId || sc.id || `subagent-${idx}`);
+        const hasLinkedThread = Boolean(
+          convId && (appState?.rows || []).some((r) => r && r.id === convId)
+        );
+        const badgeLbl = isDefine
+          ? 'Defined'
+          : isSendMsg
+            ? 'Message'
+            : isRunning
+              ? '● Running'
+              : 'Side Agent';
+        return `
+          <div class="vs-subagent-card${isRunning ? ' is-running' : ''}">
+            <div class="vs-subagent-top">
+              <span class="vs-subagent-left">
+                <span class="vs-subagent-badge">${esc(badgeLbl)}</span>
+                <span class="vs-subagent-role">${esc(roleTitle)}</span>
+                ${agentType ? `<span class="vs-subagent-type">${esc(agentType)}</span>` : ''}
+              </span>
+              <span class="vs-subagent-actions">
+                <button type="button" class="insp-mini-btn" data-insp-open-agent="${esc(inspectTargetId)}" data-sess-id="${esc(sessionId)}" data-session-prov="${provKey}">Inspect Trace</button>
+                ${hasLinkedThread ? `<button type="button" class="insp-mini-btn" data-open-conv="${esc(convId)}">Open Thread</button>` : ''}
+                ${isRunning && matchedTask?.id ? `<button type="button" class="ide-bg-stop" style="display:inline-flex" data-bg-act="stop-task" data-sess-id="${esc(sessionId)}" data-task-id="${esc(matchedTask.fullId || matchedTask.id)}" data-prov="${provKey}">■ Stop</button>` : ''}
+              </span>
+            </div>
+            ${promptPreview ? `<div class="vs-subagent-prompt">${esc(promptPreview)}</div>` : ''}
+          </div>
+        `;
+      })
+      .join('');
+    return `<div class="vs-subagents-stack">${cards}</div>`;
+  }
+
+  function renderChatQuestionDock(activeRow, messages, matchingQuestionApproval, provKey, isNewDraft) {
+    const dockEl = $('chat-question-dock');
+    if (!dockEl) return false;
+    if (isNewDraft || !activeRow?.id || activeRow.id === '__new__') {
+      dockEl.hidden = true;
+      dockEl.innerHTML = '';
+      return false;
+    }
+
+    const sid = activeRow.id;
+    const lastTurn = messages.length > 0 ? messages[messages.length - 1] : null;
+    const lastTurnId = lastTurn && lastTurn.role === 'assistant' ? String(lastTurn.id || `turn-${messages.length - 1}`) : '';
+    let qList = [];
+    let effectiveApproval = matchingQuestionApproval || null;
+
+    if (lastTurn && lastTurn.role === 'assistant') {
+      const srvAns = Array.isArray(lastTurn.questions) && lastTurn.questions.some((q) => Boolean(q?.answered));
+      if (!srvAns) {
+        qList = resolveQuestionsForTurn(lastTurn, effectiveApproval).questions;
+      }
+    }
+    if (!qList.length && effectiveApproval) {
+      qList = resolveQuestionsForApproval(effectiveApproval, messages);
+    }
+    if (!qList.length && activeRow?.pendingQuestion?.questions?.length) {
+      qList = normalizeFrontendQuestions(activeRow.pendingQuestion.questions);
+    }
+
+    if (!qList.length) {
+      dockEl.hidden = true;
+      dockEl.innerHTML = '';
+      return false;
+    }
+
+    const answered = lookupAnsweredQuestionState({
+      sessionId: sid,
+      approvalId: effectiveApproval?.approvalId || '',
+      turnId: lastTurnId,
+      questions: qList,
+      isLastTurn: true
+    });
+    const cardKey = `q-dock-${sid}-${effectiveApproval?.approvalId || lastTurnId || 'active'}`;
+    const draft = getQuestionDraft(cardKey);
+    if (answered?.answered || draft.submitted) {
+      dockEl.hidden = true;
+      dockEl.innerHTML = '';
+      return false;
+    }
+
+    renderedQuestionsByCardKey.set(cardKey, {
+      cardKey,
+      sessionId: sid,
+      provider: provKey,
+      approvalId: effectiveApproval?.approvalId || sid,
+      turnId: lastTurnId,
+      stepIndex: extractQuestionsStepIndex(qList, effectiveApproval?.stepIndex ?? null),
+      selector: effectiveApproval?.selector || '',
+      questions: qList,
+      plainQuestionFallback: !effectiveApproval && (!Array.isArray(lastTurn?.questions) || lastTurn.questions.length === 0)
+    });
+
+    if (
+      document.activeElement &&
+      dockEl.contains(document.activeElement) &&
+      document.activeElement.matches('[data-q-writein-input]') &&
+      document.activeElement.dataset.cardKey === cardKey
+    ) {
+      dockEl.hidden = false;
+      return true;
+    }
+
+    let stepIdx = Number(activeDockStepByCardKey.get(cardKey) || 0);
+    if (!Number.isFinite(stepIdx) || stepIdx < 0 || stepIdx >= qList.length) {
+      stepIdx = 0;
+    }
+    const curQ = qList[stepIdx];
+    const selSet = draft.selectedByQ[stepIdx] || new Set();
+    const writeVal = String(draft.writeInByQ[stepIdx] || '');
+    const opts = Array.isArray(curQ?.options) ? curQ.options : [];
+    const anyToolPerm = qList.some((q) => q.isToolPermission);
+    const totalSelected = countDraftSelections(draft, qList.length);
+
+    const stepsHtml =
+      qList.length > 1
+        ? `<span class="q-dock-steps">${qList
+            .map((_, idx) => {
+              const hasAns =
+                Boolean(draft.selectedByQ[idx]?.size) ||
+                Boolean(String(draft.writeInByQ[idx] || '').trim());
+              return `<button type="button" class="q-step-pill tabular${idx === stepIdx ? ' active' : hasAns ? ' done' : ''}" data-q-dock-step="${idx}" data-card-key="${esc(cardKey)}">Q${idx + 1}</button>`;
+            })
+            .join('')}</span>`
+        : '';
+
+    const optsHtml = opts
+      .map((opt, oIdx) => {
+        const isSel = selSet.has(String(oIdx));
+        return `
+          <button type="button" class="q-dock-opt${isSel ? ' selected is-selected' : ''}" data-q-opt-toggle="1" data-card-key="${esc(cardKey)}" data-q-idx="${stepIdx}" data-opt-idx="${oIdx}" aria-pressed="${isSel ? 'true' : 'false'}">
+            <span class="q-dock-kbd">${oIdx + 1}</span>
+            <span style="min-width:0;flex:1">${esc(opt.cleanText || opt.text)}</span>
+            ${opt.isRecommended && !curQ.isToolPermission ? `<span class="sb-q-rec">★ Rec</span>` : ''}
+          </button>
+        `;
+      })
+      .join('');
+
+    dockEl.hidden = false;
+    dockEl.innerHTML = `
+      <div class="q-dock-card" data-q-card="${esc(cardKey)}" data-q-active-step="${stepIdx}">
+        <div class="q-dock-top">
+          <span class="q-dock-kicker">
+            <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
+            <span>${anyToolPerm ? 'Tool Permission Required' : qList.length > 1 ? `Question ${stepIdx + 1} of ${qList.length}` : 'Question Waiting for Your Choice'}</span>
+          </span>
+          ${stepsHtml}
+        </div>
+        <div data-q-block="${stepIdx}" style="display:flex;flex-direction:column;gap:6px">
+          <div class="q-dock-prompt">${esc(curQ?.question || 'Select an option')}</div>
+          ${opts.length > 0 ? `<div class="q-dock-options">${optsHtml}</div>` : ''}
+          <div class="q-dock-foot">
+            <input type="text" class="q-dock-other" data-q-writein-input="1" data-card-key="${esc(cardKey)}" data-q-idx="${stepIdx}" placeholder="${esc(opts.length > 0 ? 'Or type custom answer…' : 'Type your answer…')}" value="${esc(writeVal)}" autocomplete="off">
+            <button type="button" class="sb-q-btn" data-q-skip="1" data-card-key="${esc(cardKey)}">${anyToolPerm ? '✕ Deny' : 'Skip'}</button>
+            ${
+              qList.length > 1 && stepIdx < qList.length - 1
+                ? `<button type="button" class="sb-q-btn" data-q-dock-step="${stepIdx + 1}" data-card-key="${esc(cardKey)}">Next ›</button>`
+                : ''
+            }
+            <button type="button" class="sb-q-btn primary" data-q-submit="1" data-card-key="${esc(cardKey)}">✓ ${anyToolPerm ? (totalSelected > 0 ? `Confirm (${totalSelected})` : 'Yes (Allow)') : `Submit Answer${totalSelected > 0 ? ` (${totalSelected})` : ''}`}</button>
+          </div>
+        </div>
+      </div>
+    `;
+    return true;
   }
 
   function renderToolCallCardHtml(tc, detailKey = '', savedOpenMap = null) {
@@ -7508,9 +8841,13 @@
     const commandText = String(tc?.command || '').trim();
     const snippet = String(tc?.snippet || tc?.diff || '').trim();
 
-    const fileChip = fileBase
-      ? renderFileChipHtml(lineRange && !fileBase.includes('#') ? `${fileBase}#${lineRange}` : fileBase)
-      : '';
+    const chipLabel = lineRange && !fileBase.includes('#') ? `${fileBase}#${lineRange}` : fileBase;
+    const chipTarget = relPath
+      ? lineRange && !relPath.includes('#')
+        ? `${relPath}#${lineRange}`
+        : relPath
+      : chipLabel;
+    const fileChip = fileBase ? renderFileChipHtml(chipLabel, chipTarget) : '';
     const diffBadge =
       added > 0 || removed > 0
         ? `<span class="code-diff-stat tabular">${added > 0 ? `<span class="diff-add">+${added}</span>` : ''}${removed > 0 ? `<span class="diff-del">-${removed}</span>` : ''}</span>`
@@ -7544,7 +8881,7 @@
         <details class="code-step-card has-snippet is-interactive"${detailKeyAttrs}>
           <summary>${headInner}</summary>
           <div class="code-step-detail-box">
-            ${relPath ? `<div class="code-step-detail-bar"><span class="mono">${esc(relPath)}${lineRange ? `#${esc(lineRange)}` : ''}</span><button type="button" class="ide-step-mention-btn" data-step-mention-file="${esc(relPath)}">@ Mention</button></div>` : ''}
+            ${relPath ? `<div class="code-step-detail-bar"><span class="mono">${esc(relPath)}${lineRange ? `#${esc(lineRange)}` : ''}</span><span style="display:inline-flex;gap:5px"><button type="button" class="ide-step-mention-btn" data-preview-file="${esc(chipTarget)}">Inspect</button><button type="button" class="ide-step-mention-btn" data-step-mention-file="${esc(relPath)}">@ Mention</button></span></div>` : ''}
             <pre class="code-step-snippet mono">${formatGitDiffHtml(snippet)}</pre>
           </div>
         </details>
@@ -7559,7 +8896,7 @@
           <div class="code-step-detail-box">
             <div class="code-step-detail-bar">
               <span class="mono">${esc(detailLine)}</span>
-              ${relPath ? `<button type="button" class="ide-step-mention-btn" data-step-mention-file="${esc(relPath)}">@ Mention</button>` : ''}
+              ${relPath ? `<span style="display:inline-flex;gap:5px"><button type="button" class="ide-step-mention-btn" data-preview-file="${esc(chipTarget)}">Inspect</button><button type="button" class="ide-step-mention-btn" data-step-mention-file="${esc(relPath)}">@ Mention</button></span>` : ''}
             </div>
             ${summaryText && summaryText !== detailLine ? `<div class="code-step-detail-note">${esc(summaryText)}</div>` : ''}
           </div>
@@ -7801,6 +9138,22 @@
     renderContextPopover(ctx);
     renderChatBgTasks(activeRow, threadDetail, provKey, isNewDraft);
 
+    const messages = isNewDraft ? [] : coalesceThreadMessages(threadDetail?.messages || []);
+    const sessionApprovals = isNewDraft
+      ? []
+      : (appState?.approvals || []).filter((a) => a && a.sessionId === prefs.selectedThreadId);
+    const matchingQuestionApproval = sessionApprovals.find(
+      (a) =>
+        a.kind === 'question' ||
+        Boolean(a.isToolPermission) ||
+        /question/i.test(String(a.toolName || '')) ||
+        (Array.isArray(a.questions) && a.questions.length > 0) ||
+        (Array.isArray(a.options) && a.options.length > 0)
+    );
+
+    renderChatQuestionDock(activeRow, messages, matchingQuestionApproval, provKey, isNewDraft);
+    renderSplitInspector(activeRow, threadDetail, messages, provKey, isNewDraft);
+
     // Conversation Stream
     const streamEl = $('chat-stream');
     if (!streamEl) return;
@@ -7836,22 +9189,10 @@
     }
     const wasNearBottom =
       streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight < 100;
-    const messages = coalesceThreadMessages(threadDetail?.messages || []);
     const isSyncingThread =
       connMode === 'cloud' &&
       prefs.selectedThreadId &&
       pendingThreadRequests.has(prefs.selectedThreadId);
-    const sessionApprovals = (appState?.approvals || []).filter(
-      (a) => a && a.sessionId === prefs.selectedThreadId
-    );
-    const matchingQuestionApproval = sessionApprovals.find(
-      (a) =>
-        a.kind === 'question' ||
-        Boolean(a.isToolPermission) ||
-        /question/i.test(String(a.toolName || '')) ||
-        (Array.isArray(a.questions) && a.questions.length > 0) ||
-        (Array.isArray(a.options) && a.options.length > 0)
-    );
     let questionRenderedInTurn = false;
 
     const buildSessionApprovalHtml = (skipQuestionApprovals = false) =>
@@ -7926,14 +9267,48 @@
       lastRenderedMsgCount = 0;
     } else {
       const savedOpenMap = getThreadOpenDetailsMap(prefs.selectedThreadId, false);
+      const sessionBgTasks = getSessionBackgroundTasks(activeRow, threadDetail);
+      const isThreadActivelyWorking = isSessionActivelyRunning(prefs.selectedThreadId);
       const turnsHtml = messages
         .map((m, msgIdx) => {
           const isUser = m.role === 'user';
           const isLastTurn = msgIdx === messages.length - 1;
           const turnIdKey = String(m.id || `turn-${msgIdx}`);
+
+          if (m.role === 'checkpoint') {
+            const cpKey = `${turnIdKey}:checkpoint`;
+            const isCpOpen = Boolean(savedOpenMap && savedOpenMap.get(cpKey) === true);
+            const cpPreview = String(m.text || 'Context compacted')
+              .replace(/\s+/g, ' ')
+              .trim();
+            return `
+              <details class="vs-checkpoint-divider" data-turn-anchor="${esc(turnIdKey)}" data-chat-detail-key="${esc(cpKey)}" data-rendered-open="${isCpOpen ? '1' : '0'}"${isCpOpen ? ' open' : ''}>
+                <summary class="vs-checkpoint-summary">
+                  <span class="vs-checkpoint-pill">✦ Checkpoint · ${esc(cpPreview.slice(0, 88) || 'Context compacted')}&nbsp;<span class="vs-thought-chev" aria-hidden="true">›</span></span>
+                </summary>
+                <div class="vs-checkpoint-body turn-text md-rich">${formatTurnMarkdown(m.text || 'Context compacted.')}</div>
+              </details>
+            `;
+          }
+
+          if (isUser) {
+            return `
+              <div class="turn-bubble user" data-turn-anchor="${esc(turnIdKey)}">
+                <div class="turn-text">${esc(m.text || '')}</div>
+              </div>
+            `;
+          }
+
           const toolCalls = Array.isArray(m.toolCalls) ? m.toolCalls : [];
-          const toolCount = Number(m.totalTurnTools || toolCalls.length);
-          const editTools = toolCalls.filter((t) => t.kind === 'edit' || t.kind === 'write');
+          const stepToolCalls = toolCalls.filter((t) => t && t.kind !== 'subagent');
+          const subagentsHtml = renderInlineSubagentsHtml(
+            toolCalls,
+            sessionBgTasks,
+            prefs.selectedThreadId,
+            provKey
+          );
+          const toolCount = Number(m.totalTurnTools || stepToolCalls.length);
+          const editTools = stepToolCalls.filter((t) => t.kind === 'edit' || t.kind === 'write');
           const changedFilesSet = new Set(
             editTools.map((t) => t.relPath || t.file || t.summary).filter(Boolean)
           );
@@ -7942,7 +9317,7 @@
           const totalRemoved = editTools.reduce((acc, t) => acc + Number(t.removedLines || 0), 0);
 
           const summaryHtmlParts = [];
-          const lastTool = toolCalls[toolCalls.length - 1];
+          const lastTool = stepToolCalls[stepToolCalls.length - 1];
           if (isLastTurn && activeRow?.status === 'working' && lastTool?.file) {
             summaryHtmlParts.push(`<span>Working on ${esc(lastTool.file)}</span>`);
           }
@@ -7961,15 +9336,15 @@
           const summaryLabelHtml = `<span class="tools-summary-left">${summaryHtmlParts.join(' <span style="opacity:0.45">·</span> ')}</span><span class="tools-summary-chevron">▾</span>`;
 
           const allStepsSavedOpen =
-            toolCalls.length >= 2 &&
+            stepToolCalls.length >= 2 &&
             Boolean(savedOpenMap) &&
-            toolCalls.every((_, sIdx) => savedOpenMap.get(`${turnIdKey}:step:${sIdx}`) === true);
+            stepToolCalls.every((_, sIdx) => savedOpenMap.get(`${turnIdKey}:step:${sIdx}`) === true);
           const stepsToolbarHtml =
-            toolCalls.length >= 2
+            stepToolCalls.length >= 2
               ? `<div class="code-steps-toolbar"><button type="button" class="ide-steps-toggle-all" data-toggle-all-steps="1">${allStepsSavedOpen ? 'Collapse all' : 'Expand all'}</button></div>`
               : '';
-          const toolCardsHtml = toolCalls.length
-            ? `<div class="code-steps-stack">${stepsToolbarHtml}${toolCalls.map((tc, sIdx) => renderToolCallCardHtml(tc, `${turnIdKey}:step:${sIdx}`, savedOpenMap)).join('')}</div>`
+          const toolCardsHtml = stepToolCalls.length
+            ? `<div class="code-steps-stack">${stepsToolbarHtml}${stepToolCalls.map((tc, sIdx) => renderToolCallCardHtml(tc, `${turnIdKey}:step:${sIdx}`, savedOpenMap)).join('')}</div>`
             : '';
 
           const artifacts = Array.isArray(m.artifacts) ? m.artifacts : [];
@@ -7996,14 +9371,6 @@
             .join('');
 
           const timeLabel = m.createdAt ? timeAgo(Date.parse(m.createdAt)) : '';
-
-          if (isUser) {
-            return `
-              <div class="turn-bubble user">
-                <div class="turn-text">${esc(m.text || '')}</div>
-              </div>
-            `;
-          }
 
           const turnQuestionsAlreadyServerAnswered =
             Array.isArray(m.questions) && m.questions.length > 0 && m.questions.some((q) => Boolean(q?.answered));
@@ -8038,29 +9405,19 @@
               : defaultToolsOpen;
           const toolsPanelCls =
             cleanedText || hasTurnQuestions ? 'tools-details' : 'tools-details active-tools-panel';
-          const toolsHtml = toolCalls.length
+          const toolsHtml = stepToolCalls.length
             ? `<details class="${toolsPanelCls}" data-chat-detail-key="${esc(toolsKey)}" data-rendered-open="${isToolsOpen ? '1' : '0'}"${isToolsOpen ? ' open' : ''}><summary>${summaryLabelHtml}</summary>${toolCardsHtml}</details>`
             : '';
 
-          const liveThought =
-            !cleanedText && !hasTurnQuestions && (m.latestThinking || m.thinking)
-              ? String(m.latestThinking || m.thinking)
-                  .trim()
-                  .split(/\n\n+/)
-                  .pop()
-              : '';
-
-          const thinkKey = `${turnIdKey}:think`;
-          const defaultThinkOpen = Boolean(!cleanedText && !hasTurnQuestions && isLastTurn);
-          const isThinkOpen =
-            savedOpenMap && savedOpenMap.has(thinkKey)
-              ? savedOpenMap.get(thinkKey)
-              : defaultThinkOpen;
-          const thinkHtml = m.thinking
-            ? `<details class="thinking-details" data-chat-detail-key="${esc(thinkKey)}" data-rendered-open="${isThinkOpen ? '1' : '0'}"${isThinkOpen ? ' open' : ''}><summary>Reasoning &amp; Internal Thought</summary><div class="turn-text mono" style="margin-top:6px">${esc(m.thinking)}</div></details>`
-            : liveThought
-              ? `<div class="thinking-details"><div class="turn-text mono">${esc(liveThought)}</div></div>`
-              : '';
+          const thinkHtml = renderCompactedThoughtHtml({
+            m,
+            turnIdKey,
+            isLastTurn,
+            isActivelyWorking: isThreadActivelyWorking,
+            cleanedText,
+            hasTurnQuestions,
+            savedOpenMap
+          });
 
           const questionCardHtml = hasTurnQuestions
             ? renderInteractiveQuestionCardHtml({
@@ -8091,8 +9448,14 @@
           const liveToolHtml = isLiveStreamingTurn
             ? `<div class="live-tool-chip mono" data-stream-tool-slot="1" ${m.activeTool ? '' : 'hidden'}>${m.activeTool ? `⚡ ${esc(m.activeTool)}` : ''}</div>`
             : '';
+          const liveStreamPreview =
+            String(m.thinking || '')
+              .trim()
+              .split(/\n+/)
+              .filter(Boolean)
+              .pop() || '';
           const streamThinkHtml = isLiveStreamingTurn
-            ? `<details class="thinking-details is-streaming" data-stream-think-wrap="1" open ${m.thinking ? '' : 'hidden'}><summary>Live Reasoning &amp; Thought</summary><div class="turn-text mono" data-stream-think-body="1" style="margin-top:6px">${esc(m.thinking || '')}</div></details>`
+            ? `<details class="vs-thought-card thinking-details is-streaming" data-stream-think-wrap="1" ${m.thinking ? '' : 'hidden'}><summary class="vs-thought-summary"><span class="vs-thought-live-dot" aria-hidden="true"></span><span class="vs-thought-lbl tabular">Thinking…</span><span class="vs-thought-preview" data-stream-think-preview="1">${esc(liveStreamPreview.replace(/`+/g, '').slice(0, 96))}</span><span class="vs-thought-chev" aria-hidden="true">›</span></summary><div class="vs-thought-body"><div class="vs-thought-step-text" data-stream-think-body="1">${esc(m.thinking || '')}</div></div></details>`
             : thinkHtml;
           const streamTextHtml = isLiveStreamingTurn
             ? `<div class="turn-text md-rich" data-stream-text-body="1">${cleanedText ? formatTurnMarkdown(cleanedText) : ''}<span class="stream-cursor"></span></div>`
@@ -8101,12 +9464,13 @@
               : '';
 
           return `
-            <div class="turn-bubble assistant ${isLiveStreamingTurn ? 'is-streaming' : ''}" ${isLiveStreamingTurn ? 'data-streaming-turn="1"' : ''}>
+            <div class="turn-bubble assistant ${isLiveStreamingTurn ? 'is-streaming' : ''}" data-turn-anchor="${esc(turnIdKey)}" ${isLiveStreamingTurn ? 'data-streaming-turn="1"' : ''}>
               ${liveHeadHtml}
               ${streamThinkHtml}
               ${liveToolHtml}
               ${streamTextHtml}
               ${artifactsHtml}
+              ${subagentsHtml}
               ${toolsHtml}
               ${questionCardHtml}
               ${timeLabel ? `<div class="turn-foot tabular">${esc(timeLabel)}</div>` : ''}
@@ -8131,18 +9495,70 @@
     updateComposerActionButton();
   }
 
-  function renderFileChipHtml(rawLabel) {
+  function renderFileChipHtml(rawLabel, rawTargetHref = '') {
     const clean = String(rawLabel || '')
       .trim()
       .replace(/^`+|`+$/g, '');
+    const href = String(rawTargetHref || '').trim();
+    if (/^conversation:\/\//i.test(href)) {
+      const convId = href
+        .replace(/^conversation:\/\/+/i, '')
+        .replace(/[)\s]+$/g, '')
+        .trim();
+      return `<span class="md-file-chip is-clickable" role="button" tabindex="0" data-open-conv="${esc(convId)}"><span class="md-chip-ico">⇄</span><span>${esc(clean)}</span></span>`;
+    }
+
     let ico = '📄';
-    if (/\.md(#|$)/i.test(clean)) ico = 'M↓';
-    else if (/\.py(#|$)/i.test(clean)) ico = 'py';
-    else if (/\.(js|ts|cjs|mjs)(#|$)/i.test(clean)) ico = 'JS';
-    else if (/\.(sh|ps1|bat|cmd)(#|$)/i.test(clean)) ico = '>_';
-    else if (/\.json(#|$)/i.test(clean)) ico = '{}';
-    else if (/\.(css|html)(#|$)/i.test(clean)) ico = '<>';
-    return `<span class="md-file-chip"><span class="md-chip-ico">${ico}</span><span>${esc(clean)}</span></span>`;
+    let icoCls = '';
+    const extProbe = `${clean} ${href.split('?')[0]}`;
+    if (/\.md(#|$|\s)/i.test(extProbe)) {
+      ico = 'M↓';
+      icoCls = ' md';
+    } else if (/\.py(#|$|\s)/i.test(extProbe)) {
+      ico = 'py';
+      icoCls = ' py';
+    } else if (/\.(ts|tsx)(#|$|\s)/i.test(extProbe)) {
+      ico = 'TS';
+      icoCls = ' ts';
+    } else if (/\.(js|jsx|cjs|mjs)(#|$|\s)/i.test(extProbe)) {
+      ico = 'JS';
+      icoCls = ' js';
+    } else if (/\.cs(#|$|\s)/i.test(extProbe)) {
+      ico = 'C#';
+      icoCls = ' cs';
+    } else if (/\.(sh|ps1|bat|cmd)(#|$|\s)/i.test(extProbe)) {
+      ico = '>_';
+      icoCls = ' sh';
+    } else if (/\.json(#|$|\s)/i.test(extProbe)) {
+      ico = '{}';
+      icoCls = ' json';
+    } else if (/\.(css|html|svg)(#|$|\s)/i.test(extProbe)) {
+      ico = '<>';
+      icoCls = ' css';
+    }
+
+    let previewTarget = '';
+    if (/^file:\/\//i.test(href)) {
+      const stripped = href.replace(/^file:\/\/\/?/i, '').replace(/[)\s]+$/g, '');
+      try {
+        previewTarget = decodeURIComponent(stripped);
+      } catch {
+        previewTarget = stripped;
+      }
+    } else if (href) {
+      previewTarget = href;
+    } else if (
+      /\.(md|py|js|jsx|ts|tsx|cjs|mjs|json|css|html|svg|ps1|sh|bat|cmd|cs|sql|yml|yaml|toml|xml)(#L?\d+(?:-L?\d+)?|$)/i.test(
+        clean
+      )
+    ) {
+      previewTarget = clean;
+    }
+
+    if (previewTarget) {
+      return `<span class="md-file-chip is-clickable" role="button" tabindex="0" data-preview-file="${esc(previewTarget)}"><span class="md-chip-ico${icoCls}">${ico}</span><span>${esc(clean)}</span></span>`;
+    }
+    return `<span class="md-file-chip"><span class="md-chip-ico${icoCls}">${ico}</span><span>${esc(clean)}</span></span>`;
   }
 
   function formatTurnMarkdown(rawText) {
@@ -8159,16 +9575,16 @@
     });
 
     const chips = [];
-    const pushChip = (label) => {
+    const pushChip = (label, targetHref = '') => {
       const idx = chips.length;
-      chips.push(renderFileChipHtml(label));
+      chips.push(renderFileChipHtml(label, targetHref));
       return `\x00CHIP_${idx}\x00`;
     };
 
     // Convert [label](file:///...) or [`label`](file:///...) or [label](conversation://...) (even if truncated mid-URL) into VS Code file chips
     src = src.replace(
-      /\[`?([^`\]\n]+)`?\]\((?:file|conversation):\/\/[^)\s]*\)?/gi,
-      (_, label) => pushChip(label)
+      /\[`?([^`\]\n]+)`?\]\(((?:file|conversation):\/\/[^)\s]*)\)?/gi,
+      (_, label, targetUrl) => pushChip(label, targetUrl)
     );
     // Convert any bare file:/// URLs into compact basename chips
     src = src.replace(/(^|[\s(])file:\/\/\/([^\s)]+)/gi, (_, prefix, rawPath) => {
@@ -8178,7 +9594,7 @@
       } catch {
         base = rawPath.split(/[\\/]/).pop() || rawPath;
       }
-      return `${prefix}${pushChip(base)}`;
+      return `${prefix}${pushChip(base, `file:///${rawPath}`)}`;
     });
 
     const inlineCodes = [];
@@ -8690,10 +10106,12 @@
     { id: '/goal', label: '/goal', desc: 'Autonomous thorough execution until goal is achieved', kind: 'prompt', insert: '/goal ', baseWeight: 80 },
     { id: '/new-agy', label: '/new-agy', desc: 'Start a fresh Google Antigravity session tab', kind: 'action', act: 'new-agy', baseWeight: 76 },
     { id: '/new-claude', label: '/new-claude', desc: 'Start a fresh Claude Code session tab', kind: 'action', act: 'new-claude', baseWeight: 74 },
+    { id: '/inspector', label: '/inspector', desc: 'Toggle Split Inspector (Code, Diff, Side Agents & Outline)', kind: 'action', act: 'inspector', baseWeight: 72 },
     { id: '/bgtasks', label: '/bgtasks', desc: 'Inspect live background tasks & subagents', kind: 'action', act: 'bgtasks', baseWeight: 68 },
     { id: '/stop', label: '/stop', desc: 'Interrupt the currently running session', kind: 'action', act: 'stop', baseWeight: 64 },
     { id: '/sync', label: '/sync', desc: 'Force immediate Bridge & Cloud Relay sync', kind: 'action', act: 'sync', baseWeight: 60 },
-    { id: '/theme', label: '/theme', desc: 'Toggle between Carbon Dark and Studio Daylight', kind: 'action', act: 'theme', baseWeight: 52 }
+    { id: '/palette', label: '/palette', desc: 'Switch Studio Palette (Graphite, Velvet, Espresso, Daylight)', kind: 'action', act: 'palette', baseWeight: 56 },
+    { id: '/theme', label: '/theme', desc: 'Toggle between Dark Studio and Studio Daylight', kind: 'action', act: 'theme', baseWeight: 52 }
   ];
 
   function closeSlashPopover() {
@@ -8938,6 +10356,15 @@
         const bgPop = $('bg-tasks-popover');
         if (bgPop) bgPop.hidden = false;
         renderChatView();
+      } else if (item.act === 'inspector') {
+        if (prefs.activeTab !== 'chat') switchTab('chat');
+        setInspectorOpen(!prefs.inspectorOpen);
+      } else if (item.act === 'palette') {
+        const pPop = $('theme-palette-popover');
+        if (pPop) {
+          syncPalettePickerUi();
+          pPop.hidden = false;
+        }
       } else if (item.act === 'stop') {
         await stopActiveSession(prefs.selectedThreadId);
       } else if (item.act === 'sync') {
@@ -9188,10 +10615,12 @@
         ? [{ title: '+ New Claude Code Session', sub: 'Action', act: 'new-claude' }]
         : []),
       { title: 'Sync with VS Code & Cloud Relay Now', sub: 'Connectivity', act: 'sync' },
+      { title: 'Toggle Split Inspector (Code, Diff, Side Agents & Outline)', sub: 'Workbench · ⌘I', act: 'inspector' },
+      { title: 'Switch Studio Color Palette (Graphite · Velvet · Espresso · Daylight)', sub: 'Appearance', act: 'palette' },
       { title: 'Enable / Test Web Push Notifications', sub: 'Notifications', act: 'push-test' },
       { title: 'Inspect Background Tasks & Subagents', sub: 'Workbench Overview', act: 'bgtasks' },
       { title: 'Run /compact on Active Session', sub: 'Context Window', act: 'compact' },
-      { title: 'Switch Obsidian Dark / Warm Paper Light Theme', sub: 'Appearance', act: 'theme' }
+      { title: 'Switch Dark Studio / Studio Daylight Theme', sub: 'Appearance', act: 'theme' }
     ];
 
     for (const r of (appState?.rows || []).slice(0, 20)) {
@@ -9295,6 +10724,7 @@
     }
     overlay.hidden = false;
     if (appShell) appShell.inert = true;
+    closeFloatingUiMenus();
     document.documentElement.classList.remove('pin-locked-boot');
     let entered = '';
     const updateDots = () => {
@@ -9481,6 +10911,21 @@
       row.dot = 'running';
     }
 
+    if (sessId && questions.length > 0 && Array.isArray(threadsCache[sessId]?.messages)) {
+      const lastAsstMsg = [...threadsCache[sessId].messages]
+        .reverse()
+        .find((m) => m && m.role === 'assistant');
+      if (lastAsstMsg) {
+        const stampedQs = questions.map((q) => ({
+          ...q,
+          answered: true,
+          skipped: Boolean(skipped),
+          answerSummary: humanSummary
+        }));
+        lastAsstMsg.questions = stampedQs;
+      }
+    }
+
     if (sessId && !skipped) {
       if (!threadsCache[sessId]) {
         threadsCache[sessId] = {
@@ -9561,14 +11006,35 @@
         const draft = getQuestionDraft(cardKey);
         draft.writeInByQ[qIdx] = qInput.value;
         const meta = renderedQuestionsByCardKey.get(cardKey);
-        const qCount = meta?.questions?.length || 1;
-        const anyToolPerm = Boolean(meta?.questions?.some((q) => q.isToolPermission));
-        const count = countDraftSelections(draft, qCount);
-        const cardEl = qInput.closest('[data-q-card]');
-        const subBtn = cardEl?.querySelector('[data-q-submit]');
-        if (subBtn) {
-          subBtn.textContent = `✓ ${anyToolPerm ? (count > 0 ? `Confirm (${count})` : 'Yes (Allow)') : `Submit Answer${count > 0 ? ` (${count})` : ''}`}`;
+        if (meta?.sessionId) {
+          for (const [sibKey, sibMeta] of renderedQuestionsByCardKey.entries()) {
+            if (sibKey !== cardKey && sibMeta?.sessionId === meta.sessionId) {
+              const sibDraft = getQuestionDraft(sibKey);
+              sibDraft.writeInByQ[qIdx] = qInput.value;
+            }
+          }
         }
+        document.querySelectorAll('[data-q-card]').forEach((cardEl) => {
+          const cKey = cardEl.dataset.qCard || '';
+          const cMeta = renderedQuestionsByCardKey.get(cKey);
+          if (cKey !== cardKey && (!meta?.sessionId || cMeta?.sessionId !== meta.sessionId)) return;
+          cardEl.querySelectorAll(`[data-q-writein-input][data-q-idx="${qIdx}"]`).forEach((inp) => {
+            if (inp !== qInput && document.activeElement !== inp && inp.value !== qInput.value) {
+              inp.value = qInput.value;
+            }
+          });
+          const cDraft = getQuestionDraft(cKey);
+          const qCount = cMeta?.questions?.length || meta?.questions?.length || 1;
+          const anyToolPerm = Boolean((cMeta?.questions || meta?.questions)?.some((q) => q.isToolPermission));
+          const totalCount = countDraftSelections(cDraft, qCount);
+          const subBtn = cardEl.querySelector('[data-q-submit]');
+          if (subBtn) {
+            const isShortSub = cardEl.classList.contains('sb-q-card');
+            subBtn.textContent = isShortSub
+              ? `✓ ${anyToolPerm ? 'Allow' : 'Submit'}${totalCount > 0 ? ` (${totalCount})` : ''}`
+              : `✓ ${anyToolPerm ? (totalCount > 0 ? `Confirm (${totalCount})` : 'Yes (Allow)') : `Submit Answer${totalCount > 0 ? ` (${totalCount})` : ''}`}`;
+          }
+        });
       }
     });
 
@@ -9601,6 +11067,275 @@
       ) {
         closeSlashPopover();
       }
+      const palPop = $('theme-palette-popover');
+      if (
+        palPop &&
+        !palPop.hidden &&
+        !e.target?.closest?.('#theme-palette-popover') &&
+        !e.target?.closest?.('#btn-palette-picker')
+      ) {
+        palPop.hidden = true;
+        $('btn-palette-picker')?.setAttribute('aria-expanded', 'false');
+      }
+      const ctxMenuEl = $('ide-context-menu');
+      if (
+        ctxMenuEl &&
+        !ctxMenuEl.hidden &&
+        !e.target?.closest?.('#ide-context-menu') &&
+        !e.target?.closest?.('[data-sess-ctx-menu]')
+      ) {
+        ctxMenuEl.hidden = true;
+      }
+
+      // Palette Switcher & Split Inspector Controls
+      if (e.target.closest('#btn-palette-picker')) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (palPop) {
+          const nextOpen = palPop.hidden;
+          syncPalettePickerUi();
+          palPop.hidden = !nextOpen;
+          $('btn-palette-picker')?.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+        }
+        return;
+      }
+      if (e.target.closest('#btn-close-palette')) {
+        if (palPop) palPop.hidden = true;
+        $('btn-palette-picker')?.setAttribute('aria-expanded', 'false');
+        return;
+      }
+      const setPalBtn = e.target.closest('[data-set-palette]');
+      if (setPalBtn) {
+        applyPalette(setPalBtn.dataset.setPalette || 'graphite', true);
+        if (palPop) palPop.hidden = true;
+        $('btn-palette-picker')?.setAttribute('aria-expanded', 'false');
+        return;
+      }
+      if (e.target.closest('#btn-toggle-inspector')) {
+        haptic(8);
+        setInspectorOpen(!prefs.inspectorOpen);
+        return;
+      }
+      if (e.target.closest('#btn-close-inspector') || e.target.closest('#ide-inspector-backdrop')) {
+        setInspectorOpen(false);
+        return;
+      }
+      const inspTabBtn = e.target.closest('[data-insp-tab]');
+      if (inspTabBtn) {
+        setInspectorOpen(true, inspTabBtn.dataset.inspTab || 'code');
+        return;
+      }
+      const inspModeBtn = e.target.closest('[data-insp-view-mode]');
+      if (inspModeBtn) {
+        prefs.inspectorViewMode = inspModeBtn.dataset.inspViewMode === 'diff' ? 'diff' : 'source';
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        renderChatView(false);
+        return;
+      }
+      const inspCopyBtn = e.target.closest('[data-insp-copy-code]');
+      if (inspCopyBtn) {
+        const key = inspCopyBtn.dataset.inspCopyCode || '';
+        const cached = filePreviewCache.get(key);
+        const diffCopy = String(cached?.gitDiff ?? cached?.diffPatch ?? cached?.diff ?? '');
+        const srcCopy = String(cached?.content || '');
+        const textToCopy =
+          prefs.inspectorViewMode === 'diff' && diffCopy
+            ? diffCopy
+            : srcCopy || diffCopy;
+        if (textToCopy) {
+          try {
+            await navigator.clipboard.writeText(textToCopy);
+            showToast('📋 Copied preview to clipboard');
+          } catch {}
+        }
+        return;
+      }
+      if (e.target.closest('[data-insp-refresh-agents]')) {
+        if (prefs.selectedThreadId && !isNewSessionMode()) {
+          const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId);
+          const prov = activeRow?.provider || pinnedNavProvider || 'antigravity';
+          await fetchThreadDetail(prefs.selectedThreadId, prov);
+          const { allTasks } = getSessionBackgroundTasks(activeRow, threadsCache[prefs.selectedThreadId]);
+          for (const t of allTasks.slice(0, 4)) {
+            if (t?.id) {
+              await fetchBgTaskLiveLog(prefs.selectedThreadId, t.fullId || t.id, prov);
+            }
+          }
+          renderChatView(false);
+          showToast('Refreshed Side Agents & task traces');
+        }
+        return;
+      }
+      const previewFileEl = e.target.closest('[data-preview-file]');
+      if (previewFileEl) {
+        e.preventDefault();
+        e.stopPropagation();
+        const fileTarget = previewFileEl.dataset.previewFile || '';
+        if (fileTarget) {
+          if (prefs.activeTab !== 'chat') switchTab('chat');
+          setInspectorOpen(true, 'code', { fileTarget });
+        }
+        return;
+      }
+      const openAgentBtn = e.target.closest('[data-insp-open-agent]');
+      if (openAgentBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const agentId = openAgentBtn.dataset.inspOpenAgent || '';
+        const sid = openAgentBtn.dataset.sessId || prefs.selectedThreadId || '';
+        const prov = openAgentBtn.dataset.sessionProv || '';
+        if (sid && sid !== prefs.selectedThreadId) {
+          recentResumeUntil = 0;
+          ensureEditorTabOpen(sid);
+          setPinnedNav({ threadId: sid, provider: prov, durationMs: 45000 });
+          prefs.selectedThreadId = sid;
+          prefs.lastReplyThreadId = sid;
+          prefs.composerMode = 'reply';
+          saveJson(STORAGE_KEYS.PREFS, prefs);
+          fetchThreadDetail(sid, prov).catch(() => {});
+        }
+        if (prefs.activeTab !== 'chat') switchTab('chat');
+        setInspectorOpen(true, 'agents', { agentId });
+        if (sid && agentId) {
+          fetchBgTaskLiveLog(sid, agentId, prov).catch(() => {});
+        }
+        renderIdeSidebar();
+        return;
+      }
+      const openConvEl = e.target.closest('[data-open-conv]');
+      if (openConvEl) {
+        e.preventDefault();
+        e.stopPropagation();
+        const convId = String(openConvEl.dataset.openConv || '').trim();
+        if (convId) {
+          recentResumeUntil = 0;
+          ensureEditorTabOpen(convId);
+          setPinnedNav({ threadId: convId, durationMs: 45000 });
+          prefs.selectedThreadId = convId;
+          prefs.lastReplyThreadId = convId;
+          prefs.composerMode = 'reply';
+          saveJson(STORAGE_KEYS.PREFS, prefs);
+          if (prefs.activeTab !== 'chat') switchTab('chat');
+          renderChatView(true);
+          renderIdeSidebar();
+          fetchThreadDetail(convId).catch(() => {});
+        }
+        return;
+      }
+      const outlineJumpBtn = e.target.closest('[data-outline-jump]');
+      if (outlineJumpBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const anchor = outlineJumpBtn.dataset.outlineJump || '';
+        const detailKey = outlineJumpBtn.dataset.outlineDetail || '';
+        const streamEl = $('chat-stream');
+        if (streamEl && anchor) {
+          const candidates = Array.from(streamEl.querySelectorAll('[data-turn-anchor]'));
+          const targetEl = candidates.find((el) => el.dataset.turnAnchor === anchor);
+          if (detailKey) {
+            const detCandidates = Array.from(streamEl.querySelectorAll('details[data-chat-detail-key]'));
+            const detEl = detCandidates.find((d) => d.dataset.chatDetailKey === detailKey);
+            if (detEl) {
+              detEl.open = true;
+              detEl.dataset.renderedOpen = '1';
+              const openMap = getThreadOpenDetailsMap(prefs.selectedThreadId, true);
+              if (openMap) openMap.set(detailKey, true);
+            }
+          }
+          if (window.innerWidth <= 1024) {
+            setInspectorOpen(false);
+          }
+          if (targetEl) {
+            targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }
+        return;
+      }
+      const bgSideActBtn = e.target.closest('[data-bg-side-act]');
+      if (bgSideActBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const sideAct = bgSideActBtn.dataset.bgSideAct;
+        if (sideAct === 'unpin') {
+          prefs.pinnedBgSessionId = '';
+          saveJson(STORAGE_KEYS.PREFS, prefs);
+          renderIdeSidebar();
+        } else if (sideAct === 'stop-all') {
+          if (prefs.pinnedBgSessionId) {
+            const pinnedRow = (appState?.rows || []).find((r) => r.id === prefs.pinnedBgSessionId);
+            await cancelAllSessionBgTasks(prefs.pinnedBgSessionId, pinnedRow?.provider || 'antigravity');
+          } else {
+            const rows = (appState?.rows || []).filter((r) => r && r.id && !r.archived);
+            for (const r of rows) {
+              const { runningCount } = getSessionBackgroundTasks(r, threadsCache[r.id]);
+              if (runningCount > 0) {
+                await cancelAllSessionBgTasks(r.id, r.provider);
+              }
+            }
+          }
+        }
+        return;
+      }
+      const sessCtxBtn = e.target.closest('[data-sess-ctx-menu]');
+      if (sessCtxBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = sessCtxBtn.getBoundingClientRect();
+        openSessionContextMenu(sessCtxBtn.dataset.sessCtxMenu || '', rect.right - 160, rect.bottom + 4);
+        return;
+      }
+      const ctxActBtn = e.target.closest('[data-ctx-menu-act]');
+      if (ctxActBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (ctxMenuEl) ctxMenuEl.hidden = true;
+        const cAct = ctxActBtn.dataset.ctxMenuAct;
+        const sid = ctxActBtn.dataset.id || '';
+        const prov = ctxActBtn.dataset.prov || 'antigravity';
+        if (!sid) return;
+        if (cAct === 'open' || cAct === 'inspect-outline') {
+          recentResumeUntil = 0;
+          ensureEditorTabOpen(sid);
+          recordFreqUsage('threads', sid);
+          setPinnedNav({ threadId: sid, provider: prov, durationMs: 45000 });
+          prefs.selectedThreadId = sid;
+          prefs.lastReplyThreadId = sid;
+          prefs.composerMode = 'reply';
+          saveJson(STORAGE_KEYS.PREFS, prefs);
+          switchTab('chat');
+          if (cAct === 'inspect-outline') {
+            setInspectorOpen(true, 'outline');
+          }
+          renderIdeSidebar();
+          fetchThreadDetail(sid, prov).catch(() => {});
+        } else if (cAct === 'pin-bg') {
+          prefs.pinnedBgSessionId = prefs.pinnedBgSessionId === sid ? '' : sid;
+          saveJson(STORAGE_KEYS.PREFS, prefs);
+          renderIdeSidebar();
+          showToast(prefs.pinnedBgSessionId ? '📌 Pinned session Side Agents in sidebar' : 'Unpinned Side Agents');
+        } else if (cAct === 'open-vscode') {
+          await dispatchRemoteCommand({
+            type: 'sessionAction',
+            action: 'open',
+            subAction: 'open',
+            id: sid,
+            provider: prov
+          });
+          showToast('Opened session tab in desktop VS Code');
+        }
+        return;
+      }
+      const qDockStepBtn = e.target.closest('[data-q-dock-step]');
+      if (qDockStepBtn) {
+        const cardKey = qDockStepBtn.dataset.cardKey || '';
+        const nextStep = Number(qDockStepBtn.dataset.qDockStep || 0);
+        if (cardKey && Number.isFinite(nextStep)) {
+          activeDockStepByCardKey.set(cardKey, nextStep);
+          renderChatView(false);
+        }
+        return;
+      }
+
       // 0. Interactive VS Code Question & Recommendation Card Actions
       const qOptBtn = e.target.closest('[data-q-opt-toggle]');
       if (qOptBtn) {
@@ -9629,25 +11364,42 @@
           }
         }
 
-        const cardEl = qOptBtn.closest('[data-q-card]');
-        if (cardEl) {
+        // Mirror selection across sibling question cards (sidebar / dock / chat stream) for the same session
+        if (meta?.sessionId) {
+          for (const [sibKey, sibMeta] of renderedQuestionsByCardKey.entries()) {
+            if (sibKey !== cardKey && sibMeta?.sessionId === meta.sessionId) {
+              const sibDraft = getQuestionDraft(sibKey);
+              sibDraft.selectedByQ[qIdx] = new Set(selSet);
+            }
+          }
+        }
+
+        document.querySelectorAll('[data-q-card]').forEach((cardEl) => {
+          const cKey = cardEl.dataset.qCard || '';
+          const cMeta = renderedQuestionsByCardKey.get(cKey);
+          if (cKey !== cardKey && (!meta?.sessionId || cMeta?.sessionId !== meta.sessionId)) return;
           const blockEl = cardEl.querySelector(`[data-q-block="${qIdx}"]`) || cardEl;
           blockEl.querySelectorAll(`[data-q-opt-toggle][data-q-idx="${qIdx}"]`).forEach((btn) => {
             const idx = String(btn.dataset.optIdx || '');
             const active = selSet.has(idx);
             btn.classList.toggle('is-selected', active);
+            btn.classList.toggle('selected', active);
             btn.setAttribute('aria-pressed', active ? 'true' : 'false');
             const chk = btn.querySelector('.vs-q-check');
             if (chk) chk.textContent = active ? '✓' : '';
           });
-          const qCount = meta?.questions?.length || 1;
-          const anyToolPerm = Boolean(meta?.questions?.some((q) => q.isToolPermission));
-          const totalCount = countDraftSelections(draft, qCount);
+          const cDraft = getQuestionDraft(cKey);
+          const qCount = cMeta?.questions?.length || meta?.questions?.length || 1;
+          const anyToolPerm = Boolean((cMeta?.questions || meta?.questions)?.some((q) => q.isToolPermission));
+          const totalCount = countDraftSelections(cDraft, qCount);
           const subBtn = cardEl.querySelector('[data-q-submit]');
           if (subBtn) {
-            subBtn.textContent = `✓ ${anyToolPerm ? (totalCount > 0 ? `Confirm (${totalCount})` : 'Yes (Allow)') : `Submit Answer${totalCount > 0 ? ` (${totalCount})` : ''}`}`;
+            const isShortSub = cardEl.classList.contains('sb-q-card');
+            subBtn.textContent = isShortSub
+              ? `✓ ${anyToolPerm ? 'Allow' : 'Submit'}${totalCount > 0 ? ` (${totalCount})` : ''}`
+              : `✓ ${anyToolPerm ? (totalCount > 0 ? `Confirm (${totalCount})` : 'Yes (Allow)') : `Submit Answer${totalCount > 0 ? ` (${totalCount})` : ''}`}`;
           }
-        }
+        });
         return;
       }
 
@@ -10914,6 +12666,15 @@
           const bgPop = $('bg-tasks-popover');
           if (bgPop) bgPop.hidden = false;
           renderChatView();
+        } else if (act === 'inspector') {
+          if (prefs.activeTab !== 'chat') switchTab('chat');
+          setInspectorOpen(!prefs.inspectorOpen);
+        } else if (act === 'palette') {
+          const pPop = $('theme-palette-popover');
+          if (pPop) {
+            syncPalettePickerUi();
+            pPop.hidden = false;
+          }
         } else if (act === 'compact') {
           if (isNewSessionMode() || !cleanTargetThreadId(prefs.selectedThreadId)) {
             showToast('Select an active session first to run /compact');
@@ -10926,6 +12687,52 @@
         }
       }
     });
+
+    // Desktop Sidebar Rich Hover Card & Right-Click Context Menu
+    const sideTree = $('ide-sidebar-tree');
+    if (sideTree) {
+      sideTree.addEventListener('contextmenu', (e) => {
+        if (isPinLocked()) return;
+        const rowEl = e.target.closest?.('.ide-tree-row[data-ide-open-session]');
+        if (rowEl && rowEl.dataset.ideOpenSession) {
+          e.preventDefault();
+          openSessionContextMenu(rowEl.dataset.ideOpenSession, e.clientX, e.clientY);
+        }
+      });
+      sideTree.addEventListener('pointerover', (e) => {
+        if (isPinLocked() || e.pointerType === 'touch') return;
+        const rowEl = e.target.closest?.('.ide-tree-row[data-ide-open-session]');
+        if (!rowEl) return;
+        if (sidebarHoverTimer) clearTimeout(sidebarHoverTimer);
+        sidebarHoverTimer = setTimeout(() => {
+          showSidebarHoverCard(rowEl);
+        }, 200);
+      });
+      sideTree.addEventListener('pointerout', (e) => {
+        const nextRow = e.relatedTarget?.closest?.('.ide-tree-row[data-ide-open-session]');
+        const curRow = e.target?.closest?.('.ide-tree-row[data-ide-open-session]');
+        if (curRow && curRow !== nextRow) {
+          if (sidebarHoverTimer) {
+            clearTimeout(sidebarHoverTimer);
+            sidebarHoverTimer = 0;
+          }
+          const hc = $('ide-hover-card');
+          if (hc) hc.hidden = true;
+        }
+      });
+      sideTree.addEventListener(
+        'scroll',
+        () => {
+          if (sidebarHoverTimer) {
+            clearTimeout(sidebarHoverTimer);
+            sidebarHoverTimer = 0;
+          }
+          const hc = $('ide-hover-card');
+          if (hc) hc.hidden = true;
+        },
+        { passive: true }
+      );
+    }
 
     // Theme, Sound, Sync buttons
     $('btn-theme-toggle')?.addEventListener('click', () =>
@@ -11309,12 +13116,45 @@
     $('cmd-input')?.addEventListener('input', (e) => renderCommandPaletteResults(e.target.value));
     window.addEventListener('keydown', (e) => {
       if (isPinLocked()) return;
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         openCommandPalette();
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
+      } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'b') {
         e.preventDefault();
         toggleIdeSidebar();
+      } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'i') {
+        e.preventDefault();
+        if (prefs.activeTab !== 'chat') switchTab('chat');
+        setInspectorOpen(!prefs.inspectorOpen);
+      } else if (
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        /^[1-9]$/.test(e.key) &&
+        prefs.activeTab === 'chat'
+      ) {
+        const ae = document.activeElement;
+        const inField = Boolean(
+          ae &&
+            (ae.tagName === 'INPUT' ||
+              ae.tagName === 'TEXTAREA' ||
+              ae.tagName === 'SELECT' ||
+              ae.isContentEditable)
+        );
+        const anyModalOpen = Boolean(
+          ($('cmd-modal') && !$('cmd-modal').hidden) ||
+            ($('conn-modal') && !$('conn-modal').hidden) ||
+            ($('notif-modal') && !$('notif-modal').hidden)
+        );
+        const dock = $('chat-question-dock');
+        if (!inField && !anyModalOpen && dock && !dock.hidden && getComputedStyle(dock).display !== 'none') {
+          const optBtns = dock.querySelectorAll('[data-q-opt-toggle]');
+          const targetOpt = optBtns[Number(e.key) - 1];
+          if (targetOpt) {
+            e.preventDefault();
+            targetOpt.click();
+          }
+        }
       } else if (e.key === 'Enter' && !e.shiftKey) {
         const t = e.target;
         if (t && t.matches && t.matches('[data-pair-code-input], #input-pair-six-code')) {
@@ -11328,10 +13168,17 @@
           $('btn-apply-pair-token')?.click();
         }
       } else if (e.key === 'Escape') {
+        closeFloatingUiMenus();
         closeSlashPopover();
         closeCommandPalette();
         closeConnModal();
         closeNotifModal();
+        if (
+          prefs.inspectorOpen &&
+          (window.innerWidth <= 1024 || document.activeElement?.closest?.('#ide-inspector-pane'))
+        ) {
+          setInspectorOpen(false);
+        }
       }
     });
 
@@ -11341,6 +13188,12 @@
 
     window.addEventListener('popstate', (ev) => {
       if (isPinLocked()) return;
+      const palPop = $('theme-palette-popover');
+      const ctxMenu = $('ide-context-menu');
+      if ((palPop && !palPop.hidden) || (ctxMenu && !ctxMenu.hidden)) {
+        closeFloatingUiMenus();
+        return;
+      }
       const cmdModal = $('cmd-modal');
       if (cmdModal && !cmdModal.hidden) {
         closeCommandPalette();
@@ -11364,6 +13217,10 @@
       const ctxPop = $('ctx-popover');
       if (ctxPop && !ctxPop.hidden) {
         ctxPop.hidden = true;
+        return;
+      }
+      if (window.innerWidth <= 1024 && prefs.inspectorOpen) {
+        setInspectorOpen(false);
         return;
       }
       const targetTab = ev.state?.theoTab || 'pulse';
@@ -12079,7 +13936,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=58', { updateViaCache: 'none' })
+        .register('sw.js?v=59', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

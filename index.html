@@ -1,22 +1,22 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="dark" data-palette="graphite">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-  <meta name="theme-color" content="#0D0F14" id="meta-theme-color">
+  <meta name="theme-color" content="#141417" id="meta-theme-color">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="THEO">
   <meta name="description" content="THEO — AI Coding &amp; Session Workbench for Google Antigravity and Claude Code.">
   <title>THEO — AI Session Workbench</title>
-  <link rel="manifest" href="manifest.json?v=58">
-  <link rel="icon" type="image/svg+xml" href="icon.svg?v=58">
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=58">
-  <link rel="apple-touch-icon" href="icon-180.png?v=58">
+  <link rel="manifest" href="manifest.json?v=59">
+  <link rel="icon" type="image/svg+xml" href="icon.svg?v=59">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=59">
+  <link rel="apple-touch-icon" href="icon-180.png?v=59">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/theo.css?v=58">
+  <link rel="stylesheet" href="css/theo.css?v=59">
   <script id="pre">
     (() => {
       try {
@@ -24,9 +24,19 @@
         const raw = localStorage.getItem('theo_remote_prefs_v1');
         const p = raw ? JSON.parse(raw) : null;
         const t = p && p.themeUserSet && (p.theme === 'dark' || p.theme === 'light') ? p.theme : 'dark';
+        const rawPal = p && typeof p.palette === 'string' ? p.palette : '';
+        const pal = t === 'light'
+          ? 'daylight'
+          : (rawPal === 'velvet' || rawPal === 'espresso' || rawPal === 'graphite' ? rawPal : 'graphite');
         d.setAttribute('data-theme', t);
+        d.setAttribute('data-palette', pal);
         const m = document.getElementById('meta-theme-color');
-        if (m) m.setAttribute('content', t === 'light' ? '#F3F5F9' : '#0D0F14');
+        if (m) {
+          m.setAttribute(
+            'content',
+            t === 'light' ? '#F6F5F0' : pal === 'velvet' ? '#0C0D12' : pal === 'espresso' ? '#191614' : '#141417'
+          );
+        }
         if (p && p.sidebarCollapsed) {
           d.classList.add('sidebar-collapsed');
         }
@@ -45,7 +55,7 @@
   <div id="pin-overlay" class="pin-overlay" hidden>
     <div class="pin-card">
       <div class="pin-brand">
-        <img src="icon.svg?v=58" alt="THEO" class="pin-logo">
+        <img src="icon.svg?v=59" alt="THEO" class="pin-logo">
         <div class="pin-title">THEO REMOTE</div>
         <div class="brass-double-rule"></div>
       </div>
@@ -75,7 +85,7 @@
     <aside class="ink-rail" id="ink-rail" aria-label="Primary Navigation">
       <div class="ide-activity-bar">
         <button type="button" class="activity-brand-btn" id="btn-activity-brand" data-sidebar-collapse="1" data-tip="THEO Workbench (⌘B)" aria-label="Toggle THEO Explorer Sidebar">
-          <img src="icon.svg?v=58" alt="THEO" class="brand-badge">
+          <img src="icon.svg?v=59" alt="THEO" class="brand-badge">
         </button>
 
         <nav class="rail-nav" id="rail-nav">
@@ -117,7 +127,10 @@
             <span class="conn-dot" id="rail-push-dot" style="position:absolute;top:5px;right:5px;width:6px;height:6px;box-shadow:none"></span>
             <span class="push-count-badge tabular" id="rail-push-badge" hidden>0</span>
           </button>
-          <button type="button" class="icon-btn" id="btn-theme-toggle" data-tip="Toggle Theme" aria-label="Toggle theme">
+          <button type="button" class="icon-btn" id="btn-palette-picker" data-palette-open="1" data-tip="Studio Palettes" aria-label="Choose Studio Color Palette" aria-expanded="false">
+            <svg viewBox="0 0 20 20"><path d="M10 2.8a7.2 7.2 0 1 0 0 14.4 1.6 1.6 0 0 0 1.6-1.6c0-.4-.15-.78-.4-1.06a1.5 1.5 0 0 1 1.12-2.54h1.28a3.6 3.6 0 0 0 3.6-3.6C17.2 5.2 13.98 2.8 10 2.8z" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linejoin="round"/><circle cx="6.8" cy="8.2" r="1" fill="currentColor"/><circle cx="9.8" cy="6.4" r="1" fill="currentColor"/><circle cx="13" cy="8.2" r="1" fill="currentColor"/></svg>
+          </button>
+          <button type="button" class="icon-btn" id="btn-theme-toggle" data-tip="Toggle Dark / Light" aria-label="Toggle theme">
             <svg viewBox="0 0 20 20"><path d="M10 3a7 7 0 1 0 7 7c0-.4-.04-.8-.1-1.2A5.5 5.5 0 0 1 11.2 3.1C10.8 3.04 10.4 3 10 3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
           </button>
           <button type="button" class="icon-btn" id="btn-sound-toggle" data-tip="Toggle Chime" aria-label="Toggle notification chime">
@@ -174,6 +187,37 @@
         <!-- Live Approvals Strip inside Sidebar when Waiting -->
         <div class="ide-side-approvals" id="ide-sidebar-approvals" hidden></div>
 
+        <!-- Collapsible Interactive Questions Section (VS Code Hub Parity) -->
+        <details class="ide-side-section ide-sec-questions" id="ide-sec-questions" open hidden>
+          <summary class="ide-side-summary">
+            <span class="ide-side-summary-left">
+              <span class="ide-chevron">▾</span>
+              <span>QUESTIONS</span>
+              <span class="ide-side-count amber tabular" id="ide-questions-count">0</span>
+            </span>
+            <span class="ide-side-summary-right">
+              <span class="ide-link-text" role="button" tabindex="0" data-goto-tab="pulse">Queue</span>
+            </span>
+          </summary>
+          <div class="ide-questions-body" id="ide-sidebar-questions"></div>
+        </details>
+
+        <!-- Collapsible Side Agents & Background Tasks Section (VS Code Hub Parity) -->
+        <details class="ide-side-section ide-sec-bgtasks" id="ide-sec-bgtasks" open hidden>
+          <summary class="ide-side-summary">
+            <span class="ide-side-summary-left">
+              <span class="ide-chevron">▾</span>
+              <span id="ide-bgtasks-heading">SIDE AGENTS &amp; TASKS</span>
+              <span class="ide-side-count emerald tabular" id="ide-bgtasks-count">0</span>
+            </span>
+            <span class="ide-side-summary-right">
+              <span class="ide-link-pill" id="ide-bgtasks-unpin" role="button" tabindex="0" data-bg-side-act="unpin" hidden>All</span>
+              <span class="ide-link-pill danger" id="ide-bgtasks-stop-all" role="button" tabindex="0" data-bg-side-act="stop-all" hidden>■ Stop</span>
+            </span>
+          </summary>
+          <div class="ide-bgtasks-body" id="ide-sidebar-bgtasks"></div>
+        </details>
+
         <!-- Session Manager Tree (VS Code Hub Parity) -->
         <div class="ide-side-sessions">
           <div class="ide-side-summary static">
@@ -219,7 +263,7 @@
       <!-- Mobile & Compact Top Header -->
       <header class="mobile-topbar">
         <div class="mobile-brand">
-          <img src="icon.svg?v=58" alt="THEO" class="mobile-badge">
+          <img src="icon.svg?v=59" alt="THEO" class="mobile-badge">
           <div class="mobile-brand-copy">
             <div class="mobile-title-row">
               <div class="mobile-wordmark-stack">
@@ -448,6 +492,14 @@
                 </span>
                 <span id="ctx-pill-label">14k · 7%</span>
               </button>
+              <button type="button" class="inspector-toggle-pill tabular" id="btn-toggle-inspector" aria-label="Toggle Split Inspector (Ctrl+I)" aria-expanded="false" aria-controls="ide-inspector-pane">
+                <svg class="insp-pill-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="1.5" y="2.5" width="13" height="11" rx="1.6"/>
+                  <path d="M9.8 2.5v11"/>
+                </svg>
+                <span class="insp-pill-lbl">Inspector</span>
+                <span class="insp-pill-badge" id="inspector-pill-count" hidden>0</span>
+              </button>
               <button type="button" class="btn-ghost-sm" id="btn-chat-open-vscode" aria-label="Reveal this session tab in VS Code on laptop">
                 Open in IDE
               </button>
@@ -489,70 +541,100 @@
             </div>
           </div>
 
-          <!-- Conversation Stream -->
-          <div class="chat-stream" id="chat-stream"></div>
+          <!-- Split Workbench Body: Primary Conversation Column + Collapsible Right-Hand IDE Inspector -->
+          <div class="chat-workbench-split" id="chat-workbench-split">
+            <div class="chat-primary-col" id="chat-primary-col">
+              <!-- Conversation Stream -->
+              <div class="chat-stream" id="chat-stream"></div>
 
-          <!-- Live Active Background Tasks Strip -->
-          <div class="chat-live-bgtasks" id="chat-live-bgtasks" hidden></div>
+              <!-- Docked Active Multi-Question Stepper Bar -->
+              <div class="chat-question-dock" id="chat-question-dock" hidden></div>
 
-          <!-- Floating VS Code Command Capsule Composer -->
-          <form class="chat-composer" id="chat-composer-form">
-            <div class="composer-box" id="composer-box">
-              <!-- Interactive / & @ Autocomplete Popover -->
-              <div class="composer-slash-popover" id="composer-slash-popover" role="listbox" aria-label="Autocomplete suggestions" hidden></div>
+              <!-- Live Active Background Tasks Strip -->
+              <div class="chat-live-bgtasks" id="chat-live-bgtasks" hidden></div>
 
-              <div class="composer-attachments" id="composer-attachments" hidden></div>
+              <!-- Floating VS Code Command Capsule Composer -->
+              <form class="chat-composer" id="chat-composer-form">
+                <div class="composer-box" id="composer-box">
+                  <!-- Interactive / & @ Autocomplete Popover -->
+                  <div class="composer-slash-popover" id="composer-slash-popover" role="listbox" aria-label="Autocomplete suggestions" hidden></div>
 
-              <div class="composer-input-row">
-                <textarea id="composer-input" rows="1" placeholder="Ask anything, @ to mention workspace, / for actions…"></textarea>
-              </div>
+                  <div class="composer-attachments" id="composer-attachments" hidden></div>
 
-              <div class="composer-footer-bar">
-                <div class="composer-footer-left">
-                  <input type="file" id="composer-file-input" multiple accept="image/*,.pdf,.txt,.md,.json,.csv,.py,.js,.ts,.tsx,.jsx,.html,.css,.sql,.xml,.yaml,.yml,.ps1,.sh,.log" hidden>
-                  <button type="button" class="composer-icon-pill composer-attach-btn" id="btn-composer-attach" aria-label="Attach file, screenshot, or photo">
-                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4.5v11M4.5 10h11"/></svg>
-                  </button>
-                  <button type="button" class="composer-icon-pill" id="btn-composer-mention" aria-label="Mention workspace or file">@</button>
-                  <button type="button" class="composer-icon-pill" id="btn-composer-slash" aria-label="Run slash action">/</button>
+                  <div class="composer-input-row">
+                    <textarea id="composer-input" rows="1" placeholder="Ask anything, @ to mention workspace, / for actions…"></textarea>
+                  </div>
 
-                  <div class="composer-target-bar">
-                    <div class="composer-mode-pills" id="composer-mode-pills">
-                      <button type="button" class="target-pill active" id="comp-mode-reply" data-comp-mode="reply">Reply</button>
-                      <button type="button" class="target-pill" id="comp-mode-new-agy" data-comp-mode="new-antigravity">+ AGY</button>
-                      <button type="button" class="target-pill" id="comp-mode-new-claude" data-comp-mode="new-claude">+ Claude</button>
+                  <div class="composer-footer-bar">
+                    <div class="composer-footer-left">
+                      <input type="file" id="composer-file-input" multiple accept="image/*,.pdf,.txt,.md,.json,.csv,.py,.js,.ts,.tsx,.jsx,.html,.css,.sql,.xml,.yaml,.yml,.ps1,.sh,.log" hidden>
+                      <button type="button" class="composer-icon-pill composer-attach-btn" id="btn-composer-attach" aria-label="Attach file, screenshot, or photo">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4.5v11M4.5 10h11"/></svg>
+                      </button>
+                      <button type="button" class="composer-icon-pill" id="btn-composer-mention" aria-label="Mention workspace or file">@</button>
+                      <button type="button" class="composer-icon-pill" id="btn-composer-slash" aria-label="Run slash action">/</button>
+
+                      <div class="composer-target-bar">
+                        <div class="composer-mode-pills" id="composer-mode-pills">
+                          <button type="button" class="target-pill active" id="comp-mode-reply" data-comp-mode="reply">Reply</button>
+                          <button type="button" class="target-pill" id="comp-mode-new-agy" data-comp-mode="new-antigravity">+ AGY</button>
+                          <button type="button" class="target-pill" id="comp-mode-new-claude" data-comp-mode="new-claude">+ Claude</button>
+                        </div>
+                      </div>
+
+                      <div class="composer-routing-row" id="composer-routing-row">
+                        <label class="composer-route-pill" aria-label="Select target machine">
+                          <span class="route-pill-lbl">Host</span>
+                          <select id="composer-device-select" class="composer-route-select" aria-label="Target device">
+                            <option value="auto">Auto (Active Host)</option>
+                          </select>
+                        </label>
+                        <label class="composer-route-pill" aria-label="Select working directory or BHFIRMS repo">
+                          <span class="route-pill-lbl">Repo</span>
+                          <select id="composer-repo-select" class="composer-route-select" aria-label="Target workspace">
+                            <option value="">Default Workspace</option>
+                          </select>
+                        </label>
+                        <button type="button" class="direct-stream-pill active" id="composer-direct-toggle" aria-label="Toggle Direct CLI Stream">
+                          ⚡ Direct
+                        </button>
+                      </div>
+                    </div>
+
+                    <div class="composer-footer-right">
+                      <span class="outbox-indicator tabular" id="outbox-indicator" hidden>0 queued</span>
+                      <button type="submit" class="composer-send-btn" id="composer-send-btn" aria-label="Dispatch Prompt">
+                        <svg class="icon-send" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 15.5V4.5M5.25 9.25L10 4.5l4.75 4.75"/></svg>
+                        <svg class="icon-stop" viewBox="0 0 20 20"><rect x="5" y="5" width="10" height="10" rx="2.2" fill="currentColor"/></svg>
+                      </button>
                     </div>
                   </div>
-
-                  <div class="composer-routing-row" id="composer-routing-row">
-                    <label class="composer-route-pill" aria-label="Select target machine">
-                      <span class="route-pill-lbl">Host</span>
-                      <select id="composer-device-select" class="composer-route-select" aria-label="Target device">
-                        <option value="auto">Auto (Active Host)</option>
-                      </select>
-                    </label>
-                    <label class="composer-route-pill" aria-label="Select working directory or BHFIRMS repo">
-                      <span class="route-pill-lbl">Repo</span>
-                      <select id="composer-repo-select" class="composer-route-select" aria-label="Target workspace">
-                        <option value="">Default Workspace</option>
-                      </select>
-                    </label>
-                    <button type="button" class="direct-stream-pill active" id="composer-direct-toggle" aria-label="Toggle Direct CLI Stream">
-                      ⚡ Direct
-                    </button>
-                  </div>
                 </div>
+              </form>
+            </div>
 
-                <div class="composer-footer-right">
-                  <span class="outbox-indicator tabular" id="outbox-indicator" hidden>0 queued</span>
-                  <button type="submit" class="composer-send-btn" id="composer-send-btn" aria-label="Dispatch Prompt">
-                    <svg class="icon-send" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 15.5V4.5M5.25 9.25L10 4.5l4.75 4.75"/></svg>
-                    <svg class="icon-stop" viewBox="0 0 20 20"><rect x="5" y="5" width="10" height="10" rx="2.2" fill="currentColor"/></svg>
+            <!-- Right-Hand Split Inspector (Code & Diffs | Side Agents | Outline & Plan) -->
+            <div class="ide-inspector-backdrop" id="ide-inspector-backdrop" hidden></div>
+            <aside class="ide-inspector-pane" id="ide-inspector-pane" aria-label="IDE Split Inspector" hidden>
+              <div class="ide-inspector-head">
+                <div class="ide-inspector-tabs" id="ide-inspector-tabs" role="tablist">
+                  <button type="button" class="ide-insp-tab active" role="tab" aria-selected="true" data-insp-tab="code">
+                    <span>Code &amp; Diff</span>
+                  </button>
+                  <button type="button" class="ide-insp-tab" role="tab" aria-selected="false" data-insp-tab="agents">
+                    <span>Side Agents</span>
+                    <span class="ide-insp-badge tabular" id="insp-agents-badge" hidden>0</span>
+                  </button>
+                  <button type="button" class="ide-insp-tab" role="tab" aria-selected="false" data-insp-tab="outline">
+                    <span>Outline</span>
                   </button>
                 </div>
+                <button type="button" class="icon-btn-sm" id="btn-close-inspector" aria-label="Close Split Inspector">✕</button>
               </div>
-            </div>
-          </form>
+              <div class="ide-inspector-subbar" id="ide-inspector-subbar" hidden></div>
+              <div class="ide-inspector-body" id="ide-inspector-body"></div>
+            </aside>
+          </div>
         </section>
 
         <!-- VIEW 4: WORKSPACES & GIT INSPECTOR -->
@@ -697,10 +779,54 @@
     </div>
   </div>
 
+  <!-- Studio Theme & Palette Picker Popover -->
+  <div class="theme-palette-popover" id="theme-palette-popover" role="dialog" aria-label="Studio Appearance Palettes" hidden>
+    <div class="palette-pop-head">
+      <span>STUDIO PALETTE</span>
+      <button type="button" class="icon-btn-sm" id="btn-close-palette" aria-label="Close Palette Menu">✕</button>
+    </div>
+    <div class="palette-grid" id="palette-grid">
+      <button type="button" class="palette-option" data-set-palette="graphite">
+        <span class="palette-swatch sw-graphite"><i></i><b></b></span>
+        <span class="palette-copy">
+          <strong>VS Code Graphite</strong>
+          <small>Neutral matte charcoal · Default</small>
+        </span>
+      </button>
+      <button type="button" class="palette-option" data-set-palette="velvet">
+        <span class="palette-swatch sw-velvet"><i></i><b></b></span>
+        <span class="palette-copy">
+          <strong>Obsidian Velvet</strong>
+          <small>OLED deep slate &amp; champagne</small>
+        </span>
+      </button>
+      <button type="button" class="palette-option" data-set-palette="espresso">
+        <span class="palette-swatch sw-espresso"><i></i><b></b></span>
+        <span class="palette-copy">
+          <strong>Warm Espresso</strong>
+          <small>Zero-blue-light warm umber</small>
+        </span>
+      </button>
+      <button type="button" class="palette-option" data-set-palette="daylight">
+        <span class="palette-swatch sw-daylight"><i></i><b></b></span>
+        <span class="palette-copy">
+          <strong>Studio Daylight</strong>
+          <small>Warm ivory paper &amp; crisp ink</small>
+        </span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Sidebar Session Rich Hover Preview Card (Zero native [title] tooltips) -->
+  <div class="ide-hover-card" id="ide-hover-card" aria-hidden="true" hidden></div>
+
+  <!-- Session Context Menu -->
+  <div class="ide-context-menu" id="ide-context-menu" role="menu" hidden></div>
+
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=58"></script>
-  <script src="js/app.js?v=58"></script>
+  <script src="js/endpoints.js?v=59"></script>
+  <script src="js/app.js?v=59"></script>
 </body>
 </html>

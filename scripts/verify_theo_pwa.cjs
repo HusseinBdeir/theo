@@ -48,6 +48,38 @@ function startStaticServer(rootDir) {
     const srv = http.createServer((req, res) => {
       try {
         const u = new URL(req.url, 'http://127.0.0.1');
+        if (u.pathname === '/api/ping') {
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ ok: true, service: 'theo-mock-local', authRequired: false }));
+          return;
+        }
+        if (u.pathname === '/api/file-preview') {
+          const reqPath = String(u.searchParams.get('path') || '').trim();
+          if (!reqPath || reqPath.includes('..') || /\.(env|dev\.vars|sqlite)/i.test(reqPath)) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: 'Blocked sensitive or outside-workspace path' }));
+            return;
+          }
+          const isSlow = /slow\d*\.js/i.test(reqPath);
+          const delayMs = isSlow ? 130 : 8;
+          const lines = Array.from({ length: 30 }, (_, i) => `const line_${i + 1} = "${reqPath.replace(/"/g, '')}:${i + 1}";`);
+          setTimeout(() => {
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+            res.end(
+              JSON.stringify({
+                ok: true,
+                workspaceId: 'theo',
+                workspaceName: 'theo',
+                relPath: reqPath.replace(/^.*bhfirms[\\/]+theo[\\/]+/i, '').replace(/\\/g, '/'),
+                lineCount: lines.length,
+                truncated: false,
+                content: lines.join('\n'),
+                gitDiff: `@@ -10,2 +10,2 @@\n-const oldVal = false;\n+const newVal = true;`
+              })
+            );
+          }, delayMs);
+          return;
+        }
         let rel = decodeURIComponent(u.pathname);
         if (rel === '/' || rel === '') rel = '/index.html';
         const filePath = path.resolve(rootDir, '.' + rel);
@@ -1394,6 +1426,393 @@ async function main() {
     assert.strictEqual(workbenchProbe.selectedAfterNestedKeydown, 'sess-beta', 'Nested action keydown must not open outer session row');
     assert.strictEqual(workbenchProbe.selectedAfterCloseNew, 'sess-beta', 'Closing __new__ draft tab must return cleanly to last reply tab');
     console.log('[PASS] Adversarial #9: Desktop split-workbench geometry, <details> re-render persistence, keyboard tab/action guards & draft-tab close verified');
+
+    // -------------------------------------------------------------------------
+    // Adversarial Check #10: v59 Studio Depth — 4-Palette Switcher, Sidebar
+    // Questions & Side Agents, Compacted Thinking/Checkpoints, Docked Question
+    // Stepper, Split Inspector (Code/Diff/Agents/Outline), Race & PIN Guards
+    // -------------------------------------------------------------------------
+    await cdp.send(
+      'Emulation.setDeviceMetricsOverride',
+      { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false },
+      sessionId
+    );
+    const v59DesktopProbe = await evalJs(`(async () => {
+      // Point customBridgeUrl to local test server so fetchSafeFilePreview exercises live HTTP /api/file-preview without external network
+      const prefsRaw = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+      prefsRaw.customBridgeUrl = location.origin;
+      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefsRaw));
+
+      // 1. Test 4-Palette Switcher + Negative Test #1 (invalid/hostile palette fallback)
+      document.getElementById('btn-palette-picker')?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      const popOpen = document.getElementById('theme-palette-popover')?.hidden === false;
+
+      document.querySelector('[data-set-palette="velvet"]')?.click();
+      await new Promise((r) => setTimeout(r, 20));
+      const palVelvet = document.documentElement.dataset.palette;
+      const themeVelvet = document.documentElement.dataset.theme;
+
+      document.getElementById('btn-palette-picker')?.click();
+      document.querySelector('[data-set-palette="daylight"]')?.click();
+      await new Promise((r) => setTimeout(r, 20));
+      const palDaylight = document.documentElement.dataset.palette;
+      const themeDaylight = document.documentElement.dataset.theme;
+
+      // Negative #1: Inject hostile palette button and click it -> must reject unknown palette without mutating state or triggering XSS
+      const bogusBtn = document.createElement('button');
+      bogusBtn.setAttribute('data-set-palette', '<img src=x onerror="window.__XSS=90">');
+      document.body.appendChild(bogusBtn);
+      bogusBtn.click();
+      bogusBtn.remove();
+      await new Promise((r) => setTimeout(r, 20));
+      const palAfterHostile = document.documentElement.dataset.palette;
+
+      // Switch to default VS Code Graphite palette
+      document.getElementById('btn-palette-picker')?.click();
+      document.querySelector('[data-set-palette="graphite"]')?.click();
+      await new Promise((r) => setTimeout(r, 20));
+      const palGraphite = document.documentElement.dataset.palette;
+      const themeGraphite = document.documentElement.dataset.theme;
+      const metaThemeGraphite = document.getElementById('meta-theme-color')?.getAttribute('content');
+
+      // 2. Seed rich v59 session with multi-step thoughtBlocks, /compact checkpoint, invoke_subagent, file chips, and multi-question approval
+      const cache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+      const now = Date.now();
+      cache.state.rows.unshift({
+        id: 'sess-v59',
+        title: 'Studio v59 Deep Upgrade',
+        provider: 'antigravity',
+        model: 'Gemini 3.1 Pro',
+        cwd: 'C:\\\\Users\\\\hbdei\\\\bhfirms\\\\theo',
+        folder: 'theo',
+        branch: 'main',
+        status: 'waiting',
+        statusLabel: 'Waiting for input',
+        dot: 'waiting',
+        open: true,
+        at: now,
+        backgroundTasks: [
+          {
+            id: 'task-v59-live',
+            kind: 'task',
+            state: 'running',
+            summary: 'Live CDP verification runner',
+            startedAt: now - 12000,
+            outputPreview: '[PASS] Watching studio layout'
+          }
+        ]
+      });
+      cache.state.approvals = [
+        {
+          id: 'app-v59',
+          approvalId: 'app-v59',
+          sessionId: 'sess-v59',
+          provider: 'antigravity',
+          title: 'Architecture Alignment',
+          questions: [
+            {
+              question: 'Which Studio palette should be default? <img src=x onerror="window.__XSS=91">',
+              options: ['(Recommended) VS Code Graphite', 'Obsidian Velvet']
+            },
+            {
+              question: 'Enable Split Inspector shortcut?',
+              options: ['(Recommended) Yes (Ctrl+I)', 'Manual button only']
+            }
+          ]
+        }
+      ];
+      cache.threads['sess-v59'] = {
+        id: 'sess-v59',
+        provider: 'antigravity',
+        title: 'Studio v59 Deep Upgrade',
+        messages: [
+          { id: 'u-1', role: 'user', createdAt: new Date(now - 90000).toISOString(), text: 'Upgrade THEO Studio depth.' },
+          { id: 'cp-1', role: 'checkpoint', createdAt: new Date(now - 60000).toISOString(), text: 'Compacted 184k tokens into clean Studio v59 checkpoint.' },
+          {
+            id: 'a-1',
+            role: 'assistant',
+            createdAt: new Date(now - 15000).toISOString(),
+            thinking: 'Step 1 analysis\\n\\nStep 2 verify layout',
+            thinkingDurationSec: 9,
+            thoughtBlocks: [
+              { text: 'Mapped VS Code Graphite tokens and sand inline code.', durationSec: 4 },
+              { text: 'Audited 7 axes <img src=x onerror="window.__XSS=92">', durationSec: 5 }
+            ],
+            text: 'Updated [app.js#L10-L14](file:///C:/Users/hbdei/bhfirms/theo/js/app.js#L10-L14), [slow.js](file:///C:/Users/hbdei/bhfirms/theo/js/slow.js), [slow2.js](file:///C:/Users/hbdei/bhfirms/theo/js/slow2.js), [.env](file:///C:/Users/hbdei/bhfirms/theo/.env), and \`inlineSymbol\` pill.',
+            artifacts: [
+              { title: 'Studio v59 Walkthrough', summary: 'Visual and interactive architecture summary.', content: 'All checks green.' }
+            ],
+            toolCalls: [
+              {
+                id: 'sub-call-1',
+                name: 'invoke_subagent',
+                kind: 'subagent',
+                subagentRole: 'Red-Team Gate Auditor <img src=x onerror="window.__XSS=93">',
+                subagentType: 'red-team-gate',
+                subagentPrompt: 'Audit git diff across all 7 Universal Axes.',
+                subagentConversationId: 'sess-beta'
+              },
+              {
+                name: 'edit_file',
+                kind: 'edit',
+                file: 'js/app.js#L10-L14',
+                relPath: 'js/app.js',
+                lineRange: 'L10-L14',
+                addedLines: 18,
+                removedLines: 4,
+                snippet: '@@ -10,2 +10,2 @@\\n-old\\n+new'
+              }
+            ]
+          }
+        ]
+      };
+      localStorage.setItem('theo_remote_cache_v3', JSON.stringify(cache));
+      return {
+        popOpen,
+        palVelvet,
+        themeVelvet,
+        palDaylight,
+        themeDaylight,
+        palAfterHostile,
+        palGraphite,
+        themeGraphite,
+        metaThemeGraphite
+      };
+    })()`);
+
+    assert.strictEqual(v59DesktopProbe.popOpen, true, 'Palette picker popover must open on #btn-palette-picker click');
+    assert.strictEqual(v59DesktopProbe.palVelvet, 'velvet', 'Expected velvet palette');
+    assert.strictEqual(v59DesktopProbe.themeVelvet, 'dark', 'Velvet must keep dark base theme');
+    assert.strictEqual(v59DesktopProbe.palDaylight, 'daylight', 'Expected daylight palette');
+    assert.strictEqual(v59DesktopProbe.themeDaylight, 'light', 'Daylight must switch base theme to light');
+    assert.strictEqual(v59DesktopProbe.palAfterHostile, 'daylight', 'Hostile palette string must be rejected by strict allowlist without mutating current palette');
+    assert.strictEqual(v59DesktopProbe.palGraphite, 'graphite', 'Clicking graphite preset must apply graphite');
+    assert.strictEqual(v59DesktopProbe.themeGraphite, 'dark', 'Graphite must set dark theme');
+    assert.strictEqual(v59DesktopProbe.metaThemeGraphite, '#141417', 'Graphite #meta-theme-color must be #141417');
+
+    // Navigate fresh after seeding sess-v59
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 650));
+
+    const v59InteractiveProbe = await evalJs(`(async () => {
+      // Ensure customBridgeUrl points to local origin for /api/file-preview
+      document.querySelector('[data-tab="analytics"]')?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      const bridgeInp = document.getElementById('input-custom-bridge');
+      if (bridgeInp) {
+        bridgeInp.value = location.origin;
+        document.getElementById('btn-save-bridge')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+      }
+
+      // Open sess-v59 in Workbench
+      document.querySelector('#ide-sidebar-tree [data-ide-open-session="sess-v59"]')?.click();
+      await new Promise((r) => setTimeout(r, 45));
+
+      const inlineCodeEl = document.querySelector('#chat-stream .md-inline-code');
+      const inlineCodeColor = inlineCodeEl ? getComputedStyle(inlineCodeEl).color : '';
+
+      const secQuestionsVisible = document.getElementById('ide-sec-questions')?.hidden === false;
+      const secBgVisible = document.getElementById('ide-sec-bgtasks')?.hidden === false;
+      const dockEl = document.getElementById('chat-question-dock');
+      const dockVisibleDesktop = Boolean(dockEl && !dockEl.hidden && getComputedStyle(dockEl).display !== 'none');
+
+      // Negative #2: Focus sidebar question write-in input, type text -> mirrors to dock & survives renderIdeSidebar()
+      const sbWriteIn = document.querySelector('#ide-sidebar-questions .sb-q-other[data-q-writein-input]');
+      let writeInFocusSurvived = false;
+      let writeInMirroredToDock = false;
+      if (sbWriteIn) {
+        sbWriteIn.focus();
+        sbWriteIn.value = 'Keep my focus safe';
+        sbWriteIn.dispatchEvent(new Event('input', { bubbles: true }));
+        const dockWriteIn = document.querySelector('#chat-question-dock [data-q-writein-input][data-q-idx="0"]');
+        writeInMirroredToDock = Boolean(dockWriteIn && dockWriteIn.value === 'Keep my focus safe');
+        document.querySelector('[data-side-filter="all"]')?.click();
+        await new Promise((r) => setTimeout(r, 25));
+        writeInFocusSurvived = document.activeElement === sbWriteIn && sbWriteIn.value === 'Keep my focus safe';
+        sbWriteIn.value = '';
+        sbWriteIn.dispatchEvent(new Event('input', { bubbles: true }));
+        sbWriteIn.blur();
+      }
+
+      // Compacted Thought, Checkpoint & Side-Agent card assertions
+      const thoughtDet = document.querySelector('#chat-stream details.vs-thought-card');
+      const thoughtCollapsedDefault = Boolean(thoughtDet && thoughtDet.open === false);
+      const thoughtLabel = thoughtDet?.querySelector('.vs-thought-lbl')?.textContent?.trim() || '';
+      const thoughtStepsCount = thoughtDet ? thoughtDet.querySelectorAll('.vs-thought-step').length : 0;
+      thoughtDet?.querySelector('summary')?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      // Trigger re-render and verify thought stays open
+      document.getElementById('btn-bg-tasks')?.click();
+      document.getElementById('btn-close-bgtasks')?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      const thoughtStayedOpen = Boolean(document.querySelector('#chat-stream details.vs-thought-card')?.open === true);
+
+      const cpDet = document.querySelector('#chat-stream details.vs-checkpoint-divider');
+      const cpCollapsedDefault = Boolean(cpDet && cpDet.open === false);
+      const subCard = document.querySelector('#chat-stream .vs-subagent-card');
+      const hasSubagentCard = Boolean(subCard && subCard.textContent.includes('Red-Team Gate Auditor'));
+
+      // Keyboard '1' quick-select on docked question bar -> syncs sidebar & dock selection, then Submit compacts into .vs-answered-q
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 25));
+      const dockOpt1Selected = Boolean(document.querySelector('#chat-question-dock [data-q-opt-toggle][data-opt-idx="0"].selected'));
+      const sideOpt1Selected = Boolean(document.querySelector('#ide-sidebar-questions [data-q-opt-toggle][data-opt-idx="0"].selected'));
+
+      // Step to Q2 in dock, then submit
+      document.querySelector('#chat-question-dock [data-q-dock-step="1"]')?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      const dockSteppedToQ2 = Boolean(document.querySelector('#chat-question-dock')?.textContent?.includes('Question 2 of 2'));
+      document.querySelector('#chat-question-dock [data-q-submit]')?.click();
+      await new Promise((r) => setTimeout(r, 45));
+      const dockHiddenAfterSubmit = Boolean(document.getElementById('chat-question-dock')?.hidden === true);
+      const answeredCompactedInStream = Boolean(document.querySelector('#chat-stream details.vs-answered-q'));
+
+      // Negative #3a: Out-of-order file preview race cancellation (slow.js 130ms vs js/app.js#L10-L14 8ms)
+      const chips = Array.from(document.querySelectorAll('#chat-stream .md-file-chip[data-preview-file]'));
+      const slowChip = chips.find((c) => (c.dataset.previewFile || '').includes('slow.js'));
+      const slow2Chip = chips.find((c) => (c.dataset.previewFile || '').includes('slow2.js'));
+      const envChip = chips.find((c) => (c.dataset.previewFile || '').includes('.env'));
+      const fastChip = chips.find((c) => (c.dataset.previewFile || '').includes('app.js'));
+      slowChip?.click();
+      fastChip?.click();
+      await new Promise((r) => setTimeout(r, 210));
+
+      // Negative #3b: Cache-hit race cancellation (uncached slow2.js 130ms -> already-cached app.js 0ms)
+      slow2Chip?.click();
+      fastChip?.click();
+      await new Promise((r) => setTimeout(r, 210));
+      const inspOpen = document.getElementById('ide-inspector-pane')?.hidden === false;
+      const inspSubPath = document.querySelector('#ide-inspector-subbar .insp-sub-path-txt')?.textContent || '';
+      const focusedCodeLines = document.querySelectorAll('#ide-inspector-body .insp-code-row.is-hl').length;
+
+      // Negative #3c: Sensitive .env preview returns 403 error without rendering source rows
+      envChip?.click();
+      await new Promise((r) => setTimeout(r, 45));
+      const envBlockedOk =
+        document.querySelectorAll('#ide-inspector-body .insp-code-row').length === 0 &&
+        Boolean(document.getElementById('ide-inspector-body')?.textContent?.includes('Blocked sensitive'));
+
+      // Switch back to app.js, then test Diff mode (gitDiff), Side Agents tab, and Outline tab
+      fastChip?.click();
+      await new Promise((r) => setTimeout(r, 20));
+      document.querySelector('#ide-inspector-subbar [data-insp-view-mode="diff"]')?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      const diffRendered = Boolean(document.querySelector('#ide-inspector-body')?.textContent?.includes('newVal'));
+
+      document.querySelector('#ide-inspector-pane [data-insp-tab="agents"]')?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      const agentsTabRendered = Boolean(document.querySelector('#ide-inspector-body .insp-agent-card'));
+
+      document.querySelector('#ide-inspector-pane [data-insp-tab="outline"]')?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      document.querySelector('#ide-inspector-body [data-outline-jump="cp-1"]')?.click();
+      await new Promise((r) => setTimeout(r, 35));
+      const cpOpenedByOutline = Boolean(document.querySelector('#chat-stream details.vs-checkpoint-divider')?.open === true);
+
+      const desktopOverflowX = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+      const titleAttrsCount = document.querySelectorAll('[title]').length;
+
+      return {
+        inlineCodeColor,
+        secQuestionsVisible,
+        secBgVisible,
+        dockVisibleDesktop,
+        writeInFocusSurvived,
+        writeInMirroredToDock,
+        thoughtCollapsedDefault,
+        thoughtLabel,
+        thoughtStepsCount,
+        thoughtStayedOpen,
+        cpCollapsedDefault,
+        hasSubagentCard,
+        dockOpt1Selected,
+        sideOpt1Selected,
+        dockSteppedToQ2,
+        dockHiddenAfterSubmit,
+        answeredCompactedInStream,
+        inspOpen,
+        inspSubPath,
+        focusedCodeLines,
+        envBlockedOk,
+        diffRendered,
+        agentsTabRendered,
+        cpOpenedByOutline,
+        desktopOverflowX,
+        titleAttrsCount,
+        xssTriggered: Boolean(window.__XSS)
+      };
+    })()`);
+
+    assert.strictEqual(v59InteractiveProbe.xssTriggered, false, 'Hostile HTML in thoughtBlocks, subagents, questions & palettes must never execute');
+    assert.strictEqual(v59InteractiveProbe.inlineCodeColor, 'rgb(223, 201, 163)', `Expected warm sand inline code rgb(223, 201, 163), got ${v59InteractiveProbe.inlineCodeColor}`);
+    assert.strictEqual(v59InteractiveProbe.secQuestionsVisible, true, 'Sidebar #ide-sec-questions must be visible when questions are pending');
+    assert.strictEqual(v59InteractiveProbe.secBgVisible, true, 'Sidebar #ide-sec-bgtasks must be visible when Side Agents / tasks exist');
+    assert.strictEqual(v59InteractiveProbe.dockVisibleDesktop, true, '#chat-question-dock must be visible above composer on desktop');
+    assert.strictEqual(v59InteractiveProbe.writeInMirroredToDock, true, 'Typing in sidebar write-in input must mirror draft text to #chat-question-dock');
+    assert.strictEqual(v59InteractiveProbe.writeInFocusSurvived, true, 'Focused .sb-q-other input in sidebar must survive background renderIdeSidebar() calls');
+    assert.strictEqual(v59InteractiveProbe.thoughtCollapsedDefault, true, '.vs-thought-card must render compacted (closed) by default');
+    assert.strictEqual(v59InteractiveProbe.thoughtLabel, 'Thought for 9s', `Expected "Thought for 9s", got "${v59InteractiveProbe.thoughtLabel}"`);
+    assert.strictEqual(v59InteractiveProbe.thoughtStepsCount, 2, 'Expected 2 multi-step thoughtBlocks inside .vs-thought-card');
+    assert.strictEqual(v59InteractiveProbe.thoughtStayedOpen, true, 'Expanded .vs-thought-card must stay open across renderChatView() re-renders');
+    assert.strictEqual(v59InteractiveProbe.cpCollapsedDefault, true, '.vs-checkpoint-divider must render compacted by default');
+    assert.strictEqual(v59InteractiveProbe.hasSubagentCard, true, '.vs-subagent-card must render inline for invoke_subagent tool calls');
+    assert.strictEqual(v59InteractiveProbe.dockOpt1Selected, true, 'Pressing "1" must select option 1 in #chat-question-dock');
+    assert.strictEqual(v59InteractiveProbe.sideOpt1Selected, true, 'Option selection must mirror across sidebar and dock question cards');
+    assert.strictEqual(v59InteractiveProbe.dockSteppedToQ2, true, 'Clicking Q2/Next in dock must advance multi-question stepper');
+    assert.strictEqual(v59InteractiveProbe.dockHiddenAfterSubmit, true, 'Submitting question in dock must hide #chat-question-dock');
+    assert.strictEqual(v59InteractiveProbe.answeredCompactedInStream, true, 'Answered question must compact into 1-line <details.vs-answered-q>');
+    assert.strictEqual(v59InteractiveProbe.inspOpen, true, 'Clicking .md-file-chip[data-preview-file] must open #ide-inspector-pane');
+    assert.ok(
+      v59InteractiveProbe.inspSubPath.includes('js/app.js') && !v59InteractiveProbe.inspSubPath.includes('slow'),
+      `Stale slow.js / slow2.js responses must be discarded even on cache hits; got "${v59InteractiveProbe.inspSubPath}"`
+    );
+    assert.strictEqual(v59InteractiveProbe.focusedCodeLines, 5, `Expected 5 highlighted lines (#L10-L14), got ${v59InteractiveProbe.focusedCodeLines}`);
+    assert.strictEqual(v59InteractiveProbe.envBlockedOk, true, 'Sensitive .env file preview must return 403 error and render 0 source rows');
+    assert.strictEqual(v59InteractiveProbe.diffRendered, true, 'Diff mode in Split Inspector must render gitDiff hunks');
+    assert.strictEqual(v59InteractiveProbe.agentsTabRendered, true, 'Side Agents tab in Split Inspector must render live subagent/task cards');
+    assert.strictEqual(v59InteractiveProbe.cpOpenedByOutline, true, 'Clicking checkpoint in Outline tab must auto-expand .vs-checkpoint-divider');
+    assert.strictEqual(v59InteractiveProbe.desktopOverflowX, 0, 'Desktop Split Inspector must cause 0px horizontal overflow');
+    assert.strictEqual(v59InteractiveProbe.titleAttrsCount, 0, 'Zero [title] attributes allowed anywhere in v59 DOM');
+
+    // Mobile bottom-sheet Inspector geometry + Negative #4: PIN-lock blocks Ctrl+I and [data-preview-file]
+    await cdp.send(
+      'Emulation.setDeviceMetricsOverride',
+      { width: 375, height: 812, deviceScaleFactor: 3, mobile: true },
+      sessionId
+    );
+    const v59MobileAndPinProbe = await evalJs(`(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+      const mobileOverflowX = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+      const inspRect = document.getElementById('ide-inspector-pane')?.getBoundingClientRect();
+      const fitsMobileViewport = Boolean(inspRect && inspRect.width <= 376 && inspRect.bottom <= 813);
+
+      // Mobile Back/popstate closes #ide-inspector-pane bottom sheet first without switching away from chat tab
+      window.dispatchEvent(new PopStateEvent('popstate', { state: { theoTab: 'pulse' } }));
+      await new Promise((r) => setTimeout(r, 20));
+      const popstateClosedSheetOnly =
+        document.getElementById('ide-inspector-pane')?.hidden === true &&
+        document.getElementById('view-chat')?.classList.contains('active') === true;
+
+      // Simulate active PIN lock and verify Ctrl+I + [data-preview-file] are completely blocked
+      const pinOverlay = document.getElementById('pin-overlay');
+      if (pinOverlay) pinOverlay.hidden = false;
+
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'i', ctrlKey: true, bubbles: true, cancelable: true }));
+      document.querySelector('#chat-stream .md-file-chip[data-preview-file]')?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      const blockedWhilePinLocked = document.getElementById('ide-inspector-pane')?.hidden === true;
+
+      if (pinOverlay) pinOverlay.hidden = true;
+      return { mobileOverflowX, fitsMobileViewport, popstateClosedSheetOnly, blockedWhilePinLocked };
+    })()`);
+
+    assert.strictEqual(v59MobileAndPinProbe.mobileOverflowX, 0, 'Mobile bottom-sheet Inspector must have 0px horizontal overflow');
+    assert.strictEqual(v59MobileAndPinProbe.fitsMobileViewport, true, 'Mobile bottom-sheet Inspector must fit cleanly inside 375x812 viewport');
+    assert.strictEqual(v59MobileAndPinProbe.popstateClosedSheetOnly, true, 'Mobile popstate must close Inspector bottom sheet first without switching tabs');
+    assert.strictEqual(v59MobileAndPinProbe.blockedWhilePinLocked, true, 'Ctrl+I and [data-preview-file] must be blocked while #pin-overlay is active');
+    console.log('[PASS] Adversarial #10: v59 4-Palette Switcher, Sidebar Questions/Agents, Compacted Thinking/Checkpoints, Split Inspector, Race Cancellation & PIN Guards verified');
 
     // Final error & network quarantine assertions (#18)
     assert.strictEqual(pageExceptions.length, 0, `Uncaught page exceptions: ${JSON.stringify(pageExceptions)}`);
