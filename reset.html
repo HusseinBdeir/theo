@@ -30,22 +30,31 @@
 <body>
   <div class="card">
     <h1>Resetting THEO Cache…</h1>
-    <p id="msg">Unregistering service workers and clearing local caches.</p>
+    <p id="msg">Unregistering THEO Remote service worker and clearing THEO Remote caches only.</p>
   </div>
   <script>
     (async () => {
+      const scopePrefix = new URL('./', location.href).href;
       try {
         if ('serviceWorker' in navigator) {
           const regs = await navigator.serviceWorker.getRegistrations();
-          for (const r of regs) await r.unregister();
+          for (const r of regs) {
+            if (r && r.scope && r.scope.startsWith(scopePrefix)) {
+              await r.unregister();
+            }
+          }
         }
         if ('caches' in window) {
           const keys = await caches.keys();
-          for (const k of keys) await caches.delete(k);
+          for (const k of keys) {
+            if (k.startsWith('theo-remote-') || k.startsWith('theo-nav-handoff-')) {
+              await caches.delete(k);
+            }
+          }
         }
       } catch (e) {}
-      document.getElementById('msg').textContent = 'Cache cleared. Redirecting to THEO…';
-      setTimeout(() => location.replace('./?reset=' + Date.now()), 500);
+      document.getElementById('msg').textContent = 'THEO cache cleared. Redirecting…';
+      setTimeout(() => location.replace('./?reset=' + Date.now()), 450);
     })();
   </script>
 </body>

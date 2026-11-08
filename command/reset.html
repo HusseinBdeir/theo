@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>THEO Command — Reset Cache</title>
+  <title>THEO Planner — Reset &amp; Redirect</title>
   <style>
     body {
       margin: 0;
@@ -29,23 +29,34 @@
 </head>
 <body>
   <div class="card">
-    <h1>Resetting THEO Command Cache…</h1>
-    <p id="msg">Unregistering service workers and clearing local caches.</p>
+    <h1>Resetting Legacy Command Cache…</h1>
+    <p id="msg">Clearing legacy /command/ cache and redirecting to Planner…</p>
   </div>
   <script>
     (async () => {
+      const scopePrefix = new URL('./', location.href).href;
       try {
         if ('serviceWorker' in navigator) {
           const regs = await navigator.serviceWorker.getRegistrations();
-          for (const r of regs) await r.unregister();
+          for (const r of regs) {
+            if (r && r.scope && r.scope.startsWith(scopePrefix)) {
+              await r.unregister();
+            }
+          }
         }
         if ('caches' in window) {
           const keys = await caches.keys();
-          for (const k of keys) await caches.delete(k);
+          for (const k of keys) {
+            if (k.startsWith('theo-command-') || k.startsWith('theo-planner-')) {
+              await caches.delete(k);
+            }
+          }
         }
       } catch (e) {}
-      document.getElementById('msg').textContent = 'Cache cleared. Redirecting to THEO Command…';
-      setTimeout(() => location.replace('./?reset=' + Date.now()), 500);
+      const targetPlanner = new URL('../../planner/', location.href);
+      targetPlanner.searchParams.set('reset', String(Date.now()));
+      document.getElementById('msg').textContent = 'Redirecting to THEO Planner…';
+      setTimeout(() => location.replace(targetPlanner.href), 450);
     })();
   </script>
 </body>

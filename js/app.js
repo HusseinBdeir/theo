@@ -6,6 +6,7 @@
     PREFS: 'theo_remote_prefs_v1',
     OUTBOX: 'theo_remote_outbox_v1',
     PIN: 'theo_remote_pin_v1',
+    PIN_HASH: 'theo_remote_pin_hash_v1',
     DEVID: 'theo_remote_devid_v1',
     PUSH_HINT: 'theo_remote_pushhint_v1',
     PERSONAL: 'theo_personal_ledger_v1',
@@ -34,92 +35,6 @@
     evening: true,
     eveningHour: 21
   };
-
-  // ---------- Daily 100-Point Discipline Ledger (5 Do's & 5 Don'ts · Starts at 50%) ----------
-  const DAILY_DOS = [
-    { id: 'wake', label: 'Waking up early', icon: '☀️', sub: 'Up on time & morning routine', hint: 'Up on time & morning routine' },
-    { id: 'work', label: 'Work', icon: '💼', sub: 'Focused executive & ops output', hint: 'Focused executive & ops output' },
-    { id: 'skills', label: 'Skills', icon: '🧠', sub: 'Deliberate learning & craft', hint: 'Deliberate learning & craft' },
-    { id: 'fitness', label: 'Fitness', icon: '💪', sub: 'Gym, calisthenics, football or padel', hint: 'Gym, calisthenics, football or padel' },
-    { id: 'social', label: 'Socializing', icon: '🤝', sub: 'Meaningful connection & presence', hint: 'Meaningful connection & presence' }
-  ];
-
-  const DAILY_DONTS = [
-    { id: 'games', label: 'Video games', icon: '🎮', sub: '10% held intact when avoided', hint: '10% held intact when avoided' },
-    { id: 'series', label: 'Series', icon: '📺', sub: '10% held intact when avoided', hint: '10% held intact when avoided' },
-    { id: 'music', label: 'Music', icon: '🎧', sub: '10% held intact when avoided', hint: '10% held intact when avoided' },
-    { id: 'socialmedia', label: 'Social media', icon: '📱', sub: '10% held intact when avoided', hint: '10% held intact when avoided' },
-    { id: 'nsfw', label: '18+ things', icon: '🚫', sub: '10% held intact when avoided', hint: '10% held intact when avoided' }
-  ];
-
-  // ---------- Universal Smart Clusters (Life, People, Verification, Shipping, Work, Family, Payments, Ideas) ----------
-  const REM_CATEGORIES = {
-    people: {
-      id: 'people',
-      label: 'People to Talk To & Follow-Ups',
-      shortLabel: 'People',
-      icon: '🗣️',
-      color: 'emerald',
-      desc: 'Calls, check-ins, and reminders to talk to specific people'
-    },
-    verify: {
-      id: 'verify',
-      label: 'Verify & App Sync ("Did It Show Up?")',
-      shortLabel: 'Verify / App',
-      icon: '🔍',
-      color: 'amber',
-      desc: 'Paid for something & waiting for it to show up on an app, bank, or statement'
-    },
-    shipping: {
-      id: 'shipping',
-      label: 'Shipping, Orders & Deliveries',
-      shortLabel: 'Shipping',
-      icon: '📦',
-      color: 'steel',
-      desc: 'Shipping time countdowns, packages, spare parts & order arrivals'
-    },
-    work: {
-      id: 'work',
-      label: 'Work & Specific Projects',
-      shortLabel: 'Work',
-      icon: '💼',
-      color: 'brass',
-      desc: 'Operational tasks across Resorts, WTC/Manufacturing, Trading, Holding & Tech'
-    },
-    family: {
-      id: 'family',
-      label: 'Family & Home',
-      shortLabel: 'Family',
-      icon: '👨‍👩‍👧',
-      color: 'emerald',
-      desc: 'Family commitments, parents, home errands & personal life'
-    },
-    payments: {
-      id: 'payments',
-      label: 'Payments & Wait-to-Pay Holds',
-      shortLabel: 'Payments',
-      icon: '💸',
-      color: 'brass',
-      desc: 'Cooling-off wait timers when someone asks for a payment or wire'
-    },
-    want_to_do: {
-      id: 'want_to_do',
-      label: 'Things I Want To Do',
-      shortLabel: 'Want to Do',
-      icon: '🌟',
-      color: 'emerald',
-      desc: 'Personal goals, places to try, activities, weekend plans & bucket list'
-    },
-    ideas: {
-      id: 'ideas',
-      label: 'Ideas for Later',
-      shortLabel: 'Ideas',
-      icon: '💡',
-      color: 'steel',
-      desc: 'Brainstorms, product concepts, automations & future ideas'
-    }
-  };
-
 
   const _VAPID = {
     pub: 'BKAC6gWORFSoi6Yf7XuS3voZnBgflXmG1GzW0K1pt4hcNoY7FNYPK-Jn-gAghKvphbSM_-ieA6U8w0E9yEgKB68',
@@ -218,25 +133,25 @@
     } catch {}
   }
 
-  // Decode Dataverse Cloud Relay endpoints
-  function getCloudConfig() {
-    const cfg = window.THEO_CLOUD_CFG || {};
-    let url = '';
-    let key = '';
-    try {
-      url = cfg.u ? atob(cfg.u) : '';
-      key = cfg.k ? atob(cfg.k) : '';
-    } catch {}
-    return { url, key, port: cfg.port || 4318 };
-  }
+  const LOCAL_BOOT_SESSION_KEY = 'theo_local_boot_v1';
+  let localBootInfo = null;
+  try {
+    if (window.__THEO_LOCAL_BOOT__ && typeof window.__THEO_LOCAL_BOOT__ === 'object') {
+      localBootInfo = window.__THEO_LOCAL_BOOT__;
+      sessionStorage.setItem(LOCAL_BOOT_SESSION_KEY, JSON.stringify(localBootInfo));
+      delete window.__THEO_LOCAL_BOOT__;
+    } else {
+      const savedBoot = sessionStorage.getItem(LOCAL_BOOT_SESSION_KEY);
+      if (savedBoot) localBootInfo = JSON.parse(savedBoot);
+    }
+  } catch {}
 
   const isHeadlessBrowser = Boolean(
     (typeof navigator !== 'undefined' && navigator.webdriver) ||
       (typeof window !== 'undefined' && window.__THEO_HEADLESS_TEST)
   );
 
-  const cloudCfg = getCloudConfig();
-  const prefs = loadJson(STORAGE_KEYS.PREFS, {
+  const DEFAULT_PREFS = {
     theme: 'light',
     themeUserSet: false,
     sound: true,
@@ -247,30 +162,143 @@
     composerTargetDevice: 'auto',
     composerDirectStream: true,
     edgeRelayUrl: '',
-    freqUsage: { devices: {}, repos: {} },
+    cloudUrl: '',
+    cloudKey: '',
+    edgeAccessKey: '',
+    port: 4318,
+    freqUsage: { devices: {}, repos: {}, threads: {}, commands: {} },
     telemetryProv: 'all',
     selectedThreadId: '',
     selectedRepoId: 'resort-operations',
     composerMode: 'reply',
     composerRepoPrefix: '',
     customBridgeUrl: '',
-    remGroupBy: 'urgency',
-    remShowDone: false,
     notif: { ...DEFAULT_NOTIF }
-  });
+  };
+  const rawStoredPrefs = loadJson(STORAGE_KEYS.PREFS, null);
+  const prefs = Object.assign(
+    {},
+    DEFAULT_PREFS,
+    rawStoredPrefs && typeof rawStoredPrefs === 'object' && !Array.isArray(rawStoredPrefs)
+      ? rawStoredPrefs
+      : {}
+  );
   if (!prefs.themeUserSet) {
     prefs.theme = 'light';
   }
+  if (!prefs.sessProvider) prefs.sessProvider = 'all';
+  if (!prefs.sessStatus) prefs.sessStatus = 'all';
+  if (!prefs.telemetryProv) prefs.telemetryProv = 'all';
   if (!prefs.selectedDeviceFilter) prefs.selectedDeviceFilter = 'all';
   if (!prefs.composerTargetDevice) prefs.composerTargetDevice = 'auto';
   prefs.composerDirectStream = prefs.composerDirectStream !== false;
   prefs.freqUsage = Object.assign(
-    { devices: {}, repos: {} },
+    { devices: {}, repos: {}, threads: {}, commands: {} },
     prefs.freqUsage && typeof prefs.freqUsage === 'object' ? prefs.freqUsage : {}
   );
   prefs.freqUsage.devices = Object.assign({}, prefs.freqUsage.devices || {});
   prefs.freqUsage.repos = Object.assign({}, prefs.freqUsage.repos || {});
+  prefs.freqUsage.threads = Object.assign({}, prefs.freqUsage.threads || {});
+  prefs.freqUsage.commands = Object.assign({}, prefs.freqUsage.commands || {});
   prefs.notif = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
+
+  function decodeMaybeB64Field(val) {
+    const s = String(val || '').trim();
+    if (!s) return '';
+    if (/^https?:\/\//i.test(s) || /^[0-9a-f]{32,}$/i.test(s)) return s;
+    try {
+      const dec = atob(s).trim();
+      if (dec && /^[\x20-\x7e]+$/.test(dec)) return dec;
+    } catch {}
+    return s;
+  }
+
+  function decodePairTokenString(rawInput) {
+    let token = String(rawInput || '').trim();
+    if (!token) return null;
+    const hashIdx = token.toLowerCase().indexOf('#pair=');
+    if (hashIdx >= 0) token = token.slice(hashIdx + 6);
+    else if (/^#?pair=/i.test(token)) token = token.replace(/^#?pair=/i, '');
+    token = token.split('&')[0].trim();
+    if (!token) return null;
+    try {
+      const b64 = token.replace(/-/g, '+').replace(/_/g, '/');
+      const pad = b64.length % 4 === 0 ? '' : '===='.slice(b64.length % 4);
+      const obj = JSON.parse(atob(b64 + pad));
+      if (!obj || typeof obj !== 'object') return null;
+      const cloudUrl = decodeMaybeB64Field(obj.u || obj.cloudUrl || '');
+      const cloudKey = decodeMaybeB64Field(obj.k || obj.cloudKey || '');
+      const edgeAccessKey = String(obj.e || obj.edgeAccessKey || '').trim();
+      if (!cloudUrl && !cloudKey && !edgeAccessKey) return null;
+      return {
+        cloudUrl,
+        cloudKey,
+        edgeAccessKey,
+        edgeRelayUrl: String(obj.r || obj.w || obj.edgeRelayUrl || '').trim(),
+        port: Number(obj.p || obj.port || 4318) || 4318
+      };
+    } catch {
+      if (/^[a-fA-F0-9]{32,128}$/.test(token)) {
+        return { cloudUrl: '', cloudKey: '', edgeAccessKey: token, edgeRelayUrl: '', port: 4318 };
+      }
+      return null;
+    }
+  }
+
+  function encodePairTokenString(payload) {
+    try {
+      const json = JSON.stringify({
+        v: 1,
+        u: payload.cloudUrl || '',
+        k: payload.cloudKey || '',
+        e: payload.edgeAccessKey || '',
+        r: payload.edgeRelayUrl || '',
+        p: Number(payload.port || 4318) || 4318
+      });
+      return btoa(json).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    } catch {
+      return '';
+    }
+  }
+
+  function applyPairPayloadToPrefs(parsed) {
+    if (!parsed) return false;
+    if (parsed.cloudUrl) prefs.cloudUrl = parsed.cloudUrl;
+    if (parsed.cloudKey) prefs.cloudKey = parsed.cloudKey;
+    if (parsed.edgeAccessKey) prefs.edgeAccessKey = parsed.edgeAccessKey;
+    if (parsed.edgeRelayUrl) prefs.edgeRelayUrl = parsed.edgeRelayUrl;
+    if (parsed.port) prefs.port = parsed.port;
+    saveJson(STORAGE_KEYS.PREFS, prefs);
+    return true;
+  }
+
+  try {
+    if (location.hash && location.hash.includes('pair=')) {
+      const parsedBootPair = decodePairTokenString(location.hash);
+      if (parsedBootPair) {
+        applyPairPayloadToPrefs(parsedBootPair);
+      }
+      const cleanHashUrl = location.pathname + (location.search || '');
+      history.replaceState(null, '', cleanHashUrl);
+    }
+  } catch {}
+
+  const cloudCfg = { url: '', key: '', edgeAccessKey: '', port: 4318 };
+  function refreshCloudConfig() {
+    const cfg = window.THEO_CLOUD_CFG || {};
+    let fallbackUrl = '';
+    let fallbackKey = '';
+    try {
+      fallbackUrl = cfg.u ? atob(cfg.u) : '';
+      fallbackKey = cfg.k ? atob(cfg.k) : '';
+    } catch {}
+    cloudCfg.url = String(prefs.cloudUrl || fallbackUrl || '').trim();
+    cloudCfg.key = String(prefs.cloudKey || fallbackKey || '').trim();
+    cloudCfg.edgeAccessKey = String(prefs.edgeAccessKey || '').trim();
+    cloudCfg.port = Number(prefs.port || cfg.port || 4318) || 4318;
+    return cloudCfg;
+  }
+  refreshCloudConfig();
 
   // Frequency-First Search & Comboboxes (THEO.md Rule 11: strictly usage frequency descending, never alphabetical override)
   function recordFreqUsage(bucket, rawKey) {
@@ -327,8 +355,19 @@
   const DEFAULT_EDGE_RELAY_URL = 'wss://theo-edge-relay.husseinbdeir.workers.dev/ws';
   let edgeWsPingTimer = null;
   let edgeWsReconnectTimer = null;
-  let discoveredEdgeUrl = prefs.edgeRelayUrl || DEFAULT_EDGE_RELAY_URL;
+  let discoveredEdgeUrl = localBootInfo?.edgeRelayUrl || prefs.edgeRelayUrl || DEFAULT_EDGE_RELAY_URL;
   let lastCloudBackstopAt = 0;
+  let lastCloudQueue = null;
+  let edgeReconnectAttempts = 0;
+  let localWsReconnectAttempts = 0;
+  let cachedBridgeTokenHex = '';
+  let cachedBridgeTokenSrc = '';
+  let cachedPairingInfo = null;
+  let wsRenderSeq = 0;
+  let hasProvidersHydrated = Boolean(appState?.providers);
+  let hasExplicitBootUrlNav = false;
+  let suppressHistoryPush = false;
+  const hostSnapshotsByDevice = new Map();
   const wsPendingRpcs = new Map();
   const fleetDevicesMap = new Map();
   const liveStreamsByThreadId = new Map();
@@ -545,6 +584,7 @@
   let pinnedNavThreadId = '';
   let pinnedNavProvider = '';
   let pinnedNavTitle = '';
+  let pinnedNavReminderId = '';
   let pinnedNavUntil = 0;
   let lastAppliedNavSig = '';
   let lastAppliedNavAt = 0;
@@ -626,1060 +666,10 @@
     } catch {}
   }
 
-  // ---------- Personal Ledger State (Daily 100% Score + Smart Reminders / Payment Holds) ----------
-  function localIsoDate(dt = new Date()) {
-    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-  }
-
-  function shiftIsoDate(iso, deltaDays) {
-    const [y, m, d] = String(iso || localIsoDate())
-      .split('-')
-      .map(Number);
-    const dt = new Date(y, (m || 1) - 1, (d || 1) + Number(deltaDays || 0));
-    return localIsoDate(dt);
-  }
-
-  function fmtDateNice(iso) {
-    const today = localIsoDate();
-    if (iso === today) return 'Today';
-    if (iso === shiftIsoDate(today, -1)) return 'Yesterday';
-    const [y, m, d] = String(iso || today)
-      .split('-')
-      .map(Number);
-    const dt = new Date(y, (m || 1) - 1, d || 1);
-    return dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-  }
-
-  let personalLedger = loadJson(STORAGE_KEYS.PERSONAL, {
-    reminders: [],
-    deletedIds: [],
-    dailyScores: {},
-    teamRoster: [],
-    updatedAt: 0
-  });
-  if (!personalLedger || typeof personalLedger !== 'object') {
-    personalLedger = { reminders: [], deletedIds: [], dailyScores: {}, teamRoster: [], updatedAt: 0 };
-  }
-  if (!Array.isArray(personalLedger.reminders)) personalLedger.reminders = [];
-  if (!Array.isArray(personalLedger.deletedIds)) personalLedger.deletedIds = [];
-  if (!personalLedger.dailyScores || typeof personalLedger.dailyScores !== 'object') {
-    personalLedger.dailyScores = {};
-  }
-  if (!Array.isArray(personalLedger.teamRoster)) personalLedger.teamRoster = [];
-
-  function normalizeDayScoreRecord(rec, iso = '') {
-    if (!rec || typeof rec !== 'object') {
-      return { iso, date: iso, dos: {}, donts: {}, updatedAt: 0 };
-    }
-    const rawDos = rec.dos && typeof rec.dos === 'object' ? rec.dos : {};
-    const rawDonts = rec.donts && typeof rec.donts === 'object' ? rec.donts : {};
-
-    const normDo = (v) => (v === 'full' || v === 'half' ? v : 'none');
-    const normDontTheo = (v) => {
-      if (v === 'broken' || v === 'slip') return 'broken';
-      if (v === 'half') return 'half';
-      return 'clean';
-    };
-    const toCmdDont = (theoVal) =>
-      theoVal === 'broken' ? 'slip' : theoVal === 'half' ? 'half' : 'intact';
-
-    const socialVal = normDo(
-      rawDos.social && rawDos.social !== 'none' ? rawDos.social : rawDos.socializing
-    );
-    const dos = {
-      ...rawDos,
-      wake: normDo(rawDos.wake),
-      work: normDo(rawDos.work),
-      skills: normDo(rawDos.skills),
-      fitness: normDo(rawDos.fitness),
-      social: socialVal,
-      socializing: socialVal
-    };
-
-    const gamesTheo = normDontTheo(
-      rawDonts.games && rawDonts.games !== 'clean' && rawDonts.games !== 'intact'
-        ? rawDonts.games
-        : rawDonts.videogames || rawDonts.games
-    );
-    const seriesTheo = normDontTheo(rawDonts.series);
-    const musicTheo = normDontTheo(rawDonts.music);
-    const socialmediaTheo = normDontTheo(rawDonts.socialmedia);
-    const nsfwTheo = normDontTheo(
-      rawDonts.nsfw && rawDonts.nsfw !== 'clean' && rawDonts.nsfw !== 'intact'
-        ? rawDonts.nsfw
-        : rawDonts.adult18 || rawDonts.nsfw
-    );
-
-    const donts = {
-      ...rawDonts,
-      games: gamesTheo,
-      videogames: toCmdDont(gamesTheo),
-      series: seriesTheo,
-      music: musicTheo,
-      socialmedia: socialmediaTheo,
-      nsfw: nsfwTheo,
-      adult18: toCmdDont(nsfwTheo)
-    };
-
-    return {
-      ...rec,
-      iso: rec.iso || rec.date || iso,
-      date: rec.date || rec.iso || iso,
-      dos,
-      donts,
-      updatedAt: Number(rec.updatedAt || 0)
-    };
-  }
-
-  function normalizeReminderItem(rem) {
-    if (!rem || typeof rem !== 'object') return rem;
-    const completed = Boolean(rem.completed || rem.status === 'done');
-    const subTag =
-      rem.subTag ||
-      rem.subGroup ||
-      rem.customGroup ||
-      (rem.assigneeName ? `👤 ${rem.assigneeName}` : '');
-    const isParkedIdea =
-      (rem.category === 'ideas' || rem.category === 'want_to_do') &&
-      !rem.matureAt &&
-      rem.kind !== 'wait';
-    return {
-      ...rem,
-      completed,
-      status: completed ? 'done' : 'open',
-      subTag,
-      subGroup: rem.subGroup || subTag,
-      kind: isParkedIdea ? 'parked' : rem.kind || 'task',
-      dueAt: isParkedIdea ? 0 : Number(rem.dueAt || 0),
-      matureAt: Number(rem.matureAt || 0),
-      recur: isParkedIdea ? 'none' : rem.recur || 'none'
-    };
-  }
-
-  function savePersonalLedgerToLocal() {
-    for (const [iso, rec] of Object.entries(personalLedger.dailyScores || {})) {
-      personalLedger.dailyScores[iso] = normalizeDayScoreRecord(rec, iso);
-    }
-    personalLedger.deletedIds = Array.from(new Set(personalLedger.deletedIds || [])).slice(-400);
-    saveJson(STORAGE_KEYS.PERSONAL, personalLedger);
-    saveJson(STORAGE_KEYS.COMMAND, personalLedger);
-  }
-
-  function loadPersonalLedgerFromLocal() {
-    const p1 = loadJson(STORAGE_KEYS.PERSONAL, null);
-    if (p1 && typeof p1 === 'object') mergePersonalLedger(p1, { skipSave: true });
-    const p2 = loadJson(STORAGE_KEYS.COMMAND, null);
-    if (p2 && typeof p2 === 'object') mergePersonalLedger(p2, { skipSave: true });
-    savePersonalLedgerToLocal();
-  }
-
-  let selectedScoreDate = localIsoDate();
-  const remDraft = {
-    kind: 'auto', // 'auto' | 'wait' | 'task' | 'recurring' | 'parked' | 'payment'
-    title: '',
-    amount: '',
-    waitChoice: 'auto', // 'auto' | 'none' | '1h' | '3h' | 'tonight' | '1d' | '2d' | '3d' | '4d' | '5d' | '7d' | '10d' | '14d' | 'nextmon'
-    recur: 'daily', // 'daily' | 'weekdays' | 'weekly' | 'monthly'
-    categoryOverride: '',
-    customGroup: ''
-  };
-
-  function getDayRecord(iso = localIsoDate()) {
-    return normalizeDayScoreRecord(personalLedger.dailyScores?.[iso], iso);
-  }
-
-  function computeDayDiscipline(isoOrRec = localIsoDate()) {
-    const rec = typeof isoOrRec === 'string' ? getDayRecord(isoOrRec) : normalizeDayScoreRecord(isoOrRec, isoOrRec?.iso || localIsoDate());
-    let doEarned = 0;
-    let doFullCount = 0;
-    let doHalfCount = 0;
-    for (const item of DAILY_DOS) {
-      const st = rec.dos?.[item.id] || 'none';
-      if (st === 'full') {
-        doEarned += 10;
-        doFullCount++;
-      } else if (st === 'half') {
-        doEarned += 5;
-        doHalfCount++;
-      }
-    }
-
-    let dontLost = 0;
-    let dontCleanCount = 0;
-    let dontSlipCount = 0;
-    for (const item of DAILY_DONTS) {
-      const st = rec.donts?.[item.id] || 'clean';
-      if (st === 'broken' || st === 'slip') {
-        dontLost += 10;
-        dontSlipCount++;
-      } else if (st === 'half') {
-        dontLost += 5;
-        dontSlipCount++;
-      } else {
-        dontCleanCount++;
-      }
-    }
-
-    const dontKept = 50 - dontLost;
-    const score = Math.max(0, Math.min(100, 50 + doEarned - dontLost));
-    const deltaFromStart = score - 50;
-    const tone =
-      score >= 80 ? 'emerald' : score >= 50 ? 'brass' : score >= 35 ? 'amber' : 'crimson';
-    const hasInteracted = Boolean(rec.updatedAt > 0 || doEarned > 0 || dontLost > 0);
-
-    return {
-      iso: rec.iso,
-      score,
-      deltaFromStart,
-      doEarned,
-      dontLost,
-      dontKept,
-      doFullCount,
-      doHalfCount,
-      dontCleanCount,
-      dontSlipCount,
-      tone,
-      hasInteracted,
-      dos: rec.dos,
-      donts: rec.donts
-    };
-  }
-
-  function setHabitState(iso, group, habitId, nextVal) {
-    const cur = getDayRecord(iso);
-    if (group === 'do') {
-      const val = nextVal === 'full' || nextVal === 'half' ? nextVal : 'none';
-      cur.dos[habitId] = val;
-      if (habitId === 'social' || habitId === 'socializing') {
-        cur.dos.social = val;
-        cur.dos.socializing = val;
-      }
-    } else {
-      const val = nextVal === 'broken' || nextVal === 'slip' ? 'broken' : nextVal === 'half' ? 'half' : 'clean';
-      cur.donts[habitId] = val;
-      if (habitId === 'games' || habitId === 'videogames') {
-        cur.donts.games = val;
-        cur.donts.videogames = val === 'broken' ? 'slip' : val === 'half' ? 'half' : 'intact';
-      } else if (habitId === 'nsfw' || habitId === 'adult18') {
-        cur.donts.nsfw = val;
-        cur.donts.adult18 = val === 'broken' ? 'slip' : val === 'half' ? 'half' : 'intact';
-      }
-    }
-    cur.updatedAt = Date.now();
-    personalLedger.dailyScores[iso] = normalizeDayScoreRecord(cur, iso);
-    personalLedger.updatedAt = Date.now();
-    persistAndSyncPersonalLedger();
-    renderAll();
-  }
-
-  function parseAmountFromText(text, explicitAmt = '') {
-    const cleanExp = String(explicitAmt ?? '').replace(/[$,\s]/g, '');
-    if (cleanExp && !Number.isNaN(Number(cleanExp)) && Number(cleanExp) > 0) {
-      return Number(cleanExp);
-    }
-    const s = String(text || '');
-    const m =
-      s.match(/\$\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*(k)?/i) ||
-      s.match(/\b(\d+(?:,\d{3})*(?:\.\d+)?)\s*(k)?\s*(?:usd|dollars|\$)\b/i) ||
-      s.match(/\b(\d+(?:\.\d+)?)\s*k\s*(?:usd|payment|wire|invoice)?\b/i);
-    if (!m) return 0;
-    const num = Number(String(m[1]).replace(/,/g, ''));
-    if (Number.isNaN(num)) return 0;
-    const hasK = Boolean(m[2] || /\bk\b/i.test(m[0]));
-    return hasK ? num * 1000 : num;
-  }
-
-  function extractContextTags(text) {
-    const raw = String(text || '').trim();
-    const s = raw.toLowerCase();
-    const tags = [];
-    let personTag = '';
-    let appTag = '';
-    let workSubTag = '';
-
-    // 1. Explicit @person or natural "talk to / call / ask / message / meet [Name]"
-    const atMatch = raw.match(/@([A-Za-z][A-Za-z0-9_-]{1,20})/);
-    const personMatch = raw.match(
-      /\b(?:talk\s+to|speak\s+(?:to|with)|call|message|text|whatsapp|ask|remind\s+me\s+to\s+tell|check\s+with|follow\s+up\s+with|meet\s+with|meet)\s+([A-Z][a-z]{1,18}|mom|dad|mama|baba|brother|sister|lawyer|accountant|auditor|broker)\b/i
-    );
-    if (atMatch) {
-      personTag = atMatch[1];
-    } else if (personMatch) {
-      const p = personMatch[1];
-      if (!/^(the|a|an|my|our|him|her|them|someone|about|on|for|at|in|to)$/i.test(p)) {
-        personTag = p.charAt(0).toUpperCase() + p.slice(1);
-      }
-    }
-    if (personTag) tags.push(`👤 ${personTag}`);
-
-    // 2. App / Bank / Platform name for "paid and didn't show up on app"
-    const appMatch = raw.match(
-      /\b(?:on|in|via|from)\s+(whish|omt|bob|bank\s*audi|audi|blom|byblos|neo|revolut|wise|stripe|paypal|apple\s*pay|binance|brains|dataverse|power\s*bi|tally|meta|instagram|whatsapp|amazon|dhl|aramex|fedex|aliexpress|shein)\b/i
-    );
-    if (appMatch) {
-      const a = appMatch[1];
-      appTag = a.charAt(0).toUpperCase() + a.slice(1);
-      tags.push(`📱 ${appTag}`);
-    } else if (/\b(didn'?t\s+show\s+up|not\s+showing|pending\s+on\s+app|on\s+the\s+app|app\s+balance)\b/i.test(s)) {
-      appTag = 'App Sync';
-      tags.push('📱 App Sync');
-    }
-
-    // 3. Specific Work Area sub-tags ("certain things at work")
-    if (/\b(blanca|la\s*una|launa|palms|voile|platinum|resort|hotel|cabana|pos|kitchen|guest|beach|hospitality)\b/i.test(s)) {
-      workSubTag = '🏖️ Resorts';
-    } else if (/\b(wtc|bbc|bbconstruction|lions|quarry|crusher|asphalt|concrete|filter\s*press|plant|diesel|mixer|manufacturing)\b/i.test(s)) {
-      workSubTag = '🏗️ WTC · Mfg';
-    } else if (/\b(korri|shacman|truck|trucks|spare\s*parts|workshop|vin|trading)\b/i.test(s)) {
-      workSubTag = '🚛 Korri · Trading';
-    } else if (/\b(property|properties|tenant|lease|rent|villa|apartment|real\s*estate|insurance|policy|claim|broker|underwriter)\b/i.test(s)) {
-      workSubTag = '🏢 Real Estate · Ins';
-    } else if (/\b(holding|brains|vat|tax|audit|kyc|payroll|salary|lawyer|contract|soa|board)\b/i.test(s)) {
-      workSubTag = '🏛️ Holding · Finance';
-    } else if (/\b(theo|claude|antigravity|pwa|power\s*bi|flow|dataverse|github|script|automation)\b/i.test(s)) {
-      workSubTag = '⚡ Tech · THEO';
-    }
-    if (workSubTag) tags.push(workSubTag);
-
-    // 4. Explicit #hashtag
-    const hashMatch = raw.match(/#([A-Za-z0-9_-]{2,24})/);
-    if (hashMatch) {
-      tags.push(`#${hashMatch[1]}`);
-    }
-
-    return {
-      personTag,
-      appTag,
-      workSubTag,
-      subTag: tags[0] || '',
-      allTags: tags
-    };
-  }
-
-  function getCategoryMeta(catId, customGroup = '') {
-    if (customGroup) {
-      return {
-        id: `custom:${customGroup}`,
-        label: customGroup,
-        shortLabel: customGroup,
-        icon: '🏷️',
-        color: 'brass',
-        desc: 'Custom smart group'
-      };
-    }
-    if (catId && String(catId).startsWith('custom:')) {
-      const name = String(catId).slice(7);
-      return {
-        id: catId,
-        label: name,
-        shortLabel: name,
-        icon: '🏷️',
-        color: 'brass',
-        desc: 'Custom smart group'
-      };
-    }
-    // Map legacy company categories seamlessly to the new universal clusters
-    const legacyMap = {
-      hospitality: REM_CATEGORIES.work,
-      trading: REM_CATEGORIES.work,
-      manufacturing: REM_CATEGORIES.work,
-      realestate_ins: REM_CATEGORIES.work,
-      holding: REM_CATEGORIES.work,
-      personal: REM_CATEGORIES.want_to_do
-    };
-    return REM_CATEGORIES[catId] || legacyMap[catId] || REM_CATEGORIES.work;
-  }
-
-  function detectRelevanceCategory(text, kind = 'auto', override = '', customGroup = '') {
-    if (customGroup) return getCategoryMeta('', customGroup);
-    if (override) return getCategoryMeta(override);
-
-    const s = String(text || '').toLowerCase();
-
-    // 1. "Paid for something and it didn't show up on an app" / pending verification / refund / statement check
-    if (
-      /\b(didn'?t\s+show|not\s+showing|show\s+up|showed\s+up|reflect|reflected|pending|still\s+pending|didn'?t\s+go\s+through|didn'?t\s+arrive\s+on|verify|reconcil|refund|chargeback|receipt\s+missing|balance\s+update|app\s+sync|check\s+if.*paid|paid.*app)\b/i.test(
-        s
-      )
-    ) {
-      return REM_CATEGORIES.verify;
-    }
-
-    // 2. Shipping time / packages / orders / tracking / delivery / customs
-    if (
-      /\b(ship|shipping|shipment|delivery|deliver|delivered|package|parcel|order|ordered|tracking|dhl|fedex|aramex|ups|container|cargo|freight|customs\s+clearance|arrives?\s+in|transit|aliexpress|amazon)\b/i.test(
-        s
-      )
-    ) {
-      return REM_CATEGORIES.shipping;
-    }
-
-    // 3. Ideas for later / brainstorms / future concepts
-    if (
-      /\b(idea|ideas|idea\s+for\s+later|brainstorm|concept|maybe\s+build|could\s+build|what\s+if\s+we|future\s+feature|feature\s+idea|someday\s+build|automation\s+idea)\b/i.test(
-        s
-      )
-    ) {
-      return REM_CATEGORIES.ideas;
-    }
-
-    // 4. Things I want to do / bucket list / personal plans / try out
-    if (
-      /\b(want\s+to\s+do|things\s+i\s+want|i\s+want\s+to|wanna|bucket\s+list|try\s+out|place\s+to\s+visit|watch|read\s+book|learn\s+how|trip\s+to|hobby|weekend\s+plan|someday)\b/i.test(
-        s
-      )
-    ) {
-      return REM_CATEGORIES.want_to_do;
-    }
-
-    // 5. Family & Home
-    if (
-      /\b(family|mom|mother|dad|father|mama|baba|parents|brother|sister|wife|kids|home|house|apartment\s+repair|groceries|dinner\s+with\s+family|lunch\s+with\s+family|doctor|dentist|gift\s+for)\b/i.test(
-        s
-      )
-    ) {
-      return REM_CATEGORIES.family;
-    }
-
-    // 6. Reminders to talk to certain people / call / message / follow up with someone
-    if (
-      /\b(talk\s+to|speak\s+to|speak\s+with|call|phone|text|whatsapp|message|reach\s+out|check\s+in\s+with|check\s+with|follow\s+up\s+with|ask\s+[a-z]+|tell\s+[a-z]+|meet\s+with|catch\s+up\s+with)\b/i.test(
-        s
-      )
-    ) {
-      return REM_CATEGORIES.people;
-    }
-
-    // 7. Payments & Wait-to-Pay (when they ask for payments and you want to wait a bit)
-    if (
-      kind === 'payment' ||
-      /\b(pay|payment|payments|asked\s+for\s+payment|invoice|wire|transfer|cheque|supplier\s+payout|advance|deposit|disburse|remit|bill|\$\s*\d+)\b/i.test(
-        s
-      )
-    ) {
-      return REM_CATEGORIES.payments;
-    }
-
-    // 8. Default to Work & Specific Projects (or Personal if no work signal)
-    const ctx = extractContextTags(text);
-    if (
-      ctx.workSubTag ||
-      /\b(work|office|team|project|report|client|staff|manager|approve|review|check|audit|meeting|schedule|ops|operations)\b/i.test(
-        s
-      )
-    ) {
-      return REM_CATEGORIES.work;
-    }
-
-    return REM_CATEGORIES.want_to_do;
-  }
-
-  function parseNaturalWaitFromText(text) {
-    const s = String(text || '').toLowerCase();
-    const now = new Date();
-    const nowMs = now.getTime();
-
-    // Check recurring keywords first
-    if (/\b(every\s*day|daily)\b/i.test(s)) {
-      return {
-        matched: true,
-        isRecurring: true,
-        recur: 'daily',
-        waitDays: 1,
-        waitMs: 24 * 3600 * 1000,
-        label: '🔁 Daily Routine'
-      };
-    }
-    if (/\b(every\s*weekday|weekdays|mon-fri)\b/i.test(s)) {
-      return {
-        matched: true,
-        isRecurring: true,
-        recur: 'weekdays',
-        waitDays: 1,
-        waitMs: 24 * 3600 * 1000,
-        label: '🔁 Weekdays (Mon–Fri)'
-      };
-    }
-    if (/\b(every\s*week|weekly)\b/i.test(s)) {
-      return {
-        matched: true,
-        isRecurring: true,
-        recur: 'weekly',
-        waitDays: 7,
-        waitMs: 7 * 24 * 3600 * 1000,
-        label: '🔁 Weekly Routine'
-      };
-    }
-    if (/\b(every\s*month|monthly)\b/i.test(s)) {
-      return {
-        matched: true,
-        isRecurring: true,
-        recur: 'monthly',
-        waitDays: 30,
-        waitMs: 30 * 24 * 3600 * 1000,
-        label: '🔁 Monthly Routine'
-      };
-    }
-
-    // Explicit "in X min/hours/days/weeks" or "wait X days" or "shipping X days" or "for X days"
-    const minMatch = s.match(/\b(?:in|wait|after)\s+(\d+)\s*(?:m|min|mins|minutes)\b/i);
-    if (minMatch) {
-      const mins = Math.max(1, Number(minMatch[1]));
-      return {
-        matched: true,
-        waitDays: +(mins / 1440).toFixed(2),
-        waitMs: mins * 60 * 1000,
-        label: `In ${mins}m (parsed from text)`
-      };
-    }
-
-    const hrMatch = s.match(/\b(?:in|wait|after|for)\s+(\d+)\s*(?:h|hr|hrs|hour|hours)\b/i);
-    if (hrMatch) {
-      const hrs = Math.max(1, Number(hrMatch[1]));
-      return {
-        matched: true,
-        waitDays: +(hrs / 24).toFixed(2),
-        waitMs: hrs * 3600 * 1000,
-        label: `Wait ${hrs}h (parsed from text)`
-      };
-    }
-
-    const dayMatch = s.match(
-      /\b(?:in|wait|after|for|shipping|takes|within)\s+(\d+)\s*(?:d|day|days)\b/i
-    );
-    if (dayMatch) {
-      const days = Math.max(1, Number(dayMatch[1]));
-      return {
-        matched: true,
-        waitDays: days,
-        waitMs: days * 24 * 3600 * 1000,
-        label: `Wait ${days}d (parsed from text)`
-      };
-    }
-
-    const wkMatch = s.match(/\b(?:in|wait|after|for)\s+(\d+)\s*(?:w|wk|wks|week|weeks)\b/i);
-    if (wkMatch) {
-      const wks = Math.max(1, Number(wkMatch[1]));
-      const days = wks * 7;
-      return {
-        matched: true,
-        waitDays: days,
-        waitMs: days * 24 * 3600 * 1000,
-        label: `Wait ${wks}w / ${days}d (parsed from text)`
-      };
-    }
-
-    if (/\b(tonight|this\s+evening)\b/i.test(s)) {
-      const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 20, 0, 0);
-      const waitMs = Math.max(3600 * 1000, dt.getTime() - nowMs);
-      return {
-        matched: true,
-        waitDays: 0.4,
-        waitMs,
-        label: 'Tonight 20:00 (parsed from text)'
-      };
-    }
-
-    if (/\btomorrow\b/i.test(s)) {
-      const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 10, 0, 0);
-      return {
-        matched: true,
-        waitDays: 1,
-        waitMs: Math.max(3600 * 1000, dt.getTime() - nowMs),
-        label: 'Tomorrow 10:00 (parsed from text)'
-      };
-    }
-
-    if (/\bnext\s+week\b/i.test(s)) {
-      return {
-        matched: true,
-        waitDays: 7,
-        waitMs: 7 * 24 * 3600 * 1000,
-        label: 'In 7 days (parsed from text)'
-      };
-    }
-
-    return { matched: false };
-  }
-
-  function suggestPaymentWait(text, rawAmount = '') {
-    const s = String(text || '').toLowerCase();
-    const amt = parseAmountFromText(text, rawAmount);
-    const cat = detectRelevanceCategory(text, remDraft.kind, remDraft.categoryOverride, remDraft.customGroup);
-    const nat = parseNaturalWaitFromText(text);
-
-    // If user typed a natural duration ("in 3 days", "wait 48 hours", "shipping 6 days", "tomorrow"), honor it!
-    if (nat.matched) {
-      return {
-        waitDays: nat.waitDays,
-        waitMs: nat.waitMs,
-        isRecurring: Boolean(nat.isRecurring),
-        recur: nat.recur || '',
-        isParked: false,
-        inferredKind: nat.isRecurring ? 'recurring' : 'wait',
-        tier: nat.label,
-        amt,
-        reason: `Automatically extracted timing (${nat.label}) directly from your note.`
-      };
-    }
-
-    // 1. Verify / "Paid for something and it didn't show up on an app"
-    if (cat.id === 'verify') {
-      const days = /\b(bank|wire|swift|international)\b/i.test(s) ? 2 : 1;
-      return {
-        waitDays: days,
-        waitMs: days * 24 * 3600 * 1000,
-        isParked: false,
-        inferredKind: 'wait',
-        tier: `Verify in ${days === 1 ? '24h' : '48h'} · App / Settlement Check`,
-        amt,
-        reason:
-          days === 1
-            ? '24-hour wait timer — reminds you tomorrow to verify if the payment or update showed up on the app.'
-            : '48-hour settlement timer — reminds you in 2 days to verify bank/app reflection.'
-      };
-    }
-
-    // 2. Shipping time / package / order delivery
-    if (cat.id === 'shipping') {
-      const isLocal = /\b(local|beirut|lebanon|aramex\s+local|today|tomorrow)\b/i.test(s);
-      const isSea = /\b(container|sea|vessel|freight|china)\b/i.test(s);
-      const days = isSea ? 14 : isLocal ? 2 : 5;
-      return {
-        waitDays: days,
-        waitMs: days * 24 * 3600 * 1000,
-        isParked: false,
-        inferredKind: 'wait',
-        tier: `Shipping Timer (${days}d)`,
-        amt,
-        reason: `Auto-set ${days}-day shipping countdown — you'll get a push when it's time to check tracking/arrival.`
-      };
-    }
-
-    // 3. Ideas for later OR Things I want to do -> Parked (no noisy alarm unless chosen)
-    if (cat.id === 'ideas' || cat.id === 'want_to_do') {
-      return {
-        waitDays: 0,
-        waitMs: 0,
-        isParked: true,
-        inferredKind: 'parked',
-        tier: cat.id === 'ideas' ? '💡 Parked in Ideas (No Alarm)' : '🌟 Saved in Want-to-Do (No Alarm)',
-        amt,
-        reason:
-          'Kept cleanly in your organized cluster without a noisy timer (tap any timer chip below if you want a reminder).'
-      };
-    }
-
-    // 4. People to talk to / follow-ups
-    if (cat.id === 'people') {
-      const now = new Date();
-      const tom = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 10, 0, 0);
-      const waitMs = Math.max(2 * 3600 * 1000, tom.getTime() - now.getTime());
-      return {
-        waitDays: 1,
-        waitMs,
-        isParked: false,
-        inferredKind: 'task',
-        tier: '🗣️ People Follow-Up (Tomorrow 10:00)',
-        amt,
-        reason: 'Grouped under People to Talk To — nudges you tomorrow morning at 10:00.'
-      };
-    }
-
-    // 5. Family & Home
-    if (cat.id === 'family') {
-      const now = new Date();
-      const eve = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 19, 30, 0);
-      const waitMs =
-        eve.getTime() > now.getTime() + 1800 * 1000
-          ? eve.getTime() - now.getTime()
-          : 20 * 3600 * 1000;
-      return {
-        waitDays: 1,
-        waitMs,
-        isParked: false,
-        inferredKind: 'task',
-        tier: '👨‍👩‍👧 Family & Home (Evening / 24h)',
-        amt,
-        reason: 'Grouped under Family & Home — reminds you this evening after work hours.'
-      };
-    }
-
-    // 6. Payments & Wait-to-Pay Holds
-    if (cat.id === 'payments' || remDraft.kind === 'payment') {
-      if (/\b(salary|payroll|wage|electricity|edl|water|tax|vat|customs|urgent|emergency)\b/i.test(s)) {
-        return {
-          waitDays: 1,
-          waitMs: 24 * 3600 * 1000,
-          isParked: false,
-          inferredKind: 'payment',
-          tier: 'Urgent / Statutory (24h)',
-          amt,
-          reason: 'Statutory, payroll, or utility item — 24h verification hold.'
-        };
-      }
-      if (amt > 15000) {
-        return {
-          waitDays: 10,
-          waitMs: 10 * 24 * 3600 * 1000,
-          isParked: false,
-          inferredKind: 'payment',
-          tier: `Strategic Payment Hold · $${fmtInt(amt)} (10d)`,
-          amt,
-          reason: 'High-value payout (>$15k) — 10-day cooling-off hold.'
-        };
-      }
-      if (amt > 5000) {
-        return {
-          waitDays: 7,
-          waitMs: 7 * 24 * 3600 * 1000,
-          isParked: false,
-          inferredKind: 'payment',
-          tier: `Major Payment Hold · $${fmtInt(amt)} (7d)`,
-          amt,
-          reason: 'Major payout ($5k–$15k) — 7-day cooling-off hold.'
-        };
-      }
-      if (amt >= 1000) {
-        return {
-          waitDays: 4,
-          waitMs: 4 * 24 * 3600 * 1000,
-          isParked: false,
-          inferredKind: 'payment',
-          tier: `Medium Payment Hold · $${fmtInt(amt)} (4d)`,
-          amt,
-          reason: 'Medium payout ($1k–$5k) — 4-day cooling-off hold.'
-        };
-      }
-      if (amt > 0) {
-        return {
-          waitDays: 2,
-          waitMs: 2 * 24 * 3600 * 1000,
-          isParked: false,
-          inferredKind: 'payment',
-          tier: `Routine Payment Hold · $${fmtInt(amt)} (2d)`,
-          amt,
-          reason: 'Routine payout (<$1k) — 48h cooling-off hold.'
-        };
-      }
-      return {
-        waitDays: 3,
-        waitMs: 3 * 24 * 3600 * 1000,
-        isParked: false,
-        inferredKind: 'payment',
-        tier: 'Payment Wait-Timer (3d)',
-        amt: 0,
-        reason: '3-day cooling-off hold before paying (type an amount like $800 or $6,000 in the note to auto-scale).'
-      };
-    }
-
-    // 7. Work & Projects default
-    return {
-      waitDays: 1,
-      waitMs: 24 * 3600 * 1000,
-      isParked: false,
-      inferredKind: 'task',
-      tier: '💼 Work Follow-Up (+24h)',
-      amt,
-      reason: 'Auto-grouped under Work & Projects with a 24-hour reminder timer.'
-    };
-  }
-
-  function computeTargetTimestampFromChoice(choice, text, rawAmount) {
-    const now = new Date();
-    const nowMs = now.getTime();
-    if (choice === 'none') {
-      return {
-        targetMs: 0,
-        waitDays: 0,
-        isParked: true,
-        inferredKind: 'parked',
-        label: 'No Timer (Parked)',
-        reason: 'Saved in its smart group with no timer.'
-      };
-    }
-    if (choice === 'auto') {
-      const sug = suggestPaymentWait(text, rawAmount);
-      return {
-        targetMs: sug.isParked ? 0 : nowMs + sug.waitMs,
-        waitDays: sug.waitDays,
-        isParked: Boolean(sug.isParked),
-        isRecurring: Boolean(sug.isRecurring),
-        recur: sug.recur || '',
-        inferredKind: sug.inferredKind || 'task',
-        label: sug.tier,
-        reason: sug.reason
-      };
-    }
-    if (choice === '1h') {
-      return { targetMs: nowMs + 3600 * 1000, waitDays: 0.04, label: 'In 1 hour', reason: '1-hour quick reminder.' };
-    }
-    if (choice === '3h') {
-      return { targetMs: nowMs + 3 * 3600 * 1000, waitDays: 0.125, label: 'In 3 hours', reason: '3-hour same-day wait.' };
-    }
-    if (choice === 'tonight') {
-      const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 20, 30, 0);
-      const tMs = dt.getTime() > nowMs ? dt.getTime() : nowMs + 2 * 3600 * 1000;
-      return { targetMs: tMs, waitDays: 0.5, label: 'Tonight 20:30', reason: 'Scheduled for tonight at 20:30.' };
-    }
-    if (choice === 'nextmon') {
-      const day = now.getDay();
-      const daysUntilMon = ((8 - day) % 7) || 7;
-      const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysUntilMon, 9, 0, 0);
-      return {
-        targetMs: dt.getTime(),
-        waitDays: daysUntilMon,
-        label: `Next Mon (${daysUntilMon}d)`,
-        reason: 'Scheduled for Monday 09:00.'
-      };
-    }
-    const dayMatch = String(choice || '').match(/^(\d+)d$/);
-    const dCount = dayMatch ? Number(dayMatch[1]) : 3;
-    return {
-      targetMs: nowMs + dCount * 24 * 3600 * 1000,
-      waitDays: dCount,
-      label: `Wait ${dCount} day${dCount === 1 ? '' : 's'}`,
-      reason: `Manual ${dCount}-day wait timer.`
-    };
-  }
-
-  function formatHoldCountdown(targetMs, nowMs = Date.now()) {
-    if (!targetMs) return 'Parked · No alarm';
-    const diff = Number(targetMs) - nowMs;
-    if (diff <= 0) {
-      const agoMin = Math.floor(Math.abs(diff) / 60000);
-      if (agoMin < 60) return `Ready · ${agoMin}m ago`;
-      const agoHrs = Math.floor(agoMin / 60);
-      if (agoHrs < 24) return `Ready · ${agoHrs}h ago`;
-      return `Ready · ${Math.floor(agoHrs / 24)}d ago`;
-    }
-    const totalMin = Math.ceil(diff / 60000);
-    if (totalMin < 60) return `${totalMin}m wait left`;
-    const hrs = Math.floor(totalMin / 60);
-    const mins = totalMin % 60;
-    if (hrs < 48) return `${hrs}h ${mins}m left`;
-    const days = Math.floor(hrs / 24);
-    const remHrs = hrs % 24;
-    return `${days}d ${remHrs}h left`;
-  }
-
-  function isTimerItem(r) {
-    if (!r || r.completed || r.deleted) return false;
-    if (r.category === 'ideas' || r.category === 'want_to_do') return Boolean(r.matureAt > 0);
-    return Boolean(
-      r.matureAt > 0 ||
-        r.kind === 'wait' ||
-        r.kind === 'payment' ||
-        r.category === 'verify' ||
-        r.category === 'shipping' ||
-        r.category === 'payments'
-    );
-  }
-
-  function isDelegatedItem(r) {
-    if (!r || r.completed || r.deleted) return false;
-    if (r.category === 'ideas' || r.category === 'want_to_do') return Boolean(r.isDelegated || r.assigneeName);
-    return Boolean(r.isDelegated || r.assigneeName || r.category === 'people');
-  }
-
-  function classifyReminderBucket(item, nowMs = Date.now()) {
-    if (item.completed) return 'completed';
-    if (item.delegationStatus === 'done') return 'urgent_matured';
-    if (item.kind === 'recurring') {
-      const targetMs = Number(item.matureAt || item.dueAt || 0);
-      if (targetMs && nowMs >= targetMs) return 'urgent_matured';
-      return 'recurring';
-    }
-    const targetMs = Number(item.matureAt || item.dueAt || 0);
-    if (!targetMs || item.kind === 'parked' || item.category === 'ideas' || item.category === 'want_to_do') {
-      if (targetMs && nowMs >= targetMs) return 'urgent_matured';
-      if (!targetMs) return 'parked';
-    }
-    const isHold = isTimerItem(item);
-    if (isHold) {
-      if (targetMs && nowMs >= targetMs) {
-        return 'urgent_matured';
-      }
-      return 'holding';
-    }
-    if (targetMs && nowMs >= targetMs) {
-      return 'urgent_matured';
-    }
-    const endOfToday = new Date();
-    endOfToday.setHours(23, 59, 59, 999);
-    if (targetMs && targetMs <= endOfToday.getTime()) {
-      return 'today';
-    }
-    return 'upcoming';
-  }
-
-  function mergePersonalLedger(incoming, opts = {}) {
-    if (!incoming || typeof incoming !== 'object') return false;
-    let changed = false;
-
-    const delSet = new Set(personalLedger.deletedIds || []);
-    if (Array.isArray(incoming.deletedIds)) {
-      for (const dId of incoming.deletedIds) {
-        if (dId && !delSet.has(dId)) {
-          delSet.add(dId);
-          changed = true;
-        }
-      }
-    }
-
-    for (const r of personalLedger.reminders || []) {
-      if (r && r.id && r.deleted && !delSet.has(r.id)) {
-        delSet.add(r.id);
-        changed = true;
-      }
-    }
-    if (Array.isArray(incoming.reminders)) {
-      for (const r of incoming.reminders) {
-        if (r && r.id && r.deleted && !delSet.has(r.id)) {
-          delSet.add(r.id);
-          changed = true;
-        }
-      }
-    }
-
-    const beforeCount = (personalLedger.reminders || []).length;
-    personalLedger.reminders = (personalLedger.reminders || [])
-      .filter((r) => r && r.id && !r.deleted && !delSet.has(r.id))
-      .map((r) => normalizeReminderItem(r));
-    if (personalLedger.reminders.length !== beforeCount) changed = true;
-
-    // 1. Merge reminders by id using updatedAt
-    if (Array.isArray(incoming.reminders)) {
-      const map = new Map();
-      for (const r of personalLedger.reminders || []) {
-        if (r && r.id && !delSet.has(r.id)) map.set(r.id, r);
-      }
-      for (const rawRem of incoming.reminders) {
-        if (!rawRem || !rawRem.id || rawRem.deleted || delSet.has(rawRem.id)) continue;
-        const rem = normalizeReminderItem(rawRem);
-        const cur = map.get(rem.id);
-        if (!cur || Number(rem.updatedAt || 0) >= Number(cur.updatedAt || 0)) {
-          map.set(rem.id, rem);
-          changed = true;
-        }
-      }
-      const seenActiveTitle = new Map();
-      const deduped = [];
-      const sorted = Array.from(map.values()).sort(
-        (a, b) => Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0)
-      );
-      for (const item of sorted) {
-        if (!item.completed) {
-          const normTitle = String(item.title || '').trim().toLowerCase();
-          if (seenActiveTitle.has(normTitle)) {
-            delSet.add(item.id);
-            changed = true;
-            continue;
-          }
-          seenActiveTitle.set(normTitle, item.id);
-        }
-        deduped.push(item);
-      }
-      personalLedger.reminders = deduped.sort(
-        (a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0)
-      );
-    }
-
-    personalLedger.deletedIds = Array.from(delSet).slice(-400);
-
-    for (const [iso, curRec] of Object.entries(personalLedger.dailyScores || {})) {
-      personalLedger.dailyScores[iso] = normalizeDayScoreRecord(curRec, iso);
-    }
-
-    // 2. Merge dailyScores by date key using updatedAt
-    if (incoming.dailyScores && typeof incoming.dailyScores === 'object') {
-      for (const [iso, rec] of Object.entries(incoming.dailyScores)) {
-        if (!rec || typeof rec !== 'object') continue;
-        const normInc = normalizeDayScoreRecord(rec, iso);
-        const cur = personalLedger.dailyScores[iso];
-        if (!cur || Number(normInc.updatedAt || 0) >= Number(cur.updatedAt || 0)) {
-          personalLedger.dailyScores[iso] = normInc;
-          changed = true;
-        }
-      }
-    }
-
-    if (Array.isArray(incoming.teamRoster) && incoming.teamRoster.length) {
-      personalLedger.teamRoster = incoming.teamRoster;
-      changed = true;
-    }
-
-    if (incoming.prayerConfig && typeof incoming.prayerConfig === 'object') {
-      const curTs = Number(personalLedger.prayerConfig?.updatedAt || 0);
-      const incTs = Number(incoming.prayerConfig.updatedAt || 0);
-      if (!personalLedger.prayerConfig || incTs >= curTs) {
-        if (JSON.stringify(personalLedger.prayerConfig || null) !== JSON.stringify(incoming.prayerConfig)) {
-          personalLedger.prayerConfig = incoming.prayerConfig;
-          changed = true;
-        }
-      }
-    }
-
-    if (changed && !opts.skipSave) {
-      personalLedger.updatedAt = Math.max(
-        Number(personalLedger.updatedAt || 0),
-        Number(incoming.updatedAt || Date.now())
-      );
-      savePersonalLedgerToLocal();
-    } else if (!opts.skipSave) {
-      savePersonalLedgerToLocal();
-    }
-    return changed;
-  }
-
-  let personalSyncTimer = null;
-  function persistAndSyncPersonalLedger() {
-    savePersonalLedgerToLocal();
-    schedulePushSync();
-    clearTimeout(personalSyncTimer);
-    personalSyncTimer = setTimeout(() => {
-      pushPersonalLedgerToCloud().catch(() => {});
-    }, 350);
-  }
-
-  async function pushPersonalLedgerToCloud() {
-    // 1. Sync with Direct Local Bridge (:4318) if connected
-    if (localBridgeBase) {
-      try {
-        const bRes = await fetch(`${localBridgeBase}/api/personal-ledger`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ personalLedger })
-        });
-        if (bRes.ok) {
-          const bData = await bRes.json();
-          if (bData?.personalLedger) {
-            mergePersonalLedger(bData.personalLedger);
-          }
-        }
-      } catch {}
-    }
-    // 2. Sync with Dataverse Cloud Relay (fetch & merge first so we never clobber Command edits)
-    if (cloudCfg.url && cloudCfg.key) {
-      try {
-        const getRes = await callCloudPush({ op: 'get' }).catch(() => null);
-        const getDocs = getRes?.docs && typeof getRes.docs === 'object' ? getRes.docs : getRes || {};
-        if (getDocs?.personal_ledger && typeof getDocs.personal_ledger === 'object') {
-          mergePersonalLedger(getDocs.personal_ledger);
-        }
-        const res = await callCloudPush({
-          op: 'patch',
-          patch: {
-            personal_ledger: personalLedger
-          }
-        });
-        const remoteLedger = res?.docs?.personal_ledger || res?.personal_ledger;
-        if (remoteLedger) {
-          mergePersonalLedger(remoteLedger);
-        }
-      } catch {}
-    }
-  }
+  // Personal Ledger & Reminders are owned by Planner PWA (https://husseinbdeir.github.io/planner/)
+  function loadPersonalLedgerFromLocal() {}
+  function mergePersonalLedger() {}
+  async function pushPersonalLedgerToCloud() {}
 
   // ---------- Full Web Push Notifications (RFC 8291 aes128gcm + RFC 8292 VAPID ES256) ----------
   function b64ToBytes(b64) {
@@ -2400,7 +1390,7 @@
   }
 
   async function cancelExactReminderPush(itemId) {
-    if (!cloudCfg.url || !cloudCfg.key || !itemId) return;
+    if (isHeadlessBrowser || !cloudCfg.url || !cloudCfg.key || !itemId) return;
     try {
       await callCloudPush({
         op: 'patch',
@@ -2525,7 +1515,7 @@
   }
 
   async function syncPushSchedule() {
-    if (!pushSub || !pushSub.endpoint) return;
+    if (isHeadlessBrowser || !pushSub || !pushSub.endpoint) return;
     lastPushScheduleSyncAt = Date.now();
     const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
     const devId = getDeviceId();
@@ -3036,13 +2026,44 @@
     }
   }
 
-  // Web Audio Synthesizer for subtle executive chimes
-  function playChime(kind = 'confirm') {
-    if (!prefs.sound) return;
+  // Web Audio Synthesizer for subtle executive chimes (singleton context, #32)
+  let sharedAudioCtx = null;
+  function unlockSharedAudio() {
+    if (isHeadlessBrowser) return;
     try {
       const Ctx = window.AudioContext || window.webkitAudioContext;
       if (!Ctx) return;
-      const ctx = new Ctx();
+      if (!sharedAudioCtx || sharedAudioCtx.state === 'closed') {
+        sharedAudioCtx = new Ctx();
+      }
+      if (sharedAudioCtx.state === 'suspended') {
+        sharedAudioCtx.resume().catch(() => {});
+      }
+    } catch {}
+  }
+  window.addEventListener('pointerdown', unlockSharedAudio, { passive: true });
+  window.addEventListener('keydown', unlockSharedAudio, { passive: true });
+
+  function isPinLocked() {
+    const overlay = $('pin-overlay');
+    return Boolean(
+      document.documentElement.classList.contains('pin-locked-boot') ||
+        (overlay && !overlay.hidden)
+    );
+  }
+
+  function playChime(kind = 'confirm') {
+    if (isHeadlessBrowser || !prefs.sound || isPinLocked()) return;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      if (!sharedAudioCtx || sharedAudioCtx.state === 'closed') {
+        sharedAudioCtx = new Ctx();
+      }
+      const ctx = sharedAudioCtx;
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
       const now = ctx.currentTime;
       const notes = kind === 'approve' ? [523.25, 659.25, 783.99] : kind === 'send' ? [440, 587.33] : [587.33];
       notes.forEach((freq, i) => {
@@ -3128,18 +2149,71 @@
     });
   }
 
-  // Connectivity Engine: Probes Direct Local Bridge (:4318) first, then Cloud Relay fallback
+  // Connectivity Engine: Probes Direct Local Bridge (:4318) first, then Edge WS & Cloud Relay fallback
   let lastLocalProbeFailedAt = 0;
   let syncInFlight = false;
   let pendingSyncAfterFlight = false;
 
+  async function deriveEdgeAuthTokenHex(rawKey) {
+    const clean = String(rawKey || '').trim();
+    if (!clean || !window.crypto || !window.crypto.subtle) return '';
+    const bytes = new TextEncoder().encode(`theo-edge-v1:${clean}`);
+    const digest = await window.crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  }
+
+  async function getBridgeAuthTokenHex() {
+    if (localBootInfo && typeof localBootInfo.token === 'string' && localBootInfo.token.trim()) {
+      return localBootInfo.token.trim();
+    }
+    refreshCloudConfig();
+    const rawSecret = cloudCfg.edgeAccessKey || cloudCfg.key || '';
+    if (!rawSecret) return '';
+    if (cachedBridgeTokenHex && cachedBridgeTokenSrc === rawSecret) {
+      return cachedBridgeTokenHex;
+    }
+    const derived = await deriveEdgeAuthTokenHex(rawSecret);
+    if (derived) {
+      cachedBridgeTokenSrc = rawSecret;
+      cachedBridgeTokenHex = derived;
+    }
+    return derived;
+  }
+
+  async function authFetchLocal(url, init = {}) {
+    const token = await getBridgeAuthTokenHex();
+    const headers = Object.assign({}, init.headers || {});
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    return fetch(url, { ...init, headers });
+  }
+
+  async function fetchPairingInfoFromBridge() {
+    if (isHeadlessBrowser || !localBridgeBase) return cachedPairingInfo;
+    try {
+      const res = await authFetchLocal(`${localBridgeBase}/api/pairing-info`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.ok) {
+          cachedPairingInfo = data;
+          return data;
+        }
+      }
+    } catch {}
+    return cachedPairingInfo;
+  }
+
   async function probeLocalBridge(force = false) {
+    if (isHeadlessBrowser) return '';
+    refreshCloudConfig();
     const candidates = [];
     const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
     const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(ua);
     const isGithubHosted = location.hostname.endsWith('.github.io');
 
-    // If opened directly from the VS Code LAN/local bridge (e.g. http://192.168.3.129:4318), use location.origin first
     if (
       location.port === String(cloudCfg.port) ||
       (location.protocol === 'http:' && !isGithubHosted)
@@ -3150,16 +2224,14 @@
       candidates.push(prefs.customBridgeUrl.replace(/\/+$/, ''));
     }
     if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+      candidates.push(`http://127.0.0.1:${cloudCfg.port}`);
       candidates.push(`http://localhost:${cloudCfg.port}`);
     }
-    // On mobile devices hosted on GitHub Pages, 127.0.0.1 is the phone itself (never the laptop)
     if (!isMobileDevice) {
       candidates.push(`http://127.0.0.1:${cloudCfg.port}`);
     }
 
-    if (!candidates.length) {
-      return '';
-    }
+    if (!candidates.length) return '';
     if (!force && lastLocalProbeFailedAt && Date.now() - lastLocalProbeFailedAt < 30000) {
       return '';
     }
@@ -3170,8 +2242,8 @@
       seen.add(base);
       try {
         const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 700);
-        const res = await fetch(`${base}/api/ping`, { signal: ctrl.signal });
+        const timer = setTimeout(() => ctrl.abort(), 750);
+        const res = await authFetchLocal(`${base}/api/ping`, { signal: ctrl.signal });
         clearTimeout(timer);
         if (res.ok) {
           const data = await res.json();
@@ -3185,6 +2257,7 @@
             if (data.edgeRelayUrl && !prefs.edgeRelayUrl) {
               discoveredEdgeUrl = String(data.edgeRelayUrl).trim();
             }
+            fetchPairingInfoFromBridge().catch(() => {});
             return base;
           }
         }
@@ -3196,14 +2269,18 @@
 
   const initialNoSse = location.search.includes('nosse=1');
 
-  async function deriveEdgeAuthTokenHex(rawKey) {
-    const clean = String(rawKey || '').trim();
-    if (!clean || !window.crypto || !window.crypto.subtle) return '';
-    const bytes = new TextEncoder().encode(`theo-edge-v1:${clean}`);
-    const digest = await window.crypto.subtle.digest('SHA-256', bytes);
-    return Array.from(new Uint8Array(digest))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
+  function inferFrontendRowDeviceId(r, fallbackId = '', fallbackName = '') {
+    const cwd = String(r?.cwd || r?.workspacePath || '').toLowerCase();
+    if (cwd.startsWith('c:\\users\\husseinbdeir') || cwd.startsWith('c:/users/husseinbdeir')) {
+      return { id: 'main-workstation', name: 'Main Workstation' };
+    }
+    if (cwd.startsWith('c:\\users\\hbdei') || cwd.startsWith('c:/users/hbdei')) {
+      return { id: 'theo-laptop', name: r?.deviceName || 'THEO Laptop' };
+    }
+    const id = String(r?.deviceId || fallbackId || '').trim();
+    const devMeta = id ? fleetDevicesMap.get(id) : null;
+    const name = String(r?.deviceName || devMeta?.name || fallbackName || id || '').trim();
+    return { id, name };
   }
 
   function updateFleetDevices(list) {
@@ -3229,13 +2306,14 @@
     if (Array.isArray(appState?.devices)) {
       updateFleetDevices(appState.devices);
     }
-    if (appState?.device && appState.device.id) {
+    const stateDev = appState?.device || appState?.connection?.device;
+    if (stateDev && stateDev.id) {
       updateFleetDevices([
         {
-          ...appState.device,
-          online: connMode === 'local' || connMode === 'edge' ? true : Boolean(appState.device.online),
-          sessionCount: (appState.rows || []).filter(
-            (r) => !r.archived && (!r.deviceId || r.deviceId === appState.device.id)
+          ...stateDev,
+          online: connMode === 'local' || connMode === 'edge' ? true : Boolean(stateDev.online),
+          sessionCount: (appState?.rows || []).filter(
+            (r) => !r.archived && (!r.deviceId || r.deviceId === stateDev.id)
           ).length
         }
       ]);
@@ -3249,100 +2327,177 @@
     );
   }
 
-  function mergeDeviceSnapshotRows(targetState, incomingSnap, devId, devName) {
-    if (!targetState || !incomingSnap || typeof incomingSnap !== 'object') return;
-    const cleanId = String(devId || incomingSnap?.device?.id || '').trim();
-    const cleanName = String(
-      devName || incomingSnap?.device?.name || incomingSnap?.connection?.hostname || cleanId || 'Host'
+  function storeHostSnapshotEntry(snap, hintDeviceId = '') {
+    if (!snap || typeof snap !== 'object') return '';
+    const devObj = snap.device || snap.connection?.device || {};
+    const devId = String(hintDeviceId || devObj.id || 'primary-host').trim();
+    const devName = String(
+      devObj.name || snap.connection?.hostname || fleetDevicesMap.get(devId)?.name || devId
     ).trim();
-    if (cleanId) {
+
+    if (Array.isArray(snap.devices)) {
+      updateFleetDevices(snap.devices);
+    }
+
+    const normalizedRows = (Array.isArray(snap.rows) ? snap.rows : [])
+      .filter((r) => r && r.id)
+      .map((r) => {
+        const owner = inferFrontendRowDeviceId(r, devId, devName);
+        return {
+          ...r,
+          deviceId: owner.id || devId,
+          deviceName: owner.name || devName
+        };
+      });
+
+    if (devId && devId !== 'primary-host') {
       updateFleetDevices([
         {
-          ...(incomingSnap.device || {}),
-          id: cleanId,
-          name: cleanName,
-          hostname: incomingSnap?.connection?.hostname || incomingSnap?.device?.hostname || '',
-          sessionCount: Array.isArray(incomingSnap.rows)
-            ? incomingSnap.rows.filter((r) => r && !r.archived).length
-            : 0,
-          lastSeen: Number(incomingSnap.generatedAt || Date.now())
+          ...devObj,
+          id: devId,
+          name: devName,
+          hostname: snap.connection?.hostname || devObj.hostname || '',
+          sessionCount: normalizedRows.filter((r) => !r.archived && r.deviceId === devId).length,
+          lastSeen: Number(snap.generatedAt || Date.now())
         }
       ]);
     }
 
-    const rowMap = new Map();
-    for (const r of targetState.rows || []) {
-      if (r && r.id) rowMap.set(r.id, r);
-    }
-    for (const r of incomingSnap.rows || []) {
-      if (!r || !r.id) continue;
-      const tagged = {
-        ...r,
-        deviceId: r.deviceId || cleanId,
-        deviceName: r.deviceName || cleanName
-      };
-      const prev = rowMap.get(r.id);
-      if (
-        !prev ||
-        (tagged.status === 'working' && prev.status !== 'working') ||
-        Number(tagged.at || 0) >= Number(prev.at || 0)
-      ) {
-        rowMap.set(r.id, tagged);
-      }
-    }
-    targetState.rows = Array.from(rowMap.values()).sort(
-      (a, b) => Number(b.at || 0) - Number(a.at || 0)
-    );
+    const prevSnap = hostSnapshotsByDevice.get(devId) || {};
+    hostSnapshotsByDevice.set(devId, {
+      ...prevSnap,
+      ...snap,
+      device: { ...devObj, id: devId, name: devName },
+      rows: normalizedRows,
+      approvals: Array.isArray(snap.approvals)
+        ? snap.approvals.map((a) => ({
+            ...a,
+            deviceId: a.deviceId || devId,
+            deviceName: a.deviceName || devName
+          }))
+        : prevSnap.approvals || [],
+      workspaces: Array.isArray(snap.workspaces)
+        ? snap.workspaces.map((w) => ({
+            ...w,
+            deviceId: w.deviceId || devId,
+            deviceName: w.deviceName || devName
+          }))
+        : prevSnap.workspaces || [],
+      groups: Array.isArray(snap.groups) ? snap.groups : prevSnap.groups || [],
+      providers: snap.providers || prevSnap.providers || null,
+      accountOrder: Array.isArray(snap.accountOrder) ? snap.accountOrder : prevSnap.accountOrder || [],
+      summary: snap.summary || prevSnap.summary || null,
+      summaryByProvider: snap.summaryByProvider || prevSnap.summaryByProvider || null,
+      topSessions: Array.isArray(snap.topSessions) ? snap.topSessions : prevSnap.topSessions || [],
+      generatedAt: Number(snap.generatedAt || Date.now())
+    });
 
-    if (Array.isArray(incomingSnap.approvals) && incomingSnap.approvals.length > 0) {
-      const appMap = new Map();
-      for (const a of targetState.approvals || []) {
-        if (a && a.id) appMap.set(a.id, a);
+    if (snap.providers) {
+      hasProvidersHydrated = true;
+    }
+    return devId;
+  }
+
+  function rebuildUnifiedAppState(preferredDeviceId = '') {
+    if (hostSnapshotsByDevice.size === 0) return appState;
+    const entries = Array.from(hostSnapshotsByDevice.entries()).sort((a, b) => {
+      const aLocal = localWsDevice?.id && a[0] === localWsDevice.id ? 1 : 0;
+      const bLocal = localWsDevice?.id && b[0] === localWsDevice.id ? 1 : 0;
+      if (aLocal !== bLocal) return bLocal - aLocal;
+      return Number(b[1]?.generatedAt || 0) - Number(a[1]?.generatedAt || 0);
+    });
+
+    const primarySnap =
+      (preferredDeviceId && hostSnapshotsByDevice.get(preferredDeviceId)) ||
+      (localWsDevice?.id && hostSnapshotsByDevice.get(localWsDevice.id)) ||
+      entries[0][1];
+
+    const rowMap = new Map();
+    const appMap = new Map();
+    const wsMap = new Map();
+    const grpMap = new Map();
+    let maxGeneratedAt = 0;
+    let chosenProviders = primarySnap?.providers || null;
+    let chosenAccountOrder = Array.isArray(primarySnap?.accountOrder) ? primarySnap.accountOrder : [];
+    let chosenSummary = primarySnap?.summary || null;
+    let chosenSummaryByProv = primarySnap?.summaryByProvider || null;
+    let chosenTopSessions = Array.isArray(primarySnap?.topSessions) ? primarySnap.topSessions : [];
+
+    for (const [devId, snap] of entries) {
+      maxGeneratedAt = Math.max(maxGeneratedAt, Number(snap?.generatedAt || 0));
+      if (!chosenProviders && snap?.providers) chosenProviders = snap.providers;
+      if (!chosenAccountOrder.length && Array.isArray(snap?.accountOrder) && snap.accountOrder.length) {
+        chosenAccountOrder = snap.accountOrder;
       }
-      for (const a of incomingSnap.approvals) {
-        if (a && a.id && !appMap.has(a.id)) {
-          appMap.set(a.id, { ...a, deviceId: a.deviceId || cleanId, deviceName: a.deviceName || cleanName });
+      if ((!chosenSummary || !Number(chosenSummary?.week?.tokens || 0)) && snap?.summary) {
+        chosenSummary = snap.summary;
+      }
+      if (!chosenSummaryByProv && snap?.summaryByProvider) {
+        chosenSummaryByProv = snap.summaryByProvider;
+      }
+      if (!chosenTopSessions.length && Array.isArray(snap?.topSessions) && snap.topSessions.length) {
+        chosenTopSessions = snap.topSessions;
+      }
+
+      for (const r of snap.rows || []) {
+        if (!r || !r.id) continue;
+        const prev = rowMap.get(r.id);
+        if (!prev) {
+          rowMap.set(r.id, { ...r });
+        } else {
+          const rAt = Number(r.at || 0);
+          const pAt = Number(prev.at || 0);
+          const rOwned = r.deviceId === devId;
+          const pOwned = prev.deviceId !== r.deviceId;
+          if (rAt > pAt || (rAt === pAt && rOwned && pOwned)) {
+            rowMap.set(r.id, { ...prev, ...r });
+          }
         }
       }
-      targetState.approvals = Array.from(appMap.values());
+
+      for (const a of snap.approvals || []) {
+        if (!a) continue;
+        const aKey = String(a.id || a.approvalId || `${devId}:${a.sessionId || ''}`);
+        if (aKey && !appMap.has(aKey)) {
+          appMap.set(aKey, { ...a });
+        }
+      }
+
+      for (const w of snap.workspaces || []) {
+        if (!w || !w.id) continue;
+        const prevW = wsMap.get(w.id);
+        if (!prevW || w.deviceId === localWsDevice?.id || Number(snap.generatedAt || 0) >= Number(prevW._snapAt || 0)) {
+          wsMap.set(w.id, { ...w, _snapAt: Number(snap.generatedAt || 0) });
+        }
+      }
+
+      for (const g of snap.groups || []) {
+        if (g && g.id && !grpMap.has(g.id)) {
+          grpMap.set(g.id, { ...g });
+        }
+      }
     }
 
-    if (Array.isArray(incomingSnap.workspaces) && incomingSnap.workspaces.length > 0) {
-      const wsMap = new Map();
-      for (const w of targetState.workspaces || []) {
-        if (w && w.id) wsMap.set(w.id, w);
-      }
-      for (const w of incomingSnap.workspaces) {
-        if (w && w.id && !wsMap.has(w.id)) wsMap.set(w.id, w);
-      }
-      targetState.workspaces = Array.from(wsMap.values());
-    }
+    return {
+      ...primarySnap,
+      generatedAt: maxGeneratedAt || Date.now(),
+      rows: Array.from(rowMap.values()).sort((a, b) => Number(b.at || 0) - Number(a.at || 0)),
+      approvals: Array.from(appMap.values()),
+      workspaces: Array.from(wsMap.values()),
+      groups: Array.from(grpMap.values()),
+      providers: chosenProviders || appState?.providers || {},
+      accountOrder: chosenAccountOrder.length ? chosenAccountOrder : appState?.accountOrder || [],
+      summary: chosenSummary || appState?.summary || null,
+      summaryByProvider: chosenSummaryByProv || appState?.summaryByProvider || null,
+      topSessions: chosenTopSessions.length ? chosenTopSessions : appState?.topSessions || []
+    };
   }
 
   function ingestIncomingHostState(st, sourceDeviceId = '') {
     if (!st || typeof st !== 'object') return;
-    if (Array.isArray(st.devices)) {
-      updateFleetDevices(st.devices);
-    }
-    const devId = String(sourceDeviceId || st?.device?.id || '').trim();
-    const devName = String(st?.device?.name || st?.connection?.hostname || devId || '').trim();
-    if (devId && Array.isArray(st.rows)) {
-      for (const r of st.rows) {
-        if (r && !r.deviceId) r.deviceId = devId;
-        if (r && !r.deviceName && devName) r.deviceName = devName;
-      }
-    }
+    const devId = storeHostSnapshotEntry(st, sourceDeviceId);
+    const nextState = rebuildUnifiedAppState(devId) || st;
 
-    let nextState = st;
-    if (appState && devId && appState?.device?.id && appState.device.id !== devId) {
-      nextState = {
-        ...appState,
-        generatedAt: Math.max(Number(appState.generatedAt || 0), Number(st.generatedAt || Date.now()))
-      };
-      mergeDeviceSnapshotRows(nextState, st, devId, devName);
-    }
-
-    // Re-apply active live CLI stream overlays so snapshots never flicker mid-stream
     for (const [tid, live] of liveStreamsByThreadId.entries()) {
       if (live && live.status === 'working' && Date.now() - Number(live.receivedAt || 0) < 45000) {
         const matchRow = (nextState.rows || []).find((r) => r && r.id === tid);
@@ -3359,10 +2514,7 @@
     applyPendingLocalOverrides(nextState);
     checkLiveStateNotifications(nextState);
     appState = nextState;
-    reconcilePendingNewSessionBind(nextState);
-    if (st.personalLedger) {
-      mergePersonalLedger(st.personalLedger);
-    }
+    reconcilePendingNewSessionBind(nextState, lastCloudQueue);
     persistCache();
     renderAll();
   }
@@ -3377,7 +2529,7 @@
     const turnEl = streamEl.querySelector('[data-streaming-turn="1"]');
     const live = liveStreamsByThreadId.get(tid);
     if (!turnEl || !live) {
-      renderChatView();
+      renderChatView(false);
       return;
     }
     const wasNearBottom = streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight < 120;
@@ -3409,10 +2561,15 @@
       textWrap.innerHTML = rendered + cursor;
     }
     if (statusLbl) {
-      statusLbl.textContent =
-        live.status === 'working'
-          ? `⚡ Live Stream${live.deviceName ? ` · ${live.deviceName}` : ''}`
-          : '✓ Stream Complete';
+      if (live.status === 'working') {
+        statusLbl.textContent = `⚡ Live Stream${live.deviceName ? ` · ${live.deviceName}` : ''}`;
+      } else if (live.status === 'failed' || live.status === 'error') {
+        statusLbl.textContent = `⚠️ Stream Failed${live.error ? `: ${String(live.error).slice(0, 90)}` : ''}`;
+      } else if (live.status === 'cancelled' || live.status === 'stopped') {
+        statusLbl.textContent = '⏹ Stream Stopped';
+      } else {
+        statusLbl.textContent = '✓ Stream Complete';
+      }
     }
     if (live.status !== 'working') {
       turnEl.classList.remove('is-streaming');
@@ -3431,9 +2588,13 @@
     const draftId = String(delta.draftThreadId || delta.draftId || '').trim();
 
     if (realId && pendingNewSessionBind) {
+      const wantDev = pendingNewSessionBind.targetDeviceId || '';
+      const deltaDev = String(delta.deviceId || '').trim();
+      const devMatches = !wantDev || !deltaDev || wantDev === deltaDev;
       const matchesDraft =
         (draftId && pendingNewSessionBind.draftThreadId === draftId) ||
-        (pendingNewSessionBind.provider === prov &&
+        (devMatches &&
+          pendingNewSessionBind.provider === prov &&
           Date.now() - Number(pendingNewSessionBind.createdAt || 0) < 35000 &&
           !(pendingNewSessionBind.knownIds && pendingNewSessionBind.knownIds.has(realId)));
       if (matchesDraft) {
@@ -3452,7 +2613,6 @@
     };
     liveStreamsByThreadId.set(tid, mergedDelta);
 
-    // Ensure session row reflects live streaming immediately
     if (appState && Array.isArray(appState.rows)) {
       let row = appState.rows.find((r) => r && r.id === tid);
       if (!row && realId) {
@@ -3478,6 +2638,10 @@
           row.status = 'working';
           row.statusLabel = 'Streaming Live';
           row.dot = 'running';
+        } else if (delta.status === 'failed' || delta.status === 'error') {
+          row.status = 'completed';
+          row.statusLabel = 'Failed';
+          row.dot = row.open ? 'idle' : null;
         } else if (delta.status === 'done' || delta.status === 'completed') {
           row.status = 'completed';
           row.statusLabel = 'Completed';
@@ -3498,7 +2662,18 @@
     const streamMsgId = `stream-${delta.runKey || delta.runId || tid}`;
     let streamMsg = msgs.find((m) => m && (m.id === streamMsgId || m.isStreaming));
     const isWorking = delta.status === 'working';
-    if (!streamMsg) {
+    const incomingTrimmed = String(mergedDelta.fullText || '').trim();
+    const lastNonStreamAssistant = [...msgs]
+      .reverse()
+      .find((m) => m && m.role === 'assistant' && m.id !== streamMsgId && !m.isStreaming);
+    const alreadyPersisted = Boolean(
+      !isWorking &&
+        incomingTrimmed &&
+        lastNonStreamAssistant &&
+        String(lastNonStreamAssistant.text || '').trim() === incomingTrimmed
+    );
+
+    if (!streamMsg && !alreadyPersisted) {
       streamMsg = {
         id: streamMsgId,
         role: 'assistant',
@@ -3511,7 +2686,7 @@
         isStreaming: isWorking
       };
       msgs.push(streamMsg);
-    } else {
+    } else if (streamMsg) {
       if (mergedDelta.fullText !== undefined) streamMsg.text = mergedDelta.fullText;
       if (mergedDelta.fullThinking !== undefined) streamMsg.thinking = mergedDelta.fullThinking;
       if (Array.isArray(mergedDelta.toolSteps)) streamMsg.toolCalls = mergedDelta.toolSteps;
@@ -3523,7 +2698,16 @@
 
     if (!isWorking) {
       setTimeout(() => {
-        fetchThreadDetail(tid, prov).catch(() => {});
+        fetchThreadDetail(tid, prov)
+          .then((loaded) => {
+            if (loaded && Array.isArray(loaded.messages) && loaded.messages.length > 0) {
+              const curLive = liveStreamsByThreadId.get(tid);
+              if (curLive && curLive.status !== 'working') {
+                liveStreamsByThreadId.delete(tid);
+              }
+            }
+          })
+          .catch(() => {});
         renderPulseView();
         renderSessionsView();
       }, 450);
@@ -3540,6 +2724,16 @@
     }
   }
 
+  function rejectPendingRpcsForSocket(wsConn, reason = 'ws_closed') {
+    for (const [reqId, pending] of Array.from(wsPendingRpcs.entries())) {
+      if (!wsConn || pending.ws === wsConn) {
+        clearTimeout(pending.timer);
+        wsPendingRpcs.delete(reqId);
+        pending.reject(new Error(reason));
+      }
+    }
+  }
+
   function sendWsRpc(wsConn, framePayload, timeoutMs = 9000) {
     return new Promise((resolve, reject) => {
       if (!wsConn || wsConn.readyState !== 1) {
@@ -3551,7 +2745,7 @@
         wsPendingRpcs.delete(reqId);
         reject(new Error('ws_rpc_timeout'));
       }, timeoutMs);
-      wsPendingRpcs.set(reqId, { resolve, reject, timer });
+      wsPendingRpcs.set(reqId, { resolve, reject, timer, ws: wsConn });
       try {
         wsConn.send(JSON.stringify({ ...framePayload, reqId }));
       } catch (err) {
@@ -3563,7 +2757,13 @@
   }
 
   function connectLocalWs(base) {
-    if (initialNoSse || location.search.includes('nosse=1') || !base || typeof WebSocket === 'undefined') {
+    if (
+      isHeadlessBrowser ||
+      initialNoSse ||
+      location.search.includes('nosse=1') ||
+      !base ||
+      typeof WebSocket === 'undefined'
+    ) {
       return;
     }
     const wsUrl = `${base.replace(/^http/i, 'ws').replace(/\/+$/, '')}/ws`;
@@ -3577,10 +2777,10 @@
     try {
       const ws = new WebSocket(wsUrl);
       localWs = ws;
-      ws.addEventListener('open', () => {
-        localWsAuthed = true;
-        connMode = 'local';
+      ws.addEventListener('open', async () => {
         try {
+          const token = await getBridgeAuthTokenHex();
+          ws.send(JSON.stringify({ type: 'auth', role: 'client', token }));
           ws.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
         } catch {}
         if (localWsPingTimer) clearInterval(localWsPingTimer);
@@ -3591,13 +2791,15 @@
             } catch {}
           }
         }, 20000);
-        updateConnectionBanner();
       });
       ws.addEventListener('message', (ev) => {
         try {
           const msg = JSON.parse(ev.data);
           if (!msg || typeof msg !== 'object') return;
-          if (msg.type === 'welcome') {
+          if (msg.type === 'welcome' || msg.type === 'auth_ok') {
+            localWsAuthed = true;
+            localWsReconnectAttempts = 0;
+            connMode = 'local';
             const wDev = msg.device || msg.status?.device;
             if (wDev) {
               localWsDevice = wDev;
@@ -3610,6 +2812,7 @@
             }
             const wSnap = msg.state || msg.snapshot;
             if (wSnap) ingestIncomingHostState(wSnap, wDev?.id || '');
+            flushOutbox().catch(() => {});
             updateConnectionBanner();
           } else if (msg.type === 'pong') {
             const sentTs = Number(msg.echoTs || msg.ts || 0);
@@ -3635,7 +2838,8 @@
           }
         } catch {}
       });
-      ws.addEventListener('close', () => {
+      ws.addEventListener('close', (ev) => {
+        rejectPendingRpcsForSocket(ws, 'local_ws_closed');
         if (localWs === ws) {
           localWs = null;
           localWsAuthed = false;
@@ -3645,8 +2849,11 @@
           localWsPingTimer = null;
         }
         updateConnectionBanner();
+        const code = Number(ev?.code || 0);
+        localWsReconnectAttempts += 1;
+        const delay = code === 4001 ? 30000 : Math.min(20000, 2500 * localWsReconnectAttempts);
         if (!initialNoSse && localBridgeBase) {
-          localWsReconnectTimer = setTimeout(() => connectLocalWs(localBridgeBase), 3500);
+          localWsReconnectTimer = setTimeout(() => connectLocalWs(localBridgeBase), delay);
         }
       });
     } catch {}
@@ -3661,13 +2868,15 @@
     return u;
   }
 
-  function connectEdgeWs(rawUrl) {
+  async function connectEdgeWs(rawUrl) {
+    if (isHeadlessBrowser) return;
     const cleanTarget = normalizeEdgeWsUrl(rawUrl || prefs.edgeRelayUrl || discoveredEdgeUrl);
+    const token = await getBridgeAuthTokenHex();
     if (
       initialNoSse ||
       location.search.includes('nosse=1') ||
       !cleanTarget ||
-      !cloudCfg.key ||
+      !token ||
       typeof WebSocket === 'undefined'
     ) {
       return;
@@ -3693,11 +2902,11 @@
       edgeWsUrlConnected = cleanTarget;
       ws.addEventListener('open', async () => {
         try {
-          const token = await deriveEdgeAuthTokenHex(cloudCfg.key);
+          const freshToken = await getBridgeAuthTokenHex();
           ws.send(
             JSON.stringify({
               type: 'auth_client',
-              token,
+              token: freshToken,
               clientLabel: (navigator.userAgent || 'THEO Studio PWA').slice(0, 64)
             })
           );
@@ -3709,6 +2918,7 @@
           if (!msg || typeof msg !== 'object') return;
           if (msg.type === 'auth_ok') {
             edgeWsAuthed = true;
+            edgeReconnectAttempts = 0;
             if (!localWsAuthed) connMode = 'edge';
             if (Array.isArray(msg.devices)) updateFleetDevices(msg.devices);
             if (msg.cachedSnapshots && typeof msg.cachedSnapshots === 'object') {
@@ -3731,6 +2941,11 @@
             flushOutbox().catch(() => {});
             updateConnectionBanner();
             renderAll();
+          } else if (msg.type === 'auth_err') {
+            edgeReconnectAttempts = Math.max(edgeReconnectAttempts, 5);
+            try {
+              ws.close();
+            } catch {}
           } else if (msg.type === 'pong') {
             const sentTs = Number(msg.echoTs || msg.ts || 0);
             if (sentTs) edgeWsRttMs = Math.max(1, Date.now() - sentTs);
@@ -3755,7 +2970,8 @@
           }
         } catch {}
       });
-      ws.addEventListener('close', () => {
+      ws.addEventListener('close', (ev) => {
+        rejectPendingRpcsForSocket(ws, 'edge_ws_closed');
         if (edgeWs === ws) {
           edgeWs = null;
           edgeWsAuthed = false;
@@ -3766,9 +2982,17 @@
           edgeWsPingTimer = null;
         }
         updateConnectionBanner();
+        const code = Number(ev?.code || 0);
+        edgeReconnectAttempts += 1;
+        const delay =
+          code === 4001
+            ? 45000
+            : Math.min(35000, Math.round(2500 * Math.pow(1.6, Math.min(edgeReconnectAttempts, 7))));
         const retryUrl = prefs.edgeRelayUrl || discoveredEdgeUrl;
         if (!initialNoSse && retryUrl) {
-          edgeWsReconnectTimer = setTimeout(() => connectEdgeWs(retryUrl), 4000);
+          edgeWsReconnectTimer = setTimeout(() => {
+            connectEdgeWs(retryUrl).catch(() => {});
+          }, delay);
         }
       });
     } catch {}
@@ -3777,15 +3001,15 @@
   async function saveEdgeRelayConfig(nextUrl) {
     const clean = String(nextUrl || '').trim();
     prefs.edgeRelayUrl = clean;
-    discoveredEdgeUrl = clean;
+    discoveredEdgeUrl = clean || DEFAULT_EDGE_RELAY_URL;
     saveJson(STORAGE_KEYS.PREFS, prefs);
     if (isHeadlessBrowser) return true;
     if (localBridgeBase) {
       try {
-        await fetch(`${localBridgeBase}/api/edge-config`, {
+        await authFetchLocal(`${localBridgeBase}/api/edge-config`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: clean })
+          body: JSON.stringify({ edgeRelayUrl: clean, url: clean })
         });
       } catch {}
     }
@@ -3804,7 +3028,7 @@
       } catch {}
     }
     if (clean) {
-      connectEdgeWs(clean);
+      connectEdgeWs(clean).catch(() => {});
     } else if (edgeWs) {
       try {
         edgeWs.close();
@@ -3817,11 +3041,21 @@
     return true;
   }
 
-  function connectSse(base) {
-    if (initialNoSse || location.search.includes('nosse=1')) {
+  async function connectSse(base) {
+    if (isHeadlessBrowser || initialNoSse || location.search.includes('nosse=1') || !base) {
       return;
     }
     connectLocalWs(base);
+    // Avoid opening duplicate SSE stream when WebSocket is available (#14.1)
+    if (typeof WebSocket !== 'undefined') {
+      if (sseSource) {
+        try {
+          sseSource.close();
+        } catch {}
+        sseSource = null;
+      }
+      return;
+    }
     if (sseSource) {
       try {
         sseSource.close();
@@ -3829,13 +3063,13 @@
       sseSource = null;
     }
     try {
-      const es = new EventSource(`${base}/api/events`);
+      const token = await getBridgeAuthTokenHex();
+      const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+      const es = new EventSource(`${base}/api/events${qs}`);
       es.addEventListener('state', (ev) => {
         try {
           const st = JSON.parse(ev.data);
-          if (st) {
-            ingestIncomingHostState(st, localWsDevice?.id || '');
-          }
+          if (st) ingestIncomingHostState(st, localWsDevice?.id || '');
         } catch {}
       });
       es.addEventListener('stream_delta', (ev) => {
@@ -3865,14 +3099,29 @@
       const remoteMsgs = Array.isArray(remoteThread.messages) ? [...remoteThread.messages] : [];
       if (existing && Array.isArray(existing.messages)) {
         const optimisticMsgs = existing.messages.filter((m) => {
-          if (!m || !m.optimistic) return false;
+          if (!m) return false;
+          if (m.isStreaming) {
+            const streamTxt = String(m.text || '').trim();
+            const alreadyInRemote =
+              streamTxt &&
+              remoteMsgs.some(
+                (rm) => rm && rm.role === 'assistant' && String(rm.text || '').trim() === streamTxt
+              );
+            return !alreadyInRemote;
+          }
+          if (!m.optimistic) return false;
           const optAt = Number(m.optimisticAt || 0);
           if (now - optAt >= 45000) return false;
-          const cleanOptText = String(m.text || '').trim();
-          const exactMatch = remoteMsgs.some(
-            (rm) => rm && rm.role === 'user' && String(rm.text || '').trim() === cleanOptText
-          );
-          if (exactMatch) return false;
+          const cleanOptText = String(m.text || '')
+            .replace(/\n*📎 Attached:.*$/s, '')
+            .trim();
+          const matchedRemoteUser = remoteMsgs.some((rm) => {
+            if (!rm || rm.role !== 'user') return false;
+            const rTxt = String(rm.text || '').trim();
+            if (!cleanOptText) return false;
+            return rTxt === cleanOptText || (cleanOptText.length >= 4 && rTxt.includes(cleanOptText));
+          });
+          if (matchedRemoteUser) return false;
           if (m.optimisticQuestionAnswer) {
             const baseCount = Number(m.baseMsgCount || 0);
             const hasServerQuestionReply = remoteMsgs.some((rm) => {
@@ -3905,6 +3154,8 @@
   }
 
   async function syncData(options = {}) {
+    if (isHeadlessBrowser) return false;
+    refreshCloudConfig();
     if (syncInFlight) {
       if (options.force || options.toast) {
         pendingSyncAfterFlight = true;
@@ -3920,18 +3171,38 @@
       // 1. Try Direct Local Bridge first
       const bridgeBase = localBridgeBase || (await probeLocalBridge(Boolean(options.toast)));
       if (bridgeBase) {
+        if (
+          localWsAuthed &&
+          localWs &&
+          localWs.readyState === 1 &&
+          appState &&
+          !options.force &&
+          !options.toast
+        ) {
+          connMode = 'local';
+          updateConnectionBanner();
+          flushOutbox().catch(() => {});
+          return true;
+        }
         try {
-          const res = await fetch(`${bridgeBase}/api/state`);
+          const res = await authFetchLocal(`${bridgeBase}/api/state`);
           if (res.ok) {
             const payload = await res.json();
             if (payload?.state) {
               connMode = 'local';
-              ingestIncomingHostState(payload.state, payload.state?.device?.id || localWsDevice?.id || '');
-              if (!sseSource) connectSse(bridgeBase);
-              else connectLocalWs(bridgeBase);
+              ingestIncomingHostState(
+                payload.state,
+                payload.state?.device?.id || localWsDevice?.id || ''
+              );
+              connectLocalWs(bridgeBase);
               const candidateEdge = prefs.edgeRelayUrl || discoveredEdgeUrl;
-              if (candidateEdge) connectEdgeWs(candidateEdge);
-              if (pushSub && prefs.notif && prefs.notif.enabled && Date.now() - lastPushScheduleSyncAt > 10 * 60 * 1000) {
+              if (candidateEdge) connectEdgeWs(candidateEdge).catch(() => {});
+              if (
+                pushSub &&
+                prefs.notif &&
+                prefs.notif.enabled &&
+                Date.now() - lastPushScheduleSyncAt > 10 * 60 * 1000
+              ) {
                 schedulePushSync();
               }
               flushOutbox().catch(() => {});
@@ -3953,10 +3224,10 @@
         }
       }
 
-      // 2. Fallback / Worldwide Multi-Device Sync via Cloudflare Edge WS (<70ms) + Cloud Relay 60s Backstop
+      // 2. Worldwide Multi-Device Sync via Cloudflare Edge WS (<70ms) + Cloud Relay 60s Backstop
       const candidateEdgeBoot = prefs.edgeRelayUrl || discoveredEdgeUrl;
-      if (candidateEdgeBoot && !isHeadlessBrowser) {
-        connectEdgeWs(candidateEdgeBoot);
+      if (candidateEdgeBoot) {
+        connectEdgeWs(candidateEdgeBoot).catch(() => {});
       }
       if (
         edgeWsAuthed &&
@@ -3972,6 +3243,7 @@
         flushOutbox().catch(() => {});
         return true;
       }
+
       if (cloudCfg.url && cloudCfg.key) {
         try {
           const res = await fetch(cloudCfg.url, {
@@ -3984,75 +3256,73 @@
             const rawStore = await res.json();
             const store =
               rawStore?.docs && typeof rawStore.docs === 'object' ? rawStore.docs : rawStore || {};
+            lastCloudQueue = store?.queue || null;
             connMode = edgeWsAuthed ? 'edge' : 'cloud';
             if (store?.edge_relay?.url && !prefs.edgeRelayUrl) {
               discoveredEdgeUrl = String(store.edge_relay.url).trim();
             }
             const candidateEdge = prefs.edgeRelayUrl || discoveredEdgeUrl;
             if (candidateEdge) {
-              connectEdgeWs(candidateEdge);
+              connectEdgeWs(candidateEdge).catch(() => {});
             }
             if (store?.threads && typeof store.threads === 'object') {
               mergeRemoteThreads(store.threads);
             }
-            let baseSnap = store?.state?.snapshot ? { ...store.state.snapshot } : null;
+            if (store?.state?.snapshot) {
+              storeHostSnapshotEntry(
+                store.state.snapshot,
+                store.state.snapshot?.device?.id || ''
+              );
+            }
             if (store?.device_states && typeof store.device_states === 'object') {
               for (const [devId, entry] of Object.entries(store.device_states)) {
                 if (!entry || typeof entry !== 'object') continue;
-                const dInfo = entry.device || { id: devId, name: devId };
-                const ageMs = Date.now() - Number(entry.updatedAt || 0);
+                const snap = entry.snapshot || (Array.isArray(entry.rows) ? entry : null);
+                const dInfo = entry.device || snap?.device || { id: devId, name: devId };
+                const ageMs = Date.now() - Number(entry.updatedAt || snap?.generatedAt || 0);
                 updateFleetDevices([
                   {
                     ...dInfo,
                     id: devId,
                     online: Boolean(fleetDevicesMap.get(devId)?.online) || ageMs < 90000,
-                    lastSeen: Number(entry.updatedAt || Date.now()),
-                    sessionCount: Array.isArray(entry?.snapshot?.rows)
-                      ? entry.snapshot.rows.filter((r) => r && !r.archived).length
+                    lastSeen: Number(entry.updatedAt || snap?.generatedAt || Date.now()),
+                    sessionCount: Array.isArray(snap?.rows)
+                      ? snap.rows.filter((r) => r && !r.archived).length
                       : 0
                   }
                 ]);
                 if (entry.threads && typeof entry.threads === 'object') {
                   mergeRemoteThreads(entry.threads);
                 }
-                if (entry.snapshot) {
-                  if (!baseSnap) {
-                    baseSnap = { ...entry.snapshot };
-                  } else {
-                    mergeDeviceSnapshotRows(baseSnap, entry.snapshot, devId, dInfo.name || devId);
-                  }
+                if (snap) {
+                  storeHostSnapshotEntry(snap, devId);
                 }
               }
             }
-            if (baseSnap) {
-              if (edgeWsAuthed && appState && Array.isArray(appState.rows) && appState.rows.length > 0) {
-                mergeDeviceSnapshotRows(appState, baseSnap, '', '');
-                applyStoppedSessionOverrides(appState);
-                applyAnsweredQuestionOverrides(appState);
-                applyPendingLocalOverrides(appState);
-                reconcilePendingNewSessionBind(appState, store?.queue);
-              } else {
-                applyStoppedSessionOverrides(baseSnap);
-                applyAnsweredQuestionOverrides(baseSnap);
-                applyPendingLocalOverrides(baseSnap);
-                checkLiveStateNotifications(baseSnap);
-                appState = baseSnap;
-                reconcilePendingNewSessionBind(baseSnap, store?.queue);
-              }
-            }
-            if (store?.personal_ledger && typeof store.personal_ledger === 'object') {
-              mergePersonalLedger(store.personal_ledger);
+            const unified = rebuildUnifiedAppState();
+            if (unified) {
+              applyStoppedSessionOverrides(unified);
+              applyAnsweredQuestionOverrides(unified);
+              applyPendingLocalOverrides(unified);
+              checkLiveStateNotifications(unified);
+              appState = unified;
+              reconcilePendingNewSessionBind(unified, lastCloudQueue);
             }
             if (store?.state?.workspacesDetail && typeof store.state.workspacesDetail === 'object') {
               workspacesDetailCache = { ...workspacesDetailCache, ...store.state.workspacesDetail };
             }
-            if (pinnedNavThreadId && Date.now() < pinnedNavUntil) {
+            if (!hasExplicitBootUrlNav && pinnedNavThreadId && Date.now() < pinnedNavUntil) {
               prefs.selectedThreadId = pinnedNavThreadId;
               prefs.activeTab = 'chat';
             }
             persistCache();
             renderAll();
-            if (pushSub && prefs.notif && prefs.notif.enabled && Date.now() - lastPushScheduleSyncAt > 10 * 60 * 1000) {
+            if (
+              pushSub &&
+              prefs.notif &&
+              prefs.notif.enabled &&
+              Date.now() - lastPushScheduleSyncAt > 10 * 60 * 1000
+            ) {
               schedulePushSync();
             }
             flushOutbox().catch(() => {});
@@ -4071,10 +3341,15 @@
         } catch {}
       }
 
-      connMode = 'offline';
+      connMode = edgeWsAuthed ? 'edge' : 'offline';
       renderAll();
-      if (options.toast) {
-        showToast('Offline — showing cached snapshot');
+      if (options.toast && connMode === 'offline') {
+        const hasCreds = Boolean(cloudCfg.url || cloudCfg.edgeAccessKey || localBootInfo?.token);
+        showToast(
+          hasCreds
+            ? 'Offline — showing cached snapshot'
+            : 'Open Settings to pair this device with your THEO Pair Link'
+        );
       }
       return false;
     } finally {
@@ -4089,16 +3364,17 @@
   }
 
   async function fetchThreadDetail(threadId, providerHint = '') {
-    if (!threadId) return null;
+    if (isHeadlessBrowser || !threadId) return null;
     const matchedRow = (appState?.rows || []).find((r) => r && r.id === threadId);
     const rowDeviceId = matchedRow?.deviceId || '';
     const isRemoteDeviceSession = Boolean(
       rowDeviceId && localWsDevice?.id && rowDeviceId !== localWsDevice.id
     );
+    const hadAnyCachedTurns = Boolean(threadsCache[threadId]?.messages?.length);
 
     if (connMode === 'local' && localBridgeBase && !isRemoteDeviceSession) {
       try {
-        const res = await fetch(
+        const res = await authFetchLocal(
           `${localBridgeBase}/api/thread?id=${encodeURIComponent(threadId)}&provider=${encodeURIComponent(providerHint)}`
         );
         if (res.ok) {
@@ -4107,7 +3383,7 @@
             mergeRemoteThreads({ [threadId]: data.thread });
             persistCache();
             if (prefs.activeTab === 'chat' && prefs.selectedThreadId === threadId) {
-              renderChatView(true);
+              renderChatView(!hadAnyCachedTurns);
             }
             return threadsCache[threadId];
           }
@@ -4115,7 +3391,6 @@
       } catch {}
     }
 
-    // Fast <40ms Edge WS RPC thread fetch across any connected PC
     if (edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
       try {
         const rpcOut = await sendWsRpc(
@@ -4125,14 +3400,14 @@
             targetDeviceId: rowDeviceId,
             cmd: { type: 'getThread', id: threadId, threadId, provider: providerHint }
           },
-          5500
+          6500
         );
         const threadObj = rpcOut?.result?.thread || rpcOut?.thread || null;
         if (threadObj) {
           mergeRemoteThreads({ [threadId]: threadObj });
           persistCache();
           if (prefs.activeTab === 'chat' && prefs.selectedThreadId === threadId) {
-            renderChatView(true);
+            renderChatView(!hadAnyCachedTurns);
           }
           return threadsCache[threadId];
         }
@@ -4146,7 +3421,7 @@
       if (!hasMessages && Date.now() - lastReq > 30000) {
         pendingThreadRequests.set(threadId, Date.now());
         if (prefs.activeTab === 'chat' && prefs.selectedThreadId === threadId) {
-          renderChatView();
+          renderChatView(false);
         }
         dispatchRemoteCommand({
           type: 'requestThread',
@@ -4166,10 +3441,17 @@
   }
 
   async function fetchWorkspaceDetail(repoId, fileRel = '') {
-    if (connMode === 'local' && localBridgeBase) {
+    if (isHeadlessBrowser || !repoId) {
+      return { workspace: workspacesDetailCache[repoId] || null, file: null };
+    }
+    const wsEntry = (appState?.workspaces || []).find((w) => w && w.id === repoId);
+    const targetDeviceId = wsEntry?.deviceId || '';
+    const isRemoteWs = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
+
+    if (connMode === 'local' && localBridgeBase && !isRemoteWs) {
       try {
         const q = `id=${encodeURIComponent(repoId)}${fileRel ? `&file=${encodeURIComponent(fileRel)}` : ''}`;
-        const res = await fetch(`${localBridgeBase}/api/workspace?${q}`);
+        const res = await authFetchLocal(`${localBridgeBase}/api/workspace?${q}`);
         if (res.ok) {
           const data = await res.json();
           if (data?.workspace) {
@@ -4180,6 +3462,27 @@
         }
       } catch {}
     }
+
+    if (edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
+      try {
+        const rpcOut = await sendWsRpc(
+          edgeWs,
+          {
+            type: 'rpc_cmd',
+            targetDeviceId,
+            cmd: { type: 'getWorkspace', id: repoId, file: fileRel || '' }
+          },
+          6500
+        );
+        const out = rpcOut?.result || rpcOut || {};
+        if (out?.workspace) {
+          workspacesDetailCache[repoId] = out.workspace;
+          persistCache();
+          return out;
+        }
+      } catch {}
+    }
+
     return { workspace: workspacesDetailCache[repoId] || null, file: null };
   }
 
@@ -4193,29 +3496,95 @@
     return s;
   }
 
+  async function uploadLargeAttachmentsOverWs(wsConn, isEdge, targetDeviceId, attachments) {
+    if (!Array.isArray(attachments) || attachments.length === 0) return attachments;
+    const CHUNK_CHAR_SIZE = 240000;
+    const out = [];
+    for (const att of attachments) {
+      if (!att) continue;
+      const rawData = String(att.dataUrl || '');
+      if (rawData.length <= 520000) {
+        out.push(att);
+        continue;
+      }
+      const uploadId = `up-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const totalChunks = Math.ceil(rawData.length / CHUNK_CHAR_SIZE);
+      let okAll = true;
+      for (let idx = 0; idx < totalChunks; idx++) {
+        const chunkData = rawData.slice(idx * CHUNK_CHAR_SIZE, (idx + 1) * CHUNK_CHAR_SIZE);
+        const frame = isEdge
+          ? {
+              type: 'rpc_cmd',
+              targetDeviceId: targetDeviceId || '',
+              cmd: { type: 'uploadAttachmentChunk', uploadId, chunkIndex: idx, totalChunks, data: chunkData }
+            }
+          : {
+              type: 'rpc',
+              targetDeviceId: targetDeviceId || '',
+              cmd: { type: 'uploadAttachmentChunk', uploadId, chunkIndex: idx, totalChunks, data: chunkData }
+            };
+        const res = await sendWsRpc(wsConn, frame, 9000).catch(() => null);
+        if (!res || res.ok === false) {
+          okAll = false;
+          break;
+        }
+      }
+      if (okAll) {
+        out.push({
+          name: att.name,
+          mime: att.mime,
+          size: att.size,
+          uploadId,
+          totalChunks,
+          textContent: att.textContent || ''
+        });
+      } else {
+        out.push(att);
+      }
+    }
+    return out;
+  }
+
   async function dispatchRemoteCommand(cmdObj) {
+    refreshCloudConfig();
     const targetThreadId =
-      cleanTargetThreadId(cmdObj?.threadId) || cleanTargetThreadId(cmdObj?.id);
+      cleanTargetThreadId(cmdObj?.threadId) ||
+      cleanTargetThreadId(cmdObj?.id) ||
+      cleanTargetThreadId(cmdObj?.sessionId);
     const matchedRow = targetThreadId
       ? (appState?.rows || []).find((r) => r && r.id === targetThreadId)
       : null;
+    const activeFilterDev =
+      prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
+        ? String(prefs.selectedDeviceFilter).trim()
+        : '';
+    const composerPrefDev =
+      prefs.composerTargetDevice && prefs.composerTargetDevice !== 'auto'
+        ? String(prefs.composerTargetDevice).trim()
+        : '';
     const resolvedTargetDevice =
       cmdObj?.targetDeviceId !== undefined
         ? String(cmdObj.targetDeviceId || '').trim()
         : matchedRow?.deviceId
           ? String(matchedRow.deviceId).trim()
-          : cmdObj?.newSession && prefs.composerTargetDevice && prefs.composerTargetDevice !== 'auto'
-            ? String(prefs.composerTargetDevice).trim()
-            : '';
+          : cmdObj?.newSession
+            ? composerPrefDev || activeFilterDev
+            : activeFilterDev;
     const resolvedWorkspace =
       cmdObj?.workspace !== undefined
         ? String(cmdObj.workspace || '').trim()
         : String(prefs.composerRepoPrefix || '').trim();
     const resolvedExecMode =
-      cmdObj?.executionMode || (prefs.composerDirectStream !== false ? 'direct' : 'ide');
+      cmdObj?.executionMode ||
+      (prefs.composerDirectStream === false
+        ? 'ide'
+        : cmdObj?.newSession
+          ? 'direct'
+          : 'auto');
 
     if (resolvedTargetDevice) recordFreqUsage('devices', resolvedTargetDevice);
     if (resolvedWorkspace) recordFreqUsage('repos', resolvedWorkspace);
+    if (targetThreadId) recordFreqUsage('threads', targetThreadId);
 
     const cmd = {
       ...cmdObj,
@@ -4244,6 +3613,9 @@
     // 1. Direct Local WebSocket RPC (<5ms local + automatic peer forwarding)
     if (localWsAuthed && localWs && localWs.readyState === 1 && !targetsAnotherHost) {
       try {
+        const wsAttachments = Array.isArray(cmd.attachments) && cmd.attachments.length
+          ? await uploadLargeAttachmentsOverWs(localWs, false, resolvedTargetDevice, cmd.attachments)
+          : cmd.attachments;
         const wsRes = await sendWsRpc(
           localWs,
           {
@@ -4251,13 +3623,15 @@
             targetDeviceId: resolvedTargetDevice || '',
             cmd: {
               ...cmd,
+              attachments: wsAttachments,
               id: cmd.newSession ? '' : targetThreadId,
               threadId: cmd.newSession ? '' : targetThreadId
             }
           },
           10000
         );
-        if (wsRes && wsRes.ok !== false) {
+        const innerOk = wsRes && wsRes.ok !== false && wsRes?.result?.ok !== false;
+        if (innerOk) {
           return { ok: true, mode: 'local_ws', id: cmd.id, out: wsRes.result || wsRes };
         }
       } catch {}
@@ -4266,6 +3640,9 @@
     // 2. Cloudflare Edge WebSocket RPC (<25ms worldwide to ANY online PC)
     if (edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
       try {
+        const edgeAttachments = Array.isArray(cmd.attachments) && cmd.attachments.length
+          ? await uploadLargeAttachmentsOverWs(edgeWs, true, resolvedTargetDevice, cmd.attachments)
+          : cmd.attachments;
         const edgeRes = await sendWsRpc(
           edgeWs,
           {
@@ -4273,19 +3650,21 @@
             targetDeviceId: resolvedTargetDevice || '',
             cmd: {
               ...cmd,
+              attachments: edgeAttachments,
               id: cmd.newSession ? '' : targetThreadId,
               threadId: cmd.newSession ? '' : targetThreadId
             }
           },
           10000
         );
-        if (edgeRes && edgeRes.ok !== false) {
+        const innerOk = edgeRes && edgeRes.ok !== false && edgeRes?.result?.ok !== false;
+        if (innerOk) {
           return { ok: true, mode: 'edge_ws', id: cmd.id, out: edgeRes.result || edgeRes };
         }
       } catch {}
     }
 
-    // 3. Direct Local HTTP Bridge (also proxies cross-device commands via remote.js v3)
+    // 3. Direct Local HTTP Bridge
     if (connMode === 'local' && localBridgeBase) {
       try {
         const endpoint =
@@ -4294,7 +3673,7 @@
             : cmd.type === 'approve' || cmd.type === 'answerQuestion'
               ? '/api/approve'
               : '/api/session-action';
-        const res = await fetch(`${localBridgeBase}${endpoint}`, {
+        const res = await authFetchLocal(`${localBridgeBase}${endpoint}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -4305,13 +3684,15 @@
         });
         if (res.ok) {
           const out = await res.json();
-          setTimeout(() => syncData(), 500);
-          return { ok: true, mode: 'local', id: cmd.id, out };
+          if (out && out.ok !== false) {
+            setTimeout(() => syncData(), 500);
+            return { ok: true, mode: 'local', id: cmd.id, out };
+          }
         }
       } catch {}
     }
 
-    // 2. Cloud Relay Command Queue (serialized + fast get_control to avoid race overwrites)
+    // 4. Cloud Relay Command Queue (serialized + fast get_control)
     if (cloudCfg.url && cloudCfg.key) {
       const runCloudWrite = async () => {
         const ctrlGet = new AbortController();
@@ -4366,7 +3747,7 @@
       } catch {}
     }
 
-    // 3. Offline Outbox Queue
+    // 5. Offline Outbox Queue
     outbox = outbox.filter((c) => c && c.id !== cmd.id);
     outbox.push(cmd);
     saveJson(STORAGE_KEYS.OUTBOX, outbox);
@@ -4476,12 +3857,12 @@
     if (pushBtn) {
       pushBtn.style.borderColor = pushActive ? 'var(--emerald)' : 'var(--brass)';
       pushBtn.style.color = pushActive ? 'var(--emerald)' : 'var(--brass)';
-      pushBtn.title = bellTitle;
+      pushBtn.setAttribute('aria-label', bellTitle);
     }
     if (railPushBtn) {
       railPushBtn.style.borderColor = pushActive ? 'var(--emerald)' : 'var(--brass)';
       railPushBtn.style.color = pushActive ? 'var(--emerald)' : 'var(--brass)';
-      railPushBtn.title = bellTitle;
+      railPushBtn.setAttribute('aria-label', bellTitle);
     }
 
     const connModal = $('conn-modal');
@@ -4494,12 +3875,21 @@
     }
   }
 
+  function pushUiHistoryState(overlay = '') {
+    if (suppressHistoryPush) return;
+    try {
+      history.pushState({ theoTab: prefs.activeTab || 'pulse', overlay }, '');
+    } catch {}
+  }
+
   function openNotifModal() {
     const modal = $('notif-modal');
     if (!modal) return;
     seedUncheckedTheoNotifications();
     renderNotifModal();
+    const wasHidden = modal.hidden;
     modal.hidden = false;
+    if (wasHidden) pushUiHistoryState('notif-modal');
   }
 
   function closeNotifModal() {
@@ -4546,7 +3936,7 @@
                 </div>
                 ${
                   !it.checked
-                    ? `<button type="button" class="notif-check-btn" data-notif-check="${esc(it.id || it.tag)}" title="Mark checked &amp; decrement Home Screen badge">✓ Check</button>`
+                    ? `<button type="button" class="notif-check-btn" data-notif-check="${esc(it.id || it.tag)}" aria-label="Mark checked &amp; decrement Home Screen badge">✓ Check</button>`
                     : `<span class="pill-count steel" style="font-size:10px">Done</span>`
                 }
               </div>
@@ -4589,7 +3979,9 @@
     const modal = $('conn-modal');
     if (!modal) return;
     renderConnModal();
+    const wasHidden = modal.hidden;
     modal.hidden = false;
+    if (wasHidden) pushUiHistoryState('conn-modal');
   }
 
   function closeConnModal() {
@@ -4671,11 +4063,11 @@
         <button type="button" class="btn-brass-sm" id="conn-modal-sync-btn" style="flex:1">↻ Sync Now with VS Code</button>
         ${
           pushActive
-            ? `<button type="button" class="btn-ghost-sm" data-push-act="test">🔔 Test Push</button><button type="button" class="btn-ghost-sm" data-push-act="reset" title="Mint a fresh iOS APNs / Web Push subscription">🔄 Re-Pair Push</button>`
+            ? `<button type="button" class="btn-ghost-sm" data-push-act="test">🔔 Test Push</button><button type="button" class="btn-ghost-sm" data-push-act="reset" aria-label="Mint a fresh iOS APNs / Web Push subscription">🔄 Re-Pair Push</button>`
             : `<button type="button" class="btn-ghost-sm" data-push-act="enable">${pushBusy ? 'Enabling…' : '🔔 Enable Push'}</button>`
         }
         ${
-          lanUrl && connMode !== 'local'
+          lanUrl && /^https?:\/\//i.test(lanUrl) && connMode !== 'local'
             ? `<a href="${esc(lanUrl)}" class="btn-ghost-sm" style="text-decoration:none;display:inline-flex;align-items:center">Open Wi-Fi Direct (${esc(lanUrl.replace(/^https?:\/\//, '').replace(/\/$/, ''))})</a>`
             : ''
         }
@@ -4823,7 +4215,7 @@
             active
               ? `
                 <button type="button" class="btn-brass-sm" data-push-act="test">🔔 Send Test Push</button>
-                <button type="button" class="btn-ghost-sm" data-push-act="reset" title="Unsubscribe and mint a brand-new APNs push token">${pushBusy ? 'Re-pairing…' : '🔄 Re-Pair Push'}</button>
+                <button type="button" class="btn-ghost-sm" data-push-act="reset" aria-label="Unsubscribe and mint a brand-new APNs push token">${pushBusy ? 'Re-pairing…' : '🔄 Re-Pair Push'}</button>
                 <button type="button" class="btn-ghost-sm" data-push-act="sync">↻ Refresh Schedule</button>
                 <button type="button" class="btn-ghost-sm" data-push-act="disable">Turn Off</button>
               `
@@ -4840,13 +4232,17 @@
   // Navigation switching
   function switchTab(tabName) {
     if (tabName === 'discipline') {
-      window.open('https://husseinbdeir.github.io/command/', '_blank', 'noopener');
+      window.open('https://husseinbdeir.github.io/planner/', '_blank', 'noopener');
       return;
     }
     const valid = ['pulse', 'sessions', 'chat', 'workspaces', 'analytics'];
     const target = valid.includes(tabName) ? tabName : 'pulse';
+    const prevTab = prefs.activeTab;
     prefs.activeTab = target;
     saveJson(STORAGE_KEYS.PREFS, prefs);
+    if (prevTab && prevTab !== target) {
+      pushUiHistoryState('');
+    }
 
     $('view-container')?.classList.toggle('chat-active', target === 'chat');
     document.querySelectorAll('.view-pane').forEach((pane) => {
@@ -4963,6 +4359,11 @@
       threadsCache[cleanReal].messages = existingMsgs;
     }
     if (draftId && draftId !== cleanReal) {
+      const draftLive = liveStreamsByThreadId.get(draftId);
+      if (draftLive && !liveStreamsByThreadId.has(cleanReal)) {
+        liveStreamsByThreadId.set(cleanReal, draftLive);
+      }
+      liveStreamsByThreadId.delete(draftId);
       delete threadsCache[draftId];
     }
     if (
@@ -5027,6 +4428,7 @@
 
     // 2. Fallback: match a genuinely brand-new row whose timestamp is recent (never bind to older sessions missing from a stale cache)
     const known = pendingNewSessionBind.knownIds || new Set();
+    const wantDev = pendingNewSessionBind.targetDeviceId || '';
     const minRowAt = (pendingNewSessionBind.createdAt || Date.now()) - 15000;
     const freshRow = rows.find(
       (r) =>
@@ -5034,6 +4436,7 @@
         r.id &&
         !r.draft &&
         (r.provider === 'claude' ? 'claude' : 'antigravity') === wantProv &&
+        (!wantDev || !r.deviceId || r.deviceId === wantDev) &&
         !known.has(r.id) &&
         Number(r.at || 0) >= minRowAt
     );
@@ -5848,22 +5251,45 @@
   }
 
   async function fetchBgTaskLiveLog(sessionId, taskId, provider = '') {
-    if (!sessionId || !taskId) return '';
+    if (isHeadlessBrowser || !sessionId || !taskId) return '';
     const cacheKey = `${sessionId}:${taskId}`;
-    if (connMode === 'local' && localBridgeBase) {
+    const matchedRow = (appState?.rows || []).find((r) => r && r.id === sessionId);
+    const targetDeviceId = matchedRow?.deviceId || '';
+    const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
+
+    if (connMode === 'local' && localBridgeBase && !isRemote) {
       try {
         const q = `id=${encodeURIComponent(sessionId)}&taskId=${encodeURIComponent(taskId)}&provider=${encodeURIComponent(provider)}`;
-        const res = await fetch(`${localBridgeBase}/api/bg-task-log?${q}`);
+        const res = await authFetchLocal(`${localBridgeBase}/api/bg-task-log?${q}`);
         if (res.ok) {
           const data = await res.json();
           if (typeof data?.output === 'string' && data.output.trim()) {
             bgTaskLogsCache.set(cacheKey, data.output);
             const preEl = document.querySelector(`[data-bg-log-key="${CSS.escape(cacheKey)}"]`);
-            if (preEl) {
-              preEl.textContent = data.output;
-            }
+            if (preEl) preEl.textContent = data.output;
             return data.output;
           }
+        }
+      } catch {}
+    }
+
+    if (edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
+      try {
+        const rpcOut = await sendWsRpc(
+          edgeWs,
+          {
+            type: 'rpc_cmd',
+            targetDeviceId,
+            cmd: { type: 'getBgTaskLog', id: sessionId, taskId, provider }
+          },
+          6500
+        );
+        const outStr = rpcOut?.result?.output ?? rpcOut?.output ?? '';
+        if (typeof outStr === 'string' && outStr.trim()) {
+          bgTaskLogsCache.set(cacheKey, outStr);
+          const preEl = document.querySelector(`[data-bg-log-key="${CSS.escape(cacheKey)}"]`);
+          if (preEl) preEl.textContent = outStr;
+          return outStr;
         }
       } catch {}
     }
@@ -6190,7 +5616,7 @@
               const cnt = allRows.filter((r) => !r.archived && r.deviceId === d.id).length || Number(d.sessionCount || 0);
               const isAct = prefs.selectedDeviceFilter === d.id;
               return `
-                <button type="button" class="fleet-chip ${isAct ? 'active' : ''}" data-fleet-filter="${esc(d.id)}" title="${esc(d.hostname || d.name || d.id)} · ${d.online ? 'Live WebSocket / Bridge' : 'Synced via Cloud Relay'}">
+                <button type="button" class="fleet-chip ${isAct ? 'active' : ''}" data-fleet-filter="${esc(d.id)}" aria-label="${esc(d.hostname || d.name || d.id)} · ${d.online ? 'Live WebSocket / Bridge' : 'Synced via Cloud Relay'}">
                   <span class="fleet-chip-dot ${d.online ? 'online' : 'synced'}"></span>
                   <span>${esc(d.name || d.id)}</span>
                   <span class="fleet-chip-meta tabular">${cnt}</span>
@@ -6410,9 +5836,21 @@
   function syncProviderNewSessionButtons() {
     const hasAgy = hasSignedInProviderRemote('antigravity');
     const hasClaude = hasSignedInProviderRemote('claude');
+    const railWrap = document.querySelector('.rail-launchers');
+    const railAgyBtn = $('rail-new-agy');
+    const railClaudeBtn = $('rail-new-claude');
+    if (railAgyBtn) railAgyBtn.hidden = !hasAgy;
+    if (railClaudeBtn) railClaudeBtn.hidden = !hasClaude;
+    if (railWrap) {
+      railWrap.hidden = !hasAgy && !hasClaude;
+      railWrap.style.gridTemplateColumns =
+        (hasAgy && !hasClaude) || (!hasAgy && hasClaude)
+          ? 'minmax(0, 1fr)'
+          : 'repeat(2, minmax(0, 1fr))';
+    }
     const sessRow = $('sess-new-btns') || document.querySelector('#view-sessions .toolbar-new-btns');
-    const sessAgyBtn = $('btn-sess-new-agy') || document.querySelector('[data-quick-new="antigravity"]');
-    const sessClaudeBtn = $('btn-sess-new-claude') || document.querySelector('[data-quick-new="claude"]');
+    const sessAgyBtn = $('btn-sess-new-agy') || document.querySelector('#view-sessions [data-quick-new="antigravity"]');
+    const sessClaudeBtn = $('btn-sess-new-claude') || document.querySelector('#view-sessions [data-quick-new="claude"]');
     if (sessAgyBtn) sessAgyBtn.hidden = !hasAgy;
     if (sessClaudeBtn) sessClaudeBtn.hidden = !hasClaude;
     if (sessRow) {
@@ -6428,10 +5866,13 @@
       compPills.classList.toggle('single-prov', (hasAgy && !hasClaude) || (!hasAgy && hasClaude));
       compPills.classList.toggle('no-prov', !hasAgy && !hasClaude);
     }
-    if (prefs.composerMode === 'new-claude' && !hasClaude) {
-      prefs.composerMode = hasAgy ? 'new-antigravity' : 'reply';
-    } else if (prefs.composerMode === 'new-antigravity' && !hasAgy) {
-      prefs.composerMode = hasClaude ? 'new-claude' : 'reply';
+    // Only downgrade explicit new-session mode if live provider telemetry has hydrated (#29)
+    if (hasProvidersHydrated && !hasExplicitBootUrlNav) {
+      if (prefs.composerMode === 'new-claude' && !hasClaude) {
+        prefs.composerMode = hasAgy ? 'new-antigravity' : 'reply';
+      } else if (prefs.composerMode === 'new-antigravity' && !hasAgy) {
+        prefs.composerMode = hasClaude ? 'new-claude' : 'reply';
+      }
     }
   }
 
@@ -6642,20 +6083,20 @@
         : '';
 
     const statusControlHtml = !isActive
-      ? `<button type="button" class="quota-switch-btn" data-account-switch="${esc(acctId)}" data-account-prov="${key}" title="Switch active ${esc(label)} account to ${esc(email || label)} (keeps other accounts signed in)">⇄ Use</button>`
+      ? `<button type="button" class="quota-switch-btn" data-account-switch="${esc(acctId)}" data-account-prov="${key}" aria-label="Switch active ${esc(label)} account to ${esc(email || label)} (keeps other accounts signed in)">⇄ Use</button>`
       : multi
-        ? `<span class="quota-active-pill" title="Currently active for new ${esc(label)} sessions"><span class="quota-active-dot"></span>Active</span>`
+        ? `<span class="quota-active-pill" aria-label="Currently active for new ${esc(label)} sessions"><span class="quota-active-dot"></span>Active</span>`
         : '';
 
     const moveBtnsHtml = canReorder && (canMoveUp || canMoveDown)
-      ? (canMoveUp ? `<button type="button" class="quota-nick-btn" data-account-move="up" data-account-id="${esc(acctId)}" data-account-prov="${key}" title="Move account up">↑</button>` : '') +
-        (canMoveDown ? `<button type="button" class="quota-nick-btn" data-account-move="down" data-account-id="${esc(acctId)}" data-account-prov="${key}" title="Move account down">↓</button>` : '')
+      ? (canMoveUp ? `<button type="button" class="quota-nick-btn" data-account-move="up" data-account-id="${esc(acctId)}" data-account-prov="${key}" aria-label="Move account up">↑</button>` : '') +
+        (canMoveDown ? `<button type="button" class="quota-nick-btn" data-account-move="down" data-account-id="${esc(acctId)}" data-account-prov="${key}" aria-label="Move account down">↓</button>` : '')
       : '';
 
     return `
       <div class="quota-card${isCollapsed ? ' collapsed' : ''}${isActive ? ' is-active' : ' is-secondary'}${multi ? ' multi' : ''}" data-quota-card-id="${esc(acctId)}" ${canReorder ? 'draggable="true"' : ''}>
         <div class="quota-card-head">
-          <button type="button" class="quota-card-toggle" data-quota-collapse="${esc(collapseKey)}" aria-expanded="${!isCollapsed}" title="${isCollapsed ? 'Show' : 'Hide'} ${esc(email || label)} usage">
+          <button type="button" class="quota-card-toggle" data-quota-collapse="${esc(collapseKey)}" aria-expanded="${!isCollapsed}" aria-label="${isCollapsed ? 'Show' : 'Hide'} ${esc(email || label)} usage">
             <div class="quota-prov-title">
               <svg class="quota-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg>
               <span class="prov-glyph">${PROVIDER_ICONS[key]}</span>
@@ -6668,8 +6109,8 @@
             ${statusControlHtml}
             ${isCollapsed && !multi ? `<span class="plan-pill">${esc(shortPlan)}</span>` : ''}
             ${moveBtnsHtml}
-            <button type="button" class="quota-nick-btn" data-account-label="${esc(acctId)}" data-account-prov="${key}" data-account-nick="${esc(nick)}" title="${nick ? 'Edit account label' : 'Set account label (e.g. Friend, Work)'}">✎</button>
-            <button type="button" class="quota-nick-btn" data-account-remove="${esc(acctId)}" data-account-prov="${key}" data-account-email="${esc(email)}" title="${multi ? 'Disconnect account' : 'Sign out account'}">✕</button>
+            <button type="button" class="quota-nick-btn" data-account-label="${esc(acctId)}" data-account-prov="${key}" data-account-nick="${esc(nick)}" aria-label="${nick ? 'Edit account label' : 'Set account label (e.g. Friend, Work)'}">✎</button>
+            <button type="button" class="quota-nick-btn" data-account-remove="${esc(acctId)}" data-account-prov="${key}" data-account-email="${esc(email)}" aria-label="${multi ? 'Disconnect account' : 'Sign out account'}">✕</button>
           </div>
         </div>
         ${
@@ -6725,12 +6166,12 @@
     const devEntry = r.deviceId ? fleetDevicesMap.get(r.deviceId) : null;
     const devLabel = r.deviceName || devEntry?.name || '';
     const devBadgeHtml = devLabel
-      ? `<span class="sess-device-badge ${devEntry?.online ? 'is-online' : ''}" title="Host machine: ${esc(devLabel)}">${devEntry?.online ? '●' : '◐'} ${esc(devLabel)}</span>`
+      ? `<span class="sess-device-badge ${devEntry?.online ? 'is-online' : ''}" aria-label="Host machine: ${esc(devLabel)}">${devEntry?.online ? '●' : '◐'} ${esc(devLabel)}</span>`
       : '';
     return `
       <div class="session-card ${statusCls}" data-session-id="${esc(r.id || '')}" data-session-prov="${provKey}">
         <div class="sess-left">
-          <span class="sess-status-dot ${statusCls}" title="${esc(r.status || 'idle')}"></span>
+          <span class="sess-status-dot ${statusCls}" aria-label="${esc(r.status || 'idle')}"></span>
           <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
           <div class="sess-body">
             <div class="sess-title-row">
@@ -6743,7 +6184,7 @@
               <span>${esc(displayModel)}</span>
               ${
                 safeUsed > 0
-                  ? `<span class="tag-pill tabular" title="Context window usage">${fmtCompact(safeUsed)} / ${fmtCompact(limTok)} · ${ctxPct}%</span>`
+                  ? `<span class="tag-pill tabular" aria-label="Context window usage">${fmtCompact(safeUsed)} / ${fmtCompact(limTok)} · ${ctxPct}%</span>`
                   : ''
               }
               ${bgPillHtml}
@@ -6755,21 +6196,21 @@
         <div class="sess-right">
           ${
             r.status === 'working' || r.dot === 'running' || r.bgTask?.state === 'running'
-              ? `<button type="button" class="sess-act-btn stop-btn" data-sess-act="stop" data-id="${esc(r.id || '')}" title="Stop / interrupt running session">■ Stop</button>`
+              ? `<button type="button" class="sess-act-btn stop-btn" data-sess-act="stop" data-id="${esc(r.id || '')}" aria-label="Stop / interrupt running session">■ Stop</button>`
               : ''
           }
-          <button type="button" class="sess-act-btn" data-sess-act="group" data-id="${esc(r.id || '')}" title="Assign or move session to a group">
+          <button type="button" class="sess-act-btn" data-sess-act="group" data-id="${esc(r.id || '')}" aria-label="Assign or move session to a group">
             📁 ${esc(grpObj ? grpObj.name : 'Group')}
           </button>
           ${
             grpObj && !r.archived
-              ? `<button type="button" class="sess-act-btn" data-sess-act="group-remove" data-id="${esc(r.id || '')}" title="Remove from ${esc(grpObj.name)}">✕</button>`
+              ? `<button type="button" class="sess-act-btn" data-sess-act="group-remove" data-id="${esc(r.id || '')}" aria-label="Remove from ${esc(grpObj.name)}">✕</button>`
               : ''
           }
-          <button type="button" class="sess-act-btn" data-sess-act="unread" data-id="${esc(r.id || '')}" data-val="${!r.unread}" title="Toggle unread">
+          <button type="button" class="sess-act-btn" data-sess-act="unread" data-id="${esc(r.id || '')}" data-val="${!r.unread}" aria-label="Toggle unread">
             ${r.unread ? '● Unread' : '○ Read'}
           </button>
-          <button type="button" class="sess-act-btn" data-sess-act="archive" data-id="${esc(r.id || '')}" data-val="${!r.archived}" title="${r.archived ? 'Unarchive' : 'Archive'}">
+          <button type="button" class="sess-act-btn" data-sess-act="archive" data-id="${esc(r.id || '')}" data-val="${!r.archived}" aria-label="${r.archived ? 'Unarchive' : 'Archive'}">
             ${r.archived ? 'Restore' : 'Archive'}
           </button>
         </div>
@@ -6803,12 +6244,12 @@
 
     const actionsHtml = isCustomGroup
       ? `
-        <button type="button" class="group-act-btn" data-group-act="new-in-group" data-group-id="${esc(id)}" title="Start new session">+ New</button>
-        <button type="button" class="group-act-btn" data-group-act="rename" data-group-id="${esc(id)}" data-group-name="${esc(name)}" title="Rename group">✎</button>
-        <button type="button" class="group-act-btn" data-group-act="delete" data-group-id="${esc(id)}" data-group-name="${esc(name)}" title="Delete group">✕</button>
+        <button type="button" class="group-act-btn" data-group-act="new-in-group" data-group-id="${esc(id)}" aria-label="Start new session">+ New</button>
+        <button type="button" class="group-act-btn" data-group-act="rename" data-group-id="${esc(id)}" data-group-name="${esc(name)}" aria-label="Rename group">✎</button>
+        <button type="button" class="group-act-btn" data-group-act="delete" data-group-id="${esc(id)}" data-group-name="${esc(name)}" aria-label="Delete group">✕</button>
       `
       : archivableIds.length > 0
-        ? `<button type="button" class="group-act-btn" data-group-act="archive-closed" title="Archive ${archivableIds.length} closed idle sessions">Archive closed (${archivableIds.length})</button>`
+        ? `<button type="button" class="group-act-btn" data-group-act="archive-closed" aria-label="Archive ${archivableIds.length} closed idle sessions">Archive closed (${archivableIds.length})</button>`
         : '';
 
     return `
@@ -6933,7 +6374,7 @@
       }
     });
 
-    const filtered = provRows.filter((r) => {
+    const rawFiltered = provRows.filter((r) => {
       if (prefs.sessStatus === 'archived') {
         if (!r.archived) return false;
       } else {
@@ -6950,6 +6391,21 @@
       }
       return true;
     });
+    const filtered = q
+      ? (() => {
+          const exact = rawFiltered.filter((r) => String(r.title || '').toLowerCase() === q);
+          const rest = rawFiltered.filter((r) => String(r.title || '').toLowerCase() !== q);
+          const freqOrdered = rankByFreq(
+            rest,
+            'threads',
+            (r) => r.id,
+            (r) =>
+              (r.status === 'working' ? 500 : r.status === 'waiting' ? 400 : 0) +
+              Math.max(0, 299 - Math.min(299, Math.floor(Math.max(0, Date.now() - Number(r.at || 0)) / 3600000)))
+          );
+          return exact.concat(freqOrdered);
+        })()
+      : rawFiltered;
 
     if (filtered.length === 0 && (q || prefs.sessStatus !== 'all' || groups.length === 0)) {
       const hasActiveFilters = prefs.sessProvider !== 'all' || prefs.sessStatus !== 'all' || Boolean(q);
@@ -6975,8 +6431,8 @@
       return;
     }
 
-    // Render collapsible Group sections at top when groups exist and not in Archived-only mode
-    if (groups.length > 0 && prefs.sessStatus !== 'archived') {
+    // Render collapsible Group sections at top when not searching and not in Archived-only mode
+    if (!q && groups.length > 0 && prefs.sessStatus !== 'archived') {
       const groupPalette = ['blue', 'green', 'amber', 'purple', 'steel'];
       let sectionsHtml = '';
       groups.forEach((g, idx) => {
@@ -7154,7 +6610,7 @@
         ? activeRow.deviceId
         : prefs.composerTargetDevice || 'auto';
       const opts = [
-        `<option value="auto" ${wantDev === 'auto' ? 'selected' : ''}>Auto (${localWsDevice?.name || 'Active Host'})</option>`
+        `<option value="auto" ${wantDev === 'auto' ? 'selected' : ''}>Auto (${esc(localWsDevice?.name || 'Active Host')})</option>`
       ];
       for (const d of fleetDevices) {
         const sel = wantDev === d.id ? 'selected' : '';
@@ -7237,8 +6693,15 @@
           : rows[0]);
 
     const selectEl = $('chat-session-select');
-    if (selectEl) {
-      const topRows = rows.slice(0, 80);
+    if (selectEl && document.activeElement !== selectEl) {
+      const topRows = rankByFreq(
+        rows.slice(0, 80),
+        'threads',
+        (r) => r.id,
+        (r) =>
+          (r.status === 'working' ? 500 : r.status === 'waiting' ? 400 : 0) +
+          Math.max(0, 299 - Math.min(299, Math.floor(Math.max(0, Date.now() - Number(r.at || 0)) / 3600000)))
+      );
       if (
         !isNewDraft &&
         prefs.selectedThreadId &&
@@ -7392,7 +6855,6 @@
       return;
     }
     if (
-      !forceScroll &&
       document.activeElement &&
       streamEl.contains(document.activeElement) &&
       document.activeElement.matches('[data-q-writein-input]')
@@ -7728,10 +7190,16 @@
       let s = esc(lineStr);
       s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
       s = s.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s.,;:!?)]|$)/g, '$1<em>$2</em>');
-      s = s.replace(
-        /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
-        '<a href="$2" target="_blank" rel="noopener">$1</a>'
-      );
+      s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (full, labelHtml, rawHref) => {
+        const cleanHref = String(rawHref || '')
+          .replace(/\x00(?:INLINECODE|CHIP)_\d+\x00/g, '')
+          .replace(/&amp;/g, '&')
+          .trim();
+        if (!/^(https?:|mailto:)/i.test(cleanHref)) {
+          return labelHtml;
+        }
+        return `<a href="${esc(cleanHref)}" target="_blank" rel="noopener noreferrer">${labelHtml}</a>`;
+      });
       s = s.replace(/\x00INLINECODE_(\d+)\x00/g, (_, i) => inlineCodes[Number(i)] || '');
       s = s.replace(/\x00CHIP_(\d+)\x00/g, (_, i) => chips[Number(i)] || '');
       return s;
@@ -7847,10 +7315,11 @@
     sumEl.innerHTML = `<strong>${fmtInt(ctx.usedTokens)}</strong> tokens used of <strong>${fmtInt(ctx.limitTokens)}</strong> (${ctx.pct}%) · <span>${fmtInt(ctx.remainingTokens || ctx.limitTokens - ctx.usedTokens)} remaining</span>`;
     const bd = Array.isArray(ctx.breakdown) ? ctx.breakdown : [];
     const totalBd = Math.max(1, bd.reduce((acc, item) => acc + Number(item.tokens || 0), 0));
+    const safeCssColor = (c) => (/^(#[0-9a-fA-F]{3,8}|[a-zA-Z]+)$/.test(String(c || '').trim()) ? String(c).trim() : '#D9A54A');
     barEl.innerHTML = bd
       .map((item) => {
         const w = Math.max(4, Math.round((Number(item.tokens || 0) / totalBd) * 100));
-        return `<div style="width:${w}%;background:${item.color || '#D9A54A'}" title="${esc(item.label)}"></div>`;
+        return `<div style="width:${w}%;background:${safeCssColor(item.color)}" aria-label="${esc(item.label)}"></div>`;
       })
       .join('');
     listEl.innerHTML = bd
@@ -7858,7 +7327,7 @@
         (item) => `
         <div class="ctx-bd-item">
           <span style="display:flex;align-items:center;gap:6px">
-            <span style="width:8px;height:8px;border-radius:50%;background:${item.color || '#D9A54A'}"></span>
+            <span style="width:8px;height:8px;border-radius:50%;background:${safeCssColor(item.color)}"></span>
             <span>${esc(item.label)}</span>
           </span>
           <strong>${fmtCompact(item.tokens)}</strong>
@@ -7900,11 +7369,14 @@
       )
       .join('');
 
-    const fetched = await fetchWorkspaceDetail(prefs.selectedRepoId);
+    const reqSeq = ++wsRenderSeq;
+    const requestedRepoId = prefs.selectedRepoId;
+    const fetched = await fetchWorkspaceDetail(requestedRepoId);
+    if (reqSeq !== wsRenderSeq || prefs.selectedRepoId !== requestedRepoId) return;
     const repo =
       fetched?.workspace ||
-      workspacesDetailCache[prefs.selectedRepoId] ||
-      workspaces.find((w) => w.id === prefs.selectedRepoId);
+      workspacesDetailCache[requestedRepoId] ||
+      workspaces.find((w) => w.id === requestedRepoId);
 
     if (!repo) return;
 
@@ -7924,7 +7396,7 @@
         </button>
       </div>
 
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;margin:14px 0">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:14px;margin:14px 0">
         <div class="pairing-card">
           <div class="eyebrow" style="margin-bottom:6px">WORKING TREE (${modFiles.length} MODIFIED)</div>
           ${
@@ -8075,21 +7547,34 @@
       pushPanel.innerHTML = renderPushSettingsCardHtml();
     }
 
-    // Pairing & Security Configuration
+    // Pairing & Security Configuration (#16, #17.5, #30.2)
     const pairingGrid = $('pairing-grid');
-    if (pairingGrid) {
+    if (
+      pairingGrid &&
+      !(document.activeElement && pairingGrid.contains(document.activeElement) && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName))
+    ) {
+      if (localBridgeBase && !cachedPairingInfo) {
+        fetchPairingInfoFromBridge().then((info) => {
+          if (info && prefs.activeTab === 'analytics') renderAnalyticsView();
+        });
+      }
       const conn = appState?.connection || {};
-      const lanUrl = conn.lanUrl || `http://localhost:${cloudCfg.port}/`;
+      const lanUrl = conn.lanUrl || `http://127.0.0.1:${cloudCfg.port}/`;
       const pwaUrl = conn.pwaUrl || 'https://husseinbdeir.github.io/theo/';
-      const hasPin = Boolean(localStorage.getItem(STORAGE_KEYS.PIN));
+      const hasPin = Boolean(
+        localStorage.getItem(STORAGE_KEYS.PIN_HASH) || localStorage.getItem(STORAGE_KEYS.PIN)
+      );
+      const isPaired = Boolean(
+        cloudCfg.edgeAccessKey || cloudCfg.key || localBootInfo?.token || cachedPairingInfo?.mobilePairUrl
+      );
 
       const fleetDevices = getUnifiedFleetDevices();
       const effectiveEdgeUrl = prefs.edgeRelayUrl || discoveredEdgeUrl || '';
 
       pairingGrid.innerHTML = `
         <div class="pairing-card">
-          <div class="eyebrow">MULTI-DEVICE FLEET &amp; CLOUDFLARE EDGE WS (OPTION A · $0)</div>
-          <p class="meta-timestamp" style="margin:6px 0">Connects all your PCs simultaneously over persistent outbound WebSockets (&lt;25ms token streaming, headless CLI execution even with VS Code closed).</p>
+          <div class="eyebrow">MULTI-DEVICE FLEET &amp; ZERO-SECRET PAIRING</div>
+          <p class="meta-timestamp" style="margin:6px 0">Zero secrets in git/bundle. Pair phones via 1-tap hash link or workstations via 1-line PowerShell.</p>
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0">
             ${
               fleetDevices.length > 0
@@ -8099,1246 +7584,66 @@
                         `<span class="sess-device-badge ${d.online ? 'is-online' : ''}">${d.online ? '●' : '◐'} ${esc(d.name || d.id)}${d.sessionCount ? ` (${d.sessionCount})` : ''}</span>`
                     )
                     .join('')
-                : `<span class="meta-timestamp">Probing connected hosts…</span>`
+                : `<span class="meta-timestamp">${isPaired ? 'Probing connected hosts…' : 'Not paired yet — paste Pair Link below'}</span>`
             }
           </div>
-          <label style="display:block;font-size:11.5px;margin-top:8px;color:var(--text-muted)">
-            Cloudflare Edge Relay URL (<code>wss://...</code> — auto-synced across all PCs):
-            <input type="url" class="input-field mono" id="input-edge-relay-url" value="${esc(effectiveEdgeUrl)}" placeholder="wss://theo-edge-relay.<subdomain>.workers.dev">
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+            <button type="button" class="btn-brass-sm" id="btn-copy-mobile-pair" aria-label="Copy 1-tap mobile pairing URL">📱 Copy Mobile Pair URL</button>
+            <button type="button" class="btn-ghost-sm" id="btn-copy-pc-install" aria-label="Copy 1-line PowerShell installer with pairing token">💻 Copy Workstation Pair PS1</button>
+          </div>
+          <label style="display:block;font-size:11.5px;margin-top:10px;color:var(--text-muted)">
+            Pair This Device (paste <code>#pair=...</code> URL or Access Key):
+            <input type="text" class="input-field mono pin-masked" id="input-pair-token" value="" placeholder="${isPaired ? '✓ Paired (paste new link to rotate)' : 'Paste #pair=... link or 64-hex key'}" autocomplete="off" spellcheck="false">
           </label>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-            <button type="button" class="btn-brass-sm" id="btn-save-edge-relay">Save &amp; Broadcast Edge URL</button>
-            <button type="button" class="btn-ghost-sm" id="btn-copy-edge-deploy" title="Copy 1-line PowerShell command to deploy Option A Cloudflare Worker ($0 Free Plan)">Copy Option A Deploy Cmd</button>
-            <button type="button" class="btn-ghost-sm" id="btn-copy-pc-install" title="Copy 1-line PowerShell installer to add any Windows PC to your THEO fleet">Copy PC Fleet Installer</button>
+            <button type="button" class="btn-ghost-sm" id="btn-apply-pair-token">Apply Pair Token</button>
+            <button type="button" class="btn-ghost-sm" id="btn-copy-edge-deploy" aria-label="Copy Cloudflare Worker deploy command">Copy Edge Deploy Cmd</button>
+          </div>
+          <label style="display:block;font-size:11.5px;margin-top:10px;color:var(--text-muted)">
+            Cloudflare Edge Relay URL (<code>wss://...</code>):
+            <input type="url" class="input-field mono" id="input-edge-relay-url" value="${esc(effectiveEdgeUrl)}" placeholder="wss://theo-edge-relay.husseinbdeir.workers.dev/ws">
+          </label>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+            <button type="button" class="btn-ghost-sm" id="btn-save-edge-relay">Save Edge URL</button>
           </div>
         </div>
 
         <div class="pairing-card">
           <div class="eyebrow">HYBRID BRIDGE ENDPOINTS</div>
-          <p class="meta-timestamp" style="margin:6px 0">Automatic switch between local Wi-Fi WebSocket (:4318/ws), Cloudflare Edge WS, and Cloud Relay.</p>
+          <p class="meta-timestamp" style="margin:6px 0">Loopback WebSocket (<code>127.0.0.1:4318/ws</code>), Cloudflare Edge WS, and Cloud Relay backstop.</p>
           <div class="mono" style="font-size:11.5px;margin-top:8px">
             <div><strong>Hosted PWA:</strong> ${esc(pwaUrl)}</div>
-            <div style="margin-top:4px"><strong>LAN Direct:</strong> ${esc(lanUrl)}</div>
+            <div style="margin-top:4px"><strong>Local Bridge:</strong> ${esc(lanUrl)}</div>
           </div>
           <label style="display:block;font-size:11.5px;margin-top:10px;color:var(--text-muted)">
-            Custom Direct Bridge URL (optional LAN IP / Tunnel):
-            <input type="url" class="input-field mono" id="input-custom-bridge" value="${esc(prefs.customBridgeUrl || '')}" placeholder="http://192.168.1.x:4318">
+            Custom Direct Bridge URL (optional opt-in LAN / Tunnel):
+            <input type="url" class="input-field mono" id="input-custom-bridge" value="${esc(prefs.customBridgeUrl || '')}" placeholder="http://127.0.0.1:4318">
           </label>
           <button type="button" class="btn-brass-sm" id="btn-save-bridge" style="margin-top:8px">Save &amp; Probe Bridge</button>
         </div>
 
         <div class="pairing-card">
           <div class="eyebrow">SECURITY &amp; CACHE</div>
-          <p class="meta-timestamp" style="margin:6px 0">Protect remote mobile access with a 4-digit PIN lock on launch.</p>
+          <p class="meta-timestamp" style="margin:6px 0">Protect remote mobile access with a SHA-256 4-digit PIN lock on launch.</p>
           <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
             <button type="button" class="btn-ghost-sm" id="btn-set-pin">${hasPin ? 'Change / Clear 4-Digit PIN' : 'Enable 4-Digit PIN Lock'}</button>
             <a href="reset.html" class="btn-ghost-sm" style="text-decoration:none;display:inline-flex;align-items:center">Reset PWA Cache</a>
           </div>
-        </div>
-      `;
-    }
-  }
-
-  // ---------- Daily 100-Point Discipline & Smart Reminders Views ----------
-  function getActiveRemindersSummary(nowMs = Date.now()) {
-    const delSet = new Set(personalLedger.deletedIds || []);
-    const all = (personalLedger.reminders || []).filter((r) => r && r.id && !r.deleted && !delSet.has(r.id));
-    const active = all.filter((r) => !r.completed);
-    const completed = all.filter((r) => r.completed);
-    let maturedCount = 0;
-    let holdingCount = 0;
-    let dueTodayCount = 0;
-    let nextHoldItem = null;
-
-    const endOfToday = new Date();
-    endOfToday.setHours(23, 59, 59, 999);
-    const eodMs = endOfToday.getTime();
-
-    for (const item of active) {
-      const b = classifyReminderBucket(item, nowMs);
-      const tMs = Number(item.matureAt || item.dueAt || 0);
-      if (b === 'urgent_matured') {
-        maturedCount++;
-      } else if (b === 'holding') {
-        holdingCount++;
-        if (tMs && (!nextHoldItem || tMs < Number(nextHoldItem.matureAt || nextHoldItem.dueAt || Infinity))) {
-          nextHoldItem = item;
-        }
-      } else if (b === 'today' || (tMs && tMs <= eodMs)) {
-        dueTodayCount++;
-      }
-    }
-
-    const timersCount = active.filter(isTimerItem).length;
-    const delegatedCount = active.filter(isDelegatedItem).length;
-
-    return {
-      all,
-      active,
-      completed,
-      maturedCount,
-      holdingCount,
-      timersCount,
-      delegatedCount,
-      dueTodayCount,
-      urgentTotal: maturedCount + dueTodayCount,
-      nextHoldItem
-    };
-  }
-
-  function updateDisciplineBadges() {
-    const todayDisc = computeDayDiscipline(localIsoDate());
-    const remSum = getActiveRemindersSummary();
-    const railBadge = $('badge-discipline');
-    const dockBadge = $('dock-badge-discipline');
-
-    const label = remSum.maturedCount > 0 ? `${remSum.maturedCount}!` : `${todayDisc.score}%`;
-    if (railBadge) {
-      railBadge.textContent = label;
-      railBadge.classList.toggle('alert', remSum.maturedCount > 0 || todayDisc.score < 50);
-    }
-    if (dockBadge) {
-      dockBadge.textContent = label;
-      dockBadge.hidden = false;
-      dockBadge.classList.toggle('alert', remSum.maturedCount > 0 || todayDisc.score < 50);
-    }
-  }
-
-  function renderPulseDisciplineSectionHtml() {
-    const todayIso = localIsoDate();
-    const d = computeDayDiscipline(todayIso);
-    const remSum = getActiveRemindersSummary();
-    const scoreColor =
-      d.tone === 'emerald'
-        ? 'var(--emerald)'
-        : d.tone === 'brass'
-          ? 'var(--brass)'
-          : d.tone === 'amber'
-            ? 'var(--amber)'
-            : 'var(--crimson)';
-    const deltaSign = d.deltaFromStart > 0 ? `+${d.deltaFromStart}%` : `${d.deltaFromStart}%`;
-
-    const maturedItems = remSum.active
-      .filter((r) => classifyReminderBucket(r) === 'urgent_matured')
-      .slice(0, 2);
-    const holdingItems = remSum.active
-      .filter((r) => classifyReminderBucket(r) === 'holding')
-      .sort((a, b) => Number(a.matureAt || a.dueAt || 0) - Number(b.matureAt || b.dueAt || 0))
-      .slice(0, 2);
-    const activeClusterCount = new Set(
-      remSum.active.map(
-        (r) =>
-          r.customGroup ||
-          getCategoryMeta(r.category || detectRelevanceCategory(r.title, r.kind).id).id
-      )
-    ).size;
-
-    const delegatedCount = remSum.delegatedCount;
-    const cmdUrl = './command/';
-
-    return `
-      <div class="pulse-disc-grid">
-        <div class="pulse-disc-card" data-goto-tab="discipline">
-          <div>
-            <div class="eyebrow">DAILY 100-POINT DISCIPLINE · TODAY</div>
-            <div class="pulse-disc-score-row" style="margin-top:4px">
-              <div class="pulse-disc-big tabular" style="color:${scoreColor}">${d.score}%</div>
-              <div>
-                <div style="font-size:12px;font-weight:700;color:var(--text-primary)">
-                  Starts at 50% · <span class="mono" style="color:${scoreColor}">${deltaSign} net</span>
-                </div>
-                <div class="meta-timestamp">
-                  Do's: <strong style="color:var(--emerald)">+${d.doEarned}%</strong> (${d.doFullCount} full, ${d.doHalfCount} half) · Don'ts: <strong style="color:${d.dontLost > 0 ? 'var(--crimson)' : 'var(--text-secondary)'}">-${d.dontLost}%</strong> (${d.dontCleanCount}/5 clean)
-                </div>
-              </div>
-            </div>
-            <div class="disc-bar-track" style="margin-top:8px">
-              <div class="disc-bar-midline" title="50% Starting Baseline"></div>
-              <div class="disc-bar-fill" style="width:${d.score}%;background:${scoreColor}"></div>
-            </div>
-          </div>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
-            <a href="${cmdUrl}" class="chip-btn active" onclick="event.stopPropagation()" style="text-decoration:none">🎯 Command PWA ↗</a>
-          </div>
-        </div>
-
-        <div class="pulse-disc-card" data-goto-tab="discipline">
-          <div style="min-width:0;flex:1">
-            <div class="eyebrow">THEO COMMAND · ZERO-SCROLL RADAR &amp; BHFIRMS DELEGATION</div>
-            <div style="display:flex;gap:14px;align-items:baseline;margin-top:4px;flex-wrap:wrap">
-              <div>
-                <span class="pulse-disc-big tabular" style="font-size:24px;color:${remSum.maturedCount > 0 ? 'var(--amber)' : 'var(--text-primary)'}">${remSum.maturedCount}</span>
-                <span class="meta-timestamp"> ready now</span>
-              </div>
-              <div>
-                <span class="pulse-disc-big tabular" style="font-size:24px;color:var(--brass)">${remSum.timersCount}</span>
-                <span class="meta-timestamp"> timers</span>
-              </div>
-              <div>
-                <span class="pulse-disc-big tabular" style="font-size:24px;color:var(--emerald)">${delegatedCount}</span>
-                <span class="meta-timestamp"> delegated</span>
-              </div>
-              <div>
-                <span class="pulse-disc-big tabular" style="font-size:24px;color:var(--steel)">${remSum.active.length}</span>
-                <span class="meta-timestamp"> across ${activeClusterCount || 0} cluster${activeClusterCount === 1 ? '' : 's'}</span>
-              </div>
-            </div>
-            <div class="meta-timestamp" style="margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-              ${
-                maturedItems.length
-                  ? `🔥 Ready: <strong>${esc(maturedItems[0].title)}</strong>`
-                  : holdingItems.length
-                    ? `⏳ Waiting: <strong>${esc(holdingItems[0].title)}</strong> (${formatHoldCountdown(holdingItems[0].matureAt || holdingItems[0].dueAt)})`
-                    : `2×4 Zero-Scroll Bento Radar, Wait Timers & @Person WhatsApp Delegation.`
-              }
-            </div>
-          </div>
-          <div>
-            <a href="${cmdUrl}" class="chip-btn active" onclick="event.stopPropagation()" style="text-decoration:none">Open Radar ↗</a>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  function renderWaitAdvisorInnerHtml() {
-    const cat = detectRelevanceCategory(
-      remDraft.title,
-      remDraft.kind,
-      remDraft.categoryOverride,
-      remDraft.customGroup
-    );
-    const ctx = extractContextTags(remDraft.title);
-    const sug = suggestPaymentWait(remDraft.title, remDraft.amount);
-    const targetInfo = computeTargetTimestampFromChoice(
-      remDraft.waitChoice,
-      remDraft.title,
-      remDraft.amount
-    );
-    const targetDateStr = targetInfo.targetMs
-      ? new Date(targetInfo.targetMs).toLocaleString([], {
-          weekday: 'short',
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        })
-      : 'No alarm (Parked in cluster)';
-
-    const isRecurring =
-      remDraft.kind === 'recurring' ||
-      (remDraft.kind === 'auto' && Boolean(targetInfo.isRecurring));
-
-    const autoBtnLbl = sug.isParked
-      ? `✨ Auto (Park · No Alarm)`
-      : `✨ Auto (${sug.waitDays >= 1 ? `${sug.waitDays}d` : `${Math.max(1, Math.round(sug.waitDays * 24))}h`})`;
-
-    const waitChips = [
-      { k: 'auto', lbl: autoBtnLbl },
-      { k: 'none', lbl: '📌 Park (No Timer)' },
-      { k: '3h', lbl: 'In 3h' },
-      { k: 'tonight', lbl: 'Tonight 20:30' },
-      { k: '1d', lbl: '+24h / Tmrw' },
-      { k: '2d', lbl: '+2d' },
-      { k: '4d', lbl: '+4d' },
-      { k: '5d', lbl: '+5d (Ship)' },
-      { k: '7d', lbl: '+7d' },
-      { k: '14d', lbl: '+14d' },
-      { k: 'nextmon', lbl: 'Next Mon' }
-    ];
-
-    const recurChips = [
-      { k: 'daily', lbl: '🔁 Daily' },
-      { k: 'weekdays', lbl: '🏢 Weekdays (Mon–Fri)' },
-      { k: 'weekly', lbl: '📅 Weekly' },
-      { k: 'monthly', lbl: '🗓️ Monthly' }
-    ];
-
-    return `
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">
-        <div style="min-width:0;flex:1">
-          <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--brass)">
-            🧠 Smart Auto-Classifier · ${esc(targetInfo.label)}
-          </div>
-          <div class="meta-timestamp" style="margin-top:2px">
-            ${esc(targetInfo.reason || sug.reason)}
-          </div>
-        </div>
-        <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">
-          <span class="rem-badge cat" id="rem-auto-cat-chip" title="Auto-detected cluster">${cat.icon} ${esc(cat.label)}</span>
-          ${ctx.allTags
-            .map((t) => `<span class="rem-badge hold" title="Extracted context tag">${esc(t)}</span>`)
-            .join('')}
-          ${
-            sug.amt > 0
-              ? `<span class="rem-badge amt" title="Extracted amount">$${fmtInt(sug.amt)}</span>`
-              : ''
-          }
-        </div>
-      </div>
-
-      <div class="wait-chip-row">
-        ${waitChips
-          .map(
-            (c) => `
-          <button type="button" class="wait-chip ${remDraft.waitChoice === c.k ? 'active' : ''}" data-wait-choice="${c.k}">
-            ${esc(c.lbl)}
-          </button>
-        `
-          )
-          .join('')}
-      </div>
-
-      ${
-        isRecurring
-          ? `
-        <div class="wait-chip-row" style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--border-subtle)">
-          <span class="meta-timestamp" style="align-self:center;margin-right:4px">Repeat:</span>
-          ${recurChips
-            .map(
-              (rc) => `
-            <button type="button" class="wait-chip ${remDraft.recur === rc.k ? 'active' : ''}" data-recur-choice="${rc.k}">
-              ${esc(rc.lbl)}
-            </button>
-          `
-            )
-            .join('')}
-        </div>
-      `
-          : ''
-      }
-
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:6px;border-top:1px solid var(--border-subtle);flex-wrap:wrap;gap:6px">
-        <span class="meta-timestamp">
-          🔔 Reminder / Wait Target: <strong class="mono" style="color:var(--text-primary)">${esc(targetDateStr)}</strong>
-        </span>
-        <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
-          <span class="meta-timestamp" style="font-size:10.5px">Cluster:</span>
-          <button type="button" class="wait-chip ${!remDraft.categoryOverride && !remDraft.customGroup ? 'active' : ''}" style="padding:2px 7px;font-size:10.5px" data-cat-override="">✨ Auto</button>
-          ${Object.values(REM_CATEGORIES)
-            .map(
-              (c) => `
-            <button type="button" class="wait-chip ${remDraft.categoryOverride === c.id && !remDraft.customGroup ? 'active' : ''}" style="padding:2px 7px;font-size:10.5px" data-cat-override="${c.id}" title="${esc(c.label)}">
-              ${c.icon} ${esc(c.shortLabel || c.label)}
-            </button>
-          `
-            )
-            .join('')}
-          <button type="button" class="wait-chip ${remDraft.customGroup ? 'active' : ''}" style="padding:2px 7px;font-size:10.5px" data-cat-custom="1" title="Create or assign a custom group">
-            ${remDraft.customGroup ? `🏷️ ${esc(remDraft.customGroup)}` : '+ Custom'}
-          </button>
-        </div>
-      </div>
-    `;
-  }
-
-  function renderReminderCardHtml(item, nowMs = Date.now()) {
-    const cat = getCategoryMeta(
-      item.category || detectRelevanceCategory(item.title, item.kind).id,
-      item.customGroup || ''
-    );
-    const ctx = extractContextTags(item.title);
-    const subTag = item.subTag || ctx.subTag || '';
-    const targetMs = Number(item.matureAt || item.dueAt || 0);
-    const isParked = !targetMs || item.kind === 'parked';
-    const isHold =
-      !isParked &&
-      (item.kind === 'payment' ||
-        item.kind === 'wait' ||
-        cat.id === 'verify' ||
-        cat.id === 'shipping' ||
-        cat.id === 'payments');
-    const isMatured = !isParked && isHold && targetMs && nowMs >= targetMs && !item.completed;
-    const isHolding = !isParked && isHold && targetMs && nowMs < targetMs && !item.completed;
-    const isOverdue = !isParked && !isHold && targetMs && nowMs >= targetMs && !item.completed;
-
-    const cardStateClass = item.completed
-      ? 'completed'
-      : isMatured
-        ? 'matured'
-        : isHolding
-          ? 'holding'
-          : isOverdue
-            ? 'overdue'
-            : '';
-
-    const countdownTxt = formatHoldCountdown(targetMs, nowMs);
-    const targetFormatted = targetMs
-      ? new Date(targetMs).toLocaleString([], {
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        })
-      : '';
-
-    let progressPct = 0;
-    if (isHold && item.createdAt && targetMs > item.createdAt) {
-      progressPct = Math.max(
-        3,
-        Math.min(100, Math.round(((nowMs - item.createdAt) / (targetMs - item.createdAt)) * 100))
-      );
-    } else if (isMatured) {
-      progressPct = 100;
-    }
-
-    let kindBadge = '';
-    if (isParked) {
-      kindBadge = `<span class="rem-badge cat">📌 Parked · No Alarm</span>`;
-    } else if (cat.id === 'verify') {
-      kindBadge = `<span class="rem-badge ${isMatured ? 'matured' : 'hold'}">${isMatured ? '🔍 Check Now · Did It Show Up?' : `⏳ Verify Wait · ${countdownTxt}`}</span>`;
-    } else if (cat.id === 'shipping') {
-      kindBadge = `<span class="rem-badge ${isMatured ? 'matured' : 'hold'}">${isMatured ? '📦 Check Delivery / Tracking' : `📦 Shipping Timer · ${countdownTxt}`}</span>`;
-    } else if (item.kind === 'payment' || cat.id === 'payments') {
-      kindBadge = `<span class="rem-badge ${isMatured ? 'matured' : 'hold'}">${isMatured ? '🔓 Wait Complete · Ready to Pay' : `⏳ Payment Wait · ${countdownTxt}`}</span>`;
-    } else if (item.kind === 'wait') {
-      kindBadge = `<span class="rem-badge ${isMatured ? 'matured' : 'hold'}">${isMatured ? '🔓 Wait Complete' : `⏳ Waiting · ${countdownTxt}`}</span>`;
-    } else if (item.kind === 'recurring') {
-      kindBadge = `<span class="rem-badge recur">🔁 ${esc(item.recur || 'daily')} · ${esc(countdownTxt)}</span>`;
-    } else {
-      kindBadge = `<span class="rem-badge ${isOverdue ? 'matured' : 'cat'}">⏰ ${esc(countdownTxt)}</span>`;
-    }
-
-    const doneLabel =
-      cat.id === 'verify'
-        ? '✓ Verified'
-        : cat.id === 'shipping'
-          ? '✓ Received'
-          : cat.id === 'people'
-            ? '✓ Spoke'
-            : item.kind === 'payment' || cat.id === 'payments'
-              ? '✓ Paid / Done'
-              : item.kind === 'recurring'
-                ? '✓ Done & Roll'
-                : '✓ Done';
-
-    let delBadge = '';
-    if (item.isDelegated || item.assigneeName) {
-      const st = item.delegationStatus || 'assigned';
-      const who = item.assigneeName || 'Team';
-      const stLbl =
-        st === 'done'
-          ? `✅ ${who} · Done (Verify)`
-          : st === 'working'
-            ? `⚙️ ${who} · Working`
-            : st === 'seen'
-              ? `👀 ${who} · Seen`
-              : st === 'sent'
-                ? `📨 ${who} · Sent`
-                : `👤 ${who}`;
-      delBadge = `<span class="rem-badge ${st === 'done' ? 'matured' : 'hold'}">${esc(stLbl)}</span>`;
-    } else if (subTag) {
-      delBadge = `<span class="rem-badge hold">${esc(subTag)}</span>`;
-    }
-
-    const isHighlightedRem =
-      Boolean(pinnedNavReminderId) &&
-      pinnedNavReminderId === item.id &&
-      Date.now() < pinnedNavUntil;
-
-    return `
-      <div class="rem-card ${cardStateClass}" data-rem-id="${esc(item.id)}" ${isHighlightedRem ? 'style="outline:2px solid var(--brass);box-shadow:0 0 0 4px rgba(217,165,74,0.22)"' : ''}>
-        <div class="rem-card-top">
-          <div class="rem-card-body" style="flex:1 1 240px;min-width:0">
-            <div class="rem-card-title">${esc(item.title)}</div>
-            <div class="rem-card-meta">
-              <span class="rem-badge cat">${cat.icon} ${esc(cat.shortLabel || cat.label)}</span>
-              ${delBadge}
-              ${item.amount > 0 ? `<span class="rem-badge amt">$${fmtInt(item.amount)}</span>` : ''}
-              ${kindBadge}
-              ${targetFormatted ? `<span class="meta-timestamp">Target: ${esc(targetFormatted)}</span>` : ''}
-            </div>
+          <div id="pin-inline-editor" class="pin-inline-editor" hidden>
             ${
-              item.staffNote
-                ? `<div class="meta-timestamp" style="margin-top:4px;color:var(--emerald)">💬 <strong>${esc(item.assigneeName || 'Staff')}:</strong> ${esc(item.staffNote)}</div>`
+              hasPin
+                ? `<label style="font-size:11.5px;color:var(--text-muted)">Current 4-digit PIN (required):<input type="text" inputmode="numeric" maxlength="4" class="input-field pin-masked" id="input-pin-current" placeholder="••••" autocomplete="off"></label>`
                 : ''
             }
+            <label style="font-size:11.5px;color:var(--text-muted)">New 4-digit PIN ${hasPin ? '(leave empty to disable PIN)' : ''}:<input type="text" inputmode="numeric" maxlength="4" class="input-field pin-masked" id="input-pin-next" placeholder="4 digits" autocomplete="off"></label>
+            <div class="pin-editor-row">
+              <button type="button" class="btn-brass-sm" id="btn-pin-editor-save">Save PIN</button>
+              <button type="button" class="btn-ghost-sm" id="btn-pin-editor-cancel">Cancel</button>
+            </div>
           </div>
-          <div class="rem-actions">
-            ${
-              !item.completed
-                ? `
-              <button type="button" class="rem-act-btn done" data-rem-act="done" data-rem-id="${esc(item.id)}">
-                ${doneLabel}
-              </button>
-              <button type="button" class="rem-act-btn" data-rem-act="wait1d" data-rem-id="${esc(item.id)}" title="Wait / Snooze +24 hours">+24h</button>
-              <button type="button" class="rem-act-btn" data-rem-act="wait3d" data-rem-id="${esc(item.id)}" title="Wait +3 days">+3d</button>
-              ${
-                isHolding
-                  ? `<button type="button" class="rem-act-btn" data-rem-act="release" data-rem-id="${esc(item.id)}" title="Mark ready right now">Ready Now</button>`
-                  : ''
-              }
-              <button type="button" class="rem-act-btn" data-rem-act="move-group" data-rem-id="${esc(item.id)}" title="Change group / sub-topic">🏷️</button>
-            `
-                : `
-              <button type="button" class="rem-act-btn" data-rem-act="reopen" data-rem-id="${esc(item.id)}">↺ Reopen</button>
-            `
-            }
-            <button type="button" class="rem-act-btn" data-rem-act="delete" data-rem-id="${esc(item.id)}" title="Delete">✕</button>
-          </div>
-        </div>
-        ${
-          isHold && !item.completed
-            ? `
-          <div class="hold-progress-track" title="Wait elapsed: ${progressPct}%">
-            <div class="hold-progress-fill" style="width:${progressPct}%;background:${isMatured ? 'var(--emerald)' : 'var(--brass)'}"></div>
-          </div>
-        `
-            : ''
-        }
-      </div>
-    `;
-  }
-
-  function renderRemindersListHtml() {
-    const nowMs = Date.now();
-    const remSum = getActiveRemindersSummary(nowMs);
-    const groupMode = prefs.remGroupMode || 'clusters'; // 'clusters' | 'subtopics' | 'urgency'
-    const showDone = Boolean(prefs.remShowCompleted);
-
-    if (!remSum.active.length && (!showDone || !remSum.completed.length)) {
-      return `
-        <div class="empty-card" style="padding:28px;text-align:center">
-          <div style="font-size:15px;font-weight:700;color:var(--text-primary)">Your Smart Reminder &amp; Idea Clusters Are Clear</div>
-          <p class="meta-timestamp" style="max-width:540px;margin:6px auto 0">
-            Drop anything above — people to talk to, something you paid for that hasn't shown up on an app yet, shipping times, family tasks, specific work items, payments to hold, things you want to do, or ideas for later. THEO groups and times them automatically.
-          </p>
         </div>
       `;
     }
-
-    const groups = [];
-    if (groupMode === 'urgency') {
-      const buckets = [
-        {
-          id: 'urgent_matured',
-          title: '🔥 Action Ready & Matured Wait Timers',
-          sub: 'Wait timer expired or due right now — ready to check, talk, or act'
-        },
-        {
-          id: 'holding',
-          title: '⏳ Active Wait Timers (App Verify, Shipping & Payment Holds)',
-          sub: 'Cooling off or in transit — THEO will push your phone when the timer matures'
-        },
-        {
-          id: 'today',
-          title: '⚡ Today & Due Soon',
-          sub: 'Scheduled for today'
-        },
-        {
-          id: 'recurring',
-          title: '🔁 Recurring Routines',
-          sub: 'Automatically rolls forward to the next cycle when marked done'
-        },
-        {
-          id: 'upcoming',
-          title: '📅 Upcoming Scheduled',
-          sub: 'Future scheduled reminders'
-        },
-        {
-          id: 'parked',
-          title: '💡 Ideas for Later & Things I Want To Do (Parked)',
-          sub: 'Saved cleanly in your clusters without a noisy alarm'
-        }
-      ];
-
-      for (const b of buckets) {
-        const items = remSum.active
-          .filter((r) => classifyReminderBucket(r, nowMs) === b.id)
-          .sort((x, y) => Number(x.matureAt || x.dueAt || 0) - Number(y.matureAt || y.dueAt || 0));
-        if (items.length) {
-          groups.push({ ...b, items });
-        }
-      }
-    } else if (groupMode === 'subtopics') {
-      // Dynamic Sub-Topics grouping: splits Work into Resorts / WTC / Trading / Holding, People by person, Verify by app, etc.
-      const subMap = new Map();
-      for (const item of remSum.active) {
-        const cat = getCategoryMeta(
-          item.category || detectRelevanceCategory(item.title, item.kind).id,
-          item.customGroup || ''
-        );
-        const ctx = extractContextTags(item.title);
-        const sub = item.subTag || ctx.subTag || '';
-        const key = sub ? `${cat.icon} ${cat.shortLabel} · ${sub}` : `${cat.icon} ${cat.label}`;
-        if (!subMap.has(key)) {
-          subMap.set(key, {
-            id: key,
-            title: key,
-            sub: cat.desc || 'Auto-detected sub-topic cluster',
-            items: []
-          });
-        }
-        subMap.get(key).items.push(item);
-      }
-      for (const g of subMap.values()) {
-        g.items.sort(
-          (x, y) =>
-            Number(x.matureAt || x.dueAt || Infinity) - Number(y.matureAt || y.dueAt || Infinity)
-        );
-        groups.push(g);
-      }
-    } else {
-      // Default: 'clusters' — Smart Life & Work Clusters (People, Verify/App, Shipping, Work, Family, Payments, Want-to-Do, Ideas + Custom)
-      const bucketMap = new Map();
-      for (const cat of Object.values(REM_CATEGORIES)) {
-        bucketMap.set(cat.id, {
-          id: cat.id,
-          title: `${cat.icon} ${cat.label}`,
-          sub: cat.desc,
-          items: []
-        });
-      }
-      for (const item of remSum.active) {
-        const cat = getCategoryMeta(
-          item.category || detectRelevanceCategory(item.title, item.kind).id,
-          item.customGroup || ''
-        );
-        if (!bucketMap.has(cat.id)) {
-          bucketMap.set(cat.id, {
-            id: cat.id,
-            title: `${cat.icon} ${cat.label}`,
-            sub: 'Custom smart cluster',
-            items: []
-          });
-        }
-        bucketMap.get(cat.id).items.push(item);
-      }
-      for (const g of bucketMap.values()) {
-        if (g.items.length) {
-          g.items.sort(
-            (x, y) =>
-              Number(x.matureAt || x.dueAt || Infinity) - Number(y.matureAt || y.dueAt || Infinity)
-          );
-          groups.push(g);
-        }
-      }
-    }
-
-    return `
-      <div class="rem-groups-grid">
-        ${groups
-          .map(
-            (g) => `
-          <div class="rem-group-block">
-            <div class="rem-group-hdr">
-              <div>
-                <div class="rem-group-title">${esc(g.title)}</div>
-                <div class="meta-timestamp" style="font-size:11px">${esc(g.sub || '')}</div>
-              </div>
-              <span class="chip-btn" style="pointer-events:none;font-size:11px;padding:2px 8px">${g.items.length}</span>
-            </div>
-            <div class="rem-list">
-              ${g.items.map((item) => renderReminderCardHtml(item, nowMs)).join('')}
-            </div>
-          </div>
-        `
-          )
-          .join('')}
-
-        ${
-          showDone && remSum.completed.length
-            ? `
-          <div class="rem-group-block">
-            <div class="rem-group-hdr">
-              <div class="rem-group-title">✓ Recently Completed (${remSum.completed.length})</div>
-              <button type="button" class="btn-ghost-sm" data-rem-act="clear-done" style="font-size:11px;padding:2px 8px">Clear Completed</button>
-            </div>
-            <div class="rem-list">
-              ${remSum.completed
-                .slice(0, 15)
-                .map((item) => renderReminderCardHtml(item, nowMs))
-                .join('')}
-            </div>
-          </div>
-        `
-            : ''
-        }
-      </div>
-    `;
-  }
-
-  function renderDisciplineView() {
-    const root = $('discipline-view-root');
-    if (!root) return;
-
-    const todayIso = localIsoDate();
-    if (!selectedScoreDate) selectedScoreDate = todayIso;
-    const curDisc = computeDayDiscipline(selectedScoreDate);
-    const isToday = selectedScoreDate === todayIso;
-
-    const scoreColor =
-      curDisc.tone === 'emerald'
-        ? 'var(--emerald)'
-        : curDisc.tone === 'brass'
-          ? 'var(--brass)'
-          : curDisc.tone === 'amber'
-            ? 'var(--amber)'
-            : 'var(--crimson)';
-    const deltaSign =
-      curDisc.deltaFromStart > 0 ? `+${curDisc.deltaFromStart}%` : `${curDisc.deltaFromStart}%`;
-
-    // Build 7-day trend array ending today
-    const historyDays = [];
-    let sevenDaySum = 0;
-    for (let i = 6; i >= 0; i--) {
-      const dt = new Date();
-      dt.setDate(dt.getDate() - i);
-      const iso = localIsoDate(dt);
-      const dayStat = computeDayDiscipline(iso);
-      sevenDaySum += dayStat.score;
-      const dayName =
-        i === 0
-          ? 'Today'
-          : dt.toLocaleDateString([], { weekday: 'short' });
-      historyDays.push({
-        iso,
-        label: dayName,
-        score: dayStat.score,
-        tone: dayStat.tone,
-        selected: iso === selectedScoreDate
-      });
-    }
-    const sevenDayAvg = Math.round(sevenDaySum / 7);
-    const remSum = getActiveRemindersSummary();
-    const groupMode = prefs.remGroupMode || 'clusters';
-
-    const cmdUrl = './command/';
-
-    root.innerHTML = `
-      ${renderPulseNotifBannerHtml()}
-
-      <div class="push-banner-card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-color:var(--brass)">
-        <div style="min-width:220px;flex:1">
-          <div class="eyebrow" style="color:var(--brass)">STANDALONE ZERO-SCROLL EXECUTIVE APP</div>
-          <div style="font-size:15px;font-weight:800;margin-top:2px">🎯 THEO Command — 2×4 Bento Radar, Wait Timers &amp; BHFIRMS Delegation</div>
-          <div class="meta-timestamp" style="margin-top:3px">
-            Zero-scroll 8-cluster Radar grid, 52px Top Discipline HUD, @Person WhatsApp delegation &amp; private 1-task staff status links.
-          </div>
-        </div>
-        <a href="${cmdUrl}" class="btn-brass-sm" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px">
-          🚀 Open THEO Command PWA ↗
-        </a>
-      </div>
-
-      <!-- 1. Daily 100-Point Discipline Hero Banner -->
-      <div class="disc-hero-card">
-        <div class="disc-score-head">
-          <div>
-            <div class="eyebrow">DAILY 100-POINT PERSONAL DISCIPLINE LEDGER</div>
-            <div class="disc-score-big-wrap" style="margin-top:4px">
-              <div class="disc-score-big tabular" style="color:${scoreColor}">${curDisc.score}%</div>
-              <div class="disc-score-delta">
-                <span class="chip-btn active" style="pointer-events:none;font-size:11px;padding:2px 9px">
-                  Baseline 50% · ${deltaSign}
-                </span>
-                <span class="meta-timestamp">
-                  7-Day Avg: <strong class="mono">${sevenDayAvg}%</strong>
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div class="disc-date-nav">
-            <button type="button" data-disc-date-act="prev" title="Previous day">‹ Prev</button>
-            <span class="disc-date-label mono">${isToday ? `Today · ${selectedScoreDate}` : selectedScoreDate}</span>
-            <button type="button" data-disc-date-act="today" ${isToday ? 'disabled style="opacity:0.4"' : ''}>Today</button>
-            <button type="button" data-disc-date-act="next" ${isToday ? 'disabled style="opacity:0.4"' : ''} title="Next day">Next ›</button>
-          </div>
-        </div>
-
-        <div class="disc-bar-track">
-          <div class="disc-bar-midline" title="50% Day-Start Baseline (All 5 Don'ts Intact)"></div>
-          <div class="disc-bar-fill" style="width:${curDisc.score}%;background:${scoreColor}"></div>
-        </div>
-
-        <div class="disc-formula-pills">
-          <span class="disc-pill">🛡️ Day Start: <strong>50%</strong> (5 Don'ts intact)</span>
-          <span class="disc-pill good">⚡ 5 Do's Earned: <strong>+${curDisc.doEarned}%</strong> / +50%</span>
-          <span class="disc-pill ${curDisc.dontLost > 0 ? 'bad' : ''}">🚫 5 Don'ts Penalties: <strong>-${curDisc.dontLost}%</strong> (${curDisc.dontKept}% kept)</span>
-          <button type="button" class="btn-ghost-sm" data-disc-date-act="reset-day" style="margin-left:auto;font-size:11px;padding:3px 9px">Reset ${isToday ? 'Today' : selectedScoreDate} to 50%</button>
-        </div>
-
-        <!-- 7-Day Spark Strip -->
-        <div class="disc-history-strip">
-          ${historyDays
-            .map((hd) => {
-              const c =
-                hd.tone === 'emerald'
-                  ? 'var(--emerald)'
-                  : hd.tone === 'brass'
-                    ? 'var(--brass)'
-                    : hd.tone === 'amber'
-                      ? 'var(--amber)'
-                      : 'var(--crimson)';
-              return `
-                <div class="disc-day-cell ${hd.selected ? 'today' : ''}" data-disc-pick-date="${hd.iso}">
-                  <div class="disc-day-lbl">${esc(hd.label)}</div>
-                  <div class="disc-day-val tabular" style="color:${c}">${hd.score}%</div>
-                  <div class="disc-day-mini-bar">
-                    <div class="disc-day-mini-fill" style="width:${hd.score}%;background:${c}"></div>
-                  </div>
-                </div>
-              `;
-            })
-            .join('')}
-        </div>
-      </div>
-
-      <!-- 2. Two-Column 5 DO'S (+50%) & 5 DON'TS (50% Shield) -->
-      <div class="disc-top-grid">
-        <!-- 5 DO'S -->
-        <div class="disc-col-card">
-          <div class="disc-col-hdr">
-            <div>
-              <div class="disc-col-title" style="color:var(--emerald)">✅ The 5 Daily Do's (+10% Full · +5% Partial)</div>
-              <div class="meta-timestamp">Build momentum upward from your 50% baseline</div>
-            </div>
-            <span class="chip-btn active" style="pointer-events:none">+${curDisc.doEarned}% / 50%</span>
-          </div>
-
-          <div class="habit-list">
-            ${DAILY_DOS.map((item) => {
-              const st = curDisc.dos[item.id] || 'none';
-              return `
-                <div class="habit-row">
-                  <div class="habit-info">
-                    <span class="habit-icon">${item.icon}</span>
-                    <div style="min-width:0">
-                      <div class="habit-name">${esc(item.label)}</div>
-                      <div class="habit-sub">${esc(item.sub || item.hint || '')}</div>
-                    </div>
-                  </div>
-                  <div class="habit-btn-group">
-                    <button type="button" class="habit-btn ${st === 'none' ? 'active-neutral' : ''}" data-habit-group="do" data-habit-id="${item.id}" data-habit-val="none">0%</button>
-                    <button type="button" class="habit-btn ${st === 'half' ? 'active-do-half' : ''}" data-habit-group="do" data-habit-id="${item.id}" data-habit-val="half">+5% Half</button>
-                    <button type="button" class="habit-btn ${st === 'full' ? 'active-do-full' : ''}" data-habit-group="do" data-habit-id="${item.id}" data-habit-val="full">+10% Full</button>
-                  </div>
-                </div>
-              `;
-            }).join('')}
-          </div>
-        </div>
-
-        <!-- 5 DON'TS -->
-        <div class="disc-col-card">
-          <div class="disc-col-hdr">
-            <div>
-              <div class="disc-col-title" style="color:var(--brass)">🛡️ The 5 Daily Don'ts (Start w/ 50% · -5% Half · -10% Slip)</div>
-              <div class="meta-timestamp">You start with all 50% intact — protect your shield</div>
-            </div>
-            <span class="chip-btn ${curDisc.dontLost > 0 ? '' : 'active'}" style="pointer-events:none;${curDisc.dontLost > 0 ? 'border-color:var(--crimson);color:var(--crimson)' : ''}">
-              ${curDisc.dontKept}% / 50% Kept
-            </span>
-          </div>
-
-          <div class="habit-list">
-            ${DAILY_DONTS.map((item) => {
-              const st = curDisc.donts[item.id] || 'clean';
-              return `
-                <div class="habit-row">
-                  <div class="habit-info">
-                    <span class="habit-icon">${item.icon}</span>
-                    <div style="min-width:0">
-                      <div class="habit-name">${esc(item.label)}</div>
-                      <div class="habit-sub">${esc(item.sub || item.hint || '')}</div>
-                    </div>
-                  </div>
-                  <div class="habit-btn-group">
-                    <button type="button" class="habit-btn ${st === 'clean' ? 'active-dont-clean' : ''}" data-habit-group="dont" data-habit-id="${item.id}" data-habit-val="clean">10% Kept</button>
-                    <button type="button" class="habit-btn ${st === 'half' ? 'active-dont-half' : ''}" data-habit-group="dont" data-habit-id="${item.id}" data-habit-val="half">-5% Half</button>
-                    <button type="button" class="habit-btn ${st === 'broken' ? 'active-dont-broke' : ''}" data-habit-group="dont" data-habit-id="${item.id}" data-habit-val="broken">-10% Slip</button>
-                  </div>
-                </div>
-              `;
-            }).join('')}
-          </div>
-        </div>
-      </div>
-
-      <!-- 3. Universal Brain-Dump & Smart Auto-Grouping Composer -->
-      <div class="rem-composer-card">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-          <div>
-            <div class="eyebrow">SMART REMINDERS · AI AUTO-GROUPING &amp; WAIT TIMERS</div>
-            <h3 style="font-size:15px;font-weight:700;margin:2px 0 0">Drop Anything — Auto-Grouped by Context, Topic &amp; Wait Time</h3>
-          </div>
-          <div class="rem-type-seg">
-            <button type="button" class="${remDraft.kind === 'auto' ? 'active' : ''}" data-rem-kind="auto">✨ Smart Auto</button>
-            <button type="button" class="${remDraft.kind === 'wait' ? 'active' : ''}" data-rem-kind="wait">⏳ Wait / Verify</button>
-            <button type="button" class="${remDraft.kind === 'task' ? 'active' : ''}" data-rem-kind="task">⚡ Task / Reach Out</button>
-            <button type="button" class="${remDraft.kind === 'recurring' ? 'active' : ''}" data-rem-kind="recurring">🔁 Recurring</button>
-            <button type="button" class="${remDraft.kind === 'parked' ? 'active' : ''}" data-rem-kind="parked">💡 Idea / Later</button>
-          </div>
-        </div>
-
-        <form class="rem-composer-form" id="rem-composer-form">
-          <div class="rem-input-row">
-            <input
-              type="text"
-              class="rem-input"
-              id="rem-title-input"
-              value="${esc(remDraft.title)}"
-              placeholder="e.g., Talk to Rami about WTC · Paid $45 on Whish &amp; didn't show up · Shipping 6 days for parts · Family dinner · Idea for later…"
-              autocomplete="off"
-            >
-            <button type="submit" class="btn-brass-sm" style="padding:10px 18px;font-size:13px;white-space:nowrap">
-              + Add &amp; Auto-Group
-            </button>
-          </div>
-
-          <div class="wait-advisor-box" id="wait-advisor-live">
-            ${renderWaitAdvisorInnerHtml()}
-          </div>
-        </form>
-      </div>
-
-      <!-- 4. Auto-Grouping Controls & Active Reminders Stream -->
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <span class="eyebrow">VIEW GROUPS BY:</span>
-          <div class="seg-control">
-            <button type="button" class="seg-btn ${groupMode === 'clusters' ? 'active' : ''}" data-rem-group-mode="clusters">
-              🧠 Smart Clusters (${remSum.active.length})
-            </button>
-            <button type="button" class="seg-btn ${groupMode === 'subtopics' ? 'active' : ''}" data-rem-group-mode="subtopics">
-              🏷️ Sub-Topics &amp; People
-            </button>
-            <button type="button" class="seg-btn ${groupMode === 'urgency' ? 'active' : ''}" data-rem-group-mode="urgency">
-              🔥 Urgency &amp; Timers
-            </button>
-          </div>
-        </div>
-
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <button type="button" class="chip-btn active" data-rem-act="ai-regroup" title="Re-analyze and organize all active tasks into smart clusters &amp; sub-topics">
-            ✨ AI Auto-Group All
-          </button>
-          <button type="button" class="chip-btn ${prefs.remShowCompleted ? 'active' : ''}" data-rem-toggle-done="1">
-            ${prefs.remShowCompleted ? 'Hide' : 'Show'} Completed (${remSum.completed.length})
-          </button>
-        </div>
-      </div>
-
-      <div id="rem-list-live">
-        ${renderRemindersListHtml()}
-      </div>
-
-      <div style="margin-top:16px">
-        ${renderPushSettingsCardHtml()}
-      </div>
-    `;
-
-    if (pinnedNavReminderId && Date.now() < pinnedNavUntil) {
-      setTimeout(() => {
-        const targetEl = root.querySelector(`[data-rem-id="${CSS.escape(pinnedNavReminderId)}"]`);
-        if (targetEl && typeof targetEl.scrollIntoView === 'function') {
-          targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-      }, 60);
-    }
-  }
-
-  function addReminderFromDraft() {
-    const titleEl = $('rem-title-input');
-    const amtEl = $('rem-amt-input');
-    if (titleEl) remDraft.title = titleEl.value.trim();
-    if (amtEl) remDraft.amount = amtEl.value.trim();
-
-    if (!remDraft.title) {
-      showToast('Type any reminder, wait check, person to talk to, or idea first');
-      titleEl?.focus();
-      return;
-    }
-
-    const nowMs = Date.now();
-    const amount = parseAmountFromText(remDraft.title, remDraft.amount);
-    const cat = detectRelevanceCategory(
-      remDraft.title,
-      remDraft.kind,
-      remDraft.categoryOverride,
-      remDraft.customGroup
-    );
-    const ctx = extractContextTags(remDraft.title);
-    const targetInfo = computeTargetTimestampFromChoice(
-      remDraft.waitChoice,
-      remDraft.title,
-      remDraft.amount
-    );
-
-    const resolvedKind =
-      remDraft.kind === 'auto'
-        ? targetInfo.inferredKind ||
-          (cat.id === 'verify' || cat.id === 'shipping'
-            ? 'wait'
-            : cat.id === 'payments'
-              ? 'payment'
-              : cat.id === 'ideas' || cat.id === 'want_to_do'
-                ? 'parked'
-                : 'task')
-        : remDraft.kind;
-
-    const isHoldType =
-      resolvedKind === 'payment' ||
-      resolvedKind === 'wait' ||
-      cat.id === 'verify' ||
-      cat.id === 'shipping' ||
-      cat.id === 'payments';
-
-    const isDelegated = Boolean(ctx.personTag);
-    const newItem = {
-      id: `rem_${nowMs.toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
-      title: remDraft.title,
-      kind: resolvedKind,
-      amount: amount > 0 ? amount : 0,
-      category: cat.id,
-      customGroup: remDraft.customGroup || '',
-      subTag: ctx.subTag || '',
-      subGroup: ctx.subTag || '',
-      waitDays: targetInfo.waitDays,
-      waitLabel: targetInfo.label,
-      recur:
-        resolvedKind === 'recurring'
-          ? targetInfo.recur || remDraft.recur || 'daily'
-          : 'none',
-      createdAt: nowMs,
-      updatedAt: nowMs,
-      matureAt: isHoldType && targetInfo.targetMs ? targetInfo.targetMs : 0,
-      dueAt: targetInfo.targetMs || 0,
-      completed: false,
-      status: 'open',
-      completedAt: 0,
-      isDelegated,
-      assigneeName: ctx.personTag || '',
-      delegationStatus: isDelegated ? 'assigned' : ''
-    };
-
-    personalLedger.reminders.unshift(newItem);
-    personalLedger.updatedAt = nowMs;
-
-    // Reset draft inputs
-    remDraft.title = '';
-    remDraft.amount = '';
-    remDraft.waitChoice = 'auto';
-    remDraft.categoryOverride = '';
-    remDraft.customGroup = '';
-
-    haptic(15);
-    playChime('send');
-    persistAndSyncPersonalLedger();
-    if (newItem.dueAt || newItem.matureAt) {
-      scheduleExactReminderPush(newItem);
-    }
-    renderAll();
-
-    showToast(`${cat.icon} Grouped in "${cat.shortLabel || cat.label}" · ${targetInfo.label}`);
-  }
-
-  async function runAiSmartGrouping() {
-    const nowMs = Date.now();
-    let updatedCount = 0;
-    for (const r of personalLedger.reminders || []) {
-      if (!r || r.deleted) continue;
-      const cat = detectRelevanceCategory(r.title, r.kind, '', r.customGroup || '');
-      const ctx = extractContextTags(r.title);
-      if (r.category !== cat.id || r.subTag !== (ctx.subTag || '')) {
-        r.category = cat.id;
-        r.subTag = ctx.subTag || '';
-        r.updatedAt = nowMs;
-        updatedCount++;
-      }
-      if (!r.amount) {
-        const amt = parseAmountFromText(r.title);
-        if (amt > 0) {
-          r.amount = amt;
-          r.updatedAt = nowMs;
-        }
-      }
-    }
-
-    // Also invoke local bridge AI cluster refinement if connected
-    if (localBridgeBase) {
-      try {
-        const res = await fetch(`${localBridgeBase}/api/ai-group-reminders`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reminders: personalLedger.reminders })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data?.personalLedger) {
-            mergePersonalLedger(data.personalLedger);
-          }
-        }
-      } catch {}
-    }
-
-    personalLedger.updatedAt = nowMs;
-    persistAndSyncPersonalLedger();
-    renderAll();
-    showToast(
-      `✨ Smart Auto-Grouping complete (${updatedCount} item${updatedCount === 1 ? '' : 's'} refined)`
-    );
-  }
-
-  function promptMoveReminderGroup(id) {
-    const item = (personalLedger.reminders || []).find((r) => r && r.id === id);
-    if (!item) return;
-    const next = prompt(
-      'Enter group name (or people, verify, shipping, work, family, payments, want_to_do, ideas):',
-      item.customGroup || item.category || ''
-    );
-    if (next === null) return;
-    const clean = next.trim();
-    const key = clean.toLowerCase().replace(/\s+/g, '_');
-    if (!clean) {
-      item.customGroup = '';
-      item.category = detectRelevanceCategory(item.title, item.kind).id;
-    } else if (REM_CATEGORIES[key]) {
-      item.category = key;
-      item.customGroup = '';
-    } else {
-      item.customGroup = clean;
-      item.category = `custom:${clean}`;
-    }
-    item.updatedAt = Date.now();
-    personalLedger.updatedAt = Date.now();
-    persistAndSyncPersonalLedger();
-    renderAll();
-    showToast(`🏷️ Moved to ${item.customGroup || REM_CATEGORIES[item.category]?.label || clean}`);
-  }
-
-  function completeReminder(id) {
-    const item = (personalLedger.reminders || []).find((r) => r && r.id === id);
-    if (!item) return;
-    const nowMs = Date.now();
-
-    if (item.kind === 'recurring' && !item.completed) {
-      // Roll recurring task forward to its next cycle
-      let nextStepMs = 24 * 3600 * 1000;
-      if (item.recur === 'weekly') nextStepMs = 7 * 24 * 3600 * 1000;
-      else if (item.recur === 'monthly') nextStepMs = 30 * 24 * 3600 * 1000;
-      else if (item.recur === 'weekdays') {
-        const d = new Date();
-        const dow = d.getDay();
-        const addDays = dow === 5 ? 3 : dow === 6 ? 2 : 1;
-        nextStepMs = addDays * 24 * 3600 * 1000;
-      }
-      item.lastCompletedAt = nowMs;
-      item.dueAt = nowMs + nextStepMs;
-      item.matureAt = item.dueAt;
-      item.updatedAt = nowMs;
-      personalLedger.updatedAt = nowMs;
-      haptic(15);
-      playChime('approve');
-      persistAndSyncPersonalLedger();
-      scheduleExactReminderPush(item);
-      renderAll();
-      showToast(`🔁 Completed & rolled forward (${item.recur || 'daily'})`);
-      return;
-    }
-
-    item.completed = true;
-    item.completedAt = nowMs;
-    item.updatedAt = nowMs;
-    personalLedger.updatedAt = nowMs;
-    haptic(15);
-    playChime('approve');
-    cancelExactReminderPush(item.id);
-    persistAndSyncPersonalLedger();
-    renderAll();
-    showToast('✓ Marked complete');
-  }
-
-  function reopenReminder(id) {
-    const item = (personalLedger.reminders || []).find((r) => r && r.id === id);
-    if (!item) return;
-    item.completed = false;
-    item.completedAt = 0;
-    item.updatedAt = Date.now();
-    personalLedger.updatedAt = Date.now();
-    persistAndSyncPersonalLedger();
-    renderAll();
-    showToast('↺ Reminder reopened');
-  }
-
-  function extendReminderHold(id, extraDays) {
-    const item = (personalLedger.reminders || []).find((r) => r && r.id === id);
-    if (!item) return;
-    const nowMs = Date.now();
-    const baseMs = Math.max(nowMs, Number(item.matureAt || item.dueAt || nowMs));
-    const nextMs = baseMs + extraDays * 24 * 3600 * 1000;
-    item.matureAt = nextMs;
-    item.dueAt = nextMs;
-    if (item.kind === 'parked') item.kind = 'wait';
-    item.waitDays = Number(item.waitDays || 0) + extraDays;
-    item.updatedAt = nowMs;
-    personalLedger.updatedAt = nowMs;
-    alertedReminderIds.delete(item.id);
-    haptic(10);
-    persistAndSyncPersonalLedger();
-    scheduleExactReminderPush(item);
-    renderAll();
-    showToast(`⏳ Extended timer by +${extraDays}d`);
-  }
-
-  function releaseReminderHoldNow(id) {
-    const item = (personalLedger.reminders || []).find((r) => r && r.id === id);
-    if (!item) return;
-    const nowMs = Date.now();
-    item.matureAt = nowMs - 1000;
-    item.dueAt = nowMs - 1000;
-    item.updatedAt = nowMs;
-    personalLedger.updatedAt = nowMs;
-    haptic(12);
-    cancelExactReminderPush(item.id);
-    persistAndSyncPersonalLedger();
-    renderAll();
-    showToast('🔓 Marked ready now');
-  }
-
-  function deleteReminder(id) {
-    const item = (personalLedger.reminders || []).find((r) => r && r.id === id);
-    if (!item && !id) return;
-    if (!Array.isArray(personalLedger.deletedIds)) personalLedger.deletedIds = [];
-    if (id && !personalLedger.deletedIds.includes(id)) {
-      personalLedger.deletedIds.push(id);
-    }
-    personalLedger.reminders = (personalLedger.reminders || []).filter((r) => r && r.id !== id);
-    personalLedger.updatedAt = Date.now();
-    cancelExactReminderPush(id);
-    persistAndSyncPersonalLedger();
-    renderAll();
-    showToast('Reminder removed');
-  }
-
-  function clearCompletedReminders() {
-    const nowMs = Date.now();
-    if (!Array.isArray(personalLedger.deletedIds)) personalLedger.deletedIds = [];
-    for (const r of personalLedger.reminders || []) {
-      if (r && r.completed && !r.deleted) {
-        r.deleted = true;
-        r.updatedAt = nowMs;
-        if (r.id && !personalLedger.deletedIds.includes(r.id)) {
-          personalLedger.deletedIds.push(r.id);
-        }
-      }
-    }
-    personalLedger.reminders = (personalLedger.reminders || []).filter((r) => r && !r.deleted);
-    personalLedger.updatedAt = nowMs;
-    persistAndSyncPersonalLedger();
-    renderAll();
-    showToast('Cleared completed items');
-  }
-
-  function stepScoreDate(deltaDays) {
-    const parts = String(selectedScoreDate || localIsoDate()).split('-').map(Number);
-    const dt = new Date(parts[0], (parts[1] || 1) - 1, parts[2] || 1);
-    dt.setDate(dt.getDate() + deltaDays);
-    const nextIso = localIsoDate(dt);
-    const todayIso = localIsoDate();
-    selectedScoreDate = nextIso > todayIso ? todayIso : nextIso;
-    renderDisciplineView();
   }
 
   function renderAll() {
@@ -9386,7 +7691,7 @@
             ${iconHtml}
             <span class="composer-attach-name">${esc(a.name)}</span>
             ${a.sizeLabel ? `<span class="composer-attach-meta tabular">${esc(a.sizeLabel)}</span>` : ''}
-            <button type="button" class="composer-attach-remove" data-remove-attach="${esc(a.id)}" title="Remove attachment">✕</button>
+            <button type="button" class="composer-attach-remove" data-remove-attach="${esc(a.id)}" aria-label="Remove attachment">✕</button>
           </span>
         `;
       })
@@ -9477,11 +7782,14 @@
   }
 
   function openRepoFilePicker() {
+    if (isPinLocked()) return;
     cmdPaletteMode = 'repo-file';
     const modal = $('cmd-modal');
     const input = $('cmd-input');
     if (!modal || !input) return;
+    const wasHidden = modal.hidden;
     modal.hidden = false;
+    if (wasHidden) pushUiHistoryState('cmd-modal');
     input.placeholder = 'Filter BHFIRMS workspace or modified git file to attach…';
     input.value = '';
     renderCommandPaletteResults('');
@@ -9490,11 +7798,14 @@
 
   // Command Palette (⌘K)
   function openCommandPalette() {
+    if (isPinLocked()) return;
     cmdPaletteMode = 'default';
     const modal = $('cmd-modal');
     const input = $('cmd-input');
     if (!modal || !input) return;
+    const wasHidden = modal.hidden;
     modal.hidden = false;
+    if (wasHidden) pushUiHistoryState('cmd-modal');
     input.placeholder = 'Jump to session, repo, or run a remote THEO command…';
     input.value = '';
     renderCommandPaletteResults('');
@@ -9536,8 +7847,13 @@
           }
         }
       }
-      const matchedRepos = repoItems.filter(
+      const rawMatchedRepos = repoItems.filter(
         (it) => !q || `${it.title} ${it.sub}`.toLowerCase().includes(q)
+      );
+      const matchedRepos = rankByFreq(
+        rawMatchedRepos,
+        'repos',
+        (it) => String(it.repoLabel || '').replace(/^[\[]|[\]]$/g, '').split(' ')[0]
       );
       resEl.innerHTML = matchedRepos
         .slice(0, 16)
@@ -9579,9 +7895,21 @@
       }
     }
 
-    const matched = items.filter(
+    const rawMatched = items.filter(
       (it) => !q || `${it.title} ${it.sub}`.toLowerCase().includes(q)
     );
+    const matched = q
+      ? (() => {
+          const exact = rawMatched.filter((it) => String(it.title || '').toLowerCase() === q);
+          const rest = rawMatched.filter((it) => String(it.title || '').toLowerCase() !== q);
+          const freqOrdered = rankByFreq(
+            rest,
+            'threads',
+            (it) => it.threadId || it.act || it.title
+          );
+          return exact.concat(freqOrdered);
+        })()
+      : rankByFreq(rawMatched, 'threads', (it) => it.threadId || it.act || it.title);
 
     resEl.innerHTML = matched
       .slice(0, 12)
@@ -9596,20 +7924,70 @@
       .join('');
   }
 
-  // PIN Lock Check
+  async function hashPinCode(pinStr) {
+    const clean = String(pinStr || '').trim();
+    if (!clean) return '';
+    if (window.crypto && window.crypto.subtle) {
+      const bytes = new TextEncoder().encode(`theo-pin-v1:${clean}`);
+      const digest = await window.crypto.subtle.digest('SHA-256', bytes);
+      return Array.from(new Uint8Array(digest))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+    }
+    return `legacy:${clean}`;
+  }
+
+  async function verifyEnteredPin(candidatePin) {
+    const clean = String(candidatePin || '').trim();
+    if (!/^\d{4}$/.test(clean)) return false;
+    const savedHash = localStorage.getItem(STORAGE_KEYS.PIN_HASH);
+    if (savedHash) {
+      const candHash = await hashPinCode(clean);
+      return candHash === savedHash;
+    }
+    const legacyPin = localStorage.getItem(STORAGE_KEYS.PIN);
+    if (legacyPin && clean === legacyPin) {
+      const migrated = await hashPinCode(clean);
+      if (migrated) {
+        localStorage.setItem(STORAGE_KEYS.PIN_HASH, migrated);
+        localStorage.removeItem(STORAGE_KEYS.PIN);
+      }
+      return true;
+    }
+    return false;
+  }
+
+  // PIN Lock Check (#17)
   function initPinLock() {
-    const savedPin = localStorage.getItem(STORAGE_KEYS.PIN);
-    if (!savedPin) return;
+    const legacyPin = localStorage.getItem(STORAGE_KEYS.PIN);
+    const savedHash = localStorage.getItem(STORAGE_KEYS.PIN_HASH);
+    if (legacyPin && !savedHash && /^\d{4}$/.test(legacyPin)) {
+      hashPinCode(legacyPin)
+        .then((h) => {
+          if (h) {
+            localStorage.setItem(STORAGE_KEYS.PIN_HASH, h);
+            localStorage.removeItem(STORAGE_KEYS.PIN);
+          }
+        })
+        .catch(() => {});
+    }
     const overlay = $('pin-overlay');
-    if (!overlay) return;
+    const appShell = $('app-shell');
+    if ((!savedHash && !legacyPin) || !overlay) {
+      if (appShell) appShell.inert = false;
+      document.documentElement.classList.remove('pin-locked-boot');
+      return;
+    }
     overlay.hidden = false;
+    if (appShell) appShell.inert = true;
+    document.documentElement.classList.remove('pin-locked-boot');
     let entered = '';
     const updateDots = () => {
       document.querySelectorAll('#pin-dots span').forEach((s, idx) => {
         s.classList.toggle('filled', idx < entered.length);
       });
     };
-    $('pin-pad')?.addEventListener('click', (e) => {
+    $('pin-pad')?.addEventListener('click', async (e) => {
       const btn = e.target.closest('button[data-digit]');
       if (!btn) return;
       const d = btn.dataset.digit;
@@ -9618,8 +7996,13 @@
       else if (entered.length < 4) entered += d;
       updateDots();
       if (entered.length === 4) {
-        if (entered === savedPin) {
+        const attempt = entered;
+        const ok = await verifyEnteredPin(attempt);
+        if (ok) {
+          entered = '';
+          updateDots();
           overlay.hidden = true;
+          if (appShell) appShell.inert = false;
           playChime('confirm');
         } else {
           entered = '';
@@ -9836,6 +8219,7 @@
   // Event Wiring
   function bindEvents() {
     document.addEventListener('change', (e) => {
+      if (isPinLocked() && !e.target?.closest?.('#pin-overlay')) return;
       const nfEl = e.target.closest('[data-nf]');
       if (nfEl) {
         prefs.notif = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
@@ -9849,16 +8233,7 @@
     });
 
     document.addEventListener('input', (e) => {
-      if (e.target.id === 'rem-title-input' || e.target.id === 'rem-amt-input') {
-        const tEl = $('rem-title-input');
-        const aEl = $('rem-amt-input');
-        if (tEl) remDraft.title = tEl.value;
-        if (aEl) remDraft.amount = aEl.value;
-        const adv = $('wait-advisor-live');
-        if (adv) adv.innerHTML = renderWaitAdvisorInnerHtml();
-        return;
-      }
-
+      if (isPinLocked() && !e.target?.closest?.('#pin-overlay')) return;
       const qInput = e.target.closest('[data-q-writein-input]');
       if (qInput) {
         const cardKey = qInput.dataset.cardKey || '';
@@ -9878,6 +8253,7 @@
     });
 
     document.addEventListener('keydown', (e) => {
+      if (isPinLocked() && !e.target?.closest?.('#pin-overlay')) return;
       const qInput = e.target.closest?.('[data-q-writein-input]');
       if (qInput && e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
@@ -9888,14 +8264,8 @@
       }
     });
 
-    document.addEventListener('submit', (e) => {
-      if (e.target.id === 'rem-composer-form') {
-        e.preventDefault();
-        addReminderFromDraft();
-      }
-    });
-
     document.addEventListener('click', async (e) => {
+      if (isPinLocked() && !e.target?.closest?.('#pin-overlay')) return;
       // 0. Interactive VS Code Question & Recommendation Card Actions
       const qOptBtn = e.target.closest('[data-q-opt-toggle]');
       if (qOptBtn) {
@@ -9963,137 +8333,6 @@
         }
         return;
       }
-      // 1. Daily 100-Point Habit Buttons (5 Do's & 5 Don'ts)
-      const habitBtn = e.target.closest('[data-habit-group]');
-      if (habitBtn) {
-        haptic(12);
-        const group = habitBtn.dataset.habitGroup;
-        const habitId = habitBtn.dataset.habitId;
-        const val = habitBtn.dataset.habitVal;
-        setHabitState(selectedScoreDate || localIsoDate(), group, habitId, val);
-        const updated = computeDayDiscipline(selectedScoreDate || localIsoDate());
-        playChime(group === 'do' && val !== 'none' ? 'approve' : 'send');
-        showToast(`Daily Score: ${updated.score}% (Do's +${updated.doEarned}%, Don'ts -${updated.dontLost}%)`);
-        return;
-      }
-
-      // 2. Discipline Date Navigator & 7-Day Spark Strip
-      const pickDateEl = e.target.closest('[data-disc-pick-date]');
-      if (pickDateEl) {
-        selectedScoreDate = pickDateEl.dataset.discPickDate || localIsoDate();
-        renderDisciplineView();
-        return;
-      }
-
-      const dateActBtn = e.target.closest('[data-disc-date-act]');
-      if (dateActBtn) {
-        const act = dateActBtn.dataset.discDateAct;
-        if (act === 'prev') stepScoreDate(-1);
-        else if (act === 'next') stepScoreDate(1);
-        else if (act === 'today') {
-          selectedScoreDate = localIsoDate();
-          renderDisciplineView();
-        } else if (act === 'reset-day') {
-          const targetIso = selectedScoreDate || localIsoDate();
-          personalLedger.dailyScores[targetIso] = {
-            iso: targetIso,
-            dos: {},
-            donts: {},
-            updatedAt: Date.now()
-          };
-          personalLedger.updatedAt = Date.now();
-          persistAndSyncPersonalLedger();
-          renderAll();
-          showToast(`Reset ${targetIso} to 50% starting baseline`);
-        }
-        return;
-      }
-
-      // 3. Reminder Composer Mode & Wait Advisor Chips
-      const kindBtn = e.target.closest('[data-rem-kind]');
-      if (kindBtn) {
-        remDraft.kind = kindBtn.dataset.remKind;
-        if (remDraft.kind === 'parked') {
-          remDraft.waitChoice = 'none';
-        } else {
-          remDraft.waitChoice = 'auto';
-        }
-        renderDisciplineView();
-        $('rem-title-input')?.focus();
-        return;
-      }
-
-      const waitChip = e.target.closest('[data-wait-choice]');
-      if (waitChip) {
-        remDraft.waitChoice = waitChip.dataset.waitChoice;
-        const adv = $('wait-advisor-live');
-        if (adv) adv.innerHTML = renderWaitAdvisorInnerHtml();
-        return;
-      }
-
-      const recurChip = e.target.closest('[data-recur-choice]');
-      if (recurChip) {
-        remDraft.recur = recurChip.dataset.recurChoice;
-        const adv = $('wait-advisor-live');
-        if (adv) adv.innerHTML = renderWaitAdvisorInnerHtml();
-        return;
-      }
-
-      const customCatBtn = e.target.closest('[data-cat-custom]');
-      if (customCatBtn) {
-        const nextGrp = prompt('Enter a custom group name (e.g., Travel, Shopping, Cars, Quarry):', remDraft.customGroup || '');
-        if (nextGrp !== null) {
-          remDraft.customGroup = nextGrp.trim();
-          if (remDraft.customGroup) remDraft.categoryOverride = '';
-          const adv = $('wait-advisor-live');
-          if (adv) adv.innerHTML = renderWaitAdvisorInnerHtml();
-        }
-        return;
-      }
-
-      const catChip = e.target.closest('[data-cat-override]');
-      if (catChip) {
-        remDraft.categoryOverride = catChip.dataset.catOverride || '';
-        remDraft.customGroup = '';
-        const adv = $('wait-advisor-live');
-        if (adv) adv.innerHTML = renderWaitAdvisorInnerHtml();
-        return;
-      }
-
-      const grpModeBtn = e.target.closest('[data-rem-group-mode]');
-      if (grpModeBtn) {
-        prefs.remGroupMode = grpModeBtn.dataset.remGroupMode;
-        saveJson(STORAGE_KEYS.PREFS, prefs);
-        renderDisciplineView();
-        return;
-      }
-
-      const toggleDoneBtn = e.target.closest('[data-rem-toggle-done]');
-      if (toggleDoneBtn) {
-        prefs.remShowCompleted = !prefs.remShowCompleted;
-        saveJson(STORAGE_KEYS.PREFS, prefs);
-        renderDisciplineView();
-        return;
-      }
-
-      const remActBtn = e.target.closest('[data-rem-act]');
-      if (remActBtn) {
-        const act = remActBtn.dataset.remAct;
-        const id = remActBtn.dataset.remId;
-        if (act === 'done') completeReminder(id);
-        else if (act === 'reopen') reopenReminder(id);
-        else if (act === 'wait1d') extendReminderHold(id, 1);
-        else if (act === 'wait2d') extendReminderHold(id, 2);
-        else if (act === 'wait3d') extendReminderHold(id, 3);
-        else if (act === 'wait7d') extendReminderHold(id, 7);
-        else if (act === 'release') releaseReminderHoldNow(id);
-        else if (act === 'move-group') promptMoveReminderGroup(id);
-        else if (act === 'ai-regroup') await runAiSmartGrouping();
-        else if (act === 'delete') deleteReminder(id);
-        else if (act === 'clear-done') clearCompletedReminders();
-        return;
-      }
-
       const notifCheckBtn = e.target.closest('[data-notif-check]');
       if (notifCheckBtn) {
         e.stopPropagation();
@@ -10712,6 +8951,7 @@
       const sessCard = e.target.closest('.session-card[data-session-id]');
       if (sessCard && sessCard.dataset.sessionId) {
         recentResumeUntil = 0;
+        recordFreqUsage('threads', sessCard.dataset.sessionId);
         setPinnedNav({
           threadId: sessCard.dataset.sessionId,
           provider: sessCard.dataset.sessionProv || '',
@@ -10863,6 +9103,7 @@
       const repoBtn = e.target.closest('[data-select-repo]');
       if (repoBtn) {
         prefs.selectedRepoId = repoBtn.dataset.selectRepo;
+        recordFreqUsage('repos', repoBtn.dataset.selectRepo);
         saveJson(STORAGE_KEYS.PREFS, prefs);
         renderWorkspacesView();
         return;
@@ -10900,14 +9141,76 @@
         return;
       }
 
+      if (e.target.closest('#btn-copy-mobile-pair')) {
+        const info = await fetchPairingInfoFromBridge();
+        let pairUrl = info?.mobilePairUrl || '';
+        if (!pairUrl) {
+          refreshCloudConfig();
+          const tok = encodePairTokenString({
+            cloudUrl: cloudCfg.url,
+            cloudKey: cloudCfg.key,
+            edgeAccessKey: cloudCfg.edgeAccessKey,
+            edgeRelayUrl: prefs.edgeRelayUrl || discoveredEdgeUrl,
+            port: cloudCfg.port
+          });
+          if (tok) pairUrl = `https://husseinbdeir.github.io/theo/#pair=${tok}`;
+        }
+        if (!pairUrl) {
+          showToast('Open Settings on your paired PC (http://127.0.0.1:4318) first to copy the Pair URL');
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(pairUrl);
+          showToast('📱 Copied 1-Tap Mobile Pairing URL (secret stays in #hash fragment)');
+        } catch {
+          prompt('Open this 1-Tap Pairing URL on your phone:', pairUrl);
+        }
+        return;
+      }
+
       if (e.target.closest('#btn-copy-pc-install')) {
-        const cmd = `irm https://raw.githubusercontent.com/HusseinBdeir/theo/main/install.ps1 | iex`;
+        const info = await fetchPairingInfoFromBridge();
+        let cmd = info?.workstationBootstrapPs1 || '';
+        if (!cmd) {
+          refreshCloudConfig();
+          const tok = encodePairTokenString({
+            cloudUrl: cloudCfg.url,
+            cloudKey: cloudCfg.key,
+            edgeAccessKey: cloudCfg.edgeAccessKey,
+            edgeRelayUrl: prefs.edgeRelayUrl || discoveredEdgeUrl,
+            port: cloudCfg.port
+          });
+          cmd = tok
+            ? `$env:THEO_PAIR_TOKEN='${tok}'; irm https://raw.githubusercontent.com/HusseinBdeir/theo/main/install.ps1 | iex`
+            : `irm https://raw.githubusercontent.com/HusseinBdeir/theo/main/install.ps1 | iex`;
+        }
         try {
           await navigator.clipboard.writeText(cmd);
-          showToast('📋 Copied 1-line PC Fleet Installer command');
+          showToast('💻 Copied 1-line Workstation Pair & Fleet Installer');
         } catch {
-          prompt('Run this in PowerShell on any PC to add it to THEO Fleet:', cmd);
+          prompt('Run this in PowerShell on your workstation:', cmd);
         }
+        return;
+      }
+
+      if (e.target.closest('#btn-apply-pair-token')) {
+        const raw = ($('input-pair-token')?.value || '').trim();
+        const parsed = decodePairTokenString(raw);
+        if (!parsed) {
+          showToast('Invalid Pair URL or Access Key');
+          return;
+        }
+        applyPairPayloadToPrefs(parsed);
+        refreshCloudConfig();
+        cachedBridgeTokenHex = '';
+        cachedBridgeTokenSrc = '';
+        if ($('input-pair-token')) $('input-pair-token').value = '';
+        if (prefs.edgeRelayUrl || discoveredEdgeUrl) {
+          connectEdgeWs(prefs.edgeRelayUrl || discoveredEdgeUrl).catch(() => {});
+        }
+        await syncData({ force: true, toast: true });
+        renderAnalyticsView();
+        showToast('✓ Device paired & connected to THEO Fleet');
         return;
       }
 
@@ -10921,23 +9224,51 @@
       }
 
       if (e.target.closest('#btn-set-pin')) {
-        const cur = localStorage.getItem(STORAGE_KEYS.PIN);
-        const next = prompt(
-          cur
-            ? 'Enter new 4-digit PIN (or leave empty to disable PIN lock):'
-            : 'Enter a 4-digit PIN to lock THEO Remote on launch:'
+        const ed = $('pin-inline-editor');
+        if (ed) {
+          ed.hidden = !ed.hidden;
+          if (!ed.hidden) {
+            setTimeout(() => ($('input-pin-current') || $('input-pin-next'))?.focus(), 20);
+          }
+        }
+        return;
+      }
+
+      if (e.target.closest('#btn-pin-editor-cancel')) {
+        const ed = $('pin-inline-editor');
+        if (ed) ed.hidden = true;
+        return;
+      }
+
+      if (e.target.closest('#btn-pin-editor-save')) {
+        const hasPin = Boolean(
+          localStorage.getItem(STORAGE_KEYS.PIN_HASH) || localStorage.getItem(STORAGE_KEYS.PIN)
         );
-        if (next === null) return;
-        const clean = next.trim();
-        if (!clean) {
+        if (hasPin) {
+          const curVal = ($('input-pin-current')?.value || '').trim();
+          const okCur = await verifyEnteredPin(curVal);
+          if (!okCur) {
+            haptic(50);
+            showToast('Current 4-digit PIN is incorrect');
+            return;
+          }
+        }
+        const nextClean = ($('input-pin-next')?.value || '').trim();
+        if (!nextClean) {
+          localStorage.removeItem(STORAGE_KEYS.PIN_HASH);
           localStorage.removeItem(STORAGE_KEYS.PIN);
           showToast('PIN lock disabled');
-        } else if (/^\d{4}$/.test(clean)) {
-          localStorage.setItem(STORAGE_KEYS.PIN, clean);
-          showToast('4-digit PIN lock saved');
+        } else if (/^\d{4}$/.test(nextClean)) {
+          const nextHash = await hashPinCode(nextClean);
+          localStorage.setItem(STORAGE_KEYS.PIN_HASH, nextHash);
+          localStorage.removeItem(STORAGE_KEYS.PIN);
+          showToast('4-digit SHA-256 PIN lock saved');
         } else {
-          showToast('PIN must be 4 digits');
+          showToast('New PIN must be 4 digits');
+          return;
         }
+        const ed = $('pin-inline-editor');
+        if (ed) ed.hidden = true;
         renderAnalyticsView();
         return;
       }
@@ -10978,6 +9309,8 @@
         recentResumeUntil = 0;
         const act = cmdItem.dataset.cmdAct;
         const tid = cmdItem.dataset.cmdThread;
+        if (tid) recordFreqUsage('threads', tid);
+        else if (act) recordFreqUsage('threads', act);
         if (tid) {
           setPinnedNav({ threadId: tid, durationMs: 45000 });
           prefs.selectedThreadId = tid;
@@ -11009,8 +9342,12 @@
           if (bgPop) bgPop.hidden = false;
           renderChatView();
         } else if (act === 'compact') {
-          dispatchRemoteCommand({ type: 'sessionAction', action: 'compact', subAction: 'compact', id: prefs.selectedThreadId });
-          showToast('Dispatched /compact');
+          if (isNewSessionMode() || !cleanTargetThreadId(prefs.selectedThreadId)) {
+            showToast('Select an active session first to run /compact');
+          } else {
+            dispatchRemoteCommand({ type: 'sessionAction', action: 'compact', subAction: 'compact', id: prefs.selectedThreadId });
+            showToast('Dispatched /compact');
+          }
         } else if (act === 'theme') {
           applyTheme(prefs.theme === 'dark' ? 'light' : 'dark', true);
         }
@@ -11104,6 +9441,10 @@
       if (pop) pop.hidden = true;
     });
     $('btn-ctx-compact')?.addEventListener('click', async () => {
+      if (isNewSessionMode() || !cleanTargetThreadId(prefs.selectedThreadId)) {
+        showToast('Start or select a session before running /compact');
+        return;
+      }
       const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId);
       await dispatchRemoteCommand({
         type: 'sessionAction',
@@ -11172,6 +9513,7 @@
         return;
       }
       recentResumeUntil = 0;
+      recordFreqUsage('threads', val);
       setPinnedNav({ threadId: val, durationMs: 45000 });
       prefs.selectedThreadId = val;
       prefs.lastReplyThreadId = val;
@@ -11244,10 +9586,12 @@
     // Composer Form Submit
     $('chat-composer-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
+      if (isPinLocked()) return;
       await submitComposerPrompt();
     });
 
     $('composer-input')?.addEventListener('keydown', async (e) => {
+      if (isPinLocked()) return;
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         await submitComposerPrompt();
@@ -11260,6 +9604,7 @@
     $('cmd-close')?.addEventListener('click', closeCommandPalette);
     $('cmd-input')?.addEventListener('input', (e) => renderCommandPaletteResults(e.target.value));
     window.addEventListener('keydown', (e) => {
+      if (isPinLocked()) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         openCommandPalette();
@@ -11267,6 +9612,44 @@
         closeCommandPalette();
         closeConnModal();
         closeNotifModal();
+      }
+    });
+
+    window.addEventListener('popstate', (ev) => {
+      if (isPinLocked()) return;
+      const cmdModal = $('cmd-modal');
+      if (cmdModal && !cmdModal.hidden) {
+        closeCommandPalette();
+        return;
+      }
+      const connModal = $('conn-modal');
+      if (connModal && !connModal.hidden) {
+        closeConnModal();
+        return;
+      }
+      const notifModal = $('notif-modal');
+      if (notifModal && !notifModal.hidden) {
+        closeNotifModal();
+        return;
+      }
+      const bgPop = $('bg-tasks-popover');
+      if (bgPop && !bgPop.hidden) {
+        bgPop.hidden = true;
+        return;
+      }
+      const ctxPop = $('ctx-popover');
+      if (ctxPop && !ctxPop.hidden) {
+        ctxPop.hidden = true;
+        return;
+      }
+      const targetTab = ev.state?.theoTab || 'pulse';
+      if (targetTab && targetTab !== prefs.activeTab) {
+        suppressHistoryPush = true;
+        try {
+          switchTab(targetTab);
+        } finally {
+          suppressHistoryPush = false;
+        }
       }
     });
   }
@@ -11482,13 +9865,21 @@
     const shouldBrighten = !shouldShowStop && hasDraft;
     btn.classList.toggle('is-stop', shouldShowStop);
     btn.classList.toggle('is-ready', shouldBrighten);
-    btn.setAttribute('title', shouldShowStop ? 'Stop / End Running Session' : 'Dispatch Prompt');
+    btn.removeAttribute('title');
     btn.setAttribute('aria-label', shouldShowStop ? 'Stop running session' : 'Dispatch Prompt');
   }
 
   async function stopActiveSession(explicitId = '') {
     const tid = String(explicitId || prefs.selectedThreadId || '').trim();
     if (!tid) return;
+    const isDraftNew = tid.startsWith('draft-new-');
+    const boundTargetDev =
+      isDraftNew && pendingNewSessionBind && pendingNewSessionBind.draftThreadId === tid
+        ? pendingNewSessionBind.targetDeviceId || ''
+        : '';
+    if (isDraftNew && pendingNewSessionBind && pendingNewSessionBind.draftThreadId === tid) {
+      pendingNewSessionBind = null;
+    }
     const row = (appState?.rows || []).find((r) => r.id === tid);
     const detail = threadsCache[tid] || null;
     if (detail && Array.isArray(detail.messages)) {
@@ -11526,8 +9917,10 @@
       type: 'sessionAction',
       action: 'interrupt',
       subAction: 'interrupt',
-      id: tid,
-      threadId: tid,
+      id: isDraftNew ? '' : tid,
+      threadId: isDraftNew ? '' : tid,
+      draftThreadId: isDraftNew ? tid : undefined,
+      targetDeviceId: boundTargetDev || row?.deviceId || undefined,
       provider
     });
   }
@@ -11564,7 +9957,12 @@
     const repoRefs = sentAttachments.filter((a) => a.kind === 'repo');
     const fileRefs = sentAttachments.filter((a) => a.kind !== 'repo');
     const contextHeader = repoRefs.length
-      ? `${repoRefs.map((r) => `${r.name}${r.repoPath ? ` (${r.repoPath})` : ''}`).join(', ')}\n`
+      ? `${repoRefs
+          .map((r) => {
+            const relMatch = String(r.repoPath || '').replace(/\\/g, '/').match(/\/bhfirms\/([^\n]+)$/i);
+            return relMatch ? `${r.name} (bhfirms/${relMatch[1]})` : r.name;
+          })
+          .join(', ')}\n`
       : '';
     const attachDisplayLine = sentAttachments.length
       ? `\n\n📎 Attached: ${sentAttachments.map((a) => a.name).join(', ')}`
@@ -11616,9 +10014,16 @@
           }
         ]
       };
+      const boundDev =
+        prefs.composerTargetDevice && prefs.composerTargetDevice !== 'auto'
+          ? String(prefs.composerTargetDevice).trim()
+          : prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
+            ? String(prefs.selectedDeviceFilter).trim()
+            : '';
       pendingNewSessionBind = {
         draftThreadId: draftId,
         provider,
+        targetDeviceId: boundDev,
         promptText: rawText || text,
         groupId: targetGroupId,
         knownIds,
@@ -11932,7 +10337,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=55', { updateViaCache: 'none' })
+        .register('sw.js?v=56', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
@@ -12042,12 +10447,7 @@
     loadPersonalLedgerFromLocal();
     bindEvents();
 
-    window.addEventListener('storage', (e) => {
-      if (e.key === STORAGE_KEYS.PERSONAL || e.key === STORAGE_KEYS.COMMAND) {
-        loadPersonalLedgerFromLocal();
-        renderAll();
-      }
-    });
+
     window.addEventListener('focus', () => {
       const hiddenDur = wasAppHiddenAt > 0 ? Date.now() - wasAppHiddenAt : 0;
       if (hiddenDur >= 1500) {
@@ -12067,24 +10467,40 @@
       }
     });
 
-    restorePinnedNavFromSession();
+    if (appState && typeof appState === 'object') {
+      storeHostSnapshotEntry(appState, appState?.device?.id || '');
+    }
+    if (localBootInfo?.device?.id) {
+      localWsDevice = localBootInfo.device;
+      updateFleetDevices([{ ...localBootInfo.device, online: true, local: true, lastSeen: Date.now() }]);
+    }
 
     const urlParams = new URLSearchParams(location.search);
     const tabParam = urlParams.get('tab');
-    const threadParam = urlParams.get('thread');
+    const threadParam = urlParams.get('thread') || urlParams.get('session');
     const provParam = urlParams.get('provider');
     const remParam = urlParams.get('rem');
     const newParam = urlParams.get('new');
+    hasExplicitBootUrlNav = Boolean(threadParam || remParam || tabParam || newParam);
+
+    if (!hasExplicitBootUrlNav) {
+      restorePinnedNavFromSession();
+    } else {
+      clearPinnedNav();
+    }
+
     if (newParam === 'antigravity' || newParam === 'claude') {
       prefs.composerMode = `new-${newParam}`;
       prefs.selectedThreadId = '__new__';
+      prefs.activeTab = 'chat';
+      saveJson(STORAGE_KEYS.PREFS, prefs);
       updateComposerModePills();
     }
 
     if (threadParam || remParam || tabParam || newParam) {
       try {
         const cleanUrl = location.pathname + (location.hash || '');
-        history.replaceState(null, '', cleanUrl);
+        history.replaceState({ theoTab: tabParam || (newParam ? 'chat' : prefs.activeTab || 'pulse'), overlay: '' }, '', cleanUrl);
       } catch {}
     }
 
@@ -12100,34 +10516,64 @@
         `https://husseinbdeir.github.io/planner/${remParam ? `?tab=tasks&taskId=${encodeURIComponent(remParam)}` : ''}`
       );
       return;
-    } else if (pinnedNavThreadId && Date.now() < pinnedNavUntil) {
+    } else if (newParam === 'antigravity' || newParam === 'claude') {
+      suppressHistoryPush = true;
+      try {
+        switchTab('chat');
+      } finally {
+        suppressHistoryPush = false;
+      }
+    } else if (!hasExplicitBootUrlNav && pinnedNavThreadId && Date.now() < pinnedNavUntil) {
       prefs.selectedThreadId = pinnedNavThreadId;
       prefs.composerMode = 'reply';
       prefs.activeTab = 'chat';
       saveJson(STORAGE_KEYS.PREFS, prefs);
-      switchTab('chat');
+      suppressHistoryPush = true;
+      try {
+        switchTab('chat');
+      } finally {
+        suppressHistoryPush = false;
+      }
       fetchThreadDetail(pinnedNavThreadId, pinnedNavProvider || '');
     } else {
       const startTab =
         tabParam || (prefs.activeTab === 'discipline' ? 'pulse' : prefs.activeTab) || 'pulse';
-      switchTab(startTab);
+      suppressHistoryPush = true;
+      try {
+        switchTab(startTab);
+      } finally {
+        suppressHistoryPush = false;
+      }
+    }
+
+    // Clear boot nav lock after initial settle so normal user interactions work freely
+    if (hasExplicitBootUrlNav) {
+      setTimeout(() => {
+        hasExplicitBootUrlNav = false;
+      }, 8000);
     }
 
     if (appState) {
       applyAnsweredQuestionOverrides(appState);
     }
     renderAll();
-    consumePendingNotificationNav({ allowUnseenPush: true });
+    if (!hasExplicitBootUrlNav && !isHeadlessBrowser) {
+      consumePendingNotificationNav({ allowUnseenPush: true });
+    }
     if (!isHeadlessBrowser && (prefs.edgeRelayUrl || discoveredEdgeUrl)) {
-      connectEdgeWs(prefs.edgeRelayUrl || discoveredEdgeUrl);
+      connectEdgeWs(prefs.edgeRelayUrl || discoveredEdgeUrl).catch(() => {});
     }
-    syncData();
-    if (!initialNoSse) {
-      setInterval(() => {
-        if (!document.hidden) syncData();
-      }, 4500);
+    if (!isHeadlessBrowser) {
+      syncData();
+      if (!initialNoSse) {
+        setInterval(() => {
+          if (document.hidden) return;
+          if (localWsAuthed && localWs && localWs.readyState === 1) return;
+          syncData();
+        }, 4500);
+      }
+      registerServiceWorker();
     }
-    registerServiceWorker();
   }
 
   init();

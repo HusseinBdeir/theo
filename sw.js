@@ -1,7 +1,7 @@
-/* THEO Studio & Remote PWA Service Worker, v55 (2026-11-08).
+/* THEO Studio & Remote PWA Service Worker, v56 (2026-11-08).
    App shell: network-first (cache: no-cache) for HTML/JS/CSS, cache-first for static assets.
    Web Push: RFC 8291 aes128gcm push listener + synchronous in-memory & serialized push deduplication + W3C Badging API (navigator.setAppBadge) + durable Cache Storage & postMessage notificationclick handoff. */
-const CACHE_NAME = 'theo-remote-v55';
+const CACHE_NAME = 'theo-remote-v56';
 const NAV_CACHE = 'theo-nav-handoff-v1';
 const PENDING_NAV_URL = './__theo_pending_nav.json';
 const LAST_PUSH_NAV_URL = './__theo_last_push_nav.json';
@@ -47,17 +47,20 @@ function checkAndMarkInMemoryNotif(tag, title) {
   return { isRepeat, canonicalTag: canonicalTag || cleanTag };
 }
 
-const APP_SHELL = [
+const CORE_SHELL = [
   './',
   './index.html',
-  './css/theo.css?v=55',
-  './js/endpoints.js?v=55',
-  './js/app.js?v=55',
-  './manifest.json',
-  './icon.svg',
-  './icon-180.png',
-  './icon-192.png',
-  './icon-512.png',
+  './css/theo.css?v=56',
+  './js/endpoints.js?v=56',
+  './js/app.js?v=56',
+  './manifest.json?v=56'
+];
+
+const OPTIONAL_SHELL = [
+  './icon.svg?v=56',
+  './icon-180.png?v=56',
+  './icon-192.png?v=56',
+  './icon-512.png?v=56',
   './brand/theo-wordmark-dark.svg',
   './brand/theo-wordmark-light.svg',
   './brand/theo-mark-on-dark.svg'
@@ -67,13 +70,16 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) =>
-        Promise.all(
-          APP_SHELL.map((u) =>
+      .then(async (cache) => {
+        await Promise.all(
+          CORE_SHELL.map((u) => cache.add(new Request(u, { cache: 'reload' })))
+        );
+        await Promise.all(
+          OPTIONAL_SHELL.map((u) =>
             cache.add(new Request(u, { cache: 'reload' })).catch(() => {})
           )
-        )
-      )
+        );
+      })
       .then(() => self.skipWaiting())
   );
 });
@@ -84,7 +90,13 @@ self.addEventListener('activate', (event) => {
       .keys()
       .then((keys) =>
         Promise.all(
-          keys.filter((k) => k !== CACHE_NAME && k !== NAV_CACHE).map((k) => caches.delete(k))
+          keys
+            .filter(
+              (k) =>
+                (k.startsWith('theo-remote-') && k !== CACHE_NAME) ||
+                (k.startsWith('theo-nav-handoff-') && k !== NAV_CACHE)
+            )
+            .map((k) => caches.delete(k))
         )
       )
       .then(() => self.clients.claim())
@@ -555,22 +567,38 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
 
   const url = new URL(req.url);
-  // Never cache live API calls, SSE streams, or Power Automate Cloud Relay requests
+  // Never cache live API calls, SSE streams, Edge Relay, or Cloud Relay requests
   if (
     url.pathname.startsWith('/api/') ||
     url.hostname.includes('powerplatform.com') ||
-    url.hostname.includes('logic.azure.com')
+    url.hostname.includes('logic.azure.com') ||
+    url.hostname.includes('workers.dev')
   ) {
     return;
   }
 
-  // Network-first for HTML/JS/CSS so updates land immediately when online, fallback to cache when offline
+  const lowPath = url.pathname.toLowerCase();
   if (
-    req.mode === 'navigate' ||
-    url.pathname.endsWith('.html') ||
-    url.pathname.endsWith('.js') ||
-    url.pathname.endsWith('.css')
+    url.origin === self.location.origin &&
+    (lowPath.endsWith('/command') || lowPath.endsWith('/command/'))
   ) {
+    const plannerRedirect = new URL('../planner/', self.location.href).href;
+    event.respondWith(Response.redirect(plannerRedirect, 302));
+    return;
+  }
+  if (
+    url.origin === self.location.origin &&
+    (lowPath.includes('/planner/') ||
+      lowPath.endsWith('/planner') ||
+      lowPath.includes('/command/'))
+  ) {
+    return;
+  }
+
+  const isSameOrigin = url.origin === self.location.origin;
+
+  // Network-first for HTML navigations: fallback to cached page or ./index.html
+  if (isSameOrigin && (req.mode === 'navigate' || lowPath.endsWith('.html'))) {
     event.respondWith(
       fetch(req.url, { cache: 'no-cache' })
         .then((res) => {
@@ -580,23 +608,74 @@ self.addEventListener('fetch', (event) => {
           }
           return res;
         })
-        .catch(() => caches.match(req, { ignoreSearch: true }).then((r) => r || caches.match('./index.html', { ignoreSearch: true })))
+        .catch(() =>
+          caches
+            .match(req)
+            .then((r) => r || caches.match(req, { ignoreSearch: true }))
+            .then((r) => r || caches.match('./index.html', { ignoreSearch: true }))
+        )
     );
     return;
   }
 
-  // Cache-first for icons/fonts/SVGs
-  event.respondWith(
-    caches.match(req, { ignoreSearch: true }).then(
-      (cached) =>
-        cached ||
-        fetch(req).then((res) => {
+  // Network-first for JS/CSS: NEVER return index.html on offline miss!
+  if (isSameOrigin && (lowPath.endsWith('.js') || lowPath.endsWith('.css'))) {
+    event.respondWith(
+      fetch(req.url, { cache: 'no-cache' })
+        .then((res) => {
           if (res && res.ok) {
             const clone = res.clone();
             caches.open(CACHE_NAME).then((c) => c.put(req, clone));
           }
           return res;
         })
-    )
+        .catch(() =>
+          caches
+            .match(req)
+            .then((r) => r || caches.match(req, { ignoreSearch: true }))
+            .then((r) => r || Response.error())
+        )
+    );
+    return;
+  }
+
+  // Cross-origin fonts/stylesheets: match exact URL WITHOUT ignoreSearch so query-string font families never collide
+  if (!isSameOrigin) {
+    event.respondWith(
+      caches.match(req).then(
+        (cached) =>
+          cached ||
+          fetch(req)
+            .then((res) => {
+              if (res && res.ok) {
+                const clone = res.clone();
+                caches.open(CACHE_NAME).then((c) => c.put(req, clone));
+              }
+              return res;
+            })
+            .catch(() => Response.error())
+      )
+    );
+    return;
+  }
+
+  // Cache-first for same-origin icons/SVGs/manifest (exact match first, then ignoreSearch)
+  event.respondWith(
+    caches
+      .match(req)
+      .then((exact) => exact || caches.match(req, { ignoreSearch: true }))
+      .then(
+        (cached) =>
+          cached ||
+          fetch(req)
+            .then((res) => {
+              if (res && res.ok) {
+                const clone = res.clone();
+                caches.open(CACHE_NAME).then((c) => c.put(req, clone));
+              }
+              return res;
+            })
+            .catch(() => Response.error())
+      )
   );
 });
