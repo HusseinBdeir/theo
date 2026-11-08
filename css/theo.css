@@ -67,19 +67,19 @@ html[data-theme="dark"] {
   --chip-hover-bg: #2F2F38;
   --brass: #C8A25A;
   --brass-deep: #AD8740;
-  --brass-glow: rgba(200, 162, 90, 0.16);
-  --steel: #7CA3F5;
-  --steel-deep: #5B85DF;
-  --agy: #639BF2;
-  --agy-soft: rgba(99, 155, 242, 0.14);
-  --claude: #D97757;
-  --claude-soft: rgba(217, 119, 87, 0.15);
-  --emerald: #73C991;
-  --emerald-soft: rgba(115, 201, 145, 0.15);
-  --amber: #E4A844;
-  --amber-soft: rgba(228, 168, 68, 0.15);
-  --crimson: #EA6C6C;
-  --crimson-soft: rgba(234, 108, 108, 0.15);
+  --brass-glow: rgba(200, 162, 90, 0.14);
+  --steel: #7C97C2;
+  --steel-deep: #5D79A6;
+  --agy: #6E95C8;
+  --agy-soft: rgba(110, 149, 200, 0.13);
+  --claude: #C97A5E;
+  --claude-soft: rgba(201, 122, 94, 0.14);
+  --emerald: #6E9E82;
+  --emerald-soft: rgba(110, 158, 130, 0.14);
+  --amber: #C89B54;
+  --amber-soft: rgba(200, 155, 84, 0.14);
+  --crimson: #BC767A;
+  --crimson-soft: rgba(188, 118, 122, 0.14);
   --shadow-lg: 0 22px 52px rgba(0, 0, 0, 0.58), 0 0 0 1px rgba(255, 255, 255, 0.04);
   --shadow-sm: 0 2px 7px rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
@@ -282,22 +282,22 @@ button {
 }
 
 .conn-dot {
-  width: 9px;
-  height: 9px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--amber);
-  box-shadow: 0 0 0 3px var(--amber-soft);
+  box-shadow: none;
   flex-shrink: 0;
 }
 
 .conn-dot.live {
   background: var(--emerald);
-  box-shadow: 0 0 0 3px var(--emerald-soft);
+  box-shadow: none;
 }
 
 .conn-dot.cloud {
   background: var(--brass);
-  box-shadow: 0 0 0 3px var(--brass-glow);
+  box-shadow: none;
 }
 
 .conn-meta {
@@ -1717,15 +1717,15 @@ html[data-theme="dark"] .sess-act-btn.stop-btn {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 11px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%);
-  border: 1px solid rgba(254, 202, 202, 0.5);
-  color: #FFFFFF;
-  font-size: 12px;
-  font-weight: 700;
-  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.3);
-  transition: transform 0.12s ease, background 0.15s ease;
+  padding: 4px 10px;
+  border-radius: 7px;
+  background: var(--bg-elevated);
+  border: 1px solid rgba(188, 118, 122, 0.42);
+  color: var(--crimson);
+  font-size: 11.5px;
+  font-weight: 600;
+  box-shadow: none;
+  transition: transform 0.12s ease, background 0.15s ease, border-color 0.15s ease;
   flex-shrink: 0;
 }
 
@@ -1734,7 +1734,8 @@ html[data-theme="dark"] .sess-act-btn.stop-btn {
 }
 
 .btn-chat-stop:hover {
-  background: linear-gradient(135deg, #F87171 0%, #DC2626 100%);
+  background: var(--crimson-soft);
+  border-color: var(--crimson);
 }
 
 .btn-chat-stop:active {
@@ -2670,14 +2671,15 @@ html[data-theme="dark"] .composer-send-btn.is-ready {
 .composer-send-btn.is-stop {
   opacity: 1;
   filter: none;
-  background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%);
-  color: #FFFFFF;
-  border: 1px solid rgba(254, 202, 202, 0.45);
-  box-shadow: 0 2px 10px rgba(220, 38, 38, 0.35);
+  background: #2C2628;
+  color: #DFB1B4;
+  border: 1px solid rgba(188, 118, 122, 0.44);
+  box-shadow: none;
 }
 
 .composer-send-btn.is-stop:hover {
-  background: linear-gradient(135deg, #F87171 0%, #DC2626 100%);
+  background: #362C2F;
+  border-color: var(--crimson);
 }
 
 .composer-send-btn.is-stop:active {
@@ -4078,25 +4080,25 @@ html[data-theme="light"] .mobile-bottom-dock {
   }
 }
 
-/* Red Unchecked Notification Count Badge (Home Screen & Top Header Parity with Planner) */
+/* Calm Muted Notification Count Badge (Zero harsh neon glare) */
 .push-count-badge {
   position: absolute;
-  top: -6px;
-  right: -6px;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
+  top: -5px;
+  right: -5px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4.5px;
   border-radius: 999px;
-  background: #FF3B30;
-  color: #FFFFFF;
-  font-size: 10.5px;
-  font-weight: 800;
+  background: #2D2628;
+  color: #E2B8BA;
+  font-size: 10px;
+  font-weight: 700;
   line-height: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 2px solid var(--bg-plate);
-  box-shadow: 0 2px 6px rgba(255, 59, 48, 0.44);
+  border: 1px solid rgba(188, 118, 122, 0.46);
+  box-shadow: none;
   pointer-events: none;
   z-index: 4;
 }
@@ -7240,24 +7242,25 @@ html[data-theme="dark"] .composer-send-btn.is-ready {
 }
 
 .ide-dot.working {
-  background: var(--emerald);
-  opacity: 1;
-  box-shadow: 0 0 0 2px var(--emerald-soft);
+  width: 7px;
+  height: 7px;
+  background: transparent;
+  border: 1.5px solid var(--emerald);
+  opacity: 0.92;
+  box-shadow: none;
 }
 
 .ide-dot.waiting {
+  width: 6px;
+  height: 6px;
   background: var(--amber);
-  opacity: 1;
+  opacity: 0.92;
 }
 
-.ide-dot.unread {
-  background: var(--brass);
-  opacity: 1;
-}
-
-.ide-dot.open {
-  background: var(--steel);
-  opacity: 0.7;
+.ide-dot.unread,
+.ide-dot.open,
+.ide-dot.idle {
+  display: none !important;
 }
 
 .ide-row-act {
@@ -8695,4 +8698,424 @@ html[data-theme="light"] .sb-q-btn.primary {
     height: 84%;
   }
 }
+
+/* ==========================================================================
+   v60 — Calm Chromatics, De-Duplication, Change-Set Capsules, 5 Native Studio
+   Lenses & Parallel Split-Watch
+   ========================================================================== */
+
+/* 1. Quiet Activity Bar & Compact Sidebar Status Strip */
+.ide-activity-bar #badge-sessions,
+.ide-activity-bar #badge-workspaces {
+  display: none !important;
+}
+
+.ide-explorer-sidebar .rail-conn-card {
+  margin: 4px 8px 6px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border-subtle);
+  gap: 7px;
+}
+
+.ide-explorer-sidebar .conn-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.ide-explorer-sidebar .conn-title {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.ide-explorer-sidebar .conn-sub {
+  font-size: 10px;
+}
+
+.ide-acct-live-pill {
+  display: none !important;
+}
+
+.ide-side-count.emerald {
+  background: var(--bg-elevated) !important;
+  color: var(--text-secondary) !important;
+  border: 1px solid var(--border-subtle);
+}
+
+.ide-link-pill.danger,
+.ide-bg-stop {
+  background: var(--bg-elevated) !important;
+  color: var(--crimson) !important;
+  border: 1px solid rgba(188, 118, 122, 0.35);
+}
+
+.ide-editor-tab.is-unread .ide-tab-title,
+.ide-tree-row.is-unread .ide-row-title {
+  color: var(--text-heading);
+  font-weight: 600;
+}
+
+/* 2. Collapsible Composer Routing in Reply Mode */
+.composer-route-toggle-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+
+.composer-route-toggle-pill:hover,
+.composer-route-toggle-pill.active {
+  border-color: var(--brass);
+  color: var(--text-heading);
+}
+
+.composer-box.is-reply-compact:not(.is-route-open) .composer-target-bar,
+.composer-box.is-reply-compact:not(.is-route-open) .composer-routing-row {
+  display: none !important;
+}
+
+/* 3. Interactive Change-Set Capsule & Capped Tool Trace Stack */
+.turn-changeset-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 4px 0 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--bg-ink);
+  border: 1px solid var(--border-subtle);
+}
+
+.turn-cs-files {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.turn-cs-kicker {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-right: 2px;
+}
+
+.turn-cs-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--bg-obsidian);
+  border: 1px solid var(--border-subtle);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-primary);
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.turn-cs-chip:hover {
+  border-color: var(--brass);
+  background: var(--bg-elevated);
+}
+
+.turn-cs-add {
+  color: var(--emerald);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.turn-cs-del {
+  color: var(--crimson);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.turn-cs-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-cs-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1.5px solid var(--emerald);
+  flex-shrink: 0;
+}
+
+#view-chat .code-steps-stack {
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* 4. Header Built-in Studio Lens Bar */
+.studio-lens-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--bg-obsidian);
+  border: 1px solid var(--border-subtle);
+}
+
+.studio-lens-pill {
+  height: 23px;
+  padding: 0 7.5px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  transition: background 0.12s ease, color 0.12s ease;
+  white-space: nowrap;
+}
+
+.studio-lens-pill:hover,
+.studio-lens-pill.active {
+  background: var(--bg-elevated);
+  color: var(--text-heading);
+}
+
+.studio-lens-pill.split-watch-btn.active {
+  color: var(--brass);
+  border: 1px solid rgba(200, 162, 90, 0.35);
+}
+
+/* 5. Code Quote-Line Button & Studio Lens Panels (Git / Canvas / Checks) */
+.insp-quote-line-btn {
+  opacity: 0;
+  padding: 0 4px;
+  height: 16px;
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 600;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--brass);
+  margin-right: 4px;
+  flex-shrink: 0;
+  transition: opacity 0.1s ease;
+}
+
+.insp-code-row:hover .insp-quote-line-btn,
+.insp-code-row.is-hl .insp-quote-line-btn,
+.insp-diff-line:hover .insp-quote-line-btn {
+  opacity: 1;
+}
+
+.insp-quote-line-btn:hover {
+  background: var(--brass);
+  color: #141417;
+}
+
+.studio-lens-section {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.studio-lens-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.studio-lens-title {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.studio-git-file-row,
+.studio-check-row,
+.studio-skill-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg-ink);
+  border: 1px solid var(--border-subtle);
+  font-size: 11.5px;
+}
+
+.studio-git-status {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  color: var(--brass);
+}
+
+.studio-check-output {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-obsidian);
+  border: 1px solid var(--border-subtle);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.studio-diag-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: var(--crimson-soft);
+  border: 1px solid rgba(188, 118, 122, 0.36);
+  color: var(--text-heading);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  text-align: left;
+}
+
+.canvas-data-grid-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-ink);
+}
+
+.canvas-data-grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.canvas-data-grid th,
+.canvas-data-grid td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border-hairline);
+  text-align: left;
+}
+
+.canvas-data-grid th {
+  background: var(--bg-elevated);
+  color: var(--text-heading);
+  font-weight: 600;
+}
+
+.canvas-sandbox-frame {
+  width: 100%;
+  height: 190px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: #FFFFFF;
+}
+
+/* 6. Parallel Split-Watch Secondary Session Pane */
+.chat-split-watch-pane {
+  width: min(380px, 36vw);
+  min-width: 280px;
+  border-left: 1px solid var(--border-subtle);
+  background: var(--bg-plate);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex-shrink: 0;
+}
+
+.chat-split-watch-pane[hidden] {
+  display: none !important;
+}
+
+.split-watch-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-obsidian);
+}
+
+.split-watch-select {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 7px;
+  border-radius: 5px;
+  background: var(--bg-ink);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-heading);
+  font-size: 11.5px;
+}
+
+.split-watch-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.split-watch-turn {
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: var(--bg-ink);
+  border: 1px solid var(--border-subtle);
+  font-size: 11.8px;
+  line-height: 1.45;
+}
+
+.split-watch-turn.is-user {
+  border-left: 2px solid var(--brass);
+}
+
+@media (max-width: 900px) {
+  .studio-lens-bar {
+    display: none;
+  }
+  .chat-split-watch-pane {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    z-index: 48;
+  }
+}
+
 

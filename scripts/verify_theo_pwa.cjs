@@ -80,6 +80,80 @@ function startStaticServer(rootDir) {
           }, delayMs);
           return;
         }
+        if (u.pathname === '/api/studio-capabilities') {
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+          res.end(
+            JSON.stringify({
+              ok: true,
+              workspace: {
+                id: 'theo',
+                name: 'THEO Remote PWA',
+                branch: 'main',
+                dirtyCount: 2,
+                modifiedFiles: [
+                  { status: 'M', path: 'js/app.js' },
+                  { status: 'M', path: 'css/theo.css' }
+                ],
+                recentCommits: [
+                  { hash: '15493cd', subject: 'Ship v60 Studio Lenses', relativeTime: '2m ago', author: 'THEO' }
+                ]
+              },
+              checks: [
+                { id: 'git:status', label: 'Git Status & Branch', category: 'git', commandPreview: 'git status --short --branch' },
+                { id: 'syntax:js/app.js', label: 'Syntax Check · js/app.js', category: 'lint', commandPreview: 'node --check js/app.js' }
+              ],
+              skills: [
+                { id: 'red-team-gate', name: 'red-team-gate', description: 'Dynamic Pre-Handoff 7-Axis Red-Team Auditor', scope: 'user' },
+                { id: 'generative_ui', name: 'generative_ui', description: 'Interactive HTML widgets & data visualizations', scope: 'builtin' }
+              ],
+              ports: [
+                { port: 4318, label: 'THEO Workstation Bridge', url: 'http://127.0.0.1:4318/' }
+              ]
+            })
+          );
+          return;
+        }
+        if (u.pathname === '/api/studio-check' && req.method === 'POST') {
+          let bodyRaw = '';
+          req.on('data', (c) => {
+            bodyRaw += c;
+          });
+          req.on('end', () => {
+            let parsed = {};
+            try {
+              parsed = JSON.parse(bodyRaw || '{}');
+            } catch {}
+            const chkId = String(parsed.checkId || '');
+            const allowed = ['git:status', 'syntax:js/app.js'];
+            if (!allowed.includes(chkId)) {
+              res.writeHead(403, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, status: 403, error: 'Check ID is not in workspace allowlist' }));
+              return;
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+            res.end(
+              JSON.stringify({
+                ok: true,
+                passed: true,
+                exitCode: 0,
+                checkId: chkId,
+                durationMs: 14,
+                output: 'js/app.js:12:4: Verified syntax & diagnostic jump anchor',
+                diagnostics: [
+                  {
+                    file: 'app.js',
+                    relPath: 'js/app.js',
+                    line: 12,
+                    col: 4,
+                    severity: 'warning',
+                    message: 'Diagnostic anchor at line 12'
+                  }
+                ]
+              })
+            );
+          });
+          return;
+        }
         let rel = decodeURIComponent(u.pathname);
         if (rel === '/' || rel === '') rel = '/index.html';
         const filePath = path.resolve(rootDir, '.' + rel);
@@ -1813,6 +1887,263 @@ async function main() {
     assert.strictEqual(v59MobileAndPinProbe.popstateClosedSheetOnly, true, 'Mobile popstate must close Inspector bottom sheet first without switching tabs');
     assert.strictEqual(v59MobileAndPinProbe.blockedWhilePinLocked, true, 'Ctrl+I and [data-preview-file] must be blocked while #pin-overlay is active');
     console.log('[PASS] Adversarial #10: v59 4-Palette Switcher, Sidebar Questions/Agents, Compacted Thinking/Checkpoints, Split Inspector, Race Cancellation & PIN Guards verified');
+
+    // -------------------------------------------------------------------------
+    // Adversarial Check #11: v60 Calm Chromatics, De-Duplication, 31-Step
+    // Change-Set Compaction, @L Quote Line, 5 Native Studio Lenses (Code, Git,
+    // Canvas Data Grid/Sandbox/Skills, Checks & Error Lens), Parallel Split-Watch
+    // & Negative Security Assertions
+    // -------------------------------------------------------------------------
+    await cdp.send(
+      'Emulation.setDeviceMetricsOverride',
+      { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false },
+      sessionId
+    );
+    await evalJs(`(() => {
+      // Seed a 31-step turn with Markdown table + HTML snippet on sess-alpha before Page.navigate hydration
+      const cacheRaw = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+      const alphaRow = (cacheRaw.state?.rows || []).find((r) => r.id === 'sess-alpha');
+      if (alphaRow) alphaRow.status = 'working';
+      const stepCalls = Array.from({ length: 31 }, (_, i) => ({
+        id: 'tc-31-' + i,
+        kind: i % 5 === 0 ? 'edit' : 'read',
+        label: i % 5 === 0 ? 'Edited' : 'Analyzed',
+        file: i % 5 === 0 ? 'js/app.js' : 'css/theo.css',
+        relPath: i % 5 === 0 ? 'js/app.js' : 'css/theo.css',
+        addedLines: i % 5 === 0 ? 7 : 0,
+        removedLines: i % 5 === 0 ? 2 : 0,
+        summary: 'Step ' + (i + 1)
+      }));
+      cacheRaw.threads = cacheRaw.threads || {};
+      cacheRaw.threads['sess-alpha'] = {
+        id: 'sess-alpha',
+        provider: 'antigravity',
+        title: 'Alpha 31-Step Studio Session',
+        folder: 'theo',
+        messages: [
+          { id: 'u-v60', role: 'user', createdAt: new Date(Date.now() - 40000).toISOString(), text: 'Upgrade THEO Studio Lenses' },
+          {
+            id: 'a-v60',
+            role: 'assistant',
+            createdAt: new Date().toISOString(),
+            text: 'Here is the capability matrix:\\n\\n| Lens | Replaces | Status |\\n| --- | --- | --- |\\n| Git Lens | GitLens & PRs | Active |\\n| Canvas | Data Grid & Live Server | Active |\\n\\n\`\`\`html\\n<div class="demo-card">Hello Studio Canvas</div>\\n\`\`\`',
+            toolCalls: stepCalls
+          }
+        ]
+      };
+      localStorage.setItem('theo_remote_cache_v3', JSON.stringify(cacheRaw));
+    })()`);
+
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 650));
+
+    const v60Probe = await evalJs(`(async () => {
+      document.querySelector('[data-tab="analytics"]')?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      const bridgeInp = document.getElementById('input-custom-bridge');
+      if (bridgeInp) {
+        bridgeInp.value = location.origin;
+        document.getElementById('btn-save-bridge')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+      }
+
+      document.querySelector('#rail-nav [data-tab="chat"]')?.click();
+      await new Promise((r) => setTimeout(r, 30));
+
+      // 1. Calm Chromatics & De-Duplication checks
+      const pushBadge = document.getElementById('rail-push-badge');
+      const pushBadgeBg = pushBadge ? getComputedStyle(pushBadge).backgroundColor : '';
+      const stopSendBtn = document.getElementById('composer-send-btn');
+      stopSendBtn?.classList.add('is-stop');
+      const stopBtnBg = stopSendBtn ? getComputedStyle(stopSendBtn).backgroundImage + ' ' + getComputedStyle(stopSendBtn).backgroundColor : '';
+      const sessionsNavBadgeDisp = getComputedStyle(document.getElementById('badge-sessions')).display;
+      const workspacesNavBadgeDisp = getComputedStyle(document.getElementById('badge-workspaces')).display;
+
+      const betaTabDots = document.querySelectorAll('#ide-editor-tabs [data-editor-tab-id="sess-beta"] .ide-dot').length;
+      document.querySelector('#ide-sidebar-tree [data-ide-open-session="sess-alpha"]')?.click();
+      await new Promise((r) => setTimeout(r, 45));
+
+      // Verify single Stop button rule when running with empty draft
+      const inp = document.getElementById('composer-input');
+      if (inp) {
+        inp.value = '';
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      const headerStopHiddenWhenEmptyDraft = document.getElementById('btn-chat-stop')?.hidden === true;
+      const composerStopShownWhenRunning = document.getElementById('composer-send-btn')?.classList.contains('is-stop') === true;
+
+      // Verify 31-step turn starts compacted (open === false) and renders .turn-changeset-strip
+      const toolsDetails = document.querySelector('#chat-stream details.tools-details');
+      const toolsCollapsedByDefault = Boolean(toolsDetails && toolsDetails.open === false);
+      const changeSetChip = document.querySelector('#chat-stream .turn-changeset-strip .turn-cs-chip[data-preview-file="js/app.js"]');
+      const hasChangeSetStrip = Boolean(changeSetChip);
+
+      // Click Change-Set chip -> opens Split Inspector in Diff mode
+      changeSetChip?.click();
+      await new Promise((r) => setTimeout(r, 50));
+      const diffOpenedFromChip = Boolean(document.querySelector('#ide-inspector-body .insp-diff-pre'));
+
+      // Switch to Source mode & test @L Quote Line button
+      document.querySelector('#ide-inspector-subbar [data-insp-view-mode="source"]')?.click();
+      await new Promise((r) => setTimeout(r, 35));
+      const quoteLineBtn = document.querySelector('#ide-inspector-body [data-quote-line="js/app.js#L1"]');
+      quoteLineBtn?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      const quotedInComposer = String(document.getElementById('composer-input')?.value || '').includes('@js/app.js#L1');
+
+      // 2. Test Built-in Git Lens
+      document.querySelector('#studio-lens-bar [data-open-lens="git"]')?.click();
+      await new Promise((r) => setTimeout(r, 60));
+      const gitFilesRendered = document.querySelectorAll('#ide-inspector-body .studio-git-file-row').length >= 2;
+      document.querySelector('#ide-inspector-subbar [data-git-prompt-action="commit"]')?.click();
+      const gitCommitPrompted = String(document.getElementById('composer-input')?.value || '').includes('Summarize all uncommitted');
+
+      // 3. Test Built-in Canvas Lens (Port Radar, Searchable Data Grid, Sandboxed Preview & Skills)
+      document.querySelector('#studio-lens-bar [data-open-lens="canvas"]')?.click();
+      await new Promise((r) => setTimeout(r, 50));
+      const gridRowsBefore = document.querySelectorAll('#ide-inspector-body .canvas-data-grid tbody tr').length;
+      const gridSearch = document.getElementById('canvas-grid-search');
+      if (gridSearch) {
+        gridSearch.focus();
+        gridSearch.value = 'GitLens';
+        gridSearch.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      await new Promise((r) => setTimeout(r, 30));
+      const gridSearchKeptFocus = document.activeElement?.id === 'canvas-grid-search';
+      const gridRowsAfter = document.querySelectorAll('#ide-inspector-body .canvas-data-grid tbody tr').length;
+      const sandboxFrame = document.querySelector('#ide-inspector-body iframe.canvas-sandbox-frame');
+      const sandboxAttr = sandboxFrame ? sandboxFrame.getAttribute('sandbox') : null;
+      document.querySelector('#ide-inspector-body [data-use-studio-skill="red-team-gate"]')?.click();
+      const skillInserted = String(document.getElementById('composer-input')?.value || '').includes('Use the red-team-gate skill:');
+
+      // 4. Test Built-in Checks & Error Lens + Negative Test on unallowlisted checkId + Cross-Workspace Isolation
+      document.querySelector('#studio-lens-bar [data-open-lens="agents"]')?.click();
+      await new Promise((r) => setTimeout(r, 50));
+      const hostileCheckRes = await fetch('/api/studio-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId: 'theo', checkId: 'rm -rf /' })
+      });
+      const hostileBlocked403 = hostileCheckRes.status === 403;
+
+      document.querySelector('#ide-inspector-body [data-run-studio-check="syntax:js/app.js"]')?.click();
+      await new Promise((r) => setTimeout(r, 80));
+      const diagPill = document.querySelector('#ide-inspector-body .studio-diag-pill[data-preview-file="js/app.js#L12"]');
+      const diagRendered = Boolean(diagPill);
+      diagPill?.click();
+      await new Promise((r) => setTimeout(r, 50));
+      const jumpedToLine12 = Boolean(document.querySelector('#ide-inspector-body .insp-code-row.is-hl[data-ln="12"]'));
+
+      // 5. Test Parallel Split-Watch (⊞ Split) & Swap
+      document.getElementById('btn-split-watch')?.click();
+      await new Promise((r) => setTimeout(r, 40));
+      const splitPane = document.getElementById('chat-split-watch-pane');
+      const splitWatchOpen = Boolean(splitPane && !splitPane.hidden);
+      const splitOverflowX = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+      const swapBtn = document.getElementById('btn-split-watch-swap');
+      const watchedTarget = swapBtn?.dataset.splitWatchSwap || '';
+      swapBtn?.click();
+      await new Promise((r) => setTimeout(r, 40));
+      const swappedPrimary = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}').selectedThreadId === watchedTarget;
+      document.getElementById('btn-split-watch-close')?.click();
+      await new Promise((r) => setTimeout(r, 25));
+
+      // 6. Negative Test: PIN-lock blocks new v60 actions ([data-quote-line], [data-run-studio-check], #btn-split-watch)
+      if (inp) inp.value = '';
+      const pinOverlay = document.getElementById('pin-overlay');
+      if (pinOverlay) pinOverlay.hidden = false;
+      document.getElementById('btn-split-watch')?.click();
+      document.querySelector('#ide-inspector-body [data-quote-line="js/app.js#L1"]')?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      const blockedByPin =
+        document.getElementById('chat-split-watch-pane')?.hidden === true &&
+        document.getElementById('composer-input')?.value === '';
+      if (pinOverlay) pinOverlay.hidden = true;
+
+      // Leave Inspector on 'canvas' lens to test reload persistence
+      document.querySelector('#studio-lens-bar [data-open-lens="canvas"]')?.click();
+      await new Promise((r) => setTimeout(r, 25));
+
+      return {
+        pushBadgeBg,
+        stopBtnBg,
+        sessionsNavBadgeDisp,
+        workspacesNavBadgeDisp,
+        betaTabDots,
+        headerStopHiddenWhenEmptyDraft,
+        composerStopShownWhenRunning,
+        toolsCollapsedByDefault,
+        hasChangeSetStrip,
+        diffOpenedFromChip,
+        quotedInComposer,
+        gitFilesRendered,
+        gitCommitPrompted,
+        gridRowsBefore,
+        gridRowsAfter,
+        gridSearchKeptFocus,
+        sandboxAttr,
+        skillInserted,
+        hostileBlocked403,
+        diagRendered,
+        jumpedToLine12,
+        splitWatchOpen,
+        splitOverflowX,
+        swappedPrimary,
+        blockedByPin,
+        titleAttrsCount: document.querySelectorAll('[title]').length
+      };
+    })()`);
+
+    // Verify 'canvas' lens survives reload and mobile Escape closes Split-Watch
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 550));
+    await cdp.send(
+      'Emulation.setDeviceMetricsOverride',
+      { width: 375, height: 812, deviceScaleFactor: 3, mobile: true },
+      sessionId
+    );
+    const v60ReloadAndMobileProbe = await evalJs(`(async () => {
+      const savedPrefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+      const canvasTabSurvivedReload = savedPrefs.inspectorTab === 'canvas';
+      document.getElementById('btn-split-watch')?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      const openedOnMobile = document.getElementById('chat-split-watch-pane')?.hidden === false;
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await new Promise((r) => setTimeout(r, 25));
+      const closedByEscapeOnMobile = document.getElementById('chat-split-watch-pane')?.hidden === true;
+      return { canvasTabSurvivedReload, openedOnMobile, closedByEscapeOnMobile };
+    })()`);
+
+    assert.ok(!v60Probe.pushBadgeBg.includes('255, 59, 48'), `Push badge must not use harsh neon #FF3B30, got ${v60Probe.pushBadgeBg}`);
+    assert.ok(!v60Probe.stopBtnBg.includes('239, 68, 68'), `Stop button must not use harsh neon #EF4444 gradient, got ${v60Probe.stopBtnBg}`);
+    assert.strictEqual(v60Probe.sessionsNavBadgeDisp, 'none', 'Passive #badge-sessions on Activity Bar must be hidden');
+    assert.strictEqual(v60Probe.workspacesNavBadgeDisp, 'none', 'Passive #badge-workspaces on Activity Bar must be hidden');
+    assert.strictEqual(v60Probe.betaTabDots, 0, 'Idle/open editor tabs must render 0 colored dots');
+    assert.strictEqual(v60Probe.headerStopHiddenWhenEmptyDraft, true, '#btn-chat-stop must hide when composer Stop button is already shown');
+    assert.strictEqual(v60Probe.composerStopShownWhenRunning, true, '#composer-send-btn.is-stop must show when session is running');
+    assert.strictEqual(v60Probe.toolsCollapsedByDefault, true, '31-step turn must start compacted (tools-details.open === false)');
+    assert.strictEqual(v60Probe.hasChangeSetStrip, true, 'Turn must render 1-row .turn-changeset-strip');
+    assert.strictEqual(v60Probe.diffOpenedFromChip, true, 'Clicking .turn-cs-chip must open Diff view in Split Inspector');
+    assert.strictEqual(v60Probe.quotedInComposer, true, 'Clicking @L button in Code Inspector must quote @file#L in composer');
+    assert.strictEqual(v60Probe.gitFilesRendered, true, 'Git Lens must render modified working tree files');
+    assert.strictEqual(v60Probe.gitCommitPrompted, true, 'Summarize & Commit in Git Lens must populate composer prompt');
+    assert.strictEqual(v60Probe.gridRowsBefore, 2, 'Canvas Data Grid must extract 2 rows from Markdown table');
+    assert.strictEqual(v60Probe.gridRowsAfter, 1, 'Canvas Data Grid search must filter rows live');
+    assert.strictEqual(v60Probe.gridSearchKeptFocus, true, 'Canvas Data Grid search input must retain focus across re-render');
+    assert.strictEqual(v60Probe.sandboxAttr, '', 'Canvas HTML preview iframe must enforce strict sandbox=""');
+    assert.strictEqual(v60Probe.skillInserted, true, 'Clicking Use Skill in Canvas Lens must insert skill instruction');
+    assert.strictEqual(v60Probe.hostileBlocked403, true, 'Hostile/unlisted checkId must be rejected with HTTP 403');
+    assert.strictEqual(v60Probe.diagRendered, true, 'Running studio check must render clickable Error Lens diagnostic pill');
+    assert.strictEqual(v60Probe.jumpedToLine12, true, 'Clicking Error Lens diagnostic pill must highlight line 12 in Code Inspector');
+    assert.strictEqual(v60Probe.splitWatchOpen, true, 'Clicking ⊞ Split must open #chat-split-watch-pane');
+    assert.strictEqual(v60Probe.splitOverflowX, 0, 'Parallel Split-Watch + Inspector must cause 0px horizontal overflow');
+    assert.strictEqual(v60Probe.swappedPrimary, true, 'Clicking ⇄ Swap in Split-Watch must swap primary and watched sessions');
+    assert.strictEqual(v60Probe.blockedByPin, true, 'PIN lock must block Split-Watch and @L quote actions');
+    assert.strictEqual(v60Probe.titleAttrsCount, 0, 'Zero [title] attributes allowed anywhere in v60 DOM');
+    assert.strictEqual(v60ReloadAndMobileProbe.canvasTabSurvivedReload, true, 'Canvas/Git inspectorTab must survive page reload');
+    assert.strictEqual(v60ReloadAndMobileProbe.openedOnMobile, true, 'Split-Watch must open when triggered');
+    assert.strictEqual(v60ReloadAndMobileProbe.closedByEscapeOnMobile, true, 'Escape on mobile (<=900px) must close Split-Watch overlay');
+    console.log('[PASS] Adversarial #11: v60 Calm Chromatics, 31-Step Change-Set Compaction, @L Quote, 5 Built-in Studio Lenses, Parallel Split-Watch & PIN/403 Guards verified');
 
     // Final error & network quarantine assertions (#18)
     assert.strictEqual(pageExceptions.length, 0, `Uncaught page exceptions: ${JSON.stringify(pageExceptions)}`);

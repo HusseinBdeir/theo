@@ -162,6 +162,9 @@
     inspectorOpen: false,
     inspectorTab: 'code',
     inspectorViewMode: 'source',
+    splitWatchOpen: false,
+    splitWatchThreadId: '',
+    composerRouteExpanded: false,
     pinnedBgSessionId: '',
     sound: true,
     activeTab: 'pulse',
@@ -175,7 +178,7 @@
     cloudKey: '',
     edgeAccessKey: '',
     port: 4318,
-    freqUsage: { devices: {}, repos: {}, threads: {}, commands: {} },
+    freqUsage: { devices: {}, repos: {}, threads: {}, commands: {}, skills: {}, checks: {} },
     telemetryProv: 'all',
     selectedThreadId: '',
     selectedRepoId: 'resort-operations',
@@ -208,12 +211,16 @@
   }
   prefs.sidebarCollapsed = Boolean(prefs.sidebarCollapsed);
   prefs.inspectorOpen = Boolean(prefs.inspectorOpen);
-  if (!['code', 'agents', 'outline'].includes(prefs.inspectorTab)) {
+  if (!['code', 'git', 'canvas', 'agents', 'outline'].includes(prefs.inspectorTab)) {
     prefs.inspectorTab = 'code';
   }
   if (!['source', 'diff'].includes(prefs.inspectorViewMode)) {
     prefs.inspectorViewMode = 'source';
   }
+  prefs.splitWatchOpen = Boolean(prefs.splitWatchOpen);
+  prefs.splitWatchThreadId =
+    typeof prefs.splitWatchThreadId === 'string' ? prefs.splitWatchThreadId.trim() : '';
+  prefs.composerRouteExpanded = Boolean(prefs.composerRouteExpanded);
   prefs.pinnedBgSessionId =
     typeof prefs.pinnedBgSessionId === 'string' ? prefs.pinnedBgSessionId.trim() : '';
   if (!['all', 'working', 'needs_input', 'unread', 'open'].includes(prefs.sidebarFilter)) {
@@ -235,13 +242,15 @@
   if (!prefs.composerTargetDevice) prefs.composerTargetDevice = 'auto';
   prefs.composerDirectStream = prefs.composerDirectStream !== false;
   prefs.freqUsage = Object.assign(
-    { devices: {}, repos: {}, threads: {}, commands: {} },
+    { devices: {}, repos: {}, threads: {}, commands: {}, skills: {}, checks: {} },
     prefs.freqUsage && typeof prefs.freqUsage === 'object' ? prefs.freqUsage : {}
   );
   prefs.freqUsage.devices = Object.assign({}, prefs.freqUsage.devices || {});
   prefs.freqUsage.repos = Object.assign({}, prefs.freqUsage.repos || {});
   prefs.freqUsage.threads = Object.assign({}, prefs.freqUsage.threads || {});
   prefs.freqUsage.commands = Object.assign({}, prefs.freqUsage.commands || {});
+  prefs.freqUsage.skills = Object.assign({}, prefs.freqUsage.skills || {});
+  prefs.freqUsage.checks = Object.assign({}, prefs.freqUsage.checks || {});
   prefs.notif = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
 
   function decodeMaybeB64Field(val) {
@@ -2991,6 +3000,12 @@
       if (!streamDomRafId) {
         streamDomRafId = requestAnimationFrame(() => patchLiveStreamingDom(streamDomTargetTid));
       }
+    } else if (prefs.activeTab === 'chat' && prefs.splitWatchOpen && prefs.splitWatchThreadId === tid) {
+      renderSplitWatchPane();
+      if (!isWorking) {
+        renderIdeSidebar();
+        syncAndRenderEditorTabs();
+      }
     } else if (!isWorking) {
       renderPulseView();
       renderSessionsView();
@@ -3686,6 +3701,8 @@
             persistCache();
             if (prefs.activeTab === 'chat' && prefs.selectedThreadId === threadId) {
               renderChatView(!hadAnyCachedTurns);
+            } else if (prefs.activeTab === 'chat' && prefs.splitWatchOpen && prefs.splitWatchThreadId === threadId) {
+              renderSplitWatchPane();
             }
             return threadsCache[threadId];
           }
@@ -3710,6 +3727,8 @@
           persistCache();
           if (prefs.activeTab === 'chat' && prefs.selectedThreadId === threadId) {
             renderChatView(!hadAnyCachedTurns);
+          } else if (prefs.activeTab === 'chat' && prefs.splitWatchOpen && prefs.splitWatchThreadId === threadId) {
+            renderSplitWatchPane();
           }
           return threadsCache[threadId];
         }
@@ -4925,19 +4944,17 @@
         const r = rowById.get(id) || threadsCache[id] || { id, title: 'Session', provider: 'antigravity' };
         const provKey = r.provider === 'claude' ? 'claude' : 'antigravity';
         const isActive = !isNewDraft && id === curTid;
-        const stCls =
-          r.status === 'working' || liveStreamsByThreadId.get(id)?.status === 'working'
-            ? 'working'
-            : r.status === 'waiting'
-              ? 'waiting'
-              : r.unread
-                ? 'unread'
-                : '';
-        const rawTitle = String(r.title || threadsCache[id]?.title || 'Untitled Session').trim();
+        const isRunningNow = isSessionActivelyRunning(id);
         const qCnt = getSessionPendingQuestionCount(r);
-        const bgBadge = getSessionRunningBgBadge(r);
+        const stCls = isRunningNow
+          ? 'working'
+          : r.status === 'waiting' || qCnt > 0
+            ? 'waiting'
+            : '';
+        const rawTitle = String(r.title || threadsCache[id]?.title || 'Untitled Session').trim();
+        const bgBadge = r.bgTask?.state === 'running' ? getSessionRunningBgBadge(r) : '';
         return `
-          <div class="ide-editor-tab${isActive ? ' active' : ''}" role="tab" tabindex="0" aria-selected="${isActive}" data-editor-tab-id="${esc(id)}" data-session-prov="${provKey}">
+          <div class="ide-editor-tab${isActive ? ' active' : ''}${r.unread ? ' is-unread' : ''}" role="tab" tabindex="0" aria-selected="${isActive}" data-editor-tab-id="${esc(id)}" data-session-prov="${provKey}">
             ${stCls ? `<span class="ide-dot ${stCls}"></span>` : ''}
             <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
             <span class="ide-tab-title">${esc(rawTitle)}</span>
@@ -5505,19 +5522,15 @@
     const renderTreeRow = (r) => {
       const provKey = r.provider === 'claude' ? 'claude' : 'antigravity';
       const isSelected = r.id === curSelected;
-      const dotCls =
-        r.status === 'working' || r.dot === 'running'
-          ? 'working'
-          : r.status === 'waiting'
-            ? 'waiting'
-            : r.unread
-              ? 'unread'
-              : r.open
-                ? 'open'
-                : 'idle';
-      const age = shortSidebarAge(r.at);
+      const isRunningNow = isSessionActivelyRunning(r.id);
       const qCnt = getSessionPendingQuestionCount(r);
-      const bgBadge = getSessionRunningBgBadge(r);
+      const dotCls = isRunningNow
+        ? 'working'
+        : r.status === 'waiting' || qCnt > 0
+          ? 'waiting'
+          : 'idle';
+      const age = shortSidebarAge(r.at);
+      const bgBadge = r.bgTask?.state === 'running' ? getSessionRunningBgBadge(r) : '';
       return `
         <div class="ide-tree-row${isSelected ? ' active' : ''}${r.unread ? ' is-unread' : ''}" role="button" tabindex="0" data-ide-open-session="${esc(r.id)}" data-session-prov="${provKey}">
           <span class="ide-dot ${dotCls}"></span>
@@ -8128,6 +8141,8 @@
     };
   }
 
+  const filePreviewInFlightKeys = new Set();
+
   async function fetchSafeFilePreview(rawTarget, activeRow = null, forceRefresh = false) {
     const parsed = parsePreviewTargetClient(rawTarget);
     if (!parsed.filePath) return null;
@@ -8153,37 +8168,42 @@
     const allowProbeHttp =
       !isHeadlessBrowser || Boolean(prefs.customBridgeUrl) || Boolean(window.__THEO_ALLOW_PROBE_MOCK_FETCH);
 
-    if (effectiveLocalBase && allowProbeHttp) {
-      try {
-        const q = `path=${encodeURIComponent(rawTarget)}&sessionId=${encodeURIComponent(sid)}&workspaceId=${encodeURIComponent(wsId)}`;
-        const res = await authFetchLocal(`${effectiveLocalBase}/api/file-preview?${q}`);
-        const data = await res.json().catch(() => null);
-        if (data && typeof data === 'object') {
-          result = data;
-        }
-      } catch {}
-    }
+    filePreviewInFlightKeys.add(cacheKey);
+    try {
+      if (effectiveLocalBase && allowProbeHttp) {
+        try {
+          const q = `path=${encodeURIComponent(rawTarget)}&sessionId=${encodeURIComponent(sid)}&workspaceId=${encodeURIComponent(wsId)}`;
+          const res = await authFetchLocal(`${effectiveLocalBase}/api/file-preview?${q}`);
+          const data = await res.json().catch(() => null);
+          if (data && typeof data === 'object') {
+            result = data;
+          }
+        } catch {}
+      }
 
-    if (!result && !isHeadlessBrowser && edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
-      try {
-        const rpcOut = await sendWsRpc(
-          edgeWs,
-          {
-            type: 'rpc_cmd',
-            targetDeviceId,
-            cmd: { type: 'getFilePreview', path: rawTarget, sessionId: sid, workspaceId: wsId }
-          },
-          6500
-        );
-        const payload = rpcOut?.result && typeof rpcOut.result === 'object' ? rpcOut.result : rpcOut;
-        if (payload && typeof payload === 'object' && ('ok' in payload || 'content' in payload || 'error' in payload)) {
-          result = payload;
-        }
-      } catch {}
-    }
+      if (!result && !isHeadlessBrowser && edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
+        try {
+          const rpcOut = await sendWsRpc(
+            edgeWs,
+            {
+              type: 'rpc_cmd',
+              targetDeviceId,
+              cmd: { type: 'getFilePreview', path: rawTarget, sessionId: sid, workspaceId: wsId }
+            },
+            6500
+          );
+          const payload = rpcOut?.result && typeof rpcOut.result === 'object' ? rpcOut.result : rpcOut;
+          if (payload && typeof payload === 'object' && ('ok' in payload || 'content' in payload || 'error' in payload)) {
+            result = payload;
+          }
+        } catch {}
+      }
 
-    if (!result) {
-      result = buildOfflinePreviewFallback(parsed, matchedRow);
+      if (!result) {
+        result = buildOfflinePreviewFallback(parsed, matchedRow);
+      }
+    } finally {
+      filePreviewInFlightKeys.delete(cacheKey);
     }
 
     if (seq === inspectorFetchSeq || !filePreviewCache.has(cacheKey)) {
@@ -8205,9 +8225,366 @@
       const td = threadsCache[sid] || null;
       const msgs = coalesceThreadMessages(td?.messages || []);
       const provKey = (td?.provider || matchedRow?.provider) === 'claude' ? 'claude' : 'antigravity';
-      renderSplitInspector(matchedRow, td, msgs, provKey, isNewSessionMode());
+      renderSplitInspector(matchedRow, td, msgs, provKey, isNewSessionMode(), true);
     }
     return result;
+  }
+
+  const studioCapabilitiesCache = new Map();
+  const studioCapInFlightKeys = new Set();
+  const studioCheckResultsById = new Map();
+  let studioCapFetchSeq = 0;
+  let studioCheckBusy = false;
+  let canvasGridFilterText = '';
+
+  function resolveStudioWorkspaceId(activeRow = null) {
+    const rawFolder = String(
+      prefs.selectedRepoId || activeRow?.workspaceId || activeRow?.folder || ''
+    )
+      .replace(/^Scope:\s*/i, '')
+      .trim();
+    const wsList = Array.isArray(appState?.workspaces) ? appState.workspaces : [];
+    const matched = wsList.find(
+      (w) =>
+        w &&
+        (w.id === rawFolder ||
+          String(w.name || '').toLowerCase() === rawFolder.toLowerCase() ||
+          String(w.path || '').toLowerCase().endsWith(`\\${rawFolder.toLowerCase()}`) ||
+          String(w.path || '').toLowerCase().endsWith(`/${rawFolder.toLowerCase()}`))
+    );
+    return matched?.id || rawFolder || 'theo';
+  }
+
+  function buildOfflineStudioCapabilitiesFallback(wsId, activeRow = null) {
+    const wsList = Array.isArray(appState?.workspaces) ? appState.workspaces : [];
+    const wsObj =
+      wsList.find((w) => w && (w.id === wsId || w.name === wsId)) ||
+      wsList[0] || {
+        id: wsId || 'theo',
+        name: activeRow?.folder || 'THEO Studio Workspace',
+        branch: 'main',
+        dirtyCount: 0,
+        modifiedFiles: [],
+        recentCommits: []
+      };
+    return {
+      ok: true,
+      workspace: wsObj,
+      checks: [
+        { id: 'git:status', label: 'Git Status & Branch', category: 'git', commandPreview: 'git status --short --branch' },
+        { id: 'git:diff-stat', label: 'Git Diff Summary', category: 'git', commandPreview: 'git diff --stat' },
+        { id: 'syntax:js/app.js', label: 'Syntax Check · js/app.js', category: 'lint', commandPreview: 'node --check js/app.js' }
+      ],
+      skills: [
+        { id: 'red-team-gate', name: 'red-team-gate', description: 'Dynamic Pre-Handoff 7-Axis Red-Team Auditor & Adversarial Verification', scope: 'user' },
+        { id: 'generative_ui', name: 'generative_ui', description: 'Interactive HTML widgets, diagrams & data visualizations', scope: 'builtin' },
+        { id: 'agy-customizations', name: 'agy-customizations', description: 'Skills, rules, plugins, hooks & MCP servers reference', scope: 'builtin' },
+        { id: 'automation', name: 'automation', description: 'Design and schedule recurring background automations', scope: 'builtin' }
+      ],
+      ports: connMode === 'local' ? [{ port: 4318, label: 'THEO Workstation Bridge', url: 'http://127.0.0.1:4318/' }] : [],
+      fallbackOnly: true
+    };
+  }
+
+  async function fetchStudioCapabilities(activeRow = null, forceRefresh = false) {
+    const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
+    const wsId = resolveStudioWorkspaceId(activeRow);
+    const cacheKey = `${sid || 'global'}::${wsId}`;
+    const seq = ++studioCapFetchSeq;
+    if (!forceRefresh && studioCapabilitiesCache.has(cacheKey)) {
+      return studioCapabilitiesCache.get(cacheKey);
+    }
+
+    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid);
+    const targetDeviceId = matchedRow?.deviceId || '';
+    const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
+    const effectiveLocalBase =
+      connMode === 'local' && localBridgeBase
+        ? localBridgeBase
+        : !isRemote && prefs.customBridgeUrl
+          ? String(prefs.customBridgeUrl).trim().replace(/\/+$/, '')
+          : '';
+    const allowProbeHttp =
+      !isHeadlessBrowser || Boolean(prefs.customBridgeUrl) || Boolean(window.__THEO_ALLOW_PROBE_MOCK_FETCH);
+
+    let result = null;
+    studioCapInFlightKeys.add(cacheKey);
+    try {
+      if (effectiveLocalBase && allowProbeHttp) {
+        try {
+          const q = `workspaceId=${encodeURIComponent(wsId)}&sessionId=${encodeURIComponent(sid)}&diff=1`;
+          const res = await authFetchLocal(`${effectiveLocalBase}/api/studio-capabilities?${q}`);
+          const data = await res.json().catch(() => null);
+          if (data && typeof data === 'object' && data.ok) {
+            result = data;
+          }
+        } catch {}
+      }
+
+      if (!result && !isHeadlessBrowser && edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
+        try {
+          const rpcOut = await sendWsRpc(
+            edgeWs,
+            {
+              type: 'rpc_cmd',
+              targetDeviceId,
+              cmd: { type: 'getStudioCapabilities', workspaceId: wsId, sessionId: sid, includeDiff: true }
+            },
+            7000
+          );
+          const payload = rpcOut?.result && typeof rpcOut.result === 'object' ? rpcOut.result : rpcOut;
+          if (payload && typeof payload === 'object' && payload.ok) {
+            result = payload;
+          }
+        } catch {}
+      }
+
+      if (!result) {
+        result = buildOfflineStudioCapabilitiesFallback(wsId, matchedRow);
+      }
+    } finally {
+      studioCapInFlightKeys.delete(cacheKey);
+    }
+
+    if (seq === studioCapFetchSeq || !studioCapabilitiesCache.has(cacheKey)) {
+      if (studioCapabilitiesCache.size >= 24 && !studioCapabilitiesCache.has(cacheKey)) {
+        const oldest = studioCapabilitiesCache.keys().next().value;
+        if (oldest) studioCapabilitiesCache.delete(oldest);
+      }
+      studioCapabilitiesCache.set(cacheKey, result);
+    }
+
+    if (
+      seq === studioCapFetchSeq &&
+      prefs.inspectorOpen &&
+      prefs.activeTab === 'chat' &&
+      sid === String(prefs.selectedThreadId || '').trim() &&
+      ['git', 'canvas', 'agents'].includes(prefs.inspectorTab)
+    ) {
+      const td = threadsCache[sid] || null;
+      const msgs = coalesceThreadMessages(td?.messages || []);
+      const provKey = (td?.provider || matchedRow?.provider) === 'claude' ? 'claude' : 'antigravity';
+      renderSplitInspector(matchedRow, td, msgs, provKey, isNewSessionMode(), true);
+    }
+    return result;
+  }
+
+  async function executeStudioCheck(checkId, activeRow = null) {
+    if (isPinLocked() || studioCheckBusy) return null;
+    const cleanId = String(checkId || '').trim();
+    if (!cleanId) return null;
+    recordFreqUsage('checks', cleanId);
+    const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
+    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid);
+    const wsId = resolveStudioWorkspaceId(matchedRow);
+    const checkResKey = `${wsId}::${cleanId}`;
+    const targetDeviceId = matchedRow?.deviceId || '';
+    const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
+    const effectiveLocalBase =
+      connMode === 'local' && localBridgeBase
+        ? localBridgeBase
+        : !isRemote && prefs.customBridgeUrl
+          ? String(prefs.customBridgeUrl).trim().replace(/\/+$/, '')
+          : '';
+    const allowProbeHttp =
+      !isHeadlessBrowser || Boolean(prefs.customBridgeUrl) || Boolean(window.__THEO_ALLOW_PROBE_MOCK_FETCH);
+
+    studioCheckBusy = true;
+    studioCheckResultsById.set(checkResKey, { running: true, checkId: cleanId, output: 'Running check…' });
+    renderChatView(false);
+
+    try {
+      let result = null;
+      if (effectiveLocalBase && allowProbeHttp) {
+        try {
+          const res = await authFetchLocal(`${effectiveLocalBase}/api/studio-check`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ workspaceId: wsId, sessionId: sid, checkId: cleanId })
+          });
+          const data = await res.json().catch(() => null);
+          result = data || { ok: false, status: res.status, error: `HTTP ${res.status}` };
+        } catch (err) {
+          result = { ok: false, error: err?.message || 'Check request failed' };
+        }
+      } else if (!isHeadlessBrowser && edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
+        try {
+          const rpcOut = await sendWsRpc(
+            edgeWs,
+            {
+              type: 'rpc_cmd',
+              targetDeviceId,
+              cmd: { type: 'runStudioCheck', workspaceId: wsId, sessionId: sid, checkId: cleanId }
+            },
+            22000
+          );
+          result = rpcOut?.result && typeof rpcOut.result === 'object' ? rpcOut.result : rpcOut;
+        } catch (err) {
+          result = { ok: false, error: err?.message || 'Edge RPC check failed' };
+        }
+      } else {
+        result = {
+          ok: false,
+          error: 'Connect to workstation bridge (:4318 or Edge WS) to execute live checks.'
+        };
+      }
+      studioCheckResultsById.set(checkResKey, result);
+      return result;
+    } finally {
+      studioCheckBusy = false;
+      renderChatView(false);
+    }
+  }
+
+  function extractSessionStructuredTables(messages) {
+    const tables = [];
+    for (const m of messages || []) {
+      const txt = String(m?.text || '');
+      if (!txt) continue;
+      const lines = txt.split(/\r?\n/);
+      let i = 0;
+      while (i < lines.length - 1) {
+        const hdrLine = lines[i].trim();
+        const sepLine = lines[i + 1].trim();
+        if (
+          hdrLine.startsWith('|') &&
+          hdrLine.endsWith('|') &&
+          /^\|(?:\s*:?-{2,}:?\s*\|)+$/.test(sepLine)
+        ) {
+          const headers = hdrLine
+            .slice(1, -1)
+            .split('|')
+            .map((c) => c.trim());
+          const rows = [];
+          i += 2;
+          while (i < lines.length && lines[i].trim().startsWith('|') && lines[i].trim().endsWith('|')) {
+            const cells = lines[i]
+              .trim()
+              .slice(1, -1)
+              .split('|')
+              .map((c) => c.trim());
+            rows.push(cells);
+            i += 1;
+          }
+          if (headers.length > 0 && rows.length > 0) {
+            tables.push({ headers, rows });
+          }
+          continue;
+        }
+        i += 1;
+      }
+      const jsonFenceRe = /```json\s*\n([\s\S]*?)```/gi;
+      let jm;
+      while ((jm = jsonFenceRe.exec(txt)) !== null) {
+        try {
+          const parsed = JSON.parse(jm[1]);
+          if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'object' && parsed[0] !== null) {
+            const headers = Object.keys(parsed[0]).slice(0, 8);
+            const rows = parsed.slice(0, 30).map((item) => headers.map((k) => String(item?.[k] ?? '')));
+            if (headers.length > 0) tables.push({ headers, rows });
+          }
+        } catch {}
+      }
+    }
+    return tables;
+  }
+
+  function extractSessionCanvasSnippets(messages) {
+    const snippets = [];
+    for (const m of messages || []) {
+      const txt = String(m?.text || '');
+      if (!txt) continue;
+      const re = /```(html|svg|mermaid)\s*\n([\s\S]*?)```/gi;
+      let match;
+      while ((match = re.exec(txt)) !== null) {
+        const lang = String(match[1] || 'html').toLowerCase();
+        const code = String(match[2] || '').trim();
+        if (code) {
+          snippets.push({ lang, code });
+        }
+      }
+    }
+    return snippets;
+  }
+
+  function renderSplitWatchPane() {
+    const paneEl = $('chat-split-watch-pane');
+    const btnEl = $('btn-split-watch');
+    if (btnEl) {
+      btnEl.classList.toggle('active', Boolean(prefs.splitWatchOpen));
+      btnEl.setAttribute('aria-pressed', prefs.splitWatchOpen ? 'true' : 'false');
+    }
+    if (!paneEl) return;
+    if (!prefs.splitWatchOpen) {
+      paneEl.hidden = true;
+      return;
+    }
+
+    const allRows = (appState?.rows || []).filter((r) => r && r.id && !r.archived && r.id !== prefs.selectedThreadId);
+    const rankedRows = rankByFreq(
+      allRows,
+      'threads',
+      (r) => r.id,
+      (r) => (isSessionActivelyRunning(r.id) ? 500 : r.status === 'waiting' ? 350 : 0)
+    );
+    if (!prefs.splitWatchThreadId || prefs.splitWatchThreadId === prefs.selectedThreadId || !rankedRows.some((r) => r.id === prefs.splitWatchThreadId)) {
+      prefs.splitWatchThreadId = rankedRows[0]?.id || '';
+    }
+    const watchedId = prefs.splitWatchThreadId;
+    const watchedRow = rankedRows.find((r) => r.id === watchedId) || null;
+    const watchedDetail = watchedId ? threadsCache[watchedId] || null : null;
+    if (watchedId && !watchedDetail) {
+      fetchThreadDetail(watchedId, watchedRow?.provider || '').catch(() => {});
+    }
+    const watchedMsgs = coalesceThreadMessages(watchedDetail?.messages || []);
+    const isRunning = watchedId ? isSessionActivelyRunning(watchedId) : false;
+
+    const optsHtml = rankedRows.length
+      ? rankedRows
+          .map(
+            (r) =>
+              `<option value="${esc(r.id)}" ${r.id === watchedId ? 'selected' : ''}>${isSessionActivelyRunning(r.id) ? '◎ ' : ''}${esc(r.title || r.id)} (${r.provider === 'claude' ? 'Claude' : 'AGY'})</option>`
+          )
+          .join('')
+      : `<option value="">No secondary session available</option>`;
+
+    const turnsHtml = watchedMsgs.length
+      ? watchedMsgs
+          .slice(-6)
+          .map((m) => {
+            const roleLbl = m.role === 'user' ? 'You' : watchedRow?.provider === 'claude' ? 'Claude' : 'Antigravity';
+            const snippet = String(m.text || m.thinking || '')
+              .replace(/\s+/g, ' ')
+              .trim()
+              .slice(0, 260);
+            const stepsCnt = Array.isArray(m.toolCalls) ? m.toolCalls.length : 0;
+            return `
+              <div class="split-watch-turn${m.role === 'user' ? ' is-user' : ''}">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:3px">
+                  <strong style="font-size:11px;color:var(--text-heading)">${esc(roleLbl)}</strong>
+                  ${stepsCnt > 0 ? `<span class="meta-timestamp tabular">${stepsCnt} step${stepsCnt === 1 ? '' : 's'}</span>` : ''}
+                </div>
+                <div style="color:var(--text-secondary)">${esc(snippet || (stepsCnt > 0 ? 'Executing workspace tool steps…' : 'Ready.'))}</div>
+              </div>
+            `;
+          })
+          .join('')
+      : `<div class="insp-empty">Monitoring <strong style="color:var(--text-heading)">${esc(watchedRow?.title || 'Secondary Session')}</strong>.${isRunning ? ' Active turn in progress…' : ''}</div>`;
+
+    paneEl.hidden = false;
+    const existingBody = paneEl.querySelector('.split-watch-body');
+    if (document.activeElement?.id === 'split-watch-session-select' && existingBody) {
+      existingBody.innerHTML = turnsHtml;
+      return;
+    }
+    paneEl.innerHTML = `
+      <div class="split-watch-head">
+        <select id="split-watch-session-select" class="split-watch-select" aria-label="Select secondary session to monitor">${optsHtml}</select>
+        ${watchedId ? `<button type="button" class="insp-mini-btn" id="btn-split-watch-swap" data-split-watch-swap="${esc(watchedId)}">⇄ Swap</button>` : ''}
+        <button type="button" class="icon-btn-sm" id="btn-split-watch-close" data-split-watch-close="1" aria-label="Close Split Watch">✕</button>
+      </div>
+      <div class="split-watch-body">${turnsHtml}</div>
+    `;
   }
 
   function setInspectorOpen(openBool, tab = '', opts = {}) {
@@ -8216,7 +8593,7 @@
     if (!prefs.inspectorOpen || opts.fileTarget !== undefined) {
       ++inspectorFetchSeq;
     }
-    if (tab && ['code', 'agents', 'outline'].includes(tab)) {
+    if (tab && ['code', 'git', 'canvas', 'agents', 'outline'].includes(tab)) {
       prefs.inspectorTab = tab;
     }
     if (opts.fileTarget !== undefined) {
@@ -8234,9 +8611,12 @@
     const td = isNewSessionMode() ? null : threadsCache[sid] || null;
     const msgs = coalesceThreadMessages(td?.messages || []);
     const provKey = (td?.provider || row?.provider) === 'claude' ? 'claude' : 'antigravity';
-    renderSplitInspector(row, td, msgs, provKey, isNewSessionMode());
+    renderSplitInspector(row, td, msgs, provKey, isNewSessionMode(), true);
     if (prefs.inspectorOpen && prefs.inspectorTab === 'code' && activeInspectorFileTarget) {
       fetchSafeFilePreview(activeInspectorFileTarget, row, Boolean(opts.forceRefresh)).catch(() => {});
+    }
+    if (prefs.inspectorOpen && ['git', 'canvas', 'agents'].includes(prefs.inspectorTab)) {
+      fetchStudioCapabilities(row, Boolean(opts.forceRefresh)).catch(() => {});
     }
     if (prefs.inspectorOpen && prefs.inspectorTab === 'agents' && sid && activeInspectorAgentId) {
       fetchBgTaskLiveLog(sid, activeInspectorAgentId, provKey).catch(() => {});
@@ -8260,7 +8640,7 @@
       .join('');
   }
 
-  function renderSplitInspector(activeRow, threadDetail, messages, provKey, isNewDraft) {
+  function renderSplitInspector(activeRow, threadDetail, messages, provKey, isNewDraft, skipAutoFetch = false) {
     const paneEl = $('ide-inspector-pane');
     const backdropEl = $('ide-inspector-backdrop');
     const toggleBtn = $('btn-toggle-inspector');
@@ -8278,6 +8658,9 @@
     if (toggleBtn) {
       toggleBtn.setAttribute('aria-expanded', prefs.inspectorOpen ? 'true' : 'false');
     }
+    document.querySelectorAll('#studio-lens-bar [data-open-lens]').forEach((btn) => {
+      btn.classList.toggle('active', Boolean(prefs.inspectorOpen && btn.dataset.openLens === prefs.inspectorTab));
+    });
     if (pillBadge) {
       const badgeNum = runningCount > 0 ? runningCount : allTasks.length > 0 ? allTasks.length : touchedFiles.length;
       if (badgeNum > 0) {
@@ -8315,18 +8698,29 @@
     }
 
     const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
+    const wsId = resolveStudioWorkspaceId(activeRow);
+    const capCacheKey = `${sid || 'global'}::${wsId}`;
+    const studioCap = studioCapabilitiesCache.get(capCacheKey) || null;
+    if (
+      !skipAutoFetch &&
+      !studioCap &&
+      !studioCapInFlightKeys.has(capCacheKey) &&
+      ['git', 'canvas', 'agents'].includes(prefs.inspectorTab)
+    ) {
+      fetchStudioCapabilities(activeRow).catch(() => {});
+    }
 
     if (prefs.inspectorTab === 'code') {
       if (!activeInspectorFileTarget && touchedFiles.length > 0) {
         activeInspectorFileTarget = touchedFiles[0].target;
       }
       const parsed = parsePreviewTargetClient(activeInspectorFileTarget);
-      const wsId = String(prefs.selectedRepoId || activeRow?.folder || '').trim();
+      const rawWsId = String(prefs.selectedRepoId || activeRow?.folder || '').trim();
       const cacheKey = parsed.filePath
-        ? `${sid || wsId || 'global'}::${parsed.filePath.replace(/\\/g, '/')}`
+        ? `${sid || rawWsId || 'global'}::${parsed.filePath.replace(/\\/g, '/')}`
         : '';
       const cached = cacheKey ? filePreviewCache.get(cacheKey) : null;
-      if (parsed.filePath && !cached) {
+      if (!skipAutoFetch && parsed.filePath && !cached && !filePreviewInFlightKeys.has(cacheKey)) {
         fetchSafeFilePreview(activeInspectorFileTarget, activeRow).catch(() => {});
       }
 
@@ -8345,7 +8739,7 @@
 
       if (!parsed.filePath) {
         if (subbarEl) subbarEl.hidden = true;
-        bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">Click any file chip in the conversation or work steps to inspect its source code and live git diff right beside your chat.</div>`;
+        bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">Click any file chip in the conversation or change-set strip to inspect source code, quote lines (<code class="md-inline-code">@L</code>), or review live git diffs.</div>`;
         return;
       }
 
@@ -8375,6 +8769,7 @@
             <button type="button" class="insp-mini-btn${effectiveMode === 'source' ? ' active' : ''}" data-insp-view-mode="source">Source</button>
             <button type="button" class="insp-mini-btn${effectiveMode === 'diff' ? ' active' : ''}" data-insp-view-mode="diff" ${hasDiff ? '' : 'disabled'}>Diff</button>
             <button type="button" class="insp-mini-btn" data-step-mention-file="${esc(displayPath)}">@ Mention</button>
+            <button type="button" class="insp-mini-btn" data-insp-ask-review="${esc(displayPath)}">Ask AI Review</button>
             <button type="button" class="insp-mini-btn" data-insp-copy-code="${esc(cacheKey)}">Copy</button>
           </span>
         `;
@@ -8408,7 +8803,7 @@
         .map((txt, idx) => {
           const ln = sliceStart + idx + 1;
           const isHl = hlStart > 0 && ln >= hlStart && ln <= hlEnd;
-          return `<div class="insp-code-row${isHl ? ' is-hl' : ''}" data-ln="${ln}"><span class="insp-ln tabular">${ln}</span><span class="insp-code-txt">${esc(txt)}</span></div>`;
+          return `<div class="insp-code-row${isHl ? ' is-hl' : ''}" data-ln="${ln}"><button type="button" class="insp-quote-line-btn" data-quote-line="${esc(displayPath)}#L${ln}" aria-label="Quote ${esc(displayPath)} line ${ln} in chat">@L${ln}</button><span class="insp-ln tabular">${ln}</span><span class="insp-code-txt">${esc(txt)}</span></div>`;
         })
         .join('');
       const truncNote =
@@ -8428,61 +8823,307 @@
       return;
     }
 
-    if (prefs.inspectorTab === 'agents') {
+    if (prefs.inspectorTab === 'git') {
+      const wsInfo = studioCap?.workspace ||
+        (appState?.workspaces || []).find((w) => w && w.id === wsId) ||
+        (appState?.workspaces || [])[0] || {
+          name: activeRow?.folder || 'Workspace',
+          branch: 'main',
+          dirtyCount: touchedFiles.length,
+          modifiedFiles: touchedFiles.map((tf) => ({ status: 'M', path: tf.filePath })),
+          recentCommits: []
+        };
+      const modFiles = Array.isArray(wsInfo.modifiedFiles) && wsInfo.modifiedFiles.length
+        ? wsInfo.modifiedFiles
+        : touchedFiles.map((tf) => ({ status: tf.isEdit ? 'M' : 'R', path: tf.filePath }));
+      const commits = Array.isArray(wsInfo.recentCommits) ? wsInfo.recentCommits : [];
+
       if (subbarEl) {
         subbarEl.hidden = false;
         subbarEl.innerHTML = `
-          <span class="insp-sub-path"><span class="insp-sub-path-txt">${allTasks.length} Side Agent${allTasks.length === 1 ? '' : 's'} &amp; Task${allTasks.length === 1 ? '' : 's'}${runningCount > 0 ? ` · ${runningCount} Live` : ''}</span></span>
+          <span class="insp-sub-path"><span class="insp-sub-path-txt">${esc(wsInfo.name || wsId)} · <code class="md-inline-code">${esc(wsInfo.branch || 'main')}</code> · ${modFiles.length} changed</span></span>
           <span class="insp-sub-actions">
-            ${sid && !isNewDraft ? `<button type="button" class="insp-mini-btn" data-insp-refresh-agents="1">↻ Refresh</button>` : ''}
+            <button type="button" class="insp-mini-btn" data-studio-cap-refresh="1">↻ Refresh</button>
+            <button type="button" class="insp-mini-btn" data-git-prompt-action="commit">Summarize &amp; Commit</button>
+          </span>
+        `;
+      }
+
+      const modHtml = modFiles.length
+        ? modFiles
+            .slice(0, 24)
+            .map(
+              (f) => `
+              <div class="studio-git-file-row">
+                <span style="display:inline-flex;align-items:center;gap:6px;min-width:0;flex:1">
+                  <span class="studio-git-status">${esc(f.status || 'M')}</span>
+                  <span class="mono" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.path)}</span>
+                </span>
+                <span style="display:inline-flex;gap:4px;flex-shrink:0">
+                  <button type="button" class="insp-mini-btn" data-preview-file="${esc(f.path)}" data-preview-mode="diff">Diff</button>
+                  <button type="button" class="insp-mini-btn" data-step-mention-file="${esc(f.path)}">@ Mention</button>
+                </span>
+              </div>
+            `
+            )
+            .join('')
+        : `<div class="meta-timestamp">Working tree clean — zero uncommitted files.</div>`;
+
+      const commitsHtml = commits.length
+        ? commits
+            .slice(0, 6)
+            .map(
+              (c) => `
+              <div class="studio-git-file-row">
+                <span class="mono" style="color:var(--brass);font-size:10.5px">${esc(c.hash || '')}</span>
+                <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.subject || '')}</span>
+                <span class="meta-timestamp tabular">${esc(c.relativeTime || '')}</span>
+              </div>
+            `
+            )
+            .join('')
+        : `<div class="meta-timestamp">Connect to workstation bridge to inspect commit history.</div>`;
+
+      bodyEl.innerHTML = `
+        <div class="studio-lens-section">
+          <div class="studio-lens-head">
+            <span class="studio-lens-title">Working Tree Changes (${modFiles.length})</span>
+            <button type="button" class="insp-mini-btn" data-git-prompt-action="review">Ask AI to Review All</button>
+          </div>
+          ${modHtml}
+        </div>
+        <div class="studio-lens-section">
+          <div class="studio-lens-head">
+            <span class="studio-lens-title">Recent Commits</span>
+          </div>
+          ${commitsHtml}
+        </div>
+      `;
+      return;
+    }
+
+    if (prefs.inspectorTab === 'canvas') {
+      const ports = Array.isArray(studioCap?.ports) ? studioCap.ports : [];
+      const rawSkills = Array.isArray(studioCap?.skills) ? studioCap.skills : [];
+      const rankedSkills = rankByFreq(rawSkills, 'skills', (s) => s.id || s.name);
+      const tables = extractSessionStructuredTables(messages);
+      const snippets = extractSessionCanvasSnippets(messages);
+
+      if (subbarEl) {
+        subbarEl.hidden = false;
+        subbarEl.innerHTML = `
+          <span class="insp-sub-path"><span class="insp-sub-path-txt">Live Canvas · ${tables.length} Data Grid${tables.length === 1 ? '' : 's'} · ${rankedSkills.length} Skills</span></span>
+          <span class="insp-sub-actions">
+            <button type="button" class="insp-mini-btn" data-studio-cap-refresh="1">↻ Refresh</button>
+          </span>
+        `;
+      }
+
+      const portsHtml = ports.length
+        ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${ports
+            .map(
+              (p) =>
+                `<a href="${esc(p.url)}" target="_blank" rel="noopener" class="insp-mini-btn" style="text-decoration:none">● :${p.port} ${esc(p.label)}</a>`
+            )
+            .join('')}</div>`
+        : `<div class="meta-timestamp">No local dev servers detected on ports 3000–8787.</div>`;
+
+      let gridHtml = `<div class="meta-timestamp">Markdown tables and JSON arrays in this conversation automatically render as a searchable data grid here.</div>`;
+      if (tables.length > 0) {
+        const primaryTbl = tables[tables.length - 1];
+        const qGrid = String(canvasGridFilterText || '').trim().toLowerCase();
+        const filteredRows = qGrid
+          ? primaryTbl.rows.filter((r) => r.some((cell) => String(cell).toLowerCase().includes(qGrid)))
+          : primaryTbl.rows;
+        gridHtml = `
+          <input type="search" id="canvas-grid-search" class="q-dock-other" placeholder="Filter ${primaryTbl.rows.length} rows…" value="${esc(canvasGridFilterText)}" autocomplete="off">
+          <div class="canvas-data-grid-wrap">
+            <table class="canvas-data-grid tabular">
+              <thead><tr>${primaryTbl.headers.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+              <tbody>${filteredRows
+                .slice(0, 40)
+                .map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`)
+                .join('')}</tbody>
+            </table>
+          </div>
+        `;
+      }
+
+      let sandboxHtml = '';
+      if (snippets.length > 0) {
+        const lastSnip = snippets[snippets.length - 1];
+        const safeDoc =
+          lastSnip.lang === 'mermaid'
+            ? `<!doctype html><html><body style="margin:10px;font-family:monospace;font-size:12px;background:#18181b;color:#e4e4e7"><pre>${esc(lastSnip.code)}</pre></body></html>`
+            : lastSnip.code;
+        sandboxHtml = `
+          <div class="studio-lens-section">
+            <div class="studio-lens-head">
+              <span class="studio-lens-title">Sandboxed ${esc(lastSnip.lang.toUpperCase())} Preview (Zero-Script Isolation)</span>
+            </div>
+            <iframe class="canvas-sandbox-frame" sandbox="" referrerpolicy="no-referrer" srcdoc="${esc(safeDoc)}"></iframe>
+          </div>
+        `;
+      }
+
+      const skillsHtml = rankedSkills.length
+        ? rankedSkills
+            .slice(0, 12)
+            .map(
+              (s) => `
+              <div class="studio-skill-row">
+                <div style="min-width:0;flex:1">
+                  <div style="font-weight:600;color:var(--text-heading)">${esc(s.name)} <span class="meta-timestamp">(${esc(s.scope || 'skill')})</span></div>
+                  <div class="meta-timestamp" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.description || '')}</div>
+                </div>
+                <button type="button" class="insp-mini-btn" data-use-studio-skill="${esc(s.name)}">Use Skill</button>
+              </div>
+            `
+            )
+            .join('')
+        : `<div class="meta-timestamp">No skills discovered yet.</div>`;
+
+      const prevGridInp = $('canvas-grid-search');
+      const hadGridFocus = document.activeElement === prevGridInp;
+      const prevSelStart = hadGridFocus ? prevGridInp.selectionStart : null;
+      const prevSelEnd = hadGridFocus ? prevGridInp.selectionEnd : null;
+
+      bodyEl.innerHTML = `
+        <div class="studio-lens-section">
+          <div class="studio-lens-head"><span class="studio-lens-title">Live Local Port Radar</span></div>
+          ${portsHtml}
+        </div>
+        <div class="studio-lens-section">
+          <div class="studio-lens-head"><span class="studio-lens-title">Interactive Data Grid (${tables.length})</span></div>
+          ${gridHtml}
+        </div>
+        ${sandboxHtml}
+        <div class="studio-lens-section">
+          <div class="studio-lens-head"><span class="studio-lens-title">Built-in AI Skills Pack (Frequency-First)</span></div>
+          ${skillsHtml}
+        </div>
+      `;
+      if (hadGridFocus) {
+        const nextGridInp = $('canvas-grid-search');
+        if (nextGridInp) {
+          nextGridInp.focus();
+          try {
+            if (typeof prevSelStart === 'number') {
+              nextGridInp.setSelectionRange(prevSelStart, prevSelEnd ?? prevSelStart);
+            }
+          } catch {}
+        }
+      }
+      return;
+    }
+
+    if (prefs.inspectorTab === 'agents') {
+      const rawChecks = Array.isArray(studioCap?.checks) ? studioCap.checks : [];
+      const rankedChecks = rankByFreq(rawChecks, 'checks', (c) => c.id);
+
+      if (subbarEl) {
+        subbarEl.hidden = false;
+        subbarEl.innerHTML = `
+          <span class="insp-sub-path"><span class="insp-sub-path-txt">${rankedChecks.length} Studio Check${rankedChecks.length === 1 ? '' : 's'} · ${allTasks.length} Side Agent${allTasks.length === 1 ? '' : 's'}${runningCount > 0 ? ` · ${runningCount} Live` : ''}</span></span>
+          <span class="insp-sub-actions">
+            <button type="button" class="insp-mini-btn" data-insp-refresh-agents="1">↻ Refresh</button>
             ${runningCount > 0 && sid ? `<button type="button" class="insp-mini-btn" style="color:var(--crimson)" data-bg-act="stop-session-all" data-sess-id="${esc(sid)}" data-prov="${provKey}">■ Stop All</button>` : ''}
           </span>
         `;
       }
-      if (allTasks.length === 0) {
-        bodyEl.innerHTML = `<div class="insp-empty">No Side Agents or background tasks recorded in this session yet.<br>Subagents spawned via <code class="md-inline-code">invoke_subagent</code> or Claude <code class="md-inline-code">Task</code> appear here with live trace output.</div>`;
-        return;
-      }
-      bodyEl.innerHTML = allTasks
-        .map((t) => {
-          const stInfo = getBgStateBadgeInfo(t.state);
-          const cacheKey = `${sid}:${t.id}`;
-          const isFocused = activeInspectorAgentId && (t.id === activeInspectorAgentId || t.fullId === activeInspectorAgentId);
-          const titleTxt = t.subagentRole || t.summary || t.command || t.id || 'Side Agent';
-          const liveOut =
-            bgTaskLogsCache.get(cacheKey) ||
-            t.outputPreview ||
-            (t.state === 'running'
-              ? 'Agent/task is running — click Refresh to tail live output.'
-              : 'Completed cleanly.');
-          const linkedConvId = String(t.subagentConversationId || '').trim();
-          const hasLinkedSession = Boolean(
-            linkedConvId && (appState?.rows || []).some((r) => r && r.id === linkedConvId)
-          );
-          return `
-            <div class="insp-agent-card${t.state === 'running' ? ' is-running' : ''}" ${isFocused ? 'style="border-color:var(--brass)"' : ''}>
-              <div class="insp-agent-head">
-                <span class="insp-agent-title">${esc(titleTxt)}</span>
-                <span class="bg-kind-badge ${stInfo.cls}">${esc(getBgKindLabel(t.kind))} · ${esc(stInfo.label)}</span>
-              </div>
-              ${t.command ? `<div class="meta-timestamp mono" style="white-space:pre-wrap;word-break:break-word">${esc(String(t.command).slice(0, 260))}</div>` : ''}
-              <pre class="insp-agent-log mono" data-bg-log-key="${esc(cacheKey)}">${esc(liveOut)}</pre>
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:6px">
-                <span class="meta-timestamp tabular">${esc(t.id)}${t.startedAt ? ` · ${esc(timeAgo(t.startedAt))}` : ''}</span>
-                <span style="display:inline-flex;gap:5px">
-                  <button type="button" class="insp-mini-btn" data-bg-act="refresh-log" data-sess-id="${esc(sid)}" data-task-id="${esc(t.id)}" data-prov="${provKey}">↻ Tail</button>
-                  ${hasLinkedSession ? `<button type="button" class="insp-mini-btn" data-open-conv="${esc(linkedConvId)}">Open Thread</button>` : ''}
-                  ${t.state === 'running' ? `<button type="button" class="ide-bg-stop" style="display:inline-flex" data-bg-act="stop-task" data-sess-id="${esc(sid)}" data-task-id="${esc(t.fullId || t.id)}" data-prov="${provKey}">■ Stop</button>` : ''}
-                </span>
-              </div>
-            </div>
-          `;
-        })
-        .join('');
+
+      const checksHtml = rankedChecks.length
+        ? rankedChecks
+            .map((chk) => {
+              const res = studioCheckResultsById.get(`${wsId}::${chk.id}`);
+              const diags = Array.isArray(res?.diagnostics) ? res.diagnostics : [];
+              const statusBadge = res
+                ? res.running
+                  ? `<span class="meta-timestamp">Running…</span>`
+                  : res.ok && res.passed
+                    ? `<span style="color:var(--emerald);font-weight:600;font-size:11px">✓ Passed (${res.durationMs || 1}ms)</span>`
+                    : `<span style="color:var(--crimson);font-weight:600;font-size:11px">✕ Failed</span>`
+                : '';
+              const diagsHtml = diags.length
+                ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:5px">${diags
+                    .map(
+                      (d) =>
+                        `<button type="button" class="studio-diag-pill" data-preview-file="${esc(d.relPath)}#L${d.line}">⚠ ${esc(d.relPath)}:${d.line} · ${esc(String(d.message || '').slice(0, 64))}</button>`
+                    )
+                    .join('')}</div>`
+                : '';
+              return `
+                <div style="display:flex;flex-direction:column;gap:4px">
+                  <div class="studio-check-row">
+                    <div style="min-width:0;flex:1">
+                      <div style="font-weight:600;color:var(--text-heading)">${esc(chk.label)}</div>
+                      <div class="meta-timestamp mono">${esc(chk.commandPreview || chk.id)}</div>
+                    </div>
+                    ${statusBadge}
+                    <button type="button" class="insp-mini-btn" data-run-studio-check="${esc(chk.id)}" ${studioCheckBusy ? 'disabled' : ''}>▶ Run</button>
+                  </div>
+                  ${diagsHtml}
+                  ${res && (res.output || res.error) ? `<pre class="studio-check-output">${esc(res.output || res.error)}</pre>` : ''}
+                </div>
+              `;
+            })
+            .join('')
+        : `<div class="meta-timestamp">Discovering allowlisted workspace checks…</div>`;
+
+      const agentsHtml =
+        allTasks.length === 0
+          ? `<div class="meta-timestamp">No Side Agents or background tasks recorded in this session yet. Subagents spawned via <code class="md-inline-code">invoke_subagent</code> or Claude <code class="md-inline-code">Task</code> appear here with live trace output.</div>`
+          : allTasks
+              .map((t) => {
+                const stInfo = getBgStateBadgeInfo(t.state);
+                const cacheKey = `${sid}:${t.id}`;
+                const isFocused = activeInspectorAgentId && (t.id === activeInspectorAgentId || t.fullId === activeInspectorAgentId);
+                const titleTxt = t.subagentRole || t.summary || t.command || t.id || 'Side Agent';
+                const liveOut =
+                  bgTaskLogsCache.get(cacheKey) ||
+                  t.outputPreview ||
+                  (t.state === 'running'
+                    ? 'Agent/task is running — click Refresh to tail live output.'
+                    : 'Completed cleanly.');
+                const linkedConvId = String(t.subagentConversationId || '').trim();
+                const hasLinkedSession = Boolean(
+                  linkedConvId && (appState?.rows || []).some((r) => r && r.id === linkedConvId)
+                );
+                return `
+                  <div class="insp-agent-card${t.state === 'running' ? ' is-running' : ''}" ${isFocused ? 'style="border-color:var(--brass)"' : ''}>
+                    <div class="insp-agent-head">
+                      <span class="insp-agent-title">${esc(titleTxt)}</span>
+                      <span class="bg-kind-badge ${stInfo.cls}">${esc(getBgKindLabel(t.kind))} · ${esc(stInfo.label)}</span>
+                    </div>
+                    ${t.command ? `<div class="meta-timestamp mono" style="white-space:pre-wrap;word-break:break-word">${esc(String(t.command).slice(0, 260))}</div>` : ''}
+                    <pre class="insp-agent-log mono" data-bg-log-key="${esc(cacheKey)}">${esc(liveOut)}</pre>
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px">
+                      <span class="meta-timestamp tabular">${esc(t.id)}${t.startedAt ? ` · ${esc(timeAgo(t.startedAt))}` : ''}</span>
+                      <span style="display:inline-flex;gap:5px">
+                        <button type="button" class="insp-mini-btn" data-bg-act="refresh-log" data-sess-id="${esc(sid)}" data-task-id="${esc(t.id)}" data-prov="${provKey}">↻ Tail</button>
+                        ${hasLinkedSession ? `<button type="button" class="insp-mini-btn" data-open-conv="${esc(linkedConvId)}">Open Thread</button>` : ''}
+                        ${t.state === 'running' ? `<button type="button" class="ide-bg-stop" style="display:inline-flex" data-bg-act="stop-task" data-sess-id="${esc(sid)}" data-task-id="${esc(t.fullId || t.id)}" data-prov="${provKey}">■ Stop</button>` : ''}
+                      </span>
+                    </div>
+                  </div>
+                `;
+              })
+              .join('');
+
+      bodyEl.innerHTML = `
+        <div class="studio-lens-section">
+          <div class="studio-lens-head"><span class="studio-lens-title">1-Click Native Studio Checks &amp; Error Lens</span></div>
+          ${checksHtml}
+        </div>
+        <div class="studio-lens-section">
+          <div class="studio-lens-head"><span class="studio-lens-title">Side Agents &amp; Background Tasks (${allTasks.length})</span></div>
+          ${agentsHtml}
+        </div>
+      `;
       return;
     }
 
-    // Tab 3: Outline (Prompts, Checkpoints & Artifacts)
+    // Tab 5: Outline (Prompts, Checkpoints & Artifacts)
     if (subbarEl) {
       subbarEl.hidden = false;
       subbarEl.innerHTML = `<span class="insp-sub-path"><span class="insp-sub-path-txt">Session Prompts, Checkpoints &amp; Artifacts</span></span>`;
@@ -9152,6 +9793,7 @@
     );
 
     renderChatQuestionDock(activeRow, messages, matchingQuestionApproval, provKey, isNewDraft);
+    renderSplitWatchPane();
     renderSplitInspector(activeRow, threadDetail, messages, provKey, isNewDraft);
 
     // Conversation Stream
@@ -9395,18 +10037,52 @@
           }
 
           const toolsKey = `${turnIdKey}:tools`;
-          const defaultToolsOpen =
-            cleanedText || hasTurnQuestions
-              ? Boolean(isLastTurn && activeRow?.status === 'working')
-              : true;
+          const defaultToolsOpen = false;
           const isToolsOpen =
             savedOpenMap && savedOpenMap.has(toolsKey)
               ? savedOpenMap.get(toolsKey)
               : defaultToolsOpen;
           const toolsPanelCls =
             cleanedText || hasTurnQuestions ? 'tools-details' : 'tools-details active-tools-panel';
+
+          const changedMap = new Map();
+          for (const et of editTools) {
+            const fp = String(et.relPath || et.file || '').split('#')[0].trim();
+            if (!fp) continue;
+            const k = fp.replace(/\\/g, '/').toLowerCase();
+            const prev = changedMap.get(k);
+            changedMap.set(k, {
+              target: fp,
+              base: fp.split(/[\\/]/).pop() || fp,
+              added: Number(prev?.added || 0) + Number(et.addedLines ?? et.added ?? 0),
+              removed: Number(prev?.removed || 0) + Number(et.removedLines ?? et.removed ?? 0)
+            });
+          }
+          const changedChips = Array.from(changedMap.values()).slice(0, 6);
+          const isTurnActivelyWorking = Boolean(isLastTurn && isThreadActivelyWorking && lastTool);
+          const changeSetStripHtml =
+            changedChips.length > 0 || isTurnActivelyWorking
+              ? `<div class="turn-changeset-strip">
+                  ${
+                    changedChips.length > 0
+                      ? `<div class="turn-cs-files"><span class="turn-cs-kicker">Changed</span>${changedChips
+                          .map(
+                            (cf) =>
+                              `<button type="button" class="turn-cs-chip" data-preview-file="${esc(cf.target)}" data-preview-mode="diff"><span>${esc(cf.base)}</span>${cf.added > 0 ? `<span class="turn-cs-add tabular">+${cf.added}</span>` : ''}${cf.removed > 0 ? `<span class="turn-cs-del tabular">-${cf.removed}</span>` : ''}</button>`
+                          )
+                          .join('')}</div>`
+                      : '<span></span>'
+                  }
+                  ${
+                    isTurnActivelyWorking
+                      ? `<span class="turn-cs-live"><span class="turn-cs-pulse"></span><span>${esc(lastTool.label || 'Running')} ${esc(lastTool.file || lastTool.summary || lastTool.command || '')}</span></span>`
+                      : ''
+                  }
+                </div>`
+              : '';
+
           const toolsHtml = stepToolCalls.length
-            ? `<details class="${toolsPanelCls}" data-chat-detail-key="${esc(toolsKey)}" data-rendered-open="${isToolsOpen ? '1' : '0'}"${isToolsOpen ? ' open' : ''}><summary>${summaryLabelHtml}</summary>${toolCardsHtml}</details>`
+            ? `${changeSetStripHtml}<details class="${toolsPanelCls}" data-chat-detail-key="${esc(toolsKey)}" data-rendered-open="${isToolsOpen ? '1' : '0'}"${isToolsOpen ? ' open' : ''}><summary>${summaryLabelHtml}</summary>${toolCardsHtml}</details>`
             : '';
 
           const thinkHtml = renderCompactedThoughtHtml({
@@ -11111,6 +11787,122 @@
         $('btn-palette-picker')?.setAttribute('aria-expanded', 'false');
         return;
       }
+      if (e.target.closest('#btn-toggle-composer-route')) {
+        prefs.composerRouteExpanded = !prefs.composerRouteExpanded;
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        updateComposerActionButton();
+        return;
+      }
+      const openLensBtn = e.target.closest('[data-open-lens]');
+      if (openLensBtn) {
+        const lens = openLensBtn.dataset.openLens || 'code';
+        if (prefs.inspectorOpen && prefs.inspectorTab === lens) {
+          setInspectorOpen(false);
+        } else {
+          setInspectorOpen(true, lens);
+        }
+        return;
+      }
+      if (e.target.closest('#btn-split-watch')) {
+        prefs.splitWatchOpen = !prefs.splitWatchOpen;
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        renderChatView(false);
+        return;
+      }
+      if (e.target.closest('[data-split-watch-close]')) {
+        prefs.splitWatchOpen = false;
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        renderChatView(false);
+        return;
+      }
+      const splitSwapBtn = e.target.closest('[data-split-watch-swap]');
+      if (splitSwapBtn) {
+        const targetId = String(splitSwapBtn.dataset.splitWatchSwap || '').trim();
+        if (targetId && targetId !== prefs.selectedThreadId) {
+          const prevPrimary = prefs.selectedThreadId;
+          prefs.splitWatchThreadId = prevPrimary;
+          prefs.selectedThreadId = targetId;
+          prefs.lastReplyThreadId = targetId;
+          prefs.composerMode = 'reply';
+          ensureEditorTabOpen(targetId);
+          recordFreqUsage('threads', targetId);
+          saveJson(STORAGE_KEYS.PREFS, prefs);
+          renderChatView(true);
+          renderIdeSidebar();
+          fetchThreadDetail(targetId).catch(() => {});
+        }
+        return;
+      }
+      const quoteLineBtn = e.target.closest('[data-quote-line]');
+      if (quoteLineBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const ref = String(quoteLineBtn.dataset.quoteLine || '').trim();
+        const inp = $('composer-input');
+        if (ref && inp) {
+          const token = `@${ref} `;
+          const cur = inp.value || '';
+          inp.value = cur && !cur.endsWith(' ') ? `${cur} ${token}` : `${cur}${token}`;
+          inp.focus();
+          updateComposerActionButton();
+          showToast(`Quoted ${token.trim()} in composer`);
+        }
+        return;
+      }
+      const askReviewBtn = e.target.closest('[data-insp-ask-review]');
+      if (askReviewBtn) {
+        const fp = String(askReviewBtn.dataset.inspAskReview || '').trim();
+        const inp = $('composer-input');
+        if (fp && inp) {
+          inp.value = `Review changes in @${fp} for edge cases, regressions, and security invariants.`;
+          inp.focus();
+          updateComposerActionButton();
+        }
+        return;
+      }
+      const gitPromptBtn = e.target.closest('[data-git-prompt-action]');
+      if (gitPromptBtn) {
+        const act = gitPromptBtn.dataset.gitPromptAction;
+        const inp = $('composer-input');
+        if (inp) {
+          inp.value =
+            act === 'commit'
+              ? 'Summarize all uncommitted working tree changes and stage a clean, verified commit.'
+              : 'Review all modified files in the current git working tree and flag any potential issues.';
+          inp.focus();
+          updateComposerActionButton();
+        }
+        return;
+      }
+      if (e.target.closest('[data-studio-cap-refresh]')) {
+        const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId) || null;
+        await fetchStudioCapabilities(activeRow, true);
+        showToast('Refreshed workspace studio capabilities');
+        return;
+      }
+      const useSkillBtn = e.target.closest('[data-use-studio-skill]');
+      if (useSkillBtn) {
+        const skillName = String(useSkillBtn.dataset.useStudioSkill || '').trim();
+        const inp = $('composer-input');
+        if (skillName && inp) {
+          recordFreqUsage('skills', skillName);
+          const prefix = `Use the ${skillName} skill: `;
+          inp.value = inp.value ? `${prefix}${inp.value}` : prefix;
+          inp.focus();
+          updateComposerActionButton();
+          renderChatView(false);
+        }
+        return;
+      }
+      const runCheckBtn = e.target.closest('[data-run-studio-check]');
+      if (runCheckBtn) {
+        const chkId = String(runCheckBtn.dataset.runStudioCheck || '').trim();
+        const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId) || null;
+        if (chkId) {
+          await executeStudioCheck(chkId, activeRow);
+        }
+        return;
+      }
       if (e.target.closest('#btn-toggle-inspector')) {
         haptic(8);
         setInspectorOpen(!prefs.inspectorOpen);
@@ -11151,8 +11943,9 @@
         return;
       }
       if (e.target.closest('[data-insp-refresh-agents]')) {
+        const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId) || null;
+        await fetchStudioCapabilities(activeRow, true);
         if (prefs.selectedThreadId && !isNewSessionMode()) {
-          const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId);
           const prov = activeRow?.provider || pinnedNavProvider || 'antigravity';
           await fetchThreadDetail(prefs.selectedThreadId, prov);
           const { allTasks } = getSessionBackgroundTasks(activeRow, threadsCache[prefs.selectedThreadId]);
@@ -11162,7 +11955,7 @@
             }
           }
           renderChatView(false);
-          showToast('Refreshed Side Agents & task traces');
+          showToast('Refreshed Studio Checks & Side Agents');
         }
         return;
       }
@@ -11171,9 +11964,10 @@
         e.preventDefault();
         e.stopPropagation();
         const fileTarget = previewFileEl.dataset.previewFile || '';
+        const viewMode = previewFileEl.dataset.previewMode === 'diff' ? 'diff' : 'source';
         if (fileTarget) {
           if (prefs.activeTab !== 'chat') switchTab('chat');
-          setInspectorOpen(true, 'code', { fileTarget });
+          setInspectorOpen(true, 'code', { fileTarget, viewMode });
         }
         return;
       }
@@ -11565,9 +12359,14 @@
             d.open = anyClosed;
           });
           const parentTools = stack.closest('details.tools-details[data-chat-detail-key]');
-          if (parentTools && openMap && parentTools.dataset.chatDetailKey) {
-            parentTools.dataset.renderedOpen = parentTools.open ? '1' : '0';
-            openMap.set(parentTools.dataset.chatDetailKey, parentTools.open);
+          if (parentTools) {
+            if (anyClosed && !parentTools.open) {
+              parentTools.open = true;
+            }
+            if (openMap && parentTools.dataset.chatDetailKey) {
+              parentTools.dataset.renderedOpen = parentTools.open ? '1' : '0';
+              openMap.set(parentTools.dataset.chatDetailKey, parentTools.open);
+            }
           }
           toggleStepsBtn.textContent = anyClosed ? 'Collapse all' : 'Expand all';
         }
@@ -12750,6 +13549,33 @@
     $('mobile-sync-btn')?.addEventListener('click', () => syncData({ toast: true }));
     $('btn-refresh-git')?.addEventListener('click', () => renderWorkspacesView());
 
+    document.addEventListener('input', (ev) => {
+      if (isPinLocked()) return;
+      if (ev.target && ev.target.id === 'canvas-grid-search') {
+        canvasGridFilterText = String(ev.target.value || '');
+        const sid = prefs.selectedThreadId || '';
+        const row = (appState?.rows || []).find((r) => r && r.id === sid) || null;
+        const td = isNewSessionMode() ? null : threadsCache[sid] || null;
+        const msgs = coalesceThreadMessages(td?.messages || []);
+        const provKey = (td?.provider || row?.provider) === 'claude' ? 'claude' : 'antigravity';
+        renderSplitInspector(row, td, msgs, provKey, isNewSessionMode(), true);
+      }
+    });
+
+    document.addEventListener('change', (ev) => {
+      if (isPinLocked()) return;
+      if (ev.target && ev.target.id === 'split-watch-session-select') {
+        const nextId = String(ev.target.value || '').trim();
+        if (nextId) {
+          prefs.splitWatchThreadId = nextId;
+          recordFreqUsage('threads', nextId);
+          saveJson(STORAGE_KEYS.PREFS, prefs);
+          renderSplitWatchPane();
+          fetchThreadDetail(nextId).catch(() => {});
+        }
+      }
+    });
+
     // Background Tasks & Context Window Popovers
     $('btn-bg-tasks')?.addEventListener('click', () => {
       const bgPop = $('bg-tasks-popover');
@@ -13179,6 +14005,14 @@
         ) {
           setInspectorOpen(false);
         }
+        if (
+          prefs.splitWatchOpen &&
+          (window.innerWidth <= 900 || document.activeElement?.closest?.('#chat-split-watch-pane'))
+        ) {
+          prefs.splitWatchOpen = false;
+          saveJson(STORAGE_KEYS.PREFS, prefs);
+          renderSplitWatchPane();
+        }
       }
     });
 
@@ -13221,6 +14055,12 @@
       }
       if (window.innerWidth <= 1024 && prefs.inspectorOpen) {
         setInspectorOpen(false);
+        return;
+      }
+      if (window.innerWidth <= 900 && prefs.splitWatchOpen) {
+        prefs.splitWatchOpen = false;
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        renderSplitWatchPane();
         return;
       }
       const targetTab = ev.state?.theoTab || 'pulse';
@@ -13433,16 +14273,29 @@
 
   function updateComposerActionButton() {
     const running = isSessionActivelyRunning(prefs.selectedThreadId);
-    const stopHdrBtn = $('btn-chat-stop');
-    if (stopHdrBtn) {
-      stopHdrBtn.hidden = !running;
-    }
-    const btn = $('composer-send-btn');
-    if (!btn) return;
     const inp = $('composer-input');
     const hasDraft = Boolean((inp && inp.value.trim().length > 0) || composerAttachments.length > 0);
     const isReplyMode = !prefs.composerMode || prefs.composerMode === 'reply';
     const shouldShowStop = isReplyMode && !hasDraft && running;
+
+    const compBox = $('composer-box');
+    const routeToggleBtn = $('btn-toggle-composer-route');
+    if (compBox) {
+      compBox.classList.toggle('is-reply-compact', isReplyMode && !isNewSessionMode());
+      compBox.classList.toggle('is-route-open', Boolean(prefs.composerRouteExpanded || isNewSessionMode()));
+    }
+    if (routeToggleBtn) {
+      routeToggleBtn.hidden = isNewSessionMode();
+      routeToggleBtn.classList.toggle('active', Boolean(prefs.composerRouteExpanded));
+      routeToggleBtn.setAttribute('aria-expanded', prefs.composerRouteExpanded ? 'true' : 'false');
+    }
+
+    const stopHdrBtn = $('btn-chat-stop');
+    if (stopHdrBtn) {
+      stopHdrBtn.hidden = !(running && !shouldShowStop);
+    }
+    const btn = $('composer-send-btn');
+    if (!btn) return;
     const shouldBrighten = !shouldShowStop && hasDraft;
     btn.classList.toggle('is-stop', shouldShowStop);
     btn.classList.toggle('is-ready', shouldBrighten);
@@ -13936,7 +14789,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=59', { updateViaCache: 'none' })
+        .register('sw.js?v=60', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
