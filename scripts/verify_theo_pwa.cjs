@@ -280,6 +280,17 @@ function buildSeedCachePayload() {
           behind: 0,
           deviceId: 'theo-laptop',
           deviceName: 'THEO Laptop'
+        },
+        {
+          id: 'isabi-app',
+          name: 'isabi-app',
+          path: 'C:\\Users\\HusseinBdeir\\bhfirms\\isabi-app',
+          branch: 'main',
+          dirtyCount: 1,
+          ahead: 0,
+          behind: 0,
+          deviceId: 'main-workstation',
+          deviceName: 'Main Workstation'
         }
       ]
     },
@@ -307,6 +318,12 @@ function buildSeedCachePayload() {
               '- Safe link: [THEO Live](https://husseinbdeir.github.io/theo/)'
             ].join('\n'),
             toolCalls: [
+              {
+                name: 'read_file',
+                badge: 'Viewed',
+                file: 'ISABICommand.md#L1-119',
+                summary: 'Read ISABICommand.md lines 1-119'
+              },
               {
                 name: 'edit_file',
                 badge: 'Edited',
@@ -348,6 +365,7 @@ async function main() {
     ['index.html css', indexSrc, /css\/theo\.css\?v=(\d+)/g],
     ['index.html app.js', indexSrc, /js\/app\.js\?v=(\d+)/g],
     ['index.html manifest', indexSrc, /manifest\.json\?v=(\d+)/g],
+    ['index.html icon.svg', indexSrc, /icon\.svg\?v=(\d+)/g],
     ['sw.js shell assets', swSrc, /\?v=(\d+)/g],
     ['manifest.json icons', manifestSrc, /\?v=(\d+)/g],
     ['js/app.js registerServiceWorker', appJsSrc, /serviceWorker\s*\.register\(\s*['"]sw\.js\?v=(\d+)['"]/g]
@@ -505,7 +523,9 @@ async function main() {
               const cs = document.getElementById('chat-stream');
               if (cs) chatStreamH = cs.clientHeight;
             }
-            return { docScrollW, vw, titleEls, xssGlobal, jsLinks, inlineHandlers, chatContainerOverflow, chatStreamH };
+            const inlineExp = document.getElementById('btn-expand-sidebar-inline');
+            const inlineExpandDisplay = inlineExp ? getComputedStyle(inlineExp).display : 'none';
+            return { docScrollW, vw, titleEls, xssGlobal, jsLinks, inlineHandlers, chatContainerOverflow, chatStreamH, inlineExpandDisplay };
           })()`);
 
           assert.ok(
@@ -516,6 +536,13 @@ async function main() {
           assert.strictEqual(probe.xssGlobal, null, `XSS executed on ${vp.label} ${theme} ${tab}`);
           assert.strictEqual(probe.jsLinks, 0, `javascript: href rendered on ${vp.label} ${theme} ${tab}`);
           assert.strictEqual(probe.inlineHandlers, 0, `Inline event handler rendered on ${vp.label} ${theme} ${tab}`);
+          if (vp.w <= 1024 && tab === 'chat') {
+            assert.strictEqual(
+              probe.inlineExpandDisplay,
+              'none',
+              `#btn-expand-sidebar-inline must be hidden on <=1024px (${vp.label}), got ${probe.inlineExpandDisplay}`
+            );
+          }
 
           if (vp.w === 1440 && tab === 'chat') {
             assert.ok(
@@ -1052,6 +1079,321 @@ async function main() {
     assert.strictEqual(h2Check.keyAfterUnlock, '9'.repeat(64), 'Deferred #pair= edgeAccessKey must apply immediately on PIN unlock (H-2)');
     assert.strictEqual(h2Check.cloudKeyAfterUnlock, 'pin-unlocked-cloud-key', 'Deferred #pair= cloudKey must apply on PIN unlock (H-2)');
     console.log('[PASS] Adversarial #6: C-1 partial #pair= block, H-1 unauthed /api/ping guard, & H-2 PIN-locked #pair= deferral');
+
+    // Adversarial Check #7: v57->v58 Carbon Dark upgrade continuity, malformed openEditorTabs sanitization, XSS session title in tabs/sidebar, tab-close neighbor fallback, & PIN-locked Ctrl+B guard
+    await cdp.send(
+      'Emulation.setDeviceMetricsOverride',
+      { width: 1440, height: 900, deviceScaleFactor: 2, mobile: false },
+      sessionId
+    );
+    const v58Seed = buildSeedCachePayload();
+    v58Seed.state.rows.push({
+      id: 'sess-xss',
+      title: 'Hostile <img src=x onerror="window.__XSS=77"> Tab',
+      provider: 'antigravity',
+      model: 'Gemini 4 Argon (High)',
+      folder: 'theo',
+      status: 'completed',
+      open: true,
+      at: Date.now() - 120000
+    });
+    await evalJs(`(() => {
+      localStorage.removeItem('theo_remote_pin_hash_v1');
+      localStorage.removeItem('theo_remote_pin_v1');
+      localStorage.setItem('theo_remote_cache_v3', ${JSON.stringify(JSON.stringify(v58Seed))});
+      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify({
+        theme: 'light',
+        themeUserSet: false,
+        activeTab: 'chat',
+        selectedThreadId: 'sess-alpha',
+        composerMode: 'reply',
+        openEditorTabs: [null, '', 42, '__new__', 'sess-alpha', 'sess-beta', 'sess-xss', 'sess-alpha'],
+        freqUsage: {
+          devices: { 'theo-laptop': 5 },
+          repos: { 'isabi-app': 25, 'theo': 2 },
+          threads: { 'sess-beta': 12, 'sess-alpha': 4 },
+          commands: { '/sync': 19 }
+        }
+      }));
+    })()`);
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 450));
+
+    const v58UpgradeProbe = await evalJs(`(async () => {
+      const upgradedTheme = document.documentElement.getAttribute('data-theme');
+      const prefsBoot = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+      const tabEls = Array.from(document.querySelectorAll('#ide-editor-tabs [data-editor-tab-id]'));
+      const tabIdsBefore = tabEls.map((el) => el.dataset.editorTabId);
+      const inlineHandlers = document.querySelectorAll('[onclick],[onerror],[onload]').length;
+      const xssVal = window.__XSS || null;
+
+      // Close active tab sess-alpha -> must fall back cleanly to neighbor sess-beta
+      document.querySelector('#ide-editor-tabs [data-close-editor-tab="sess-alpha"]')?.click();
+      await new Promise((r) => setTimeout(r, 40));
+      const prefsAfterClose = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+
+      // Ctrl+B toggles sidebar when unlocked
+      const collapsedBefore = document.documentElement.classList.contains('sidebar-collapsed');
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }));
+      await new Promise((r) => setTimeout(r, 30));
+      const collapsedAfterToggle = document.documentElement.classList.contains('sidebar-collapsed');
+      // Restore expanded sidebar
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }));
+      await new Promise((r) => setTimeout(r, 30));
+
+      return {
+        upgradedTheme,
+        openTabsBoot: prefsBoot.openEditorTabs,
+        tabIdsBefore,
+        inlineHandlers,
+        xssVal,
+        selectedAfterClose: prefsAfterClose.selectedThreadId,
+        collapsedBefore,
+        collapsedAfterToggle
+      };
+    })()`);
+
+    assert.strictEqual(v58UpgradeProbe.upgradedTheme, 'dark', 'v57->v58 upgrade with themeUserSet:false must default to Carbon Dark');
+    assert.strictEqual(v58UpgradeProbe.xssVal, null, 'Hostile session title in editor tabs / sidebar must never execute XSS');
+    assert.strictEqual(v58UpgradeProbe.inlineHandlers, 0, 'Zero inline handlers allowed in tabs or sidebar');
+    assert.strictEqual(
+      v58UpgradeProbe.openTabsBoot.some((x) => !x || typeof x !== 'string' || x === '__new__'),
+      false,
+      `Malformed openEditorTabs entries must be sanitized on boot: ${JSON.stringify(v58UpgradeProbe.openTabsBoot)}`
+    );
+    assert.strictEqual(v58UpgradeProbe.selectedAfterClose, 'sess-beta', 'Closing active editor tab must switch to adjacent open tab');
+    assert.strictEqual(v58UpgradeProbe.collapsedBefore, false, 'Sidebar should start expanded on desktop');
+    assert.strictEqual(v58UpgradeProbe.collapsedAfterToggle, true, 'Ctrl+B must collapse sidebar when unlocked');
+
+    // Verify Ctrl+B is strictly blocked when PIN-locked
+    await evalJs(`localStorage.setItem('theo_remote_pin_v1', '2468')`);
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 400));
+    const pinCtrlBProbe = await evalJs(`(async () => {
+      const before = document.documentElement.classList.contains('sidebar-collapsed');
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }));
+      await new Promise((r) => setTimeout(r, 30));
+      const after = document.documentElement.classList.contains('sidebar-collapsed');
+      for (const d of ['2', '4', '6', '8']) {
+        document.querySelector('#pin-pad button[data-digit="' + d + '"]')?.click();
+      }
+      await new Promise((r) => setTimeout(r, 80));
+      localStorage.removeItem('theo_remote_pin_hash_v1');
+      return { before, after };
+    })()`);
+    assert.strictEqual(pinCtrlBProbe.before, pinCtrlBProbe.after, 'Ctrl+B must NOT toggle sidebar while PIN-locked');
+    console.log('[PASS] Adversarial #7: v57->v58 Carbon upgrade, openEditorTabs sanitization, XSS title neutralization, tab close fallback, & PIN Ctrl+B guard');
+
+    // Adversarial Check #8: Composer @mention & /slash autocomplete, Frequency-First order (Rule 11), Escape dismiss, & local /theme action
+    const slashMentionProbe = await evalJs(`(async () => {
+      // Re-open sess-alpha in editor workbench
+      document.querySelector('#ide-sidebar-tree [data-ide-open-session="sess-alpha"]')?.click();
+      await new Promise((r) => setTimeout(r, 40));
+      const inp = document.getElementById('composer-input');
+      const pop = document.getElementById('composer-slash-popover');
+
+      // 1) Type '@' -> @isabi-app (freq=25) MUST rank above @theo (freq=2) despite theo being first in state.workspaces
+      inp.focus();
+      inp.value = '@';
+      inp.setSelectionRange(1, 1);
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 30));
+      const mentionOpen = !pop.hidden;
+      const mentionLabels = Array.from(pop.querySelectorAll('.slash-pop-lbl')).map((el) => el.textContent.trim());
+
+      // Press Enter to select top @isabi-app -> must attach pill WITHOUT submitting empty prompt
+      inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 40));
+      const pillTexts = Array.from(document.querySelectorAll('#composer-attachments .composer-attach-name')).map((el) => el.textContent.trim());
+
+      // Clear attachment pill
+      document.querySelector('#composer-attachments [data-remove-attach]')?.click();
+      await new Promise((r) => setTimeout(r, 20));
+
+      // 2) Type '/' -> /sync (freq=19) MUST rank first via rankByFreq, and Escape must dismiss cleanly
+      inp.value = '/';
+      inp.setSelectionRange(1, 1);
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 30));
+      const slashLabels = Array.from(pop.querySelectorAll('.slash-pop-lbl')).map((el) => el.textContent.trim());
+      inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 20));
+      const closedOnEsc = pop.hidden === true;
+
+      // 2b) Clicking '/' button on a non-empty draft ("fix layout") must prepend '/ ' and open slash menu
+      inp.value = 'fix layout';
+      document.getElementById('btn-composer-slash')?.click();
+      await new Promise((r) => setTimeout(r, 30));
+      const slashBtnOnDraftOpen = !pop.hidden && pop.querySelectorAll('.slash-pop-item').length >= 5;
+      inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      inp.value = '';
+
+      // 2c) Typing '@ISABICommand' must offer '@ISABICommand.md' WITHOUT '#L1-119' fragment
+      inp.value = '@isabicommand';
+      inp.setSelectionRange(inp.value.length, inp.value.length);
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 30));
+      const fileMentionLabels = Array.from(pop.querySelectorAll('.slash-pop-lbl')).map((el) => el.textContent.trim());
+      inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      inp.value = '';
+
+      // 3) Submit standalone '/theme' -> executes local theme switch without creating user chat turn
+      const themeBefore = document.documentElement.getAttribute('data-theme');
+      const turnsBefore = document.querySelectorAll('#chat-stream .turn-bubble.user').length;
+      inp.value = '/theme';
+      document.getElementById('chat-composer-form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 40));
+      const themeAfter = document.documentElement.getAttribute('data-theme');
+      const turnsAfter = document.querySelectorAll('#chat-stream .turn-bubble.user').length;
+      // Switch back to dark
+      inp.value = '/theme';
+      document.getElementById('chat-composer-form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 30));
+
+      return {
+        mentionOpen,
+        mentionLabels,
+        pillTexts,
+        slashLabels,
+        closedOnEsc,
+        slashBtnOnDraftOpen,
+        fileMentionLabels,
+        themeToggled: themeBefore !== themeAfter,
+        turnsUnchanged: turnsBefore === turnsAfter
+      };
+    })()`);
+
+    assert.strictEqual(slashMentionProbe.mentionOpen, true, 'Typing @ in composer must open #composer-slash-popover');
+    assert.strictEqual(
+      slashMentionProbe.mentionLabels[0],
+      '@isabi-app',
+      `Frequency-first violation in @mention popover: expected @isabi-app (freq=25) first, got ${JSON.stringify(slashMentionProbe.mentionLabels)}`
+    );
+    assert.ok(
+      slashMentionProbe.pillTexts.some((t) => t.includes('isabi-app')),
+      `Enter on @mention item must attach workspace pill without submitting form: got ${JSON.stringify(slashMentionProbe.pillTexts)}`
+    );
+    assert.strictEqual(
+      slashMentionProbe.slashLabels[0],
+      '/sync',
+      `Frequency-first violation in /slash popover: expected /sync (freq=19) first, got ${JSON.stringify(slashMentionProbe.slashLabels)}`
+    );
+    assert.strictEqual(slashMentionProbe.closedOnEsc, true, 'Escape must dismiss #composer-slash-popover');
+    assert.strictEqual(slashMentionProbe.slashBtnOnDraftOpen, true, 'Clicking / button on non-empty draft must open slash command menu');
+    assert.ok(
+      slashMentionProbe.fileMentionLabels.includes('@ISABICommand.md') &&
+        !slashMentionProbe.fileMentionLabels.some((l) => l.includes('#')),
+      `Touched file @mention must strip #L fragments: got ${JSON.stringify(slashMentionProbe.fileMentionLabels)}`
+    );
+    assert.strictEqual(slashMentionProbe.themeToggled, true, 'Standalone /theme must toggle theme locally');
+    assert.strictEqual(slashMentionProbe.turnsUnchanged, true, 'Standalone local /theme action must NOT append literal "/theme" user bubble');
+    console.log('[PASS] Adversarial #8: @mention & /slash autocomplete, Frequency-First order, non-empty / trigger, #L strip, & local /theme interception');
+
+    // Adversarial Check #9: Desktop Split-Workbench Geometry, Re-Render <details> Persistence, Tab/Nested Keydown Guards & Inline Expand Button
+    const workbenchProbe = await evalJs(`(async () => {
+      const actBar = document.querySelector('.ide-activity-bar')?.getBoundingClientRect();
+      const sideBar = document.getElementById('ide-explorer-sidebar')?.getBoundingClientRect();
+      const tabsBar = document.getElementById('ide-editor-tabs-bar')?.getBoundingClientRect();
+      const stream = document.getElementById('chat-stream')?.getBoundingClientRect();
+      const vc = document.querySelector('.view-container.chat-active');
+
+      // Inline expand sidebar button MUST be display:none when sidebar is open, and inline-flex when collapsed on desktop
+      const inlineExpandBtn = document.getElementById('btn-expand-sidebar-inline');
+      const expandBtnDisplayWhenOpen = inlineExpandBtn ? getComputedStyle(inlineExpandBtn).display : 'missing';
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }));
+      await new Promise((r) => setTimeout(r, 25));
+      const expandBtnDisplayWhenCollapsed = inlineExpandBtn ? getComputedStyle(inlineExpandBtn).display : 'missing';
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }));
+      await new Promise((r) => setTimeout(r, 25));
+
+      const expandBtn = document.querySelector('#chat-stream [data-toggle-all-steps]');
+      expandBtn?.click();
+      await new Promise((r) => setTimeout(r, 30));
+      let allSteps = Array.from(document.querySelectorAll('#chat-stream details.code-step-card'));
+      const allExpanded = allSteps.length >= 2 && allSteps.every((d) => d.open === true);
+      const hasDetailBox = Boolean(document.querySelector('#chat-stream .code-step-detail-box'));
+
+      // Force a full renderChatView() overwrite via #btn-bg-tasks toggle -> expanded <details.code-step-card> MUST remain open!
+      document.getElementById('btn-bg-tasks')?.click();
+      await new Promise((r) => setTimeout(r, 30));
+      document.getElementById('btn-close-bgtasks')?.click();
+      await new Promise((r) => setTimeout(r, 20));
+      allSteps = Array.from(document.querySelectorAll('#chat-stream details.code-step-card'));
+      const survivedReRender = allSteps.length >= 2 && allSteps.every((d) => d.open === true);
+
+      // Click @ Mention button inside expanded tool step
+      document.querySelector('#chat-stream [data-step-mention-file]')?.click();
+      await new Promise((r) => setTimeout(r, 30));
+      const stepAttached = document.querySelectorAll('#composer-attachments .composer-attach-pill').length >= 1;
+
+      // Collapse all steps again
+      document.querySelector('#chat-stream [data-toggle-all-steps]')?.click();
+      await new Promise((r) => setTimeout(r, 30));
+      allSteps = Array.from(document.querySelectorAll('#chat-stream details.code-step-card'));
+      const allCollapsed = allSteps.every((d) => d.open === false);
+
+      // Keyboard Enter on role="tab" editor tab activates sess-beta, while Enter on nested .ide-row-act does NOT hijack to open sess-xss
+      const betaTab = document.querySelector('#ide-editor-tabs [data-editor-tab-id="sess-beta"]');
+      betaTab?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 35));
+      const selectedAfterTabEnter = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}').selectedThreadId;
+
+      const xssArchiveBtn = document.querySelector('#ide-sidebar-tree [data-ide-open-session="sess-xss"] .ide-row-act[data-sess-act="archive"]');
+      let defaultPreventedOnNestedBtn = true;
+      if (xssArchiveBtn) {
+        const ev = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+        xssArchiveBtn.dispatchEvent(ev);
+        defaultPreventedOnNestedBtn = ev.defaultPrevented;
+      }
+      const selectedAfterNestedKeydown = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}').selectedThreadId;
+
+      // Open + AGY draft tab and close '__new__' -> must return cleanly to sess-beta without resurrecting closed/archived tabs
+      document.getElementById('rail-new-agy')?.click();
+      await new Promise((r) => setTimeout(r, 30));
+      document.querySelector('#ide-editor-tabs [data-close-editor-tab="__new__"]')?.click();
+      await new Promise((r) => setTimeout(r, 35));
+      const selectedAfterCloseNew = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}').selectedThreadId;
+
+      return {
+        actW: Math.round(actBar?.width || 0),
+        sideW: Math.round(sideBar?.width || 0),
+        tabsH: Math.round(tabsBar?.height || 0),
+        streamH: Math.round(stream?.height || 0),
+        vcOverflow: Math.max(0, (vc?.scrollHeight || 0) - (vc?.clientHeight || 0)),
+        expandBtnDisplayWhenOpen,
+        expandBtnDisplayWhenCollapsed,
+        allExpanded,
+        survivedReRender,
+        hasDetailBox,
+        stepAttached,
+        allCollapsed,
+        selectedAfterTabEnter,
+        defaultPreventedOnNestedBtn,
+        selectedAfterNestedKeydown,
+        selectedAfterCloseNew
+      };
+    })()`);
+
+    assert.strictEqual(workbenchProbe.actW, 48, `Expected 48px VS Code Activity Bar, got ${workbenchProbe.actW}px`);
+    assert.ok(workbenchProbe.sideW >= 260, `Expected visible Explorer Sidebar (>=260px), got ${workbenchProbe.sideW}px`);
+    assert.ok(workbenchProbe.tabsH >= 32, `Expected visible Editor Tabs Bar (>=32px), got ${workbenchProbe.tabsH}px`);
+    assert.ok(workbenchProbe.streamH >= 400, `Expected spacious Editor Stream (>=400px), got ${workbenchProbe.streamH}px`);
+    assert.ok(workbenchProbe.vcOverflow <= 1, `Expected 0px desktop chat overflow, got ${workbenchProbe.vcOverflow}px`);
+    assert.strictEqual(workbenchProbe.expandBtnDisplayWhenOpen, 'none', '#btn-expand-sidebar-inline must be display:none when sidebar is expanded');
+    assert.ok(
+      workbenchProbe.expandBtnDisplayWhenCollapsed === 'flex' || workbenchProbe.expandBtnDisplayWhenCollapsed === 'inline-flex',
+      `#btn-expand-sidebar-inline must be flex/inline-flex when sidebar is collapsed on desktop, got ${workbenchProbe.expandBtnDisplayWhenCollapsed}`
+    );
+    assert.strictEqual(workbenchProbe.allExpanded, true, 'Expand all button must open every interactive tool step');
+    assert.strictEqual(workbenchProbe.survivedReRender, true, 'Expanded <details.code-step-card> must stay open across renderChatView() re-renders');
+    assert.strictEqual(workbenchProbe.hasDetailBox, true, 'Expanded tool step must render .code-step-detail-box');
+    assert.strictEqual(workbenchProbe.stepAttached, true, '@ Mention inside tool step must attach file pill to composer');
+    assert.strictEqual(workbenchProbe.allCollapsed, true, 'Clicking Collapse all must close every tool step');
+    assert.strictEqual(workbenchProbe.selectedAfterTabEnter, 'sess-beta', 'Pressing Enter on [role="tab"] editor tab must activate that session');
+    assert.strictEqual(workbenchProbe.defaultPreventedOnNestedBtn, false, 'Pressing Enter on nested .ide-row-act button must NOT be hijacked by outer .ide-tree-row');
+    assert.strictEqual(workbenchProbe.selectedAfterNestedKeydown, 'sess-beta', 'Nested action keydown must not open outer session row');
+    assert.strictEqual(workbenchProbe.selectedAfterCloseNew, 'sess-beta', 'Closing __new__ draft tab must return cleanly to last reply tab');
+    console.log('[PASS] Adversarial #9: Desktop split-workbench geometry, <details> re-render persistence, keyboard tab/action guards & draft-tab close verified');
 
     // Final error & network quarantine assertions (#18)
     assert.strictEqual(pageExceptions.length, 0, `Uncaught page exceptions: ${JSON.stringify(pageExceptions)}`);

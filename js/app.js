@@ -152,8 +152,11 @@
   );
 
   const DEFAULT_PREFS = {
-    theme: 'light',
+    theme: 'dark',
     themeUserSet: false,
+    sidebarCollapsed: false,
+    sidebarFilter: 'all',
+    openEditorTabs: [],
     sound: true,
     activeTab: 'pulse',
     sessProvider: 'all',
@@ -184,8 +187,21 @@
       : {}
   );
   if (!prefs.themeUserSet) {
-    prefs.theme = 'light';
+    prefs.theme = 'dark';
   }
+  prefs.sidebarCollapsed = Boolean(prefs.sidebarCollapsed);
+  if (!['all', 'working', 'needs_input', 'unread', 'open'].includes(prefs.sidebarFilter)) {
+    prefs.sidebarFilter = 'all';
+  }
+  prefs.openEditorTabs = Array.isArray(prefs.openEditorTabs)
+    ? Array.from(
+        new Set(
+          prefs.openEditorTabs
+            .map((x) => (typeof x === 'string' || typeof x === 'number' ? String(x).trim() : ''))
+            .filter((x) => x && x !== '__new__')
+        )
+      ).slice(0, 14)
+    : [];
   if (!prefs.sessProvider) prefs.sessProvider = 'all';
   if (!prefs.sessStatus) prefs.sessStatus = 'all';
   if (!prefs.telemetryProv) prefs.telemetryProv = 'all';
@@ -2260,17 +2276,29 @@
     );
   }
 
-  // Theme management
+  // Theme & IDE Sidebar management
   function applyTheme(theme, userExplicit = false) {
     prefs.theme = theme === 'dark' ? 'dark' : 'light';
     if (userExplicit) {
       prefs.themeUserSet = true;
     }
     document.documentElement.setAttribute('data-theme', prefs.theme);
+    document.documentElement.classList.toggle('sidebar-collapsed', Boolean(prefs.sidebarCollapsed));
     const meta = $('meta-theme-color');
     if (meta) {
-      meta.setAttribute('content', prefs.theme === 'light' ? '#F4F2EE' : '#0B1730');
+      meta.setAttribute('content', prefs.theme === 'light' ? '#F3F5F9' : '#0D0F14');
     }
+    saveJson(STORAGE_KEYS.PREFS, prefs);
+  }
+
+  function toggleIdeSidebar(forceCollapsed) {
+    if (isPinLocked()) return;
+    const next =
+      typeof forceCollapsed === 'boolean' ? forceCollapsed : !Boolean(prefs.sidebarCollapsed);
+    prefs.sidebarCollapsed = next;
+    document.documentElement.classList.toggle('sidebar-collapsed', next);
+    const btn = $('btn-toggle-sidebar');
+    if (btn) btn.setAttribute('aria-expanded', String(!next));
     saveJson(STORAGE_KEYS.PREFS, prefs);
   }
 
@@ -4035,13 +4063,15 @@
       ? 'Notifications & Home Screen Badge (Web Push Active)'
       : 'Notifications & Home Screen Badge (Tap to enable Web Push)';
     if (pushBtn) {
-      pushBtn.style.borderColor = pushActive ? 'var(--emerald)' : 'var(--brass)';
-      pushBtn.style.color = pushActive ? 'var(--emerald)' : 'var(--brass)';
+      pushBtn.classList.toggle('is-push-active', pushActive);
+      pushBtn.style.borderColor = '';
+      pushBtn.style.color = '';
       pushBtn.setAttribute('aria-label', bellTitle);
     }
     if (railPushBtn) {
-      railPushBtn.style.borderColor = pushActive ? 'var(--emerald)' : 'var(--brass)';
-      railPushBtn.style.color = pushActive ? 'var(--emerald)' : 'var(--brass)';
+      railPushBtn.classList.toggle('is-push-active', pushActive);
+      railPushBtn.style.borderColor = '';
+      railPushBtn.style.color = '';
       railPushBtn.setAttribute('aria-label', bellTitle);
     }
 
@@ -4654,9 +4684,451 @@
     } else if (target === 'analytics') {
       renderAnalyticsView();
     }
+    renderIdeSidebar();
   }
 
   let pendingNewSessionBind = null;
+  const closedEditorTabIds = new Set();
+
+  function ensureEditorTabOpen(tid) {
+    const clean = String(tid || '').trim();
+    if (!clean || clean === '__new__') return;
+    closedEditorTabIds.delete(clean);
+    if (!Array.isArray(prefs.openEditorTabs)) prefs.openEditorTabs = [];
+    if (!prefs.openEditorTabs.includes(clean)) {
+      prefs.openEditorTabs.push(clean);
+      if (prefs.openEditorTabs.length > 12) {
+        const dropIdx = prefs.openEditorTabs.findIndex((id) => id !== clean && id !== prefs.selectedThreadId);
+        if (dropIdx >= 0) prefs.openEditorTabs.splice(dropIdx, 1);
+      }
+      saveJson(STORAGE_KEYS.PREFS, prefs);
+    }
+  }
+
+  function removeEditorTabIds(idsToRemove, advanceIfActive = true) {
+    const rmSet = new Set(
+      (Array.isArray(idsToRemove) ? idsToRemove : [idsToRemove])
+        .map((x) => String(x || '').trim())
+        .filter(Boolean)
+    );
+    if (!rmSet.size) return;
+    for (const id of rmSet) closedEditorTabIds.add(id);
+    if (prefs.lastReplyThreadId && rmSet.has(prefs.lastReplyThreadId)) {
+      prefs.lastReplyThreadId = '';
+    }
+    const curList = Array.isArray(prefs.openEditorTabs) ? [...prefs.openEditorTabs] : [];
+    const activeWasRemoved = Boolean(prefs.selectedThreadId && rmSet.has(prefs.selectedThreadId));
+    const removedIdx = activeWasRemoved ? curList.indexOf(prefs.selectedThreadId) : -1;
+    const nextList = curList.filter((id) => id && !rmSet.has(id));
+    prefs.openEditorTabs = nextList;
+
+    if (advanceIfActive && activeWasRemoved) {
+      const nonArchived = (appState?.rows || []).filter(
+        (r) => r && r.id && !r.draft && !r.archived && !rmSet.has(r.id) && !closedEditorTabIds.has(r.id)
+      );
+      const fallbackTabId =
+        nextList.length > 0
+          ? nextList[Math.max(0, Math.min(removedIdx, nextList.length - 1))]
+          : nonArchived[0]?.id || '';
+      if (fallbackTabId) {
+        prefs.selectedThreadId = fallbackTabId;
+        prefs.lastReplyThreadId = fallbackTabId;
+        prefs.composerMode = 'reply';
+        ensureEditorTabOpen(fallbackTabId);
+        if (prefs.activeTab === 'chat') {
+          fetchThreadDetail(fallbackTabId).catch(() => {});
+        }
+      } else {
+        prefs.composerMode = hasSignedInProviderRemote('antigravity') ? 'new-antigravity' : 'new-claude';
+        prefs.selectedThreadId = '__new__';
+      }
+    }
+    saveJson(STORAGE_KEYS.PREFS, prefs);
+  }
+
+  function closeEditorTab(tid) {
+    const clean = String(tid || '').trim();
+    if (!clean) return;
+    if (clean === '__new__') {
+      exitNewSessionModeToReply('', { allowResurrectClosed: false });
+      renderIdeSidebar();
+      return;
+    }
+    removeEditorTabIds([clean], true);
+    renderChatView(true);
+    renderIdeSidebar();
+  }
+
+  function syncAndRenderEditorTabs() {
+    const tabsEl = $('ide-editor-tabs');
+    if (!tabsEl) return;
+    const prevSerialized = JSON.stringify(prefs.openEditorTabs || []);
+    const rows = (appState?.rows || []).filter((r) => r && r.id && !r.draft);
+    const rowById = new Map(rows.map((r) => [r.id, r]));
+    const isNewDraft = isNewSessionMode();
+
+    let list = Array.isArray(prefs.openEditorTabs)
+      ? Array.from(
+          new Set(
+            prefs.openEditorTabs
+              .map((x) => (typeof x === 'string' || typeof x === 'number' ? String(x).trim() : ''))
+              .filter((x) => x && x !== '__new__')
+          )
+        )
+      : [];
+
+    if (rows.length > 0) {
+      list = list.filter((id) => {
+        if (String(id).startsWith('draft-new-')) return Boolean(threadsCache[id]);
+        const r = rowById.get(id);
+        if (r) return !r.archived;
+        return Boolean(id === prefs.selectedThreadId && threadsCache[id]);
+      });
+    }
+
+    if (list.length === 0 && rows.length > 0) {
+      const candidates = rows
+        .filter((r) => !r.archived && !closedEditorTabIds.has(r.id) && (r.open || r.status === 'working' || r.status === 'waiting'))
+        .slice(0, 6);
+      const seedRows = candidates.length > 0
+        ? candidates
+        : rows.filter((r) => !r.archived && !closedEditorTabIds.has(r.id)).slice(0, 4);
+      list = seedRows.map((r) => r.id);
+    }
+
+    const curTid = String(prefs.selectedThreadId || '').trim();
+    if (!isNewDraft && curTid && curTid !== '__new__') {
+      const curRow = rowById.get(curTid);
+      if (!curRow?.archived && !list.includes(curTid)) {
+        list.push(curTid);
+      }
+    }
+
+    if (list.length > 12) {
+      list = list.filter((id, idx) => idx >= list.length - 12 || id === curTid).slice(-12);
+    }
+    prefs.openEditorTabs = list;
+    if (JSON.stringify(list) !== prevSerialized) {
+      saveJson(STORAGE_KEYS.PREFS, prefs);
+    }
+
+    const tabsHtml = list
+      .map((id) => {
+        const r = rowById.get(id) || threadsCache[id] || { id, title: 'Session', provider: 'antigravity' };
+        const provKey = r.provider === 'claude' ? 'claude' : 'antigravity';
+        const isActive = !isNewDraft && id === curTid;
+        const stCls =
+          r.status === 'working' || liveStreamsByThreadId.get(id)?.status === 'working'
+            ? 'working'
+            : r.status === 'waiting'
+              ? 'waiting'
+              : r.unread
+                ? 'unread'
+                : '';
+        const rawTitle = String(r.title || threadsCache[id]?.title || 'Untitled Session').trim();
+        return `
+          <div class="ide-editor-tab${isActive ? ' active' : ''}" role="tab" tabindex="0" aria-selected="${isActive}" data-editor-tab-id="${esc(id)}" data-session-prov="${provKey}">
+            ${stCls ? `<span class="ide-dot ${stCls}"></span>` : ''}
+            <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
+            <span class="ide-tab-title">${esc(rawTitle)}</span>
+            <button type="button" class="ide-tab-close" data-close-editor-tab="${esc(id)}" aria-label="Close ${esc(rawTitle)}">×</button>
+          </div>
+        `;
+      })
+      .join('');
+
+    const newDraftProv = prefs.composerMode === 'new-claude' ? 'claude' : 'antigravity';
+    const newDraftTabHtml = isNewDraft
+      ? `
+        <div class="ide-editor-tab active is-draft" role="tab" tabindex="0" aria-selected="true" data-editor-tab-id="__new__" data-session-prov="${newDraftProv}">
+          <span class="prov-glyph">${PROVIDER_ICONS[newDraftProv]}</span>
+          <span class="ide-tab-title">New ${newDraftProv === 'claude' ? 'Claude' : 'Antigravity'}</span>
+          <button type="button" class="ide-tab-close" data-close-editor-tab="__new__" aria-label="Close new session draft">×</button>
+        </div>
+      `
+      : '';
+
+    tabsEl.innerHTML = tabsHtml + newDraftTabHtml;
+  }
+
+  function shortSidebarAge(ts) {
+    const n = Number(ts || 0);
+    if (!n) return '';
+    const raw = String(timeAgo(n) || '').trim();
+    if (!raw || raw === 'just now') return 'now';
+    return raw.replace(/\s*ago$/i, '');
+  }
+
+  function renderIdeSidebar() {
+    const accountsEl = $('ide-sidebar-accounts');
+    const approvalsEl = $('ide-sidebar-approvals');
+    const countEl = $('ide-sidebar-count');
+    const treeEl = $('ide-sidebar-tree');
+    if (!treeEl) return;
+
+    // 1. Account & Usage compact VS Code Hub cards
+    if (accountsEl) {
+      const { ordered, sameProvCounts } = getOrderedPulseQuotaCards();
+      const nowMs = Date.now();
+      accountsEl.innerHTML = ordered
+        .map(({ acct, provKey }) => {
+          const acctId = acct?.id || `${provKey}:default`;
+          const label = provKey === 'claude' ? 'Claude Code' : 'Antigravity';
+          if (!isSignedInQuotaCard(acct)) {
+            return `
+              <div class="ide-acct-card is-offline">
+                <div class="ide-acct-head">
+                  <span class="ide-acct-left">
+                    <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
+                    <span class="ide-acct-name">${esc(label)}</span>
+                  </span>
+                  <button type="button" class="ide-acct-use-btn" data-account-add-remote="${provKey}">+ Sign in</button>
+                </div>
+              </div>
+            `;
+          }
+          const isActive = acct?.active !== false;
+          const multi = (sameProvCounts[provKey] || 1) > 1;
+          const collapseKey = multi ? acctId : provKey;
+          const isCollapsed = Boolean(
+            prefs.collapsedQuotaCards &&
+              (prefs.collapsedQuotaCards[collapseKey] ?? prefs.collapsedQuotaCards[acctId])
+          );
+          const email = String(acct?.account?.email || acct?.email || '').trim();
+          const plan = String(acct?.account?.plan || acct?.plan || (provKey === 'claude' ? 'Max' : 'Pro'))
+            .replace(/^Google AI\s+/i, '')
+            .trim();
+          const nick = String(acct?.nickname || acct?.account?.nickname || acct?.label || '').trim();
+          const badgeTxt = nick || (multi ? (isActive ? 'Primary' : 'Secondary') : '');
+          let limits = acct?.usage?.limits?.length ? acct.usage.limits : acct?.usage?.allLimits || [];
+          if (!limits.length && provKey === 'claude' && isActive) {
+            const claudeSum = appState?.summaryByProvider?.claude || appState?.summary || {};
+            const tok5h = Number(claudeSum.today?.tokens || 0);
+            const tok7d = Number(claudeSum.week?.tokens || 0);
+            limits = [
+              { label: 'Session (5hr)', pct: Math.min(95, Math.max(4, Math.round((tok5h / 250000000) * 100))), resetText: `${fmtCompact(tok5h)}` },
+              { label: 'Weekly (7 day)', pct: Math.min(95, Math.max(8, Math.round((tok7d / 1800000000) * 100))), resetText: `${fmtCompact(tok7d)}` }
+            ];
+          }
+          const barsHtml = limits
+            .slice(0, 2)
+            .map((l) => {
+              const passed = Boolean(l.expired || (l.reset && l.reset <= nowMs));
+              const rawPct = l.pct !== undefined ? l.pct : l.usedPercent;
+              const pct = passed ? 0 : Math.min(100, Math.max(0, Math.round(Number(rawPct || 0))));
+              const barCls = pct >= 90 ? 'crit' : pct >= 78 ? 'warn' : provKey === 'claude' ? 'claude' : '';
+              const rst = passed
+                ? 'Idle'
+                : String(l.resetText || (l.reset ? `Resets ${timeUntil(l.reset)}` : '')).slice(0, 26);
+              return `
+                <div class="ide-qrow tabular">
+                  <div class="ide-qlabels">
+                    <span class="ide-qlbl">${esc(String(l.label || '').replace(/\s*Ledger$/i, ''))}</span>
+                    <span class="ide-qmeta">${rst ? `<span class="ide-qrst">${esc(rst)}</span>` : ''}<strong>${pct}%</strong></span>
+                  </div>
+                  <div class="ide-qtrack"><div class="ide-qfill ${barCls}" style="width:${pct}%"></div></div>
+                </div>
+              `;
+            })
+            .join('');
+
+          return `
+            <div class="ide-acct-card${isActive ? ' is-active' : ''}${isCollapsed ? ' collapsed' : ''}">
+              <div class="ide-acct-head">
+                <button type="button" class="ide-acct-toggle" data-quota-collapse="${esc(collapseKey)}" aria-expanded="${!isCollapsed}">
+                  <span class="ide-chevron-sm">${isCollapsed ? '▸' : '▾'}</span>
+                  <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
+                  <span class="ide-acct-name">${esc(label)}</span>
+                  ${badgeTxt ? `<span class="ide-acct-role${isActive ? ' primary' : ''}">${esc(badgeTxt)}</span>` : ''}
+                </button>
+                <div class="ide-acct-actions">
+                  ${
+                    !isActive
+                      ? `<button type="button" class="ide-acct-use-btn" data-account-switch="${esc(acctId)}" data-account-prov="${provKey}">⇄ Use</button>`
+                      : `<span class="ide-acct-live-pill">● Active</span>`
+                  }
+                </div>
+              </div>
+              ${
+                isCollapsed
+                  ? ''
+                  : `<div class="ide-acct-sub">${email ? `<span>${esc(email)}</span>` : '<span></span>'}<span class="ide-plan-tag">${esc(plan)}</span></div>${barsHtml ? `<div class="ide-qstack">${barsHtml}</div>` : ''}`
+              }
+            </div>
+          `;
+        })
+        .join('');
+    }
+
+    // 2. Live Approvals Banner in Sidebar
+    const devFilter =
+      prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
+        ? prefs.selectedDeviceFilter
+        : '';
+    if (approvalsEl) {
+      const approvals = (Array.isArray(appState?.approvals) ? appState.approvals : []).filter((a) => {
+        if (!a) return false;
+        if (!devFilter) return true;
+        if (a.deviceId) return a.deviceId === devFilter;
+        const linkedRow = (appState?.rows || []).find((r) => r && r.id === a.sessionId);
+        return !linkedRow?.deviceId || linkedRow.deviceId === devFilter;
+      });
+      if (approvals.length === 0) {
+        approvalsEl.hidden = true;
+        approvalsEl.innerHTML = '';
+      } else {
+        approvalsEl.hidden = false;
+        approvalsEl.innerHTML = `
+          <div class="ide-appr-head tabular">
+            <span>⚡ ${approvals.length} Waiting for Input</span>
+          </div>
+          ${approvals
+            .slice(0, 3)
+            .map((a) => {
+              const aProv = a.provider === 'claude' ? 'claude' : 'antigravity';
+              const isQ = a.kind === 'question' || a.kind === 'waiting_session' || /question/i.test(String(a.toolName || ''));
+              return `
+                <div class="ide-appr-item">
+                  <button type="button" class="ide-appr-open" data-ide-open-session="${esc(a.sessionId || '')}" data-session-prov="${aProv}">
+                    <span class="ide-dot waiting"></span>
+                    <span class="ide-appr-title">${esc(a.title || a.toolName || 'Pending Action')}</span>
+                  </button>
+                  ${
+                    !isQ && a.approvalId
+                      ? `<button type="button" class="ide-appr-ok" data-approve-act="approve" data-app-id="${esc(a.approvalId)}" data-sess-id="${esc(a.sessionId || '')}" data-prov="${aProv}" data-sel="${esc(a.selector || '')}" data-lbl="${esc(a.toolName || 'Accept')}">Approve</button>`
+                      : `<button type="button" class="ide-appr-ok" data-ide-open-session="${esc(a.sessionId || '')}" data-session-prov="${aProv}">Reply</button>`
+                  }
+                </div>
+              `;
+            })
+            .join('')}
+        `;
+      }
+    }
+
+    // 3. Session Manager Tree
+    const allRows = (appState?.rows || []).filter(
+      (r) => r && r.id && !r.archived && (!devFilter || !r.deviceId || r.deviceId === devFilter)
+    );
+    if (countEl) countEl.textContent = String(allRows.length);
+
+    document.querySelectorAll('#ide-sidebar-filters .ide-fchip').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.sideFilter === prefs.sidebarFilter);
+    });
+
+    const groups = Array.isArray(appState?.groups) ? appState.groups : [];
+    const groupIds = new Set(groups.map((g) => g.id));
+    const q = ($('ide-sidebar-search')?.value || '').trim().toLowerCase();
+
+    const rawFiltered = allRows.filter((r) => {
+      if (prefs.sidebarFilter === 'working' && r.status !== 'working') return false;
+      if (prefs.sidebarFilter === 'needs_input' && r.status !== 'waiting') return false;
+      if (prefs.sidebarFilter === 'unread' && !r.unread) return false;
+      if (prefs.sidebarFilter === 'open' && !r.open && !(Array.isArray(prefs.openEditorTabs) && prefs.openEditorTabs.includes(r.id))) return false;
+      if (q) {
+        const grpName = r.group ? groups.find((g) => g.id === r.group)?.name || '' : '';
+        const hay = `${r.title || ''} ${r.folder || ''} ${r.branch || ''} ${r.model || ''} ${r.provider || ''} ${grpName}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+
+    // Hard Rule #11: Frequency-First ordering across both searched & default views (exact.concat(freqOrdered))
+    const nowRankMs = Date.now();
+    const rowBaseWeight = (r) =>
+      (r.status === 'working' ? 500 : r.status === 'waiting' ? 400 : 0) +
+      Math.max(0, 299 - Math.min(299, Math.floor(Math.max(0, nowRankMs - Number(r.at || 0)) / 3600000)));
+    const filtered = q
+      ? (() => {
+          const exact = rawFiltered.filter((r) => String(r.title || '').toLowerCase() === q);
+          const rest = rawFiltered.filter((r) => String(r.title || '').toLowerCase() !== q);
+          return exact.concat(rankByFreq(rest, 'threads', (r) => r.id, rowBaseWeight));
+        })()
+      : rankByFreq(rawFiltered, 'threads', (r) => r.id, rowBaseWeight);
+
+    const curSelected = isNewSessionMode() ? '' : String(prefs.selectedThreadId || '');
+
+    const renderTreeRow = (r) => {
+      const provKey = r.provider === 'claude' ? 'claude' : 'antigravity';
+      const isSelected = r.id === curSelected;
+      const dotCls =
+        r.status === 'working' || r.dot === 'running'
+          ? 'working'
+          : r.status === 'waiting'
+            ? 'waiting'
+            : r.unread
+              ? 'unread'
+              : r.open
+                ? 'open'
+                : 'idle';
+      const age = shortSidebarAge(r.at);
+      return `
+        <div class="ide-tree-row${isSelected ? ' active' : ''}${r.unread ? ' is-unread' : ''}" role="button" tabindex="0" data-ide-open-session="${esc(r.id)}" data-session-prov="${provKey}">
+          <span class="ide-dot ${dotCls}"></span>
+          <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
+          <span class="ide-tree-title">${esc(r.title || 'Untitled Session')}</span>
+          <span class="ide-tree-age tabular">${esc(age)}</span>
+          <span class="ide-tree-acts">
+            ${
+              dotCls === 'working'
+                ? `<button type="button" class="ide-row-act stop" data-sess-act="stop" data-id="${esc(r.id)}" aria-label="Stop session">■</button>`
+                : ''
+            }
+            <button type="button" class="ide-row-act" data-sess-act="archive" data-id="${esc(r.id)}" data-val="true" aria-label="Archive session">✕</button>
+          </span>
+        </div>
+      `;
+    };
+
+    if (filtered.length === 0) {
+      treeEl.innerHTML = `<div class="ide-tree-empty">${allRows.length === 0 ? 'No sessions synced yet.' : 'No matching sessions.'}</div>`;
+      return;
+    }
+
+    if (!q && groups.length > 0) {
+      let html = '';
+      for (const g of groups) {
+        const gItems = filtered.filter((r) => r.group === g.id);
+        if (prefs.sidebarFilter !== 'all' && gItems.length === 0) continue;
+        const collapsed =
+          prefs.sidebarFilter !== 'all'
+            ? false
+            : isSessionGroupCollapsed(g.id, gItems.length === 0 ? true : Boolean(g.collapsed));
+        html += `
+          <div class="ide-tree-group${collapsed ? ' collapsed' : ''}">
+            <div class="ide-tree-group-hdr">
+              <button type="button" class="ide-tree-group-btn" data-group-act="toggle" data-group-id="${esc(g.id)}" aria-expanded="${!collapsed}">
+                <span class="ide-chevron-sm">${collapsed ? '▸' : '▾'}</span>
+                <span class="ide-tree-group-name">${esc(g.name || 'Group')}</span>
+              </button>
+              <span class="ide-group-pill tabular">${gItems.length}</span>
+            </div>
+            ${collapsed ? '' : `<div class="ide-tree-group-items">${gItems.map(renderTreeRow).join('')}</div>`}
+          </div>
+        `;
+      }
+      const ungrouped = filtered.filter((r) => !r.group || !groupIds.has(r.group));
+      if (ungrouped.length > 0) {
+        const ugCollapsed = prefs.sidebarFilter !== 'all' ? false : isSessionGroupCollapsed('ungrouped', false);
+        html += `
+          <div class="ide-tree-group${ugCollapsed ? ' collapsed' : ''}">
+            <div class="ide-tree-group-hdr">
+              <button type="button" class="ide-tree-group-btn" data-group-act="toggle" data-group-id="ungrouped" aria-expanded="${!ugCollapsed}">
+                <span class="ide-chevron-sm">${ugCollapsed ? '▸' : '▾'}</span>
+                <span class="ide-tree-group-name">Ungrouped</span>
+              </button>
+              <span class="ide-group-pill tabular">${ungrouped.length}</span>
+            </div>
+            ${ugCollapsed ? '' : `<div class="ide-tree-group-items">${ungrouped.map(renderTreeRow).join('')}</div>`}
+          </div>
+        `;
+      }
+      treeEl.innerHTML = html;
+      return;
+    }
+
+    treeEl.innerHTML = `<div class="ide-tree-group-items">${filtered.slice(0, 120).map(renderTreeRow).join('')}</div>`;
+  }
 
   function isNewSessionMode() {
     return Boolean(
@@ -4696,22 +5168,49 @@
     setTimeout(() => $('composer-input')?.focus(), 30);
   }
 
-  function exitNewSessionModeToReply(explicitThreadId = '') {
-    const rows = (appState?.rows || []).filter((r) => r.id && !r.draft);
+  function exitNewSessionModeToReply(explicitThreadId = '', opts = {}) {
+    const allowResurrectClosed = opts.allowResurrectClosed !== false;
+    const rows = (appState?.rows || []).filter((r) => r && r.id && !r.draft && !r.archived);
+    const isUsableReplyTarget = (id, respectClosed = true) => {
+      const clean = String(id || '').trim();
+      if (!clean || clean === '__new__') return false;
+      if (respectClosed && closedEditorTabIds.has(clean)) return false;
+      if (rows.some((x) => x.id === clean)) return true;
+      return Boolean(
+        threadsCache[clean] &&
+          !(appState?.rows || []).some((x) => x && x.id === clean && x.archived)
+      );
+    };
+    const openTabsRev = Array.isArray(prefs.openEditorTabs) ? [...prefs.openEditorTabs].reverse() : [];
     const candidateId =
-      explicitThreadId ||
-      prefs.lastReplyThreadId ||
-      (rows.find((r) => r.active) || rows.find((r) => r.open) || rows[0])?.id ||
-      '';
+      (explicitThreadId && isUsableReplyTarget(explicitThreadId, false) ? explicitThreadId : '') ||
+      (isUsableReplyTarget(prefs.lastReplyThreadId, true) ? prefs.lastReplyThreadId : '') ||
+      openTabsRev.find((id) => isUsableReplyTarget(id, true)) ||
+      (
+        rows.find((r) => !closedEditorTabIds.has(r.id) && r.active) ||
+        rows.find((r) => !closedEditorTabIds.has(r.id) && r.open) ||
+        rows.find((r) => !closedEditorTabIds.has(r.id))
+      )?.id ||
+      (allowResurrectClosed ? rows[0]?.id || '' : '');
+
+    if (!candidateId) {
+      prefs.composerMode = hasSignedInProviderRemote('antigravity') ? 'new-antigravity' : 'new-claude';
+      prefs.selectedThreadId = '__new__';
+      saveJson(STORAGE_KEYS.PREFS, prefs);
+      updateComposerModePills();
+      renderChatView(true);
+      return;
+    }
+
+    ensureEditorTabOpen(candidateId);
     prefs.composerMode = 'reply';
     prefs.selectedThreadId = candidateId;
+    prefs.lastReplyThreadId = candidateId;
     prefs.newSessionGroupId = '';
     saveJson(STORAGE_KEYS.PREFS, prefs);
     updateComposerModePills();
     renderChatView(true);
-    if (candidateId) {
-      fetchThreadDetail(candidateId);
-    }
+    fetchThreadDetail(candidateId);
   }
 
   function bindDraftThreadToRealSession(draftId, realId, provider = 'antigravity') {
@@ -4748,8 +5247,22 @@
         liveStreamsByThreadId.set(cleanReal, draftLive);
       }
       liveStreamsByThreadId.delete(draftId);
+      if (chatOpenDetailsByThread.has(draftId)) {
+        if (!chatOpenDetailsByThread.has(cleanReal)) {
+          chatOpenDetailsByThread.set(cleanReal, chatOpenDetailsByThread.get(draftId));
+        }
+        chatOpenDetailsByThread.delete(draftId);
+      }
       delete threadsCache[draftId];
+      if (Array.isArray(prefs.openEditorTabs)) {
+        const idx = prefs.openEditorTabs.indexOf(draftId);
+        if (idx >= 0) {
+          prefs.openEditorTabs[idx] = cleanReal;
+          prefs.openEditorTabs = Array.from(new Set(prefs.openEditorTabs));
+        }
+      }
     }
+    ensureEditorTabOpen(cleanReal);
     if (
       !prefs.selectedThreadId ||
       prefs.selectedThreadId === draftId ||
@@ -4847,12 +5360,19 @@
     if (String(prefs.selectedThreadId || '').startsWith('draft-new-')) {
       return;
     }
-    const rows = (appState?.rows || []).filter((r) => r.id && !r.draft);
+    const rows = (appState?.rows || []).filter((r) => r.id && !r.draft && !r.archived);
+    const curRowObj = (appState?.rows || []).find((r) => r && r.id === prefs.selectedThreadId);
+    if (curRowObj?.archived) {
+      prefs.selectedThreadId = '';
+    }
     const hasPinned =
       Boolean(pinnedNavThreadId) &&
       prefs.selectedThreadId === pinnedNavThreadId &&
-      Date.now() < pinnedNavUntil;
-    const hasCachedThread = Boolean(prefs.selectedThreadId && threadsCache[prefs.selectedThreadId]);
+      Date.now() < pinnedNavUntil &&
+      !curRowObj?.archived;
+    const hasCachedThread = Boolean(
+      prefs.selectedThreadId && threadsCache[prefs.selectedThreadId] && !curRowObj?.archived
+    );
     if (hasPinned || hasCachedThread) {
       return;
     }
@@ -6204,9 +6724,13 @@
   }
 
   function isSignedInQuotaCard(provInfo) {
-    const a = provInfo?.account;
-    if (!a || a.signedOut) return false;
-    return Boolean(a.available || a.email);
+    if (!provInfo || provInfo.signedOut) return false;
+    const a = provInfo.account;
+    if (a) {
+      if (a.signedOut) return false;
+      return Boolean(a.available || a.email);
+    }
+    return Boolean(provInfo.email || provInfo.available);
   }
 
   function hasSignedInProviderRemote(provKey) {
@@ -6934,7 +7458,20 @@
     return merged;
   }
 
-  function renderToolCallCardHtml(tc) {
+  const chatOpenDetailsByThread = new Map();
+
+  function getThreadOpenDetailsMap(threadId, create = false) {
+    const clean = String(threadId || '').trim();
+    if (!clean) return null;
+    let map = chatOpenDetailsByThread.get(clean);
+    if (!map && create) {
+      map = new Map();
+      chatOpenDetailsByThread.set(clean, map);
+    }
+    return map || null;
+  }
+
+  function renderToolCallCardHtml(tc, detailKey = '', savedOpenMap = null) {
     const rawName = String(tc?.name || 'tool').trim();
     const low = rawName.toLowerCase();
     let kind = tc?.kind || 'tool';
@@ -6948,53 +7485,88 @@
         label = 'Created';
       } else if (low.includes('view') || low.includes('read')) {
         kind = 'read';
-        label = 'Viewed';
+        label = 'Analyzed';
       } else if (low.includes('command') || low === 'bash') {
         kind = 'command';
-        label = 'Ran command';
+        label = 'Ran';
       } else if (low.includes('grep') || low.includes('find') || low.includes('glob') || low.includes('search')) {
         kind = 'search';
         label = 'Searched';
       }
+    } else {
+      if (kind === 'read' && /^viewed$/i.test(label)) label = 'Analyzed';
+      if (kind === 'command' && /^ran command$/i.test(label)) label = 'Ran';
     }
 
     const fileBase = String(tc?.file || '').trim();
-    const lineRange = String(tc?.lineRange || '').trim();
-    const added = Number(tc?.addedLines || 0);
-    const removed = Number(tc?.removedLines || 0);
+    const fileStem = fileBase.split('#')[0].trim();
+    const relPath = String(tc?.relPath || fileStem || '').trim();
+    const lineRange = String(tc?.lineRange || (fileBase.includes('#') ? fileBase.split('#')[1] : '') || '').trim();
+    const added = Number(tc?.addedLines ?? tc?.added ?? 0);
+    const removed = Number(tc?.removedLines ?? tc?.removed ?? 0);
     const summaryText = String(tc?.summary || '').trim();
-    const snippet = String(tc?.snippet || '').trim();
+    const commandText = String(tc?.command || '').trim();
+    const snippet = String(tc?.snippet || tc?.diff || '').trim();
 
     const fileChip = fileBase
-      ? renderFileChipHtml(lineRange ? `${fileBase}#${lineRange}` : fileBase)
+      ? renderFileChipHtml(lineRange && !fileBase.includes('#') ? `${fileBase}#${lineRange}` : fileBase)
       : '';
     const diffBadge =
       added > 0 || removed > 0
         ? `<span class="code-diff-stat tabular">${added > 0 ? `<span class="diff-add">+${added}</span>` : ''}${removed > 0 ? `<span class="diff-del">-${removed}</span>` : ''}</span>`
         : '';
 
-    const displaySummary =
-      fileBase && summaryText === fileBase
-        ? ''
-        : summaryText.slice(0, 110);
+    const redundantReadSummary =
+      fileStem &&
+      (summaryText === fileBase ||
+        summaryText === fileStem ||
+        new RegExp(`^(?:read|view|viewed|analyzed)\\s+${fileStem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i').test(summaryText));
+    const displaySummary = redundantReadSummary ? '' : summaryText.slice(0, 115);
+
+    const hasInspectableBody = Boolean(snippet || commandText || relPath || summaryText);
+    const isStepOpen = Boolean(detailKey && savedOpenMap && savedOpenMap.get(detailKey) === true);
+    const detailKeyAttrs = detailKey
+      ? ` data-chat-detail-key="${esc(detailKey)}" data-rendered-open="${isStepOpen ? '1' : '0'}"${isStepOpen ? ' open' : ''}`
+      : '';
 
     const headInner = `
       <div class="code-step-head">
         <span class="code-step-badge kind-${esc(kind)}">${esc(label)}</span>
         ${fileChip}
-        ${displaySummary ? `<span class="code-step-summary mono">${esc(displaySummary)}</span>` : ''}
+        ${displaySummary ? `<span class="code-step-summary${kind === 'command' ? ' mono' : ''}">${esc(displaySummary)}</span>` : ''}
         ${diffBadge}
+        ${hasInspectableBody ? `<span class="code-step-chevron" aria-hidden="true">›</span>` : ''}
       </div>
     `;
 
     if (snippet) {
       return `
-        <details class="code-step-card has-snippet">
+        <details class="code-step-card has-snippet is-interactive"${detailKeyAttrs}>
           <summary>${headInner}</summary>
-          <pre class="code-step-snippet mono">${formatGitDiffHtml(snippet)}</pre>
+          <div class="code-step-detail-box">
+            ${relPath ? `<div class="code-step-detail-bar"><span class="mono">${esc(relPath)}${lineRange ? `#${esc(lineRange)}` : ''}</span><button type="button" class="ide-step-mention-btn" data-step-mention-file="${esc(relPath)}">@ Mention</button></div>` : ''}
+            <pre class="code-step-snippet mono">${formatGitDiffHtml(snippet)}</pre>
+          </div>
         </details>
       `;
     }
+
+    if (hasInspectableBody) {
+      const detailLine = commandText || (relPath ? `${relPath}${lineRange ? ` (${lineRange})` : ''}` : '') || summaryText;
+      return `
+        <details class="code-step-card is-interactive"${detailKeyAttrs}>
+          <summary>${headInner}</summary>
+          <div class="code-step-detail-box">
+            <div class="code-step-detail-bar">
+              <span class="mono">${esc(detailLine)}</span>
+              ${relPath ? `<button type="button" class="ide-step-mention-btn" data-step-mention-file="${esc(relPath)}">@ Mention</button>` : ''}
+            </div>
+            ${summaryText && summaryText !== detailLine ? `<div class="code-step-detail-note">${esc(summaryText)}</div>` : ''}
+          </div>
+        </details>
+      `;
+    }
+
     return `<div class="code-step-card">${headInner}</div>`;
   }
 
@@ -7046,13 +7618,14 @@
     if (directBtn) {
       const isDirect = prefs.composerDirectStream !== false;
       directBtn.classList.toggle('active', isDirect);
-      directBtn.textContent = isDirect ? '⚡ Direct Stream' : '🪟 VS Code Tab';
+      directBtn.textContent = isDirect ? '⚡ Direct' : '🪟 IDE Tab';
     }
   }
 
   // VIEW 3: Render Live Chat Workbench
   function renderChatView(forceScroll = false) {
     ensureSelectedThread();
+    syncAndRenderEditorTabs();
     updateComposerModePills();
     const rows = (appState?.rows || []).filter((r) => r.id && !r.draft);
     const isNewDraft = isNewSessionMode();
@@ -7352,10 +7925,12 @@
       lastRenderedThreadId = prefs.selectedThreadId;
       lastRenderedMsgCount = 0;
     } else {
+      const savedOpenMap = getThreadOpenDetailsMap(prefs.selectedThreadId, false);
       const turnsHtml = messages
         .map((m, msgIdx) => {
           const isUser = m.role === 'user';
           const isLastTurn = msgIdx === messages.length - 1;
+          const turnIdKey = String(m.id || `turn-${msgIdx}`);
           const toolCalls = Array.isArray(m.toolCalls) ? m.toolCalls : [];
           const toolCount = Number(m.totalTurnTools || toolCalls.length);
           const editTools = toolCalls.filter((t) => t.kind === 'edit' || t.kind === 'write');
@@ -7367,6 +7942,10 @@
           const totalRemoved = editTools.reduce((acc, t) => acc + Number(t.removedLines || 0), 0);
 
           const summaryHtmlParts = [];
+          const lastTool = toolCalls[toolCalls.length - 1];
+          if (isLastTurn && activeRow?.status === 'working' && lastTool?.file) {
+            summaryHtmlParts.push(`<span>Working on ${esc(lastTool.file)}</span>`);
+          }
           if (filesChangedCount > 0) {
             const diffHtml =
               totalAdded > 0 || totalRemoved > 0
@@ -7377,19 +7956,29 @@
             );
           }
           summaryHtmlParts.push(
-            `<span>⚡ ${toolCount} tool ${toolCount === 1 ? 'step' : 'steps'}</span>`
+            `<span>${toolCount} ${toolCount === 1 ? 'step' : 'steps'}</span>`
           );
-          const summaryLabelHtml = `<span class="tools-summary-left">${summaryHtmlParts.join(' <span style="opacity:0.5">·</span> ')}</span><span class="tools-summary-chevron">›</span>`;
+          const summaryLabelHtml = `<span class="tools-summary-left">${summaryHtmlParts.join(' <span style="opacity:0.45">·</span> ')}</span><span class="tools-summary-chevron">▾</span>`;
 
+          const allStepsSavedOpen =
+            toolCalls.length >= 2 &&
+            Boolean(savedOpenMap) &&
+            toolCalls.every((_, sIdx) => savedOpenMap.get(`${turnIdKey}:step:${sIdx}`) === true);
+          const stepsToolbarHtml =
+            toolCalls.length >= 2
+              ? `<div class="code-steps-toolbar"><button type="button" class="ide-steps-toggle-all" data-toggle-all-steps="1">${allStepsSavedOpen ? 'Collapse all' : 'Expand all'}</button></div>`
+              : '';
           const toolCardsHtml = toolCalls.length
-            ? `<div class="code-steps-stack">${toolCalls.map((tc) => renderToolCallCardHtml(tc)).join('')}</div>`
+            ? `<div class="code-steps-stack">${stepsToolbarHtml}${toolCalls.map((tc, sIdx) => renderToolCallCardHtml(tc, `${turnIdKey}:step:${sIdx}`, savedOpenMap)).join('')}</div>`
             : '';
 
           const artifacts = Array.isArray(m.artifacts) ? m.artifacts : [];
           const artifactsHtml = artifacts
-            .map(
-              (art) => `
-                <details class="vs-artifact-card">
+            .map((art, aIdx) => {
+              const artKey = `${turnIdKey}:art:${aIdx}`;
+              const isArtOpen = Boolean(savedOpenMap && savedOpenMap.get(artKey) === true);
+              return `
+                <details class="vs-artifact-card" data-chat-detail-key="${esc(artKey)}" data-rendered-open="${isArtOpen ? '1' : '0'}"${isArtOpen ? ' open' : ''}>
                   <summary class="vs-artifact-summary">
                     <div class="vs-artifact-head">
                       <svg class="vs-artifact-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
@@ -7402,8 +7991,8 @@
                   </summary>
                   ${art.content ? `<div class="vs-artifact-body turn-text md-rich">${formatTurnMarkdown(art.content)}</div>` : ''}
                 </details>
-              `
-            )
+              `;
+            })
             .join('');
 
           const timeLabel = m.createdAt ? timeAgo(Date.parse(m.createdAt)) : '';
@@ -7425,7 +8014,6 @@
             effectiveTurnApproval
           );
           const hasTurnQuestions = turnQuestions.length > 0;
-          const turnIdKey = String(m.id || `turn-${msgIdx}`);
           const turnAnsweredState = hasTurnQuestions
             ? lookupAnsweredQuestionState({
                 sessionId: prefs.selectedThreadId,
@@ -7439,10 +8027,19 @@
             questionRenderedInTurn = true;
           }
 
+          const toolsKey = `${turnIdKey}:tools`;
+          const defaultToolsOpen =
+            cleanedText || hasTurnQuestions
+              ? Boolean(isLastTurn && activeRow?.status === 'working')
+              : true;
+          const isToolsOpen =
+            savedOpenMap && savedOpenMap.has(toolsKey)
+              ? savedOpenMap.get(toolsKey)
+              : defaultToolsOpen;
+          const toolsPanelCls =
+            cleanedText || hasTurnQuestions ? 'tools-details' : 'tools-details active-tools-panel';
           const toolsHtml = toolCalls.length
-            ? cleanedText || hasTurnQuestions
-              ? `<details class="tools-details" ${isLastTurn && activeRow?.status === 'working' ? 'open' : ''}><summary>${summaryLabelHtml}</summary>${toolCardsHtml}</details>`
-              : `<div class="active-tools-panel"><div class="active-tools-hdr">${summaryHtmlParts.join(' · ')}</div>${toolCardsHtml}</div>`
+            ? `<details class="${toolsPanelCls}" data-chat-detail-key="${esc(toolsKey)}" data-rendered-open="${isToolsOpen ? '1' : '0'}"${isToolsOpen ? ' open' : ''}><summary>${summaryLabelHtml}</summary>${toolCardsHtml}</details>`
             : '';
 
           const liveThought =
@@ -7453,8 +8050,14 @@
                   .pop()
               : '';
 
+          const thinkKey = `${turnIdKey}:think`;
+          const defaultThinkOpen = Boolean(!cleanedText && !hasTurnQuestions && isLastTurn);
+          const isThinkOpen =
+            savedOpenMap && savedOpenMap.has(thinkKey)
+              ? savedOpenMap.get(thinkKey)
+              : defaultThinkOpen;
           const thinkHtml = m.thinking
-            ? `<details class="thinking-details" ${!cleanedText && !hasTurnQuestions && isLastTurn ? 'open' : ''}><summary>Reasoning &amp; Internal Thought</summary><div class="turn-text mono" style="margin-top:6px">${esc(m.thinking)}</div></details>`
+            ? `<details class="thinking-details" data-chat-detail-key="${esc(thinkKey)}" data-rendered-open="${isThinkOpen ? '1' : '0'}"${isThinkOpen ? ' open' : ''}><summary>Reasoning &amp; Internal Thought</summary><div class="turn-text mono" style="margin-top:6px">${esc(m.thinking)}</div></details>`
             : liveThought
               ? `<div class="thinking-details"><div class="turn-text mono">${esc(liveThought)}</div></div>`
               : '';
@@ -8067,6 +8670,8 @@
     renderOutboxBadge();
     renderPulseView();
     renderSessionsView();
+    renderIdeSidebar();
+    syncAndRenderEditorTabs();
     if (prefs.activeTab === 'chat') renderChatView();
     if (prefs.activeTab === 'workspaces') renderWorkspacesView();
     if (prefs.activeTab === 'analytics') renderAnalyticsView();
@@ -8074,6 +8679,296 @@
 
   let cmdPaletteMode = 'default';
   let composerAttachments = [];
+  let slashPopoverItems = [];
+  let slashPopoverActiveIdx = 0;
+  let slashPopoverTrigger = null;
+
+  const SLASH_COMMAND_CATALOG = [
+    { id: '/compact', label: '/compact', desc: 'Summarize context window & free tokens', kind: 'action', act: 'compact', baseWeight: 95 },
+    { id: '/plan', label: '/plan', desc: 'Draft a step-by-step architecture & implementation plan', kind: 'prompt', insert: '/plan ', baseWeight: 88 },
+    { id: '/boost', label: '/boost', desc: 'Deep multi-perspective reasoning & rigorous verification', kind: 'prompt', insert: '/boost ', baseWeight: 84 },
+    { id: '/goal', label: '/goal', desc: 'Autonomous thorough execution until goal is achieved', kind: 'prompt', insert: '/goal ', baseWeight: 80 },
+    { id: '/new-agy', label: '/new-agy', desc: 'Start a fresh Google Antigravity session tab', kind: 'action', act: 'new-agy', baseWeight: 76 },
+    { id: '/new-claude', label: '/new-claude', desc: 'Start a fresh Claude Code session tab', kind: 'action', act: 'new-claude', baseWeight: 74 },
+    { id: '/bgtasks', label: '/bgtasks', desc: 'Inspect live background tasks & subagents', kind: 'action', act: 'bgtasks', baseWeight: 68 },
+    { id: '/stop', label: '/stop', desc: 'Interrupt the currently running session', kind: 'action', act: 'stop', baseWeight: 64 },
+    { id: '/sync', label: '/sync', desc: 'Force immediate Bridge & Cloud Relay sync', kind: 'action', act: 'sync', baseWeight: 60 },
+    { id: '/theme', label: '/theme', desc: 'Toggle between Carbon Dark and Studio Daylight', kind: 'action', act: 'theme', baseWeight: 52 }
+  ];
+
+  function closeSlashPopover() {
+    const pop = $('composer-slash-popover');
+    if (pop) {
+      pop.hidden = true;
+      pop.innerHTML = '';
+    }
+    slashPopoverItems = [];
+    slashPopoverActiveIdx = 0;
+    slashPopoverTrigger = null;
+  }
+
+  function attachMentionItemToComposer({ name, repoPath = '', kind = 'repo', sizeLabel = 'workspace' }) {
+    const cleanName = String(name || '').trim();
+    if (!cleanName) return;
+    const exists = composerAttachments.some(
+      (a) => a && a.kind === kind && String(a.name || '').toLowerCase() === cleanName.toLowerCase()
+    );
+    if (!exists) {
+      composerAttachments.push({
+        id: `att-mention-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        kind,
+        name: cleanName,
+        repoPath: repoPath || cleanName,
+        sizeLabel
+      });
+      renderComposerAttachments();
+    }
+  }
+
+  function detectComposerTrigger(inp) {
+    if (!inp) return null;
+    const val = String(inp.value || '');
+    const caret = typeof inp.selectionStart === 'number' ? inp.selectionStart : val.length;
+    const before = val.slice(0, caret);
+
+    // Leading slash command: "/..." at very start of input (no spaces yet)
+    const slashMatch = before.match(/^\/([^\s/]*)$/);
+    if (slashMatch && !val.slice(caret).startsWith('/')) {
+      return {
+        mode: 'slash',
+        query: slashMatch[1].toLowerCase(),
+        startIdx: 0,
+        endIdx: caret
+      };
+    }
+
+    // Inline @workspace or @file mention right before caret
+    const atMatch = before.match(/(?:^|\s)@([^\s@]*)$/);
+    if (atMatch) {
+      const tokenLen = atMatch[1].length + 1;
+      return {
+        mode: 'mention',
+        query: atMatch[1].toLowerCase(),
+        startIdx: caret - tokenLen,
+        endIdx: caret
+      };
+    }
+    return null;
+  }
+
+  function updateComposerSlashPopover() {
+    const inp = $('composer-input');
+    const pop = $('composer-slash-popover');
+    if (!inp || !pop || isPinLocked()) {
+      closeSlashPopover();
+      return;
+    }
+    const trig = detectComposerTrigger(inp);
+    if (!trig) {
+      closeSlashPopover();
+      return;
+    }
+
+    let items = [];
+    if (trig.mode === 'slash') {
+      const q = trig.query;
+      const matches = SLASH_COMMAND_CATALOG.filter(
+        (c) => !q || c.id.slice(1).includes(q) || c.desc.toLowerCase().includes(q)
+      );
+      const exact = q ? matches.filter((c) => c.id.slice(1) === q) : [];
+      const rest = q ? matches.filter((c) => c.id.slice(1) !== q) : matches;
+      items = exact
+        .concat(rankByFreq(rest, 'commands', (c) => c.id, (c) => c.baseWeight))
+        .slice(0, 8);
+    } else if (trig.mode === 'mention') {
+      const q = trig.query;
+      const candidates = [];
+      const seenKeys = new Set();
+      for (const w of appState?.workspaces || []) {
+        if (!w || !w.name) continue;
+        const key = String(w.name);
+        if (seenKeys.has(key.toLowerCase())) continue;
+        seenKeys.add(key.toLowerCase());
+        candidates.push({
+          id: `ws:${key}`,
+          freqKey: key,
+          label: `@${key}`,
+          desc: `${w.group || 'Workspace'} · ⎇ ${w.branch || 'main'}${w.dirtyCount ? ` · ${w.dirtyCount} modified` : ''}`,
+          kind: 'mention-repo',
+          attachName: `[${key}]`,
+          repoPath: w.path || key,
+          repoPrefix: key,
+          baseWeight: 50 + Number(w.dirtyCount || 0) * 8
+        });
+        const det = workspacesDetailCache[w.id];
+        const modList = det?.modifiedFiles || det?.statusFiles || det?.files || [];
+        if (Array.isArray(modList) && modList.length > 0) {
+          for (const f of modList.slice(0, 12)) {
+            const fp = String(f?.path || f?.file || '').trim();
+            if (!fp) continue;
+            const fKey = `${key}/${fp}`;
+            if (seenKeys.has(fKey.toLowerCase())) continue;
+            seenKeys.add(fKey.toLowerCase());
+            candidates.push({
+              id: `file:${fKey}`,
+              freqKey: fKey,
+              label: `@${fp}`,
+              desc: `${key} · Modified file`,
+              kind: 'mention-file',
+              attachName: fKey,
+              repoPath: fKey,
+              baseWeight: 35
+            });
+          }
+        }
+      }
+      const activeTd = threadsCache[prefs.selectedThreadId];
+      if (activeTd && Array.isArray(activeTd.messages)) {
+        for (const m of activeTd.messages) {
+          for (const tc of m?.toolCalls || []) {
+            const fp = String(tc?.relPath || String(tc?.file || '').split('#')[0] || '').trim();
+            if (!fp || seenKeys.has(fp.toLowerCase())) continue;
+            seenKeys.add(fp.toLowerCase());
+            candidates.push({
+              id: `tfile:${fp}`,
+              freqKey: fp,
+              label: `@${fp}`,
+              desc: 'Session touched file',
+              kind: 'mention-file',
+              attachName: fp,
+              repoPath: fp,
+              baseWeight: 42
+            });
+          }
+        }
+      }
+      const matches = candidates.filter(
+        (m) =>
+          !q ||
+          m.freqKey.toLowerCase().includes(q) ||
+          m.label.toLowerCase().includes(q) ||
+          m.desc.toLowerCase().includes(q)
+      );
+      const exact = q
+        ? matches.filter(
+            (m) => m.freqKey.toLowerCase() === q || m.label.slice(1).toLowerCase() === q
+          )
+        : [];
+      const rest = q
+        ? matches.filter(
+            (m) => m.freqKey.toLowerCase() !== q && m.label.slice(1).toLowerCase() !== q
+          )
+        : matches;
+      items = exact
+        .concat(rankByFreq(rest, 'repos', (m) => m.freqKey, (m) => m.baseWeight))
+        .slice(0, 8);
+    }
+
+    if (!items.length) {
+      closeSlashPopover();
+      return;
+    }
+
+    slashPopoverItems = items;
+    slashPopoverTrigger = trig;
+    if (slashPopoverActiveIdx >= items.length || slashPopoverActiveIdx < 0) {
+      slashPopoverActiveIdx = 0;
+    }
+
+    pop.hidden = false;
+    pop.innerHTML = items
+      .map(
+        (it, idx) => `
+          <button type="button" class="slash-pop-item${idx === slashPopoverActiveIdx ? ' active' : ''}" role="option" aria-selected="${idx === slashPopoverActiveIdx}" data-slash-pick="${idx}">
+            <span class="slash-pop-lbl mono">${esc(it.label)}</span>
+            <span class="slash-pop-desc">${esc(it.desc)}</span>
+          </button>
+        `
+      )
+      .join('');
+  }
+
+  async function applySlashPopoverSelection(idx) {
+    const item = slashPopoverItems[idx];
+    const trig = slashPopoverTrigger;
+    const inp = $('composer-input');
+    closeSlashPopover();
+    if (!item || !inp) return;
+
+    const val = String(inp.value || '');
+    const before = trig ? val.slice(0, trig.startIdx) : '';
+    const after = trig ? val.slice(trig.endIdx) : '';
+
+    if (item.kind === 'prompt') {
+      recordFreqUsage('commands', item.id);
+      const nextVal = `${item.insert}${after.replace(/^\s+/, '')}`;
+      inp.value = nextVal;
+      inp.focus();
+      inp.setSelectionRange(item.insert.length, item.insert.length);
+      updateComposerActionButton();
+      return;
+    }
+
+    if (item.kind === 'action') {
+      recordFreqUsage('commands', item.id);
+      inp.value = after.trim();
+      inp.style.height = 'auto';
+      updateComposerActionButton();
+      if (item.act === 'compact') {
+        if (isNewSessionMode() || !cleanTargetThreadId(prefs.selectedThreadId)) {
+          showToast('Select an active session first to run /compact');
+        } else {
+          const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId);
+          await dispatchRemoteCommand({
+            type: 'sessionAction',
+            action: 'compact',
+            subAction: 'compact',
+            id: prefs.selectedThreadId,
+            provider: activeRow?.provider || 'antigravity'
+          });
+          showToast('⚡ Dispatched /compact to summarize context');
+        }
+      } else if (item.act === 'new-agy') {
+        enterNewSessionMode('antigravity');
+      } else if (item.act === 'new-claude') {
+        enterNewSessionMode('claude');
+      } else if (item.act === 'bgtasks') {
+        const ctxPop = $('ctx-popover');
+        if (ctxPop) ctxPop.hidden = true;
+        const bgPop = $('bg-tasks-popover');
+        if (bgPop) bgPop.hidden = false;
+        renderChatView();
+      } else if (item.act === 'stop') {
+        await stopActiveSession(prefs.selectedThreadId);
+      } else if (item.act === 'sync') {
+        await syncData({ toast: true });
+      } else if (item.act === 'theme') {
+        applyTheme(prefs.theme === 'dark' ? 'light' : 'dark', true);
+      }
+      return;
+    }
+
+    if (item.kind === 'mention-repo' || item.kind === 'mention-file') {
+      recordFreqUsage('repos', item.freqKey);
+      attachMentionItemToComposer({
+        name: item.attachName,
+        repoPath: item.repoPath,
+        kind: 'repo',
+        sizeLabel: item.kind === 'mention-repo' ? 'workspace' : 'file ref'
+      });
+      if (item.kind === 'mention-repo' && item.repoPrefix && isNewSessionMode()) {
+        prefs.composerRepoPrefix = item.repoPrefix;
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        syncComposerRoutingSelectors(null, true);
+      }
+      const nextText = `${before}${after}`.replace(/\s{2,}/g, ' ');
+      inp.value = nextText;
+      inp.focus();
+      const pos = Math.min(nextText.length, before.length);
+      inp.setSelectionRange(pos, pos);
+      updateComposerActionButton();
+    }
+  }
 
   function fmtFileBytes(bytes) {
     const n = Number(bytes || 0);
@@ -8679,6 +9574,12 @@
 
     document.addEventListener('keydown', (e) => {
       if (isPinLocked() && !e.target?.closest?.('#pin-overlay')) return;
+      const roleBtn = e.target.closest?.('[role="button"][tabindex="0"], [role="tab"][tabindex="0"]');
+      if (roleBtn && e.target === roleBtn && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        roleBtn.click();
+        return;
+      }
       const qInput = e.target.closest?.('[data-q-writein-input]');
       if (qInput && e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
@@ -8691,6 +9592,15 @@
 
     document.addEventListener('click', async (e) => {
       if (isPinLocked() && !e.target?.closest?.('#pin-overlay')) return;
+      if (
+        slashPopoverItems.length > 0 &&
+        !e.target?.closest?.('#composer-slash-popover') &&
+        !e.target?.closest?.('#btn-composer-slash') &&
+        !e.target?.closest?.('#btn-composer-mention') &&
+        !e.target?.closest?.('#composer-input')
+      ) {
+        closeSlashPopover();
+      }
       // 0. Interactive VS Code Question & Recommendation Card Actions
       const qOptBtn = e.target.closest('[data-q-opt-toggle]');
       if (qOptBtn) {
@@ -8816,6 +9726,124 @@
         return;
       }
 
+      const sidebarCollapseBtn = e.target.closest('[data-sidebar-collapse]');
+      if (sidebarCollapseBtn) {
+        haptic(8);
+        toggleIdeSidebar();
+        return;
+      }
+
+      const sideFilterBtn = e.target.closest('[data-side-filter]');
+      if (sideFilterBtn) {
+        prefs.sidebarFilter = sideFilterBtn.dataset.sideFilter || 'all';
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        renderIdeSidebar();
+        return;
+      }
+
+      const closeTabBtn = e.target.closest('[data-close-editor-tab]');
+      if (closeTabBtn) {
+        e.stopPropagation();
+        haptic(8);
+        closeEditorTab(closeTabBtn.dataset.closeEditorTab || '');
+        return;
+      }
+
+      const editorTabEl = e.target.closest('[data-editor-tab-id]');
+      if (editorTabEl && editorTabEl.dataset.editorTabId) {
+        const tid = editorTabEl.dataset.editorTabId;
+        if (tid === '__new__') return;
+        recentResumeUntil = 0;
+        ensureEditorTabOpen(tid);
+        recordFreqUsage('threads', tid);
+        setPinnedNav({
+          threadId: tid,
+          provider: editorTabEl.dataset.sessionProv || '',
+          durationMs: 45000
+        });
+        prefs.selectedThreadId = tid;
+        prefs.lastReplyThreadId = tid;
+        prefs.composerMode = 'reply';
+        prefs.newSessionGroupId = '';
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        markNotificationsCheckedForSession(tid);
+        renderChatView(true);
+        renderIdeSidebar();
+        fetchThreadDetail(tid, editorTabEl.dataset.sessionProv || '');
+        return;
+      }
+
+      const ideOpenRow = e.target.closest('[data-ide-open-session]');
+      if (ideOpenRow && ideOpenRow.dataset.ideOpenSession && !e.target.closest('[data-sess-act], [data-approve-act]')) {
+        const sid = ideOpenRow.dataset.ideOpenSession;
+        const prov = ideOpenRow.dataset.sessionProv || '';
+        recentResumeUntil = 0;
+        ensureEditorTabOpen(sid);
+        recordFreqUsage('threads', sid);
+        setPinnedNav({
+          threadId: sid,
+          provider: prov,
+          durationMs: 45000
+        });
+        prefs.selectedThreadId = sid;
+        prefs.lastReplyThreadId = sid;
+        prefs.composerMode = 'reply';
+        prefs.newSessionGroupId = '';
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        markNotificationsCheckedForSession(sid);
+        switchTab('chat');
+        renderIdeSidebar();
+        fetchThreadDetail(sid, prov);
+        return;
+      }
+
+      const toggleStepsBtn = e.target.closest('[data-toggle-all-steps]');
+      if (toggleStepsBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const stack = toggleStepsBtn.closest('.code-steps-stack');
+        if (stack) {
+          const detailsList = Array.from(stack.querySelectorAll('details.code-step-card'));
+          const anyClosed = detailsList.some((d) => !d.open);
+          const openMap = getThreadOpenDetailsMap(prefs.selectedThreadId, true);
+          detailsList.forEach((d) => {
+            const key = d.dataset.chatDetailKey || '';
+            d.dataset.renderedOpen = anyClosed ? '1' : '0';
+            if (openMap && key) openMap.set(key, anyClosed);
+            d.open = anyClosed;
+          });
+          const parentTools = stack.closest('details.tools-details[data-chat-detail-key]');
+          if (parentTools && openMap && parentTools.dataset.chatDetailKey) {
+            parentTools.dataset.renderedOpen = parentTools.open ? '1' : '0';
+            openMap.set(parentTools.dataset.chatDetailKey, parentTools.open);
+          }
+          toggleStepsBtn.textContent = anyClosed ? 'Collapse all' : 'Expand all';
+        }
+        return;
+      }
+
+      const stepMentionBtn = e.target.closest('[data-step-mention-file]');
+      if (stepMentionBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const fp = stepMentionBtn.dataset.stepMentionFile || '';
+        if (fp) {
+          recordFreqUsage('repos', fp);
+          attachMentionItemToComposer({ name: fp, repoPath: fp, kind: 'repo', sizeLabel: 'file ref' });
+          showToast(`📎 Mentioned ${fp}`);
+          $('composer-input')?.focus();
+        }
+        return;
+      }
+
+      const slashPickBtn = e.target.closest('[data-slash-pick]');
+      if (slashPickBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        await applySlashPopoverSelection(Number(slashPickBtn.dataset.slashPick || 0));
+        return;
+      }
+
       const tabBtn = e.target.closest('[data-tab]');
       if (tabBtn) {
         haptic(8);
@@ -8826,6 +9854,8 @@
 
       const gotoBtn = e.target.closest('[data-goto-tab]');
       if (gotoBtn) {
+        e.preventDefault();
+        e.stopPropagation();
         clearPinnedNav();
         switchTab(gotoBtn.dataset.gotoTab);
         return;
@@ -8840,6 +9870,7 @@
         prefs.collapsedQuotaCards[provKey] = !prefs.collapsedQuotaCards[provKey];
         saveJson(STORAGE_KEYS.PREFS, prefs);
         renderPulseView();
+        renderIdeSidebar();
         return;
       }
 
@@ -8855,6 +9886,7 @@
           }
           persistCache();
           renderPulseView();
+          renderIdeSidebar();
         }
         await dispatchRemoteCommand({
           type: 'sessionAction',
@@ -8875,6 +9907,7 @@
         const provider = acctMoveBtn.dataset.accountProv === 'claude' ? 'claude' : 'antigravity';
         if (accountId && (dir === 'up' || dir === 'down')) {
           await reorderPulseQuotaCard(accountId, { direction: dir, provider });
+          renderIdeSidebar();
         }
         return;
       }
@@ -8900,6 +9933,7 @@
           }
           persistCache();
           renderPulseView();
+          renderIdeSidebar();
         }
         await dispatchRemoteCommand({
           type: 'sessionAction',
@@ -8946,6 +9980,7 @@
           }
           persistCache();
           renderPulseView();
+          renderIdeSidebar();
         }
         await dispatchRemoteCommand({
           type: 'sessionAction',
@@ -8961,6 +9996,7 @@
 
       const addAcctRemoteBtn = e.target.closest('[data-account-add-remote]');
       if (addAcctRemoteBtn) {
+        e.preventDefault();
         e.stopPropagation();
         const hintProv = addAcctRemoteBtn.dataset.accountAddRemote;
         const defaultPromptVal =
@@ -9017,8 +10053,10 @@
         const targetProv = openBgBtn.dataset.sessionProv || '';
         const focusTask = openBgBtn.dataset.focusTask || '';
         recentResumeUntil = 0;
+        ensureEditorTabOpen(targetSid);
         setPinnedNav({ threadId: targetSid, provider: targetProv, durationMs: 45000 });
         prefs.selectedThreadId = targetSid;
+        prefs.lastReplyThreadId = targetSid;
         prefs.composerMode = 'reply';
         saveJson(STORAGE_KEYS.PREFS, prefs);
         if (focusTask) {
@@ -9030,6 +10068,7 @@
         if (ctxPop) ctxPop.hidden = true;
         const bgPop = $('bg-tasks-popover');
         if (bgPop) bgPop.hidden = false;
+        renderIdeSidebar();
         renderChatView(true);
         fetchThreadDetail(targetSid, targetProv).then(() => {
           if (focusTask) {
@@ -9085,11 +10124,14 @@
       const openChat = e.target.closest('[data-open-chat]');
       if (openChat && openChat.dataset.openChat) {
         clearPinnedNav();
+        ensureEditorTabOpen(openChat.dataset.openChat);
         prefs.selectedThreadId = openChat.dataset.openChat;
+        prefs.lastReplyThreadId = openChat.dataset.openChat;
         prefs.composerMode = 'reply';
         saveJson(STORAGE_KEYS.PREFS, prefs);
         markNotificationsCheckedForSession(prefs.selectedThreadId);
         switchTab('chat');
+        renderIdeSidebar();
         fetchThreadDetail(prefs.selectedThreadId);
         return;
       }
@@ -9115,6 +10157,7 @@
           saveJson(STORAGE_KEYS.PREFS, prefs);
           persistCache();
           renderSessionsView();
+          renderIdeSidebar();
           if (gId !== 'ungrouped') {
             dispatchRemoteCommand({
               type: 'sessionAction',
@@ -9136,6 +10179,7 @@
             appState.groups = [...(appState.groups || []), { id: newId, name: cleanName, collapsed: false }];
             persistCache();
             renderSessionsView();
+            renderIdeSidebar();
           }
           await dispatchRemoteCommand({
             type: 'sessionAction',
@@ -9157,6 +10201,7 @@
             grpObj.name = clean;
             persistCache();
             renderSessionsView();
+            renderIdeSidebar();
           }
           await dispatchRemoteCommand({
             type: 'sessionAction',
@@ -9187,6 +10232,7 @@
             }
             persistCache();
             renderSessionsView();
+            renderIdeSidebar();
           }
           await dispatchRemoteCommand({
             type: 'sessionAction',
@@ -9226,6 +10272,7 @@
               noteRowOverride(r.id, { archived: true });
             }
           }
+          removeEditorTabIds(closedIds, true);
           persistCache();
           renderAll();
           await dispatchRemoteCommand({
@@ -9348,8 +10395,10 @@
               targetRow.group = '';
               noteRowOverride(id, { archived: true, group: '' });
               markNotificationsCheckedForSession(id);
+              removeEditorTabIds([id], true);
             } else {
               noteRowOverride(id, { archived: false });
+              ensureEditorTabOpen(id);
             }
           }
           if (action === 'unread') {
@@ -9376,6 +10425,7 @@
       const sessCard = e.target.closest('.session-card[data-session-id]');
       if (sessCard && sessCard.dataset.sessionId) {
         recentResumeUntil = 0;
+        ensureEditorTabOpen(sessCard.dataset.sessionId);
         recordFreqUsage('threads', sessCard.dataset.sessionId);
         setPinnedNav({
           threadId: sessCard.dataset.sessionId,
@@ -9383,10 +10433,12 @@
           durationMs: 45000
         });
         prefs.selectedThreadId = sessCard.dataset.sessionId;
+        prefs.lastReplyThreadId = sessCard.dataset.sessionId;
         prefs.composerMode = 'reply';
         saveJson(STORAGE_KEYS.PREFS, prefs);
         markNotificationsCheckedForSession(prefs.selectedThreadId);
         switchTab('chat');
+        renderIdeSidebar();
         fetchThreadDetail(prefs.selectedThreadId, sessCard.dataset.sessionProv);
         return;
       }
@@ -9431,6 +10483,7 @@
         saveJson(STORAGE_KEYS.PREFS, prefs);
         renderPulseView();
         renderSessionsView();
+        renderIdeSidebar();
         if (prefs.activeTab === 'chat') renderChatView();
         return;
       }
@@ -9456,6 +10509,7 @@
         if (sInput) sInput.value = '';
         renderPulseView();
         renderSessionsView();
+        renderIdeSidebar();
         return;
       }
 
@@ -9828,11 +10882,14 @@
         if (tid) recordFreqUsage('threads', tid);
         else if (act) recordFreqUsage('threads', act);
         if (tid) {
+          ensureEditorTabOpen(tid);
           setPinnedNav({ threadId: tid, durationMs: 45000 });
           prefs.selectedThreadId = tid;
+          prefs.lastReplyThreadId = tid;
           prefs.composerMode = 'reply';
           saveJson(STORAGE_KEYS.PREFS, prefs);
           switchTab('chat');
+          renderIdeSidebar();
           fetchThreadDetail(tid);
         } else if (act === 'attach-file') {
           switchTab('chat');
@@ -9923,6 +10980,32 @@
       const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId);
       await cancelAllSessionBgTasks(prefs.selectedThreadId, activeRow?.provider || 'antigravity');
     });
+    $('chat-stream')?.addEventListener(
+      'toggle',
+      (ev) => {
+        const det = ev.target;
+        if (!det || det.tagName !== 'DETAILS' || !det.dataset?.chatDetailKey) return;
+        const key = det.dataset.chatDetailKey;
+        const openMap = getThreadOpenDetailsMap(prefs.selectedThreadId, false);
+        const renderedOpen = det.dataset.renderedOpen === '1';
+        if (det.open === renderedOpen && !openMap?.has(key)) return;
+        det.dataset.renderedOpen = det.open ? '1' : '0';
+        const targetMap = openMap || getThreadOpenDetailsMap(prefs.selectedThreadId, true);
+        if (targetMap) {
+          targetMap.set(key, det.open);
+        }
+        const stack = det.closest('.code-steps-stack');
+        if (stack && det.classList.contains('code-step-card')) {
+          const btn = stack.querySelector('[data-toggle-all-steps]');
+          if (btn) {
+            const allOpen = Array.from(stack.querySelectorAll('details.code-step-card')).every((d) => d.open);
+            btn.textContent = allOpen ? 'Collapse all' : 'Expand all';
+          }
+        }
+      },
+      true
+    );
+
     $('bg-tasks-popover-list')?.addEventListener(
       'toggle',
       (ev) => {
@@ -10029,6 +11112,7 @@
         return;
       }
       recentResumeUntil = 0;
+      ensureEditorTabOpen(val);
       recordFreqUsage('threads', val);
       setPinnedNav({ threadId: val, durationMs: 45000 });
       prefs.selectedThreadId = val;
@@ -10038,11 +11122,80 @@
       saveJson(STORAGE_KEYS.PREFS, prefs);
       markNotificationsCheckedForSession(prefs.selectedThreadId);
       renderChatView(true);
+      renderIdeSidebar();
       fetchThreadDetail(prefs.selectedThreadId);
     });
 
-    // Search in Sessions
+    // Search in Sessions & IDE Explorer Sidebar
     $('sess-search-input')?.addEventListener('input', () => renderSessionsView());
+    $('ide-sidebar-search')?.addEventListener('input', () => renderIdeSidebar());
+
+    // Middle-click to close open editor tab (VS Code parity)
+    $('ide-editor-tabs')?.addEventListener('auxclick', (e) => {
+      if (isPinLocked() || e.button !== 1) return;
+      const tab = e.target.closest('[data-editor-tab-id]');
+      if (tab?.dataset.editorTabId) {
+        e.preventDefault();
+        closeEditorTab(tab.dataset.editorTabId);
+      }
+    });
+
+    // Composer @mention / /slash quick-trigger buttons & drag-and-drop
+    const insertComposerTriggerChar = (ch) => {
+      if (isPinLocked()) return;
+      const inp = $('composer-input');
+      if (!inp) return;
+      const val = String(inp.value || '');
+      if (ch === '/') {
+        if (!val.startsWith('/')) {
+          inp.value = val ? `/ ${val}` : '/';
+          inp.focus();
+          inp.setSelectionRange(1, 1);
+        } else {
+          inp.focus();
+          const slashEnd = inp.value.indexOf(' ') === -1 ? inp.value.length : inp.value.indexOf(' ');
+          inp.setSelectionRange(slashEnd, slashEnd);
+        }
+      } else {
+        const caret = typeof inp.selectionStart === 'number' ? inp.selectionStart : val.length;
+        const before = val.slice(0, caret);
+        const after = val.slice(caret);
+        const spacer = before && !/\s$/.test(before) ? ' ' : '';
+        const inserted = `${spacer}@`;
+        inp.value = `${before}${inserted}${after}`;
+        const nextPos = before.length + inserted.length;
+        inp.focus();
+        inp.setSelectionRange(nextPos, nextPos);
+      }
+      slashPopoverActiveIdx = 0;
+      updateComposerActionButton();
+      updateComposerSlashPopover();
+    };
+    $('btn-composer-slash')?.addEventListener('click', () => insertComposerTriggerChar('/'));
+    $('btn-composer-mention')?.addEventListener('click', () => insertComposerTriggerChar('@'));
+
+    const compBox = $('composer-box');
+    if (compBox) {
+      compBox.addEventListener('dragover', (e) => {
+        if (isPinLocked()) return;
+        e.preventDefault();
+        compBox.classList.add('is-dragover');
+      });
+      compBox.addEventListener('dragleave', (e) => {
+        if (!compBox.contains(e.relatedTarget)) {
+          compBox.classList.remove('is-dragover');
+        }
+      });
+      compBox.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        compBox.classList.remove('is-dragover');
+        if (isPinLocked()) return;
+        const files = e.dataTransfer?.files;
+        if (files && files.length) {
+          await handleComposerFiles(files);
+        }
+      });
+    }
 
     // Composer Multi-Device Host & Repo Selectors (Frequency-First)
     $('composer-device-select')?.addEventListener('change', (e) => {
@@ -10095,8 +11248,13 @@
     $('composer-input')?.addEventListener('input', (e) => {
       const el = e.target;
       el.style.height = 'auto';
-      el.style.height = `${Math.min(110, el.scrollHeight)}px`;
+      el.style.height = `${Math.min(140, el.scrollHeight)}px`;
+      slashPopoverActiveIdx = 0;
       updateComposerActionButton();
+      updateComposerSlashPopover();
+    });
+    $('composer-input')?.addEventListener('click', () => {
+      updateComposerSlashPopover();
     });
 
     // Composer Form Submit
@@ -10108,13 +11266,43 @@
 
     $('composer-input')?.addEventListener('keydown', async (e) => {
       if (isPinLocked()) return;
+      const pop = $('composer-slash-popover');
+      const popOpen = Boolean(pop && !pop.hidden && slashPopoverItems.length > 0);
+      if (popOpen) {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          const len = slashPopoverItems.length;
+          slashPopoverActiveIdx =
+            e.key === 'ArrowDown'
+              ? (slashPopoverActiveIdx + 1) % len
+              : (slashPopoverActiveIdx - 1 + len) % len;
+          pop.querySelectorAll('.slash-pop-item').forEach((btn, idx) => {
+            const isAct = idx === slashPopoverActiveIdx;
+            btn.classList.toggle('active', isAct);
+            btn.setAttribute('aria-selected', isAct ? 'true' : 'false');
+            if (isAct) btn.scrollIntoView({ block: 'nearest' });
+          });
+          return;
+        }
+        if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+          e.preventDefault();
+          await applySlashPopoverSelection(slashPopoverActiveIdx);
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          closeSlashPopover();
+          return;
+        }
+      }
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         await submitComposerPrompt();
       }
     });
 
-    // Command Palette shortcuts
+    // Command Palette & IDE Sidebar shortcuts
     $('open-cmd-palette')?.addEventListener('click', openCommandPalette);
     $('mobile-cmd-btn')?.addEventListener('click', openCommandPalette);
     $('cmd-close')?.addEventListener('click', closeCommandPalette);
@@ -10124,6 +11312,9 @@
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         openCommandPalette();
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        toggleIdeSidebar();
       } else if (e.key === 'Enter' && !e.shiftKey) {
         const t = e.target;
         if (t && t.matches && t.matches('[data-pair-code-input], #input-pair-six-code')) {
@@ -10137,6 +11328,7 @@
           $('btn-apply-pair-token')?.click();
         }
       } else if (e.key === 'Escape') {
+        closeSlashPopover();
         closeCommandPalette();
         closeConnModal();
         closeNotifModal();
@@ -10466,6 +11658,7 @@
   }
 
   async function submitComposerPrompt() {
+    closeSlashPopover();
     const inp = $('composer-input');
     if (!inp) return;
     const sendBtn = $('composer-send-btn');
@@ -10475,6 +11668,19 @@
         await stopActiveSession();
       }
       return;
+    }
+
+    // Intercept standalone local IDE action slash commands so they execute directly
+    if (composerAttachments.length === 0 && /^\/[a-z-]+$/i.test(rawText)) {
+      const cmdMatch = SLASH_COMMAND_CATALOG.find(
+        (c) => c.kind === 'action' && c.id.toLowerCase() === rawText.toLowerCase()
+      );
+      if (cmdMatch) {
+        slashPopoverItems = [cmdMatch];
+        slashPopoverTrigger = { mode: 'slash', query: cmdMatch.id.slice(1), startIdx: 0, endIdx: inp.value.length };
+        await applySlashPopoverSelection(0);
+        return;
+      }
     }
 
     const sentAttachments = [...composerAttachments];
@@ -10561,6 +11767,7 @@
         knownIds,
         createdAt: Date.now()
       };
+      ensureEditorTabOpen(draftId);
       prefs.selectedThreadId = draftId;
       prefs.composerMode = 'reply';
       prefs.newSessionGroupId = '';
@@ -10568,6 +11775,7 @@
       persistCache();
       updateComposerModePills();
       renderChatView(true);
+      renderIdeSidebar();
     } else if (targetId) {
       stoppedSessionsById.delete(targetId);
       const hadPendingQ = Boolean(
@@ -10744,7 +11952,9 @@
     });
 
     if (threadId) {
+      ensureEditorTabOpen(threadId);
       prefs.selectedThreadId = threadId;
+      prefs.lastReplyThreadId = threadId;
       prefs.composerMode = 'reply';
       prefs.activeTab = 'chat';
       saveJson(STORAGE_KEYS.PREFS, prefs);
@@ -10869,7 +12079,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=57', { updateViaCache: 'none' })
+        .register('sw.js?v=58', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
