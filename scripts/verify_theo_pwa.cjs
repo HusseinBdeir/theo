@@ -2145,6 +2145,224 @@ async function main() {
     assert.strictEqual(v60ReloadAndMobileProbe.closedByEscapeOnMobile, true, 'Escape on mobile (<=900px) must close Split-Watch overlay');
     console.log('[PASS] Adversarial #11: v60 Calm Chromatics, 31-Step Change-Set Compaction, @L Quote, 5 Built-in Studio Lenses, Parallel Split-Watch & PIN/403 Guards verified');
 
+    // -------------------------------------------------------------------------
+    // Adversarial Check #12: v61 Composer De-clutter (No Direct/Reply pills),
+    // Desktop Breadcrumb De-duplication, Interactive Model & Thinking Level
+    // Selector (Gemini 4 Argon / Gemini 3.8 Flash + Low|Medium|High), Sidebar
+    // Open-Tab Grey Dot (.ide-dot.open), Last-Worked-On Sidebar Ordering,
+    // Studio Launchpad, & >= 3 Negative Assertions
+    // -------------------------------------------------------------------------
+    await cdp.send(
+      'Emulation.setDeviceMetricsOverride',
+      { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false },
+      sessionId
+    );
+    await evalJs(`(() => {
+      // Negative #1 seed: corrupt/hostile selectedModelByProvider & selectedThinkingEffort in localStorage
+      const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+      prefs.selectedModelByProvider = { antigravity: '<img src=x onerror="window.__XSS=610">', claude: 'invalid-model' };
+      prefs.selectedThinkingEffort = { antigravity: 'ultra-bogus', claude: 'bogus' };
+      prefs.threadModelConfig = {
+        'draft-new-123': { modelId: 'gemini-3.8-flash', effort: 'low', provider: 'antigravity' },
+        'sess-corrupt': { modelId: 'bogus-model', effort: 'high', provider: 'antigravity' },
+        'sess-beta': { modelId: 'gemini-3.8-flash', effort: 'low', provider: 'antigravity', updatedAt: Date.now() }
+      };
+      prefs.openEditorTabs = ['sess-alpha'];
+      prefs.selectedThreadId = 'sess-alpha';
+      prefs.composerMode = 'reply';
+      prefs.activeTab = 'chat';
+      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+
+      const cache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+      const now = Date.now();
+      cache.state.rows = [
+        {
+          id: 'sess-alpha',
+          title: 'Alpha Newer Session',
+          provider: 'antigravity',
+          model: 'Gemini 3.1 Pro',
+          folder: 'theo',
+          status: 'completed',
+          open: true,
+          at: now - 60000
+        },
+        {
+          id: 'sess-beta',
+          title: 'Beta Older Session',
+          provider: 'antigravity',
+          model: 'Gemini 4 Argon (High)',
+          folder: 'isabi-app',
+          status: 'completed',
+          open: false,
+          at: now - 3600000 * 11
+        }
+      ];
+      localStorage.setItem('theo_remote_cache_v3', JSON.stringify(cache));
+    })()`);
+
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 600));
+
+    const v61Probe = await evalJs(`(async () => {
+      // 1. Removed redundant bottom composer buttons
+      const directToggleGone = document.getElementById('composer-direct-toggle') === null;
+      const modePillsGone = document.getElementById('composer-mode-pills') === null;
+
+      // 2. Desktop breadcrumb de-duplication (#view-chat .chat-title-row hidden on >=1025px)
+      const titleRow = document.querySelector('#view-chat .chat-title-row');
+      const desktopTitleRowHidden = Boolean(titleRow && getComputedStyle(titleRow).display === 'none');
+
+      // Negative #1 verification: hostile model/effort sanitized to 'gemini-4-argon' / 'high' and legacy 'Gemini 3.1 Pro' upgraded to 'Gemini 4 Argon (High)'
+      const bootPrefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+      const sanitizedModel = bootPrefs.selectedModelByProvider?.antigravity;
+      const sanitizedEffort = bootPrefs.selectedThinkingEffort?.antigravity;
+      const draftCfgPurgedOnBoot = !('draft-new-123' in (bootPrefs.threadModelConfig || {})) && !('sess-corrupt' in (bootPrefs.threadModelConfig || {}));
+      const initialPillText = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+
+      // 3. Interactive Model & Thinking Level Selector (switch to Gemini 3.8 Flash + Medium)
+      document.getElementById('chat-model-picker-btn')?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      const modelPopOpen = document.getElementById('model-picker-popover')?.hidden === false;
+      document.querySelector('#model-picker-popover [data-select-ai-model="gemini-3.8-flash"]')?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      document.querySelector('#model-picker-popover [data-select-ai-effort="medium"]')?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      const updatedHeaderPill = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+      const updatedComposerPill = document.getElementById('composer-model-label')?.textContent?.trim() || '';
+      // Escape closes #model-picker-popover
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await new Promise((r) => setTimeout(r, 20));
+      const modelPopClosedByEscape = document.getElementById('model-picker-popover')?.hidden === true;
+
+      // Negative #2: PIN lock blocks model/effort mutation
+      const pinOverlay = document.getElementById('pin-overlay');
+      if (pinOverlay) pinOverlay.hidden = false;
+      document.querySelector('#model-picker-popover [data-select-ai-model="gemini-4-argon"]')?.click();
+      document.querySelector('#model-picker-popover [data-select-ai-effort="low"]')?.click();
+      await new Promise((r) => setTimeout(r, 20));
+      const pillAfterPinBlocked = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+      if (pinOverlay) pinOverlay.hidden = true;
+
+      // 4. Sidebar Open-Tab Grey Dot (.ide-dot.open) vs Closed Idle Session (.ide-dot.closed)
+      const alphaDot = document.querySelector('#ide-sidebar-tree [data-ide-open-session="sess-alpha"] .ide-dot');
+      const betaDot = document.querySelector('#ide-sidebar-tree [data-ide-open-session="sess-beta"] .ide-dot');
+      const openTabHasGreyDot = Boolean(
+        alphaDot &&
+          alphaDot.classList.contains('open') &&
+          getComputedStyle(alphaDot).display !== 'none'
+      );
+      const closedTabDotHidden = Boolean(
+        betaDot &&
+          betaDot.classList.contains('closed') &&
+          getComputedStyle(betaDot).display === 'none'
+      );
+
+      // 5. Sidebar Ordering by Last Worked On: initially sess-alpha (1m ago) is #1 before sess-beta (11h ago)
+      const orderBeforeWork = Array.from(
+        document.querySelectorAll('#ide-sidebar-tree .ide-tree-row[data-ide-open-session]')
+      ).map((el) => el.dataset.ideOpenSession);
+
+      // Open sess-beta -> now both sess-alpha and sess-beta are open tabs
+      document.querySelector('#ide-sidebar-tree [data-ide-open-session="sess-beta"]')?.click();
+      await new Promise((r) => setTimeout(r, 35));
+      const betaDotAfterOpen = document.querySelector('#ide-sidebar-tree [data-ide-open-session="sess-beta"] .ide-dot');
+      const betaNowHasGreyDot = Boolean(
+        betaDotAfterOpen &&
+          betaDotAfterOpen.classList.contains('open') &&
+          getComputedStyle(betaDotAfterOpen).display !== 'none'
+      );
+
+      // Negative #3: Clicking sidebar [data-close-editor-tab="sess-alpha"] closes sess-alpha tab & removes its grey dot WITHOUT switching active session to sess-alpha
+      document.querySelector('#ide-sidebar-tree [data-ide-open-session="sess-alpha"] [data-close-editor-tab="sess-alpha"]')?.click();
+      await new Promise((r) => setTimeout(r, 35));
+      const alphaDotAfterClose = document.querySelector('#ide-sidebar-tree [data-ide-open-session="sess-alpha"] .ide-dot');
+      const alphaGreyDotRemovedOnClose = Boolean(
+        alphaDotAfterClose && getComputedStyle(alphaDotAfterClose).display === 'none'
+      );
+      const activeStayedBeta = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}').selectedThreadId === 'sess-beta';
+
+      // Submit a prompt in sess-beta -> sess-beta is worked on now, so it MUST move to #1 in the sidebar above sess-alpha!
+      const compInp = document.getElementById('composer-input');
+      if (compInp) {
+        compInp.value = 'Verify last-worked-on sidebar ordering';
+        document.getElementById('chat-composer-form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      }
+      await new Promise((r) => setTimeout(r, 50));
+      const orderAfterWork = Array.from(
+        document.querySelectorAll('#ide-sidebar-tree .ide-tree-row[data-ide-open-session]')
+      ).map((el) => el.dataset.ideOpenSession);
+
+      // 6. Click + Antigravity -> opens active draft tab + renders .new-session-launchpad (no verbose paragraph)
+      document.getElementById('rail-new-agy')?.click();
+      await new Promise((r) => setTimeout(r, 35));
+      const hasDraftTab = Boolean(document.querySelector('#ide-editor-tabs [data-editor-tab-id="__new__"].active'));
+      const hasLaunchpad = Boolean(document.querySelector('#chat-stream .new-session-launchpad'));
+      const hasOldVerboseText = Boolean(
+        document.getElementById('chat-stream')?.textContent?.includes('Starting a brand-new, unrelated')
+      );
+      document.querySelector('#chat-stream .new-session-launchpad [data-open-lens="agents"]')?.click();
+      await new Promise((r) => setTimeout(r, 30));
+      const launchpadChecksOpenedAgentsLens =
+        document.getElementById('ide-inspector-pane')?.hidden === false &&
+        JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}').inspectorTab === 'agents';
+      document.getElementById('btn-close-inspector')?.click();
+
+      return {
+        directToggleGone,
+        modePillsGone,
+        desktopTitleRowHidden,
+        sanitizedModel,
+        sanitizedEffort,
+        draftCfgPurgedOnBoot,
+        initialPillText,
+        modelPopOpen,
+        modelPopClosedByEscape,
+        updatedHeaderPill,
+        updatedComposerPill,
+        pillAfterPinBlocked,
+        openTabHasGreyDot,
+        closedTabDotHidden,
+        orderBeforeWork,
+        betaNowHasGreyDot,
+        alphaGreyDotRemovedOnClose,
+        activeStayedBeta,
+        orderAfterWork,
+        hasDraftTab,
+        hasLaunchpad,
+        hasOldVerboseText,
+        launchpadChecksOpenedAgentsLens,
+        titleAttrsCount: document.querySelectorAll('[title]').length,
+        xssTriggered: Boolean(window.__XSS)
+      };
+    })()`);
+
+    assert.strictEqual(v61Probe.xssTriggered, false, 'Negative #1: Hostile model/effort in localStorage must never trigger XSS');
+    assert.strictEqual(v61Probe.directToggleGone, true, '#composer-direct-toggle (⚡ Direct) must be removed from bottom composer');
+    assert.strictEqual(v61Probe.modePillsGone, true, '#composer-mode-pills (Reply | + AGY | + Claude) must be removed from bottom composer');
+    assert.strictEqual(v61Probe.desktopTitleRowHidden, true, 'Duplicate #chat-session-select title row must be hidden on desktop (>=1025px)');
+    assert.strictEqual(v61Probe.sanitizedModel, 'gemini-4-argon', 'Negative #1: Invalid stored model ID must sanitize to gemini-4-argon');
+    assert.strictEqual(v61Probe.sanitizedEffort, 'high', 'Negative #1: Invalid stored thinking effort must sanitize to high');
+    assert.strictEqual(v61Probe.draftCfgPurgedOnBoot, true, 'Corrupt or draft-new-* threadModelConfig entries must be purged on boot');
+    assert.strictEqual(v61Probe.initialPillText, 'Gemini 4 Argon (High)', 'Legacy Gemini 3.1 Pro must upgrade to Gemini 4 Argon (High)');
+    assert.strictEqual(v61Probe.modelPopOpen, true, 'Clicking #chat-model-picker-btn must open #model-picker-popover');
+    assert.strictEqual(v61Probe.modelPopClosedByEscape, true, 'Escape must close #model-picker-popover');
+    assert.strictEqual(v61Probe.updatedHeaderPill, 'Gemini 3.8 Flash (Medium)', 'Selecting Gemini 3.8 Flash + Medium must update #chat-model-pill');
+    assert.strictEqual(v61Probe.updatedComposerPill, 'Gemini 3.8 Flash · Medium', 'Selecting Gemini 3.8 Flash + Medium must update #composer-model-label');
+    assert.strictEqual(v61Probe.pillAfterPinBlocked, 'Gemini 3.8 Flash (Medium)', 'Negative #2: PIN lock must block model/effort changes');
+    assert.strictEqual(v61Probe.openTabHasGreyDot, true, 'Open idle tab in sidebar must display subtle grey dot (.ide-dot.open)');
+    assert.strictEqual(v61Probe.closedTabDotHidden, true, 'Closed idle session in sidebar must hide dot (.ide-dot.closed)');
+    assert.strictEqual(v61Probe.orderBeforeWork[0], 'sess-alpha', `Expected newer sess-alpha first before work, got ${JSON.stringify(v61Probe.orderBeforeWork)}`);
+    assert.strictEqual(v61Probe.betaNowHasGreyDot, true, 'Opening sess-beta tab must immediately show .ide-dot.open in sidebar');
+    assert.strictEqual(v61Probe.alphaGreyDotRemovedOnClose, true, 'Negative #3: Closing sess-alpha tab from sidebar must remove its grey dot');
+    assert.strictEqual(v61Probe.activeStayedBeta, true, 'Negative #3: Clicking sidebar close-tab button must not open that row');
+    assert.strictEqual(v61Probe.orderAfterWork[0], 'sess-beta', `Expected newly worked-on sess-beta to move to #1 in sidebar, got ${JSON.stringify(v61Probe.orderAfterWork)}`);
+    assert.strictEqual(v61Probe.hasDraftTab, true, '+ New Session mode must render active draft tab in #ide-editor-tabs');
+    assert.strictEqual(v61Probe.hasLaunchpad, true, '+ New Session mode must render interactive .new-session-launchpad');
+    assert.strictEqual(v61Probe.hasOldVerboseText, false, 'Redundant verbose New Session paragraph must be gone');
+    assert.strictEqual(v61Probe.launchpadChecksOpenedAgentsLens, true, 'Launchpad Studio Checks & Agents card must open the agents Inspector lens');
+    assert.strictEqual(v61Probe.titleAttrsCount, 0, 'Zero [title] attributes allowed anywhere in v61 DOM');
+    console.log('[PASS] Adversarial #12: v61 Composer De-clutter, Desktop Tab De-duplication, Interactive Model & Thinking Level Selector, Sidebar Open-Tab Grey Dot, Last-Worked-On Ordering & 3 Negative Guards verified');
+
     // Final error & network quarantine assertions (#18)
     assert.strictEqual(pageExceptions.length, 0, `Uncaught page exceptions: ${JSON.stringify(pageExceptions)}`);
     assert.strictEqual(consoleErrors.length, 0, `Console errors: ${JSON.stringify(consoleErrors)}`);

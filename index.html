@@ -9,14 +9,14 @@
   <meta name="apple-mobile-web-app-title" content="THEO">
   <meta name="description" content="THEO — AI Coding &amp; Session Workbench for Google Antigravity and Claude Code.">
   <title>THEO — AI Session Workbench</title>
-  <link rel="manifest" href="manifest.json?v=60">
-  <link rel="icon" type="image/svg+xml" href="icon.svg?v=60">
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=60">
-  <link rel="apple-touch-icon" href="icon-180.png?v=60">
+  <link rel="manifest" href="manifest.json?v=61">
+  <link rel="icon" type="image/svg+xml" href="icon.svg?v=61">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=61">
+  <link rel="apple-touch-icon" href="icon-180.png?v=61">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/theo.css?v=60">
+  <link rel="stylesheet" href="css/theo.css?v=61">
   <script id="pre">
     (() => {
       try {
@@ -55,7 +55,7 @@
   <div id="pin-overlay" class="pin-overlay" hidden>
     <div class="pin-card">
       <div class="pin-brand">
-        <img src="icon.svg?v=60" alt="THEO" class="pin-logo">
+        <img src="icon.svg?v=61" alt="THEO" class="pin-logo">
         <div class="pin-title">THEO REMOTE</div>
         <div class="brass-double-rule"></div>
       </div>
@@ -85,7 +85,7 @@
     <aside class="ink-rail" id="ink-rail" aria-label="Primary Navigation">
       <div class="ide-activity-bar">
         <button type="button" class="activity-brand-btn" id="btn-activity-brand" data-sidebar-collapse="1" data-tip="THEO Workbench (⌘B)" aria-label="Toggle THEO Explorer Sidebar">
-          <img src="icon.svg?v=60" alt="THEO" class="brand-badge">
+          <img src="icon.svg?v=61" alt="THEO" class="brand-badge">
         </button>
 
         <nav class="rail-nav" id="rail-nav">
@@ -255,7 +255,7 @@
       <!-- Mobile & Compact Top Header -->
       <header class="mobile-topbar">
         <div class="mobile-brand">
-          <img src="icon.svg?v=60" alt="THEO" class="mobile-badge">
+          <img src="icon.svg?v=61" alt="THEO" class="mobile-badge">
           <div class="mobile-brand-copy">
             <div class="mobile-title-row">
               <div class="mobile-wordmark-stack">
@@ -449,13 +449,17 @@
               <span class="chat-prov-badge" id="chat-prov-badge"></span>
               <div class="chat-breadcrumb-bar">
                 <span class="chat-crumb-folder" id="chat-folder-pill">Workspace</span>
-                <span class="chat-crumb-sep">/</span>
+                <span class="chat-crumb-sep chat-title-sep">/</span>
                 <div class="chat-title-row">
                   <select id="chat-session-select" class="chat-session-select" aria-label="Select active conversation"></select>
                 </div>
                 <div class="chat-meta-row" id="chat-meta-row">
                   <span class="chat-crumb-sep">·</span>
-                  <span id="chat-model-pill" class="tabular">Gemini / Claude</span>
+                  <button type="button" class="model-picker-pill tabular" id="chat-model-picker-btn" aria-haspopup="dialog" aria-expanded="false" aria-label="Select AI Model and Thinking Level">
+                    <span class="model-pill-dot" aria-hidden="true"></span>
+                    <span id="chat-model-pill">Gemini 4 Argon (High)</span>
+                    <span class="model-pill-chev" aria-hidden="true">▾</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -502,6 +506,18 @@
                 Open in IDE
               </button>
             </div>
+          </div>
+
+          <!-- Interactive Model & Thinking Effort Popover -->
+          <div class="ctx-Popover model-picker-popover" id="model-picker-popover" role="dialog" aria-label="Model and Thinking Level Selector" hidden>
+            <div class="ctx-popover-head">
+              <div>
+                <div class="eyebrow">AI ENGINE &amp; REASONING DEPTH</div>
+                <h3 id="model-popover-title">Select Model &amp; Thinking Level</h3>
+              </div>
+              <button type="button" class="icon-btn-sm" id="btn-close-model-picker" aria-label="Close Model Selector">✕</button>
+            </div>
+            <div class="model-picker-body" id="model-picker-body"></div>
           </div>
 
           <!-- Background Tasks & Subagents Popover Drawer -->
@@ -574,14 +590,10 @@
                       <button type="button" class="composer-route-toggle-pill" id="btn-toggle-composer-route" aria-label="Toggle target host and workspace routing" aria-expanded="false">
                         <span>⇄ Route</span>
                       </button>
-
-                      <div class="composer-target-bar">
-                        <div class="composer-mode-pills" id="composer-mode-pills">
-                          <button type="button" class="target-pill active" id="comp-mode-reply" data-comp-mode="reply">Reply</button>
-                          <button type="button" class="target-pill" id="comp-mode-new-agy" data-comp-mode="new-antigravity">+ AGY</button>
-                          <button type="button" class="target-pill" id="comp-mode-new-claude" data-comp-mode="new-claude">+ Claude</button>
-                        </div>
-                      </div>
+                      <button type="button" class="composer-model-pill tabular" id="composer-model-btn" aria-label="Change Model and Thinking Level">
+                        <span id="composer-model-label">Gemini 4 Argon · High</span>
+                        <span aria-hidden="true">▾</span>
+                      </button>
 
                       <div class="composer-routing-row" id="composer-routing-row">
                         <label class="composer-route-pill" aria-label="Select target machine">
@@ -596,9 +608,6 @@
                             <option value="">Default Workspace</option>
                           </select>
                         </label>
-                        <button type="button" class="direct-stream-pill active" id="composer-direct-toggle" aria-label="Toggle Direct CLI Stream">
-                          ⚡ Direct
-                        </button>
                       </div>
                     </div>
 
@@ -836,7 +845,7 @@
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=60"></script>
-  <script src="js/app.js?v=60"></script>
+  <script src="js/endpoints.js?v=61"></script>
+  <script src="js/app.js?v=61"></script>
 </body>
 </html>
