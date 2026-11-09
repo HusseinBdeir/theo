@@ -798,6 +798,19 @@
   const prevRowSteps = new Map();
   const prevRowAts = new Map();
   const pendingThreadRequests = new Map();
+  const lastThreadDetailFetchAtById = new Map();
+  const lastThreadDetailReceivedAtById = new Map();
+  const lastSeenThreadStepStampById = new Map();
+  const stepKindFilterByTurnKey = new Map();
+  function setBoundedMap(map, key, val, max = 120) {
+    if (!map || !key) return;
+    if (map.has(key)) map.delete(key);
+    map.set(key, val);
+    if (map.size > max) {
+      const fk = map.keys().next().value;
+      if (fk !== undefined) map.delete(fk);
+    }
+  }
   const alertedReminderIds = new Set();
   const seenQuotaAlertIds = new Set(
     Array.isArray(loadJson(STORAGE_KEYS.SEEN_QUOTA_ALERTS, []))
@@ -3019,6 +3032,50 @@
     reconcilePendingNewSessionBind(nextState, lastCloudQueue);
     persistCache();
     renderAll();
+
+    if (!isHeadlessBrowser) {
+      const watchedIds = [
+        prefs.selectedThreadId,
+        prefs.splitWatchOpen ? prefs.splitWatchThreadId : ''
+      ].filter((id) => id && id !== '__new__' && !String(id).startsWith('draft-new-'));
+      const nowMs = Date.now();
+      for (const tid of watchedIds) {
+        const row = (nextState.rows || []).find((r) => r && r.id === tid);
+        if (!row) continue;
+        const rowStamp = `${row.status || ''}:${row.stepCount || 0}:${row.at || 0}:${String(row.preview || '').slice(0, 64)}`;
+        const prevStamp = lastSeenThreadStepStampById.get(tid) || '';
+        setBoundedMap(lastSeenThreadStepStampById, tid, rowStamp);
+        const isWorking = Boolean(row.status === 'working' || row.dot === 'running');
+        const stampChanged = Boolean(prevStamp && rowStamp !== prevStamp);
+        if (
+          (isWorking || stampChanged) &&
+          nowMs - (lastThreadDetailFetchAtById.get(tid) || 0) >= 950 &&
+          nowMs - (lastThreadDetailReceivedAtById.get(tid) || 0) >= 800
+        ) {
+          setBoundedMap(lastThreadDetailFetchAtById, tid, nowMs);
+          fetchThreadDetail(tid, row.provider || '').catch(() => {});
+        }
+      }
+    }
+  }
+
+  function ingestIncomingThreadDetailFrame(msg) {
+    const tObj = msg?.thread?.thread || msg?.thread || msg?.detail || null;
+    const tid = String(msg?.threadId || msg?.id || tObj?.id || '').trim();
+    if (!tid || !tObj || typeof tObj !== 'object') return false;
+    setBoundedMap(lastThreadDetailReceivedAtById, tid, Date.now());
+    mergeRemoteThreads({ [tid]: tObj });
+    persistCache();
+    if (prefs.activeTab === 'chat' && prefs.selectedThreadId === tid) {
+      renderChatView(false);
+    } else if (
+      prefs.activeTab === 'chat' &&
+      prefs.splitWatchOpen &&
+      prefs.splitWatchThreadId === tid
+    ) {
+      renderSplitWatchPane();
+    }
+    return true;
   }
 
   function patchLiveStreamingDom(tid) {
@@ -3044,7 +3101,7 @@
     if (thinkWrap && thinkBody) {
       if (live.fullThinking) {
         thinkWrap.hidden = false;
-        thinkBody.textContent = live.fullThinking;
+        thinkBody.innerHTML = formatTurnMarkdown(live.fullThinking);
         const thinkPrev = turnEl.querySelector('[data-stream-think-preview]');
         if (thinkPrev) {
           const lastLine = String(live.fullThinking)
@@ -3052,7 +3109,7 @@
             .split(/\n+/)
             .filter(Boolean)
             .pop() || '';
-          thinkPrev.textContent = lastLine.replace(/`+/g, '').slice(0, 96);
+          thinkPrev.textContent = lastLine.replace(/[*`#_>]+/g, '').trim().slice(0, 96);
         }
       } else {
         thinkWrap.hidden = true;
@@ -3362,6 +3419,8 @@
               renderPulseView();
               renderSessionsView();
             }
+          } else if (msg.type === 'thread_detail') {
+            ingestIncomingThreadDetailFrame(msg);
           } else if (msg.type === 'stream_delta') {
             handleStreamDelta(msg);
           } else if (msg.type === 'rpc_res' && msg.reqId && wsPendingRpcs.has(msg.reqId)) {
@@ -3502,21 +3561,7 @@
             const snap = msg.snapshot || msg.state;
             if (snap) ingestIncomingHostState(snap, msg.deviceId || '');
           } else if (msg.type === 'thread_detail') {
-            const tObj = msg.thread?.thread || msg.thread || msg.detail || null;
-            const tid = String(msg.threadId || msg.id || tObj?.id || '').trim();
-            if (tid && tObj && typeof tObj === 'object') {
-              mergeRemoteThreads({ [tid]: tObj });
-              persistCache();
-              if (prefs.activeTab === 'chat' && prefs.selectedThreadId === tid) {
-                renderChatView(false);
-              } else if (
-                prefs.activeTab === 'chat' &&
-                prefs.splitWatchOpen &&
-                prefs.splitWatchThreadId === tid
-              ) {
-                renderSplitWatchPane();
-              }
-            }
+            ingestIncomingThreadDetailFrame(msg);
           } else if (msg.type === 'stream_delta') {
             handleStreamDelta(msg);
           } else if (msg.type === 'rpc_res' && msg.reqId && wsPendingRpcs.has(msg.reqId)) {
@@ -3740,6 +3785,16 @@
           connMode = 'local';
           updateConnectionBanner();
           flushOutbox().catch(() => {});
+          if (
+            prefs.activeTab === 'chat' &&
+            prefs.selectedThreadId &&
+            isSessionActivelyRunning(prefs.selectedThreadId) &&
+            Date.now() - (lastThreadDetailFetchAtById.get(prefs.selectedThreadId) || 0) >= 1400 &&
+            Date.now() - (lastThreadDetailReceivedAtById.get(prefs.selectedThreadId) || 0) >= 1200
+          ) {
+            lastThreadDetailFetchAtById.set(prefs.selectedThreadId, Date.now());
+            fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
+          }
           return true;
         }
         try {
@@ -3802,6 +3857,16 @@
         connMode = 'edge';
         updateConnectionBanner();
         flushOutbox().catch(() => {});
+        if (
+          prefs.activeTab === 'chat' &&
+          prefs.selectedThreadId &&
+          isSessionActivelyRunning(prefs.selectedThreadId) &&
+          Date.now() - (lastThreadDetailFetchAtById.get(prefs.selectedThreadId) || 0) >= 1400 &&
+          Date.now() - (lastThreadDetailReceivedAtById.get(prefs.selectedThreadId) || 0) >= 1200
+        ) {
+          lastThreadDetailFetchAtById.set(prefs.selectedThreadId, Date.now());
+          fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
+        }
         return true;
       }
 
@@ -3934,6 +3999,7 @@
 
   async function fetchThreadDetail(threadId, providerHint = '') {
     if (isHeadlessBrowser || !threadId) return null;
+    setBoundedMap(lastThreadDetailFetchAtById, threadId, Date.now());
     const matchedRow = (appState?.rows || []).find((r) => r && r.id === threadId);
     const rowDeviceId = matchedRow?.deviceId || '';
     const isRemoteDeviceSession = Boolean(
@@ -3949,6 +4015,7 @@
         if (res.ok) {
           const data = await res.json();
           if (data?.thread) {
+            setBoundedMap(lastThreadDetailReceivedAtById, threadId, Date.now());
             mergeRemoteThreads({ [threadId]: data.thread });
             persistCache();
             if (prefs.activeTab === 'chat' && prefs.selectedThreadId === threadId) {
@@ -3978,6 +4045,7 @@
           rpcOut?.thread ||
           (Array.isArray(rpcOut?.result?.messages) ? rpcOut.result : null);
         if (threadObj) {
+          setBoundedMap(lastThreadDetailReceivedAtById, threadId, Date.now());
           mergeRemoteThreads({ [threadId]: threadObj });
           persistCache();
           if (prefs.activeTab === 'chat' && prefs.selectedThreadId === threadId) {
@@ -8864,7 +8932,13 @@
           .slice(-6)
           .map((m) => {
             const roleLbl = m.role === 'user' ? 'You' : watchedRow?.provider === 'claude' ? 'Claude' : 'Antigravity';
-            const snippet = String(m.text || m.thinking || '')
+            const rawSnippet =
+              m.role === 'user'
+                ? cleanUserPromptPreview(m.text)
+                : m.role === 'checkpoint'
+                  ? cleanCheckpointPreview(m.text)
+                  : String(m.text || m.thinking || '');
+            const snippet = String(rawSnippet || '')
               .replace(/\s+/g, ' ')
               .trim()
               .slice(0, 260);
@@ -9449,14 +9523,14 @@
         promptNum += 1;
         outlineItems.push({
           kicker: `Prompt #${promptNum}`,
-          title: String(m.text || '').replace(/\s+/g, ' ').trim().slice(0, 140) || 'User prompt',
+          title: cleanUserPromptPreview(m.text).slice(0, 140) || 'User prompt',
           anchor,
           detailKey: ''
         });
       } else if (m.role === 'checkpoint') {
         outlineItems.push({
-          kicker: '✦ Checkpoint',
-          title: String(m.text || 'Context compacted').replace(/\s+/g, ' ').trim().slice(0, 140),
+          kicker: '✂ compact',
+          title: cleanCheckpointPreview(m.text).slice(0, 140),
           anchor,
           detailKey: `${anchor}:checkpoint`
         });
@@ -9489,7 +9563,234 @@
       .join('');
   }
 
-  function renderCompactedThoughtHtml({ m, turnIdKey, isLastTurn, isActivelyWorking, cleanedText, hasTurnQuestions, savedOpenMap }) {
+  function extractThoughtStepTitle(rawText) {
+    const firstLine = String(rawText || '')
+      .replace(/```[\s\S]*?```/g, '')
+      .split(/\r?\n/)
+      .map((l) => l.replace(/^[#>*\-\d.)\s`]+/, '').replace(/[*`_~]+/g, '').trim())
+      .find((l) => l.length >= 4);
+    if (!firstLine) return '';
+    const clause = firstLine.split(/(?<=[.!?])\s+|\s+—\s+|\s+-\s+/)[0] || firstLine;
+    return clause.length > 56 ? `${clause.slice(0, 54).trim()}…` : clause;
+  }
+
+  function cleanCheckpointPreview(rawText) {
+    let s = String(rawText || '').trim();
+    if (!s) return 'Context compacted';
+    s = s
+      .replace(/^#+\s*Resuming from a compaction\b[^\r\n]*/im, '')
+      .replace(/You are continuing work on the task described above,?\s*but your[^\r\n.]*\.?/gi, '')
+      .replace(/The following is a summary of the conversation history[^\r\n.]*\.?/gi, '')
+      .replace(/This summary was generated at[^\r\n.]*\.?/gi, '')
+      .replace(/^#+\s*(?:User Requests|Previous Session Summary|Task Overview|Progress|Active Context|Next Steps)\s*:?/gim, '')
+      .replace(/<\/?summary>/gi, '')
+      .replace(/[*`#_>]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!s || s.length < 3) return 'Context compacted';
+    return s.slice(0, 76);
+  }
+
+  function cleanUserPromptPreview(rawText) {
+    let text = String(rawText || '').trim();
+    if (!text) return '';
+    if (/^\/compact\b/i.test(text) && text.length <= 24) return '/compact';
+    const ctxMatch = text.match(/^\[LIVE WORKSTATION CONTEXT(?:\s*[—-]\s*([^\]]+))?\]\s*\r?\n([\s\S]*?)(?:\r?\n\s*\r?\n|$)/i);
+    if (ctxMatch) {
+      text = text.slice(ctxMatch[0].length).trim();
+    }
+    const attachMatch = text.match(/\r?\n*\[Attached Files saved on workstation\]:\s*((?:\r?\n\s*-\s*[^\r\n]+)+)\s*$/i);
+    if (attachMatch) {
+      text = text.slice(0, text.length - attachMatch[0].length).trim();
+    }
+    return text.replace(/\s+/g, ' ').trim() || 'Workstation context prompt';
+  }
+
+  function renderUserTurnContentHtml(rawText, turnIdKey, createdAt = '', savedOpenMap = null) {
+    let text = String(rawText || '').trim();
+    const relTime = createdAt ? timeAgo(Date.parse(createdAt)) : '';
+    if (/^\/compact\b/i.test(text) && text.length <= 24) {
+      return `
+        <div class="user-compact-cmd-wrap">
+          ${relTime ? `<span class="user-turn-time tabular">${esc(relTime)}</span>` : ''}
+          <span class="user-compact-cmd-pill mono">/compact</span>
+        </div>
+      `;
+    }
+
+    let ctxHeader = '';
+    let ctxBody = '';
+    const ctxMatch = text.match(/^\[LIVE WORKSTATION CONTEXT(?:\s*[—-]\s*([^\]]+))?\]\s*\r?\n([\s\S]*?)(?:\r?\n\s*\r?\n|$)/i);
+    if (ctxMatch) {
+      ctxHeader = String(ctxMatch[1] || 'Live').trim();
+      ctxBody = String(ctxMatch[2] || '').trim();
+      text = text.slice(ctxMatch[0].length).trim();
+    }
+
+    const attachedFiles = [];
+    const attachMatch = text.match(/\r?\n*\[Attached Files saved on workstation\]:\s*((?:\r?\n\s*-\s*[^\r\n]+)+)\s*$/i);
+    if (attachMatch) {
+      const rawList = String(attachMatch[1] || '').split(/\r?\n/);
+      for (const line of rawList) {
+        const mFile = line.match(/^\s*-\s*([^:]+):\s*['"]?([^'"]+)['"]?\s*$/);
+        if (mFile) {
+          attachedFiles.push({
+            name: mFile[1].trim(),
+            path: mFile[2].trim()
+          });
+        }
+      }
+      text = text.slice(0, text.length - attachMatch[0].length).trim();
+    }
+
+    const ctxKey = `${turnIdKey}:userctx`;
+    const isCtxOpen = Boolean(savedOpenMap && savedOpenMap.get(ctxKey) === true);
+    const ctxHtml = ctxBody
+      ? `<details class="user-ctx-chip" data-chat-detail-key="${esc(ctxKey)}" data-rendered-open="${isCtxOpen ? '1' : '0'}"${isCtxOpen ? ' open' : ''}>
+          <summary class="user-ctx-summary">
+            <span class="user-ctx-ico" aria-hidden="true">🖥️</span>
+            <span>Workstation Context${ctxHeader ? ` · ${esc(ctxHeader)}` : ''}</span>
+            <span class="vs-thought-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>
+          </summary>
+          <div class="user-ctx-body mono">${esc(ctxBody)}</div>
+        </details>`
+      : '';
+
+    const attachHtml = attachedFiles.length
+      ? `<div class="user-attach-strip">${attachedFiles
+          .map(
+            (af) =>
+              `<span class="user-attach-chip"><span aria-hidden="true">📎</span><span class="mono">${esc(af.name)}</span></span>`
+          )
+          .join('')}</div>`
+      : '';
+
+    return `
+      ${relTime ? `<div class="user-turn-meta tabular">${esc(relTime)}</div>` : ''}
+      ${text ? `<div class="turn-text">${esc(text)}</div>` : ''}
+      ${attachHtml}
+      ${ctxHtml}
+    `;
+  }
+
+  function deriveClientLiveActivity(m, stepToolCalls, threadDetail, isThreadActivelyWorking) {
+    if (!isThreadActivelyWorking) return null;
+    const srv = threadDetail?.liveActivity;
+    const tools = Array.isArray(stepToolCalls) ? stepToolCalls : [];
+    const lastTool = tools.length > 0 ? tools[tools.length - 1] : null;
+    const rawThinking = String(m?.latestThinking || m?.thinking || '').trim();
+    const lastThoughtLine =
+      (rawThinking.replace(/```[\s\S]*?```/g, '').split(/\r?\n/).filter(Boolean).pop() || '')
+        .replace(/[*`#_>]+/g, '')
+        .trim()
+        .slice(0, 120);
+
+    let verb = srv?.active && srv?.verb ? String(srv.verb) : 'Thinking…';
+    let target = srv?.active && srv?.target ? String(srv.target) : '';
+    let file = srv?.active && srv?.file ? String(srv.file) : '';
+    let relPath = srv?.active && srv?.relPath ? String(srv.relPath) : '';
+    let lineRange = srv?.active && srv?.lineRange ? String(srv.lineRange) : '';
+    let kind = srv?.active && srv?.kind ? String(srv.kind) : 'thinking';
+
+    if (lastTool) {
+      const k = String(lastTool.kind || 'tool').toLowerCase();
+      kind = k;
+      file = String(lastTool.file || file || '').trim();
+      relPath = String(lastTool.relPath || file || relPath || '').trim();
+      lineRange = String(lastTool.lineRange || lineRange || '').trim();
+      if (k === 'read' || /view|read/i.test(String(lastTool.name || ''))) {
+        verb = 'Reading';
+        target = file || lastTool.summary || 'file';
+      } else if (k === 'edit' || /edit|replace/i.test(String(lastTool.name || ''))) {
+        verb = 'Editing';
+        target = file || lastTool.summary || 'file';
+      } else if (k === 'write' || /write|create/i.test(String(lastTool.name || ''))) {
+        verb = 'Creating';
+        target = file || lastTool.summary || 'file';
+      } else if (k === 'command' || k === 'cmd' || /command|bash/i.test(String(lastTool.name || ''))) {
+        verb = 'Running';
+        target = lastTool.summary || lastTool.command || 'command';
+      } else if (k === 'search' || /grep|find|search/i.test(String(lastTool.name || ''))) {
+        verb = 'Searching';
+        target = lastTool.summary || 'workspace';
+      } else {
+        verb = 'Working on';
+        target = file || lastTool.summary || lastTool.label || 'step';
+      }
+    } else if (m?.activeTool) {
+      verb = 'Running';
+      target = String(m.activeTool);
+      kind = 'command';
+    }
+
+    const cleanTarget = String(target || '')
+      .replace(/^(?:Read|Viewed|Analyzed|Updated|Wrote|Pattern)\s+/i, '')
+      .trim()
+      .slice(0, 96);
+    const startIso = m?.startedAt || m?.createdAt || srv?.startedAt || '';
+    const parsedStart = startIso ? Date.parse(startIso) : 0;
+    const startMs =
+      Number.isFinite(parsedStart) && parsedStart > 0 && Date.now() - parsedStart < 3600000
+        ? parsedStart
+        : Date.now() - Math.max(1, Number(m?.turnDurationSec || m?.thinkingDurationSec || 2)) * 1000;
+    const elapsedSec = Math.max(1, Math.round((Date.now() - startMs) / 1000));
+    const elapsedLabel =
+      elapsedSec >= 60
+        ? `${Math.floor(elapsedSec / 60)}m ${String(elapsedSec % 60).padStart(2, '0')}s`
+        : `${elapsedSec}s`;
+
+    return {
+      verb,
+      target: cleanTarget,
+      file,
+      relPath,
+      lineRange,
+      kind,
+      thoughtPreview: srv?.thoughtPreview || lastThoughtLine,
+      stepCount: Math.max(Number(m?.totalTurnTools || 0), tools.length, Number(srv?.stepCount || 0)),
+      startMs,
+      elapsedLabel
+    };
+  }
+
+  function renderLiveActivityBarHtml(liveAct, turnIdKey, isExpanded = false) {
+    if (!liveAct) return '';
+    const activeDotIdx = Math.min(5, Math.max(1, (Number(liveAct.stepCount || 1) % 6)));
+    const railDotsHtml = [0, 1, 2, 3, 4, 5]
+      .map(
+        (idx) =>
+          `<span class="vs-rail-dot${idx === activeDotIdx ? ' is-active' : idx < activeDotIdx ? ' is-done' : ''}"></span>`
+      )
+      .join('');
+    const targetBadgeHtml = liveAct.file
+      ? `<span class="vs-live-target-chip mono" data-preview-file="${esc(liveAct.relPath || liveAct.file)}">${esc(liveAct.file)}${liveAct.lineRange ? `<span class="vs-live-range">#${esc(liveAct.lineRange)}</span>` : ''}</span>`
+      : liveAct.target
+        ? `<span class="vs-live-target-text mono">${esc(liveAct.target)}</span>`
+        : '';
+    const subPreview =
+      !liveAct.file && !liveAct.target && liveAct.thoughtPreview
+        ? `<span class="vs-live-thought-sub">${esc(liveAct.thoughtPreview)}</span>`
+        : '';
+
+    return `
+      <div class="vs-live-activity-row" data-live-activity-row="1">
+        <div class="vs-live-step-rail" aria-hidden="true">${railDotsHtml}</div>
+        <button type="button" class="vs-live-activity-bar${isExpanded ? ' is-expanded' : ''}" aria-expanded="${isExpanded ? 'true' : 'false'}" data-toggle-live-trace="${esc(turnIdKey)}">
+          <span class="vs-live-pulse-dot" aria-hidden="true"></span>
+          <span class="vs-live-verb vs-shimmer-text">${esc(liveAct.verb)}</span>
+          ${targetBadgeHtml}
+          ${subPreview}
+          <span class="vs-live-meta tabular">
+            ${liveAct.stepCount > 0 ? `<span class="vs-live-step-count">${liveAct.stepCount} ${liveAct.stepCount === 1 ? 'step' : 'steps'}</span>` : ''}
+            <span class="vs-live-elapsed" data-live-elapsed-start="${Number(liveAct.startMs || Date.now())}">${esc(liveAct.elapsedLabel)}</span>
+          </span>
+          <span class="vs-thought-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>
+        </button>
+      </div>
+    `;
+  }
+
+  function renderCompactedThoughtHtml({ m, turnIdKey, isLastTurn, isActivelyWorking, cleanedText, hasTurnQuestions, savedOpenMap, isStreamingTurn = false }) {
     const rawBlocks =
       Array.isArray(m?.thoughtBlocks) && m.thoughtBlocks.length
         ? m.thoughtBlocks.filter((b) => b && String(b.text || '').trim())
@@ -9530,19 +9831,23 @@
     const stepsBodyHtml =
       rawBlocks.length > 1
         ? rawBlocks
-            .map(
-              (b, idx) => `
-              <div class="vs-thought-step">
-                <span class="vs-thought-step-meta tabular">Step ${idx + 1}${b.durationSec ? ` · ${Math.round(Number(b.durationSec))}s` : ''}</span>
-                <div class="vs-thought-step-text">${esc(String(b.text || '').trim())}</div>
-              </div>
-            `
-            )
+            .map((b, idx) => {
+              const stepTitle = extractThoughtStepTitle(b.text);
+              return `
+                <div class="vs-thought-step">
+                  <div class="vs-thought-step-head">
+                    <span class="vs-thought-step-dot" aria-hidden="true"></span>
+                    <span class="vs-thought-step-meta tabular">Step ${idx + 1}${stepTitle ? ` · ${esc(stepTitle)}` : ''}${b.durationSec ? ` · ${Math.round(Number(b.durationSec))}s` : ''}</span>
+                  </div>
+                  <div class="vs-thought-step-text md-rich"${idx === rawBlocks.length - 1 && isStreamingTurn ? ' data-stream-think-body="1"' : ''}>${formatTurnMarkdown(String(b.text || '').trim())}</div>
+                </div>
+              `;
+            })
             .join('')
-        : `<div class="vs-thought-step-text">${esc(lastBlockTxt)}</div>`;
+        : `<div class="vs-thought-step-text md-rich"${isStreamingTurn ? ' data-stream-think-body="1"' : ''}>${formatTurnMarkdown(lastBlockTxt)}</div>`;
 
     return `
-      <details class="vs-thought-card thinking-details" data-chat-detail-key="${esc(thinkKey)}" data-rendered-open="${isThinkOpen ? '1' : '0'}"${isThinkOpen ? ' open' : ''}>
+      <details class="vs-thought-card thinking-details${isStreamingTurn ? ' is-streaming' : ''}" data-chat-detail-key="${esc(thinkKey)}" data-rendered-open="${isThinkOpen ? '1' : '0'}"${isStreamingTurn ? ' data-stream-think-wrap="1"' : ''}${isThinkOpen ? ' open' : ''}>
         <summary class="vs-thought-summary">
           ${
             isLiveThinking
@@ -9550,7 +9855,8 @@
               : '<svg class="vs-thought-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.8v3.4l2.2 1.3"/></svg>'
           }
           <span class="vs-thought-lbl tabular">${esc(labelTxt)}</span>
-          ${previewLine ? `<span class="vs-thought-preview">${esc(previewLine)}</span>` : ''}
+          ${rawBlocks.length > 1 ? `<span class="vs-thought-step-pill tabular">${rawBlocks.length} steps</span>` : ''}
+          ${previewLine ? `<span class="vs-thought-preview"${isStreamingTurn ? ' data-stream-think-preview="1"' : ''}>${esc(previewLine)}</span>` : ''}
           <span class="vs-thought-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>
         </summary>
         <div class="vs-thought-body">${stepsBodyHtml}</div>
@@ -9757,7 +10063,7 @@
     return true;
   }
 
-  function renderToolCallCardHtml(tc, detailKey = '', savedOpenMap = null) {
+  function renderToolCallCardHtml(tc, detailKey = '', savedOpenMap = null, activeKindFilter = 'all') {
     const rawName = String(tc?.name || 'tool').trim();
     const low = rawName.toLowerCase();
     let kind = tc?.kind || 'tool';
@@ -9781,8 +10087,20 @@
       }
     } else {
       if (kind === 'read' && /^viewed$/i.test(label)) label = 'Analyzed';
-      if (kind === 'command' && /^ran command$/i.test(label)) label = 'Ran';
+      if ((kind === 'command' || kind === 'cmd') && /^ran command$/i.test(label)) label = 'Ran';
     }
+    const filterCat =
+      kind === 'edit' || kind === 'write'
+        ? 'edit'
+        : kind === 'read'
+          ? 'read'
+          : kind === 'command' || kind === 'cmd'
+            ? 'cmd'
+            : kind === 'search'
+              ? 'search'
+              : 'other';
+    const isFilteredOut =
+      Boolean(activeKindFilter && activeKindFilter !== 'all' && activeKindFilter !== filterCat);
 
     const fileBase = String(tc?.file || '').trim();
     const fileStem = fileBase.split('#')[0].trim();
@@ -9815,15 +10133,17 @@
 
     const hasInspectableBody = Boolean(snippet || commandText || relPath || summaryText);
     const isStepOpen = Boolean(detailKey && savedOpenMap && savedOpenMap.get(detailKey) === true);
-    const detailKeyAttrs = detailKey
-      ? ` data-chat-detail-key="${esc(detailKey)}" data-rendered-open="${isStepOpen ? '1' : '0'}"${isStepOpen ? ' open' : ''}`
-      : '';
+    const detailKeyAttrs = `${
+      detailKey
+        ? ` data-chat-detail-key="${esc(detailKey)}" data-rendered-open="${isStepOpen ? '1' : '0'}"${isStepOpen ? ' open' : ''}`
+        : ''
+    } data-step-kind="${esc(filterCat)}"${isFilteredOut ? ' hidden' : ''}`;
 
     const headInner = `
       <div class="code-step-head">
         <span class="code-step-badge kind-${esc(kind)}">${esc(label)}</span>
         ${fileChip}
-        ${displaySummary ? `<span class="code-step-summary${kind === 'command' ? ' mono' : ''}">${esc(displaySummary)}</span>` : ''}
+        ${displaySummary ? `<span class="code-step-summary${kind === 'command' || kind === 'cmd' ? ' mono' : ''}">${esc(displaySummary)}</span>` : ''}
         ${diffBadge}
         ${hasInspectableBody ? `<span class="code-step-chevron" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>` : ''}
       </div>
@@ -9857,7 +10177,7 @@
       `;
     }
 
-    return `<div class="code-step-card">${headInner}</div>`;
+    return `<div class="code-step-card" data-step-kind="${esc(filterCat)}"${isFilteredOut ? ' hidden' : ''}>${headInner}</div>`;
   }
 
   function syncComposerRoutingSelectors(activeRow, isNewDraft) {
@@ -10578,13 +10898,15 @@
           if (m.role === 'checkpoint') {
             const cpKey = `${turnIdKey}:checkpoint`;
             const isCpOpen = Boolean(savedOpenMap && savedOpenMap.get(cpKey) === true);
-            const cpPreview = String(m.text || 'Context compacted')
-              .replace(/\s+/g, ' ')
-              .trim();
+            const cpPreview = cleanCheckpointPreview(m.text);
             return `
               <details class="vs-checkpoint-divider" data-turn-anchor="${esc(turnIdKey)}" data-chat-detail-key="${esc(cpKey)}" data-rendered-open="${isCpOpen ? '1' : '0'}"${isCpOpen ? ' open' : ''}>
                 <summary class="vs-checkpoint-summary">
-                  <span class="vs-checkpoint-pill">✦ Checkpoint · ${esc(cpPreview.slice(0, 88) || 'Context compacted')}&nbsp;<span class="vs-thought-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span></span>
+                  <span class="vs-checkpoint-pill">
+                    <span class="vs-compact-badge"><svg class="vs-compact-scissors" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4.5" cy="4.5" r="2"/><circle cx="4.5" cy="11.5" r="2"/><path d="M13.5 3.5L6.2 10.2M6.2 5.8l7.3 6.7"/></svg><span>compact</span></span>
+                    <span class="vs-checkpoint-topic">${esc(cpPreview)}</span>
+                    <span class="vs-thought-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>
+                  </span>
                 </summary>
                 <div class="vs-checkpoint-body turn-text md-rich">${formatTurnMarkdown(m.text || 'Context compacted.')}</div>
               </details>
@@ -10594,7 +10916,7 @@
           if (isUser) {
             return `
               <div class="turn-bubble user" data-turn-anchor="${esc(turnIdKey)}">
-                <div class="turn-text">${esc(m.text || '')}</div>
+                ${renderUserTurnContentHtml(m.text || '', turnIdKey, m.createdAt || '', savedOpenMap)}
               </div>
             `;
           }
@@ -10609,6 +10931,9 @@
           );
           const toolCount = Number(m.totalTurnTools || stepToolCalls.length);
           const editTools = stepToolCalls.filter((t) => t.kind === 'edit' || t.kind === 'write');
+          const readTools = stepToolCalls.filter((t) => t.kind === 'read');
+          const cmdTools = stepToolCalls.filter((t) => t.kind === 'command' || t.kind === 'cmd');
+          const searchTools = stepToolCalls.filter((t) => t.kind === 'search');
           const changedFilesSet = new Set(
             editTools.map((t) => t.relPath || t.file || t.summary).filter(Boolean)
           );
@@ -10618,9 +10943,6 @@
 
           const summaryHtmlParts = [];
           const lastTool = stepToolCalls[stepToolCalls.length - 1];
-          if (isLastTurn && activeRow?.status === 'working' && lastTool?.file) {
-            summaryHtmlParts.push(`<span>Working on ${esc(lastTool.file)}</span>`);
-          }
           if (filesChangedCount > 0) {
             const diffHtml =
               totalAdded > 0 || totalRemoved > 0
@@ -10629,11 +10951,39 @@
             summaryHtmlParts.push(
               `<span>${filesChangedCount} ${filesChangedCount === 1 ? 'file' : 'files'} changed${diffHtml}</span>`
             );
+          } else if (readTools.length > 0) {
+            summaryHtmlParts.push(
+              `<span>Analyzed ${readTools.length} ${readTools.length === 1 ? 'file' : 'files'}</span>`
+            );
+          }
+          if (cmdTools.length > 0 && filesChangedCount === 0) {
+            summaryHtmlParts.push(
+              `<span>${cmdTools.length} ${cmdTools.length === 1 ? 'command' : 'commands'}</span>`
+            );
           }
           summaryHtmlParts.push(
             `<span>${toolCount} ${toolCount === 1 ? 'step' : 'steps'}</span>`
           );
           const summaryLabelHtml = `<span class="tools-summary-left">${summaryHtmlParts.join(' <span style="opacity:0.45">·</span> ')}</span><span class="tools-summary-chevron" aria-hidden="true">${CHEVRON_DOWN_SVG}</span>`;
+
+          const activeKindFilter = stepKindFilterByTurnKey.get(turnIdKey) || 'all';
+          const filterPills = [];
+          if (stepToolCalls.length >= 2) {
+            filterPills.push({ key: 'all', label: `All (${stepToolCalls.length})` });
+            if (editTools.length > 0) filterPills.push({ key: 'edit', label: `Edits (${editTools.length})` });
+            if (readTools.length > 0) filterPills.push({ key: 'read', label: `Reads (${readTools.length})` });
+            if (cmdTools.length > 0) filterPills.push({ key: 'cmd', label: `Cmds (${cmdTools.length})` });
+            if (searchTools.length > 0) filterPills.push({ key: 'search', label: `Search (${searchTools.length})` });
+          }
+          const filterBarHtml =
+            filterPills.length > 2
+              ? `<div class="code-steps-filters">${filterPills
+                  .map(
+                    (fp) =>
+                      `<button type="button" class="ide-step-filter-pill${activeKindFilter === fp.key ? ' is-active' : ''}" data-step-kind-filter="${esc(fp.key)}" data-step-turn-key="${esc(turnIdKey)}">${esc(fp.label)}</button>`
+                  )
+                  .join('')}</div>`
+              : '<span></span>';
 
           const allStepsSavedOpen =
             stepToolCalls.length >= 2 &&
@@ -10641,10 +10991,10 @@
             stepToolCalls.every((_, sIdx) => savedOpenMap.get(`${turnIdKey}:step:${sIdx}`) === true);
           const stepsToolbarHtml =
             stepToolCalls.length >= 2
-              ? `<div class="code-steps-toolbar"><button type="button" class="ide-steps-toggle-all" data-toggle-all-steps="1">${allStepsSavedOpen ? 'Collapse all' : 'Expand all'}</button></div>`
+              ? `<div class="code-steps-toolbar">${filterBarHtml}<button type="button" class="ide-steps-toggle-all" data-toggle-all-steps="1">${allStepsSavedOpen ? 'Collapse all' : 'Expand all'}</button></div>`
               : '';
           const toolCardsHtml = stepToolCalls.length
-            ? `<div class="code-steps-stack">${stepsToolbarHtml}${stepToolCalls.map((tc, sIdx) => renderToolCallCardHtml(tc, `${turnIdKey}:step:${sIdx}`, savedOpenMap)).join('')}</div>`
+            ? `<div class="code-steps-stack" data-steps-stack-turn="${esc(turnIdKey)}">${stepsToolbarHtml}${stepToolCalls.map((tc, sIdx) => renderToolCallCardHtml(tc, `${turnIdKey}:step:${sIdx}`, savedOpenMap, activeKindFilter)).join('')}</div>`
             : '';
 
           const artifacts = Array.isArray(m.artifacts) ? m.artifacts : [];
@@ -10719,18 +11069,14 @@
           const changedChips = Array.from(changedMap.values()).slice(0, 6);
           const isTurnActivelyWorking = Boolean(isLastTurn && isThreadActivelyWorking && lastTool);
           const changeSetStripHtml =
-            changedChips.length > 0 || isTurnActivelyWorking
+            changedChips.length > 0
               ? `<div class="turn-changeset-strip">
-                  ${
-                    changedChips.length > 0
-                      ? `<div class="turn-cs-files"><span class="turn-cs-kicker">Changed</span>${changedChips
-                          .map(
-                            (cf) =>
-                              `<button type="button" class="turn-cs-chip" data-preview-file="${esc(cf.target)}" data-preview-mode="diff"><span>${esc(cf.base)}</span>${cf.added > 0 ? `<span class="turn-cs-add tabular">+${cf.added}</span>` : ''}${cf.removed > 0 ? `<span class="turn-cs-del tabular">-${cf.removed}</span>` : ''}</button>`
-                          )
-                          .join('')}</div>`
-                      : '<span></span>'
-                  }
+                  <div class="turn-cs-files"><span class="turn-cs-kicker">Changed</span>${changedChips
+                    .map(
+                      (cf) =>
+                        `<button type="button" class="turn-cs-chip" data-preview-file="${esc(cf.target)}" data-preview-mode="diff"><span>${esc(cf.base)}</span>${cf.added > 0 ? `<span class="turn-cs-add tabular">+${cf.added}</span>` : ''}${cf.removed > 0 ? `<span class="turn-cs-del tabular">-${cf.removed}</span>` : ''}</button>`
+                    )
+                    .join('')}</div>
                   ${
                     isTurnActivelyWorking
                       ? `<span class="turn-cs-live"><span class="turn-cs-pulse"></span><span>${esc(lastTool.label || 'Running')} ${esc(lastTool.file || lastTool.summary || lastTool.command || '')}</span></span>`
@@ -10743,14 +11089,25 @@
             ? `${changeSetStripHtml}<details class="${toolsPanelCls}" data-chat-detail-key="${esc(toolsKey)}" data-rendered-open="${isToolsOpen ? '1' : '0'}"${isToolsOpen ? ' open' : ''}><summary>${summaryLabelHtml}</summary>${toolCardsHtml}</details>`
             : '';
 
-          const thinkHtml = renderCompactedThoughtHtml({
+          const isLiveStreamingTurn = Boolean(isLastTurn && m.isStreaming);
+          const liveAct =
+            isLastTurn && isThreadActivelyWorking
+              ? deriveClientLiveActivity(m, stepToolCalls, threadDetail, isThreadActivelyWorking)
+              : null;
+          const isLiveTraceExpanded = Boolean(
+            savedOpenMap?.get(`${turnIdKey}:think`) === true || savedOpenMap?.get(`${turnIdKey}:tools`) === true
+          );
+          const liveActivityHtml = liveAct ? renderLiveActivityBarHtml(liveAct, turnIdKey, isLiveTraceExpanded) : '';
+
+          const streamThinkHtml = renderCompactedThoughtHtml({
             m,
             turnIdKey,
             isLastTurn,
             isActivelyWorking: isThreadActivelyWorking,
             cleanedText,
             hasTurnQuestions,
-            savedOpenMap
+            savedOpenMap,
+            isStreamingTurn: isLiveStreamingTurn
           });
 
           const questionCardHtml = hasTurnQuestions
@@ -10775,39 +11132,31 @@
               })
             : '';
 
-          const isLiveStreamingTurn = Boolean(isLastTurn && m.isStreaming);
           const liveHeadHtml = isLiveStreamingTurn
             ? `<div class="stream-live-head"><span data-stream-status-lbl="1">⚡ Live Stream${m.deviceName ? ` · ${esc(m.deviceName)}` : ''}</span></div>`
             : '';
           const liveToolHtml = isLiveStreamingTurn
             ? `<div class="live-tool-chip mono" data-stream-tool-slot="1" ${m.activeTool ? '' : 'hidden'}>${m.activeTool ? `⚡ ${esc(m.activeTool)}` : ''}</div>`
             : '';
-          const liveStreamPreview =
-            String(m.thinking || '')
-              .trim()
-              .split(/\n+/)
-              .filter(Boolean)
-              .pop() || '';
-          const streamThinkHtml = isLiveStreamingTurn
-            ? `<details class="vs-thought-card thinking-details is-streaming" data-stream-think-wrap="1" ${m.thinking ? '' : 'hidden'}><summary class="vs-thought-summary"><span class="vs-thought-live-dot" aria-hidden="true"></span><span class="vs-thought-lbl tabular">Thinking…</span><span class="vs-thought-preview" data-stream-think-preview="1">${esc(liveStreamPreview.replace(/`+/g, '').slice(0, 96))}</span><span class="vs-thought-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span></summary><div class="vs-thought-body"><div class="vs-thought-step-text" data-stream-think-body="1">${esc(m.thinking || '')}</div></div></details>`
-            : thinkHtml;
           const streamTextHtml = isLiveStreamingTurn
             ? `<div class="turn-text md-rich" data-stream-text-body="1">${cleanedText ? formatTurnMarkdown(cleanedText) : ''}<span class="stream-cursor"></span></div>`
             : cleanedText
               ? `<div class="turn-text md-rich">${formatTurnMarkdown(cleanedText)}</div>`
               : '';
+          const showTurnFoot = Boolean(timeLabel && !(liveAct && !cleanedText));
 
           return `
-            <div class="turn-bubble assistant ${isLiveStreamingTurn ? 'is-streaming' : ''}" data-turn-anchor="${esc(turnIdKey)}" ${isLiveStreamingTurn ? 'data-streaming-turn="1"' : ''}>
+            <div class="turn-bubble assistant ${isLiveStreamingTurn ? 'is-streaming' : ''}${liveAct ? ' is-live-working' : ''}" data-turn-anchor="${esc(turnIdKey)}" ${isLiveStreamingTurn ? 'data-streaming-turn="1"' : ''}>
               ${liveHeadHtml}
+              ${liveActivityHtml}
               ${streamThinkHtml}
               ${liveToolHtml}
-              ${streamTextHtml}
-              ${artifactsHtml}
               ${subagentsHtml}
               ${toolsHtml}
+              ${streamTextHtml}
+              ${artifactsHtml}
               ${questionCardHtml}
-              ${timeLabel ? `<div class="turn-foot tabular">${esc(timeLabel)}</div>` : ''}
+              ${showTurnFoot ? `<div class="turn-foot tabular">${esc(timeLabel)}</div>` : ''}
             </div>
           `;
         })
@@ -12396,7 +12745,10 @@
     });
 
     document.addEventListener('click', async (e) => {
-      if (isPinLocked() && !e.target?.closest?.('#pin-overlay')) return;
+      if (isPinLocked() && !e.target?.closest?.('#pin-overlay')) {
+        e.preventDefault();
+        return;
+      }
       if (
         slashPopoverItems.length > 0 &&
         !e.target?.closest?.('#composer-slash-popover') &&
@@ -13144,6 +13496,61 @@
             }
           }
           toggleStepsBtn.textContent = anyClosed ? 'Collapse all' : 'Expand all';
+        }
+        return;
+      }
+
+      const stepFilterBtn = e.target.closest('[data-step-kind-filter]');
+      if (stepFilterBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const kind = stepFilterBtn.dataset.stepKindFilter || 'all';
+        const turnKey = stepFilterBtn.dataset.stepTurnKey || '';
+        if (turnKey) {
+          setBoundedMap(stepKindFilterByTurnKey, turnKey, kind);
+        }
+        const stack = stepFilterBtn.closest('.code-steps-stack');
+        if (stack) {
+          stack.querySelectorAll('[data-step-kind-filter]').forEach((btn) => {
+            btn.classList.toggle('is-active', btn.dataset.stepKindFilter === kind);
+          });
+          stack.querySelectorAll('.code-step-card[data-step-kind]').forEach((card) => {
+            const cardKind = card.dataset.stepKind || 'other';
+            card.hidden = kind !== 'all' && cardKind !== kind;
+          });
+          const parentTools = stack.closest('details.tools-details[data-chat-detail-key]');
+          if (parentTools && !parentTools.open) {
+            parentTools.open = true;
+            const openMap = getThreadOpenDetailsMap(prefs.selectedThreadId, true);
+            if (openMap && parentTools.dataset.chatDetailKey) {
+              parentTools.dataset.renderedOpen = '1';
+              openMap.set(parentTools.dataset.chatDetailKey, true);
+            }
+          }
+        }
+        return;
+      }
+
+      const liveTraceBtn = e.target.closest('[data-toggle-live-trace]');
+      if (liveTraceBtn && !e.target.closest('[data-preview-file]')) {
+        e.preventDefault();
+        e.stopPropagation();
+        const turnBubble = liveTraceBtn.closest('.turn-bubble.assistant');
+        if (turnBubble) {
+          const thinkEl = turnBubble.querySelector('details.vs-thought-card');
+          const toolsEl = turnBubble.querySelector('details.tools-details');
+          const anyClosed = Boolean((thinkEl && !thinkEl.open) || (toolsEl && !toolsEl.open));
+          const openMap = getThreadOpenDetailsMap(prefs.selectedThreadId, true);
+          for (const d of [thinkEl, toolsEl]) {
+            if (!d) continue;
+            d.open = anyClosed;
+            d.dataset.renderedOpen = anyClosed ? '1' : '0';
+            if (openMap && d.dataset.chatDetailKey) {
+              openMap.set(d.dataset.chatDetailKey, anyClosed);
+            }
+          }
+          liveTraceBtn.classList.toggle('is-expanded', anyClosed);
+          liveTraceBtn.setAttribute('aria-expanded', anyClosed ? 'true' : 'false');
         }
         return;
       }
@@ -14399,6 +14806,10 @@
       (ev) => {
         const det = ev.target;
         if (!det || det.tagName !== 'DETAILS' || !det.dataset?.chatDetailKey) return;
+        if (isPinLocked()) {
+          det.open = det.dataset.renderedOpen === '1';
+          return;
+        }
         const key = det.dataset.chatDetailKey;
         const openMap = getThreadOpenDetailsMap(prefs.selectedThreadId, false);
         const renderedOpen = det.dataset.renderedOpen === '1';
@@ -14425,6 +14836,10 @@
       (ev) => {
         const det = ev.target?.closest?.('details.bg-task-item[data-bg-detail-key]');
         if (!det) return;
+        if (isPinLocked()) {
+          det.open = false;
+          return;
+        }
         const key = det.dataset.bgDetailKey;
         if (det.open) {
           openBgTaskDetails.add(key);
@@ -15628,7 +16043,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=62', { updateViaCache: 'none' })
+        .register('sw.js?v=63', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
@@ -15859,12 +16274,39 @@
       if (!initialNoSse) {
         setInterval(() => {
           if (document.hidden) return;
-          if (localWsAuthed && localWs && localWs.readyState === 1) return;
-          if (!hasAnyPairingCredentials() && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '')) {
-            return;
+          if (!localWsAuthed || !localWs || localWs.readyState !== 1) {
+            if (!hasAnyPairingCredentials() && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '')) {
+              return;
+            }
+            syncData();
           }
-          syncData();
         }, 4500);
+
+        setInterval(() => {
+          if (document.hidden || prefs.activeTab !== 'chat') return;
+          const nowMs = Date.now();
+          document.querySelectorAll('#chat-stream [data-live-elapsed-start]').forEach((el) => {
+            const startMs = Number(el.dataset.liveElapsedStart || 0);
+            if (startMs > 0 && nowMs >= startMs) {
+              const sec = Math.max(1, Math.round((nowMs - startMs) / 1000));
+              el.textContent =
+                sec >= 60
+                  ? `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, '0')}s`
+                  : `${sec}s`;
+            }
+          });
+          const tid = prefs.selectedThreadId;
+          if (
+            tid &&
+            tid !== '__new__' &&
+            !String(tid).startsWith('draft-new-') &&
+            isSessionActivelyRunning(tid) &&
+            nowMs - (lastThreadDetailFetchAtById.get(tid) || 0) >= 1650 &&
+            nowMs - (lastThreadDetailReceivedAtById.get(tid) || 0) >= 1350
+          ) {
+            fetchThreadDetail(tid, pinnedNavProvider || '').catch(() => {});
+          }
+        }, 1100);
       }
       registerServiceWorker();
     }

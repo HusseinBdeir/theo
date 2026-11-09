@@ -2563,6 +2563,240 @@ async function main() {
     assert.strictEqual(v62NarrowClamp.composerExpandedAfterEsc, 'false', '#composer-model-btn aria-expanded must reset to false on close');
     console.log('[PASS] Adversarial #13: v62 Constrained #chat-live-bgtasks Proportions, Vector .ui-chev SVGs, Floating VS Code Model Dropdown, MODEL_PLACEHOLDER_M* Parity & 3 Negative Guards verified');
 
+    // ---------------------------------------------------------------------------
+    // Adversarial Check #14: v63 VS Code-Grade Interactive Thinking & Execution Mode
+    // (Live Activity Shimmer Bar + 6-Dot Step Rail, Zero Empty .turn-changeset-strip,
+    // Rich Markdown Thought Steps, Clean ✂ compact Pill, User Context/Attachment Chips,
+    // Interactive Step-Kind Filter Pills & >= 3 Negative Assertions)
+    // ---------------------------------------------------------------------------
+    await cdp.send(
+      'Emulation.setDeviceMetricsOverride',
+      { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false },
+      sessionId
+    );
+    const v63Result = await evalJs(`(async () => {
+      window.__XSS_V63 = false;
+      const rawCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+      const state = rawCache.state || {};
+      const rows = Array.isArray(state.rows) ? state.rows : [];
+      const targetRow = rows.find((r) => r && r.id === 'sess-alpha') || rows[0];
+      const targetId = targetRow ? targetRow.id : 'sess-alpha';
+      if (targetRow) {
+        targetRow.status = 'working';
+        targetRow.dot = 'running';
+      }
+      rawCache.threads = rawCache.threads || {};
+      rawCache.threads[targetId] = {
+        id: targetId,
+        provider: 'antigravity',
+        title: 'Theo Avatar Redesign and Upgrade',
+        status: 'working',
+        liveActivity: {
+          active: true,
+          verb: 'Reading',
+          target: 'core3d.js',
+          file: 'core3d.js',
+          relPath: 'js/core3d.js',
+          lineRange: 'L1-L120',
+          kind: 'read',
+          stepCount: 3
+        },
+        messages: [
+          {
+            id: 'u-compact-1',
+            role: 'user',
+            createdAt: new Date(Date.now() - 300000).toISOString(),
+            text: '/compact'
+          },
+          {
+            id: 'cp-compact-1',
+            role: 'checkpoint',
+            createdAt: new Date(Date.now() - 290000).toISOString(),
+            text: '# Resuming from a compaction\\nYou are continuing work on the task described above, but your prior context was compacted.\\n# Task Overview\\nAuditing SAPI grammar confidence and 3D avatar ear geometry.'
+          },
+          {
+            id: 'u-ctx-1',
+            role: 'user',
+            createdAt: new Date(Date.now() - 240000).toISOString(),
+            text: '[LIVE WORKSTATION CONTEXT — 09/11/2026, 19:25]\\n• Active Screen Window: VS Code\\n• Focused IDE Session: THEO\\n\\nthere are still many issues with thinking mode<img src=x onerror="window.__XSS_V63=true">\\n\\n[Attached Files saved on workstation]:\\n- Code-192516.png: \\'C:\\\\Users\\\\hbdei\\\\.claude\\\\theo-uploads\\\\Code-192516.png\\''
+          },
+          {
+            id: 'a-live-work-1',
+            role: 'assistant',
+            createdAt: new Date(Date.now() - 15000).toISOString(),
+            startedAt: new Date(Date.now() - 15000).toISOString(),
+            status: 'RUNNING',
+            text: '',
+            thinking: 'Auditing **SAPI grammar** in \`TheoAvatarHost.cs\` and \`core3d.js\` <img src=x onerror="window.__XSS_V63=true">',
+            thinkingDurationSec: 6,
+            thoughtBlocks: [
+              {
+                id: 'th-v63-1',
+                text: 'Inspecting **SAPI confidence** in \`TheoAvatarHost.cs\` <script>window.__XSS_V63=true</script>',
+                durationSec: 3
+              },
+              {
+                id: 'th-v63-2',
+                text: 'Checking ear mesh geometry in \`core3d.js\` <img src=x onerror="window.__XSS_V63=true">',
+                durationSec: 3
+              }
+            ],
+            totalTurnTools: 3,
+            toolCalls: [
+              {
+                id: 'tc-r1',
+                name: 'read_file',
+                kind: 'read',
+                label: 'Viewed',
+                file: 'TheoAvatarHost.cs',
+                relPath: 'TheoAvatarHost.cs',
+                summary: 'Read TheoAvatarHost.cs'
+              },
+              {
+                id: 'tc-c1',
+                name: 'run_command',
+                kind: 'cmd',
+                label: 'Ran command',
+                command: 'dotnet build',
+                summary: 'dotnet build'
+              },
+              {
+                id: 'tc-r2',
+                name: 'read_file',
+                kind: 'read',
+                label: 'Viewed',
+                file: 'core3d.js',
+                relPath: 'js/core3d.js',
+                lineRange: 'L1-L120',
+                summary: 'Read core3d.js (L1-L120)'
+              }
+            ]
+          }
+        ]
+      };
+      localStorage.setItem('theo_remote_cache_v3', JSON.stringify(rawCache));
+      const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+      prefs.activeTab = 'chat';
+      prefs.selectedThreadId = targetId;
+      prefs.composerMode = 'reply';
+      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+      location.reload();
+      return true;
+    })()`);
+    await new Promise((r) => setTimeout(r, 650));
+
+    const v63Verify = await evalJs(`(async () => {
+      // Negative #1: Zero .turn-changeset-strip when working turn has only read/cmd steps (0 edited files)
+      const changeSetCountOnReadOnlyTurn = document.querySelectorAll('#chat-stream .turn-changeset-strip').length;
+
+      // Live Activity Bar & 6-Dot Vertical Step Rail
+      const liveBar = document.querySelector('#chat-stream .vs-live-activity-bar[data-toggle-live-trace]');
+      const railDotsCount = document.querySelectorAll('#chat-stream .vs-live-step-rail .vs-rail-dot').length;
+      const liveVerbText = document.querySelector('#chat-stream .vs-live-verb')?.textContent?.trim() || '';
+      const liveTargetText = document.querySelector('#chat-stream .vs-live-target-chip')?.textContent?.trim() || '';
+      const hasElapsedBadge = Boolean(document.querySelector('#chat-stream .vs-live-elapsed[data-live-elapsed-start]'));
+
+      // Clean ✂ compact checkpoint pill (stripped of "# Resuming from a compaction")
+      const cpPillText = document.querySelector('#chat-stream .vs-checkpoint-pill')?.textContent?.replace(/\\s+/g, ' ').trim() || '';
+      const hasCompactBadge = Boolean(document.querySelector('#chat-stream .vs-compact-badge'));
+      const strippedBoilerplate = !cpPillText.includes('Resuming from a compaction') && !cpPillText.includes('continuing work on the task');
+
+      // Clean User Bubble Context & Attachment Chips & /compact command pill
+      const hasCompactCmdPill = Boolean(document.querySelector('#chat-stream .user-compact-cmd-pill'));
+      const userCtxDetails = document.querySelector('#chat-stream details.user-ctx-chip');
+      const userCtxCollapsedByDefault = Boolean(userCtxDetails && userCtxDetails.open === false);
+      const userAttachChipText = document.querySelector('#chat-stream .user-attach-chip')?.textContent?.trim() || '';
+
+      // Rich Markdown inside .vs-thought-step-text.md-rich
+      const thoughtRichStrong = Boolean(document.querySelector('#chat-stream .vs-thought-step-text.md-rich strong'));
+      const thoughtRichCode = Boolean(document.querySelector('#chat-stream .vs-thought-step-text.md-rich code'));
+
+      // Clicking live activity bar toggles open both thinking & tools details and sets .is-expanded
+      liveBar?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      const thinkCard = document.querySelector('#chat-stream details.vs-thought-card');
+      const toolsCard = document.querySelector('#chat-stream details.tools-details');
+      const liveClickOpenedTrace = Boolean(thinkCard?.open && toolsCard?.open && liveBar?.classList.contains('is-expanded'));
+
+      // Check Outline tab in Split Inspector strips [LIVE WORKSTATION CONTEXT] & "# Resuming from a compaction"
+      const outlineTabBtn = document.querySelector('.insp-tab[data-insp-tab="outline"]');
+      outlineTabBtn?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      const outlineText = document.getElementById('split-inspector-body')?.textContent || '';
+      const outlineClean =
+        !outlineText.includes('LIVE WORKSTATION CONTEXT') &&
+        !outlineText.includes('Resuming from a compaction');
+
+      // Interactive Step-Kind Filter Pills (All / Reads / Cmds)
+      const cmdFilterBtn = document.querySelector('#chat-stream [data-step-kind-filter="cmd"]');
+      cmdFilterBtn?.click();
+      await new Promise((r) => setTimeout(r, 20));
+      const visibleStepsWhenCmd = Array.from(document.querySelectorAll('#chat-stream .code-step-card')).filter((el) => !el.hidden).length;
+      const allFilterBtn = document.querySelector('#chat-stream [data-step-kind-filter="all"]');
+      allFilterBtn?.click();
+      await new Promise((r) => setTimeout(r, 20));
+      const visibleStepsWhenAll = Array.from(document.querySelectorAll('#chat-stream .code-step-card')).filter((el) => !el.hidden).length;
+
+      // Negative #3: PIN-lock quarantine blocks [data-step-kind-filter] & [data-toggle-live-trace]
+      const pinOverlay = document.getElementById('pin-overlay');
+      if (pinOverlay) pinOverlay.hidden = false;
+      document.documentElement.classList.add('pin-locked-boot');
+      cmdFilterBtn?.click();
+      const visibleDuringPinLock = Array.from(document.querySelectorAll('#chat-stream .code-step-card')).filter((el) => !el.hidden).length;
+      if (pinOverlay) pinOverlay.hidden = true;
+      document.documentElement.classList.remove('pin-locked-boot');
+
+      const docOverflowX = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+      const titleAttrsCount = document.querySelectorAll('[title]').length;
+
+      return {
+        changeSetCountOnReadOnlyTurn,
+        hasLiveBar: Boolean(liveBar),
+        railDotsCount,
+        liveVerbText,
+        liveTargetText,
+        hasElapsedBadge,
+        hasCompactBadge,
+        strippedBoilerplate,
+        hasCompactCmdPill,
+        userCtxCollapsedByDefault,
+        userAttachChipText,
+        thoughtRichStrong,
+        thoughtRichCode,
+        liveClickOpenedTrace,
+        outlineClean,
+        visibleStepsWhenCmd,
+        visibleStepsWhenAll,
+        visibleDuringPinLock,
+        xssTriggered: Boolean(window.__XSS_V63),
+        docOverflowX,
+        titleAttrsCount
+      };
+    })()`);
+
+    assert.strictEqual(v63Verify.changeSetCountOnReadOnlyTurn, 0, 'v63 Negative #1: Read/cmd-only working turn must NOT render an empty .turn-changeset-strip box');
+    assert.strictEqual(v63Verify.xssTriggered, false, 'v63 Negative #2: Hostile HTML in markdown thought blocks and user workstation context must never execute');
+    assert.strictEqual(v63Verify.hasLiveBar, true, 'Active working turn must render VS Code .vs-live-activity-bar');
+    assert.strictEqual(v63Verify.railDotsCount, 6, 'Active working turn must render 6-dot .vs-live-step-rail');
+    assert.strictEqual(v63Verify.liveVerbText, 'Reading', 'Live activity bar must show progressive verb "Reading"');
+    assert.ok(v63Verify.liveTargetText.includes('core3d.js'), `Expected liveTargetText to include core3d.js, got ${v63Verify.liveTargetText}`);
+    assert.strictEqual(v63Verify.hasElapsedBadge, true, 'Live activity bar must render [data-live-elapsed-start] ticker');
+    assert.strictEqual(v63Verify.hasCompactBadge, true, 'Checkpoint divider must render VS Code ✂ compact badge');
+    assert.strictEqual(v63Verify.strippedBoilerplate, true, 'Checkpoint pill must strip "# Resuming from a compaction" boilerplate');
+    assert.strictEqual(v63Verify.hasCompactCmdPill, true, '/compact user turn must render as .user-compact-cmd-pill');
+    assert.strictEqual(v63Verify.userCtxCollapsedByDefault, true, '[LIVE WORKSTATION CONTEXT] must compact into a collapsed-by-default <details.user-ctx-chip>');
+    assert.ok(v63Verify.userAttachChipText.includes('Code-192516.png'), 'Attached workstation file must render as compact .user-attach-chip');
+    assert.strictEqual(v63Verify.thoughtRichStrong, true, 'Thought step text must render rich markdown <strong>');
+    assert.strictEqual(v63Verify.thoughtRichCode, true, 'Thought step text must render rich markdown <code>');
+    assert.strictEqual(v63Verify.liveClickOpenedTrace, true, 'Clicking .vs-live-activity-bar must expand thinking & tool steps and set .is-expanded');
+    assert.strictEqual(v63Verify.outlineClean, true, 'Split Inspector Outline tab must strip [LIVE WORKSTATION CONTEXT] and compaction boilerplate');
+    assert.strictEqual(v63Verify.visibleStepsWhenCmd, 1, 'Clicking [data-step-kind-filter="cmd"] must filter to the 1 command step');
+    assert.strictEqual(v63Verify.visibleStepsWhenAll, 3, 'Clicking [data-step-kind-filter="all"] must restore all 3 steps');
+    assert.strictEqual(v63Verify.visibleDuringPinLock, 3, 'v63 Negative #3: PIN lock must block [data-step-kind-filter] clicks');
+    assert.strictEqual(v63Verify.docOverflowX, 0, '0px horizontal overflow on v63 Chat view');
+    assert.strictEqual(v63Verify.titleAttrsCount, 0, 'Zero [title] attributes allowed in v63 DOM');
+    console.log('[PASS] Adversarial #14: v63 VS Code-Grade Interactive Thinking & Execution Mode, Live Activity Shimmer Bar, Rich Thought Markdown, Compact Checkpoint/Context Chips & 3 Negative Guards verified');
+
     // Final error & network quarantine assertions (#18)
     assert.strictEqual(pageExceptions.length, 0, `Uncaught page exceptions: ${JSON.stringify(pageExceptions)}`);
     assert.strictEqual(consoleErrors.length, 0, `Console errors: ${JSON.stringify(consoleErrors)}`);
