@@ -9,14 +9,14 @@
   <meta name="apple-mobile-web-app-title" content="THEO">
   <meta name="description" content="THEO — AI Coding &amp; Session Workbench for Google Antigravity and Claude Code.">
   <title>THEO — AI Session Workbench</title>
-  <link rel="manifest" href="manifest.json?v=61">
-  <link rel="icon" type="image/svg+xml" href="icon.svg?v=61">
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=61">
-  <link rel="apple-touch-icon" href="icon-180.png?v=61">
+  <link rel="manifest" href="manifest.json?v=62">
+  <link rel="icon" type="image/svg+xml" href="icon.svg?v=62">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=62">
+  <link rel="apple-touch-icon" href="icon-180.png?v=62">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/theo.css?v=61">
+  <link rel="stylesheet" href="css/theo.css?v=62">
   <script id="pre">
     (() => {
       try {
@@ -55,7 +55,7 @@
   <div id="pin-overlay" class="pin-overlay" hidden>
     <div class="pin-card">
       <div class="pin-brand">
-        <img src="icon.svg?v=61" alt="THEO" class="pin-logo">
+        <img src="icon.svg?v=62" alt="THEO" class="pin-logo">
         <div class="pin-title">THEO REMOTE</div>
         <div class="brass-double-rule"></div>
       </div>
@@ -85,7 +85,7 @@
     <aside class="ink-rail" id="ink-rail" aria-label="Primary Navigation">
       <div class="ide-activity-bar">
         <button type="button" class="activity-brand-btn" id="btn-activity-brand" data-sidebar-collapse="1" data-tip="THEO Workbench (⌘B)" aria-label="Toggle THEO Explorer Sidebar">
-          <img src="icon.svg?v=61" alt="THEO" class="brand-badge">
+          <img src="icon.svg?v=62" alt="THEO" class="brand-badge">
         </button>
 
         <nav class="rail-nav" id="rail-nav">
@@ -170,7 +170,7 @@
         <details class="ide-side-section" id="ide-sec-accounts" open>
           <summary class="ide-side-summary">
             <span class="ide-side-summary-left">
-              <span class="ide-chevron">▾</span>
+              <span class="ide-chevron" aria-hidden="true"><svg class="ui-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6L8 9.5L11.5 6"/></svg></span>
               <span>ACCOUNT &amp; USAGE</span>
             </span>
             <span class="ide-side-summary-right">
@@ -187,7 +187,7 @@
         <details class="ide-side-section ide-sec-questions" id="ide-sec-questions" open hidden>
           <summary class="ide-side-summary">
             <span class="ide-side-summary-left">
-              <span class="ide-chevron">▾</span>
+              <span class="ide-chevron" aria-hidden="true"><svg class="ui-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6L8 9.5L11.5 6"/></svg></span>
               <span>QUESTIONS</span>
               <span class="ide-side-count amber tabular" id="ide-questions-count">0</span>
             </span>
@@ -199,7 +199,7 @@
         <details class="ide-side-section ide-sec-bgtasks" id="ide-sec-bgtasks" open hidden>
           <summary class="ide-side-summary">
             <span class="ide-side-summary-left">
-              <span class="ide-chevron">▾</span>
+              <span class="ide-chevron" aria-hidden="true"><svg class="ui-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6L8 9.5L11.5 6"/></svg></span>
               <span id="ide-bgtasks-heading">SIDE AGENTS &amp; TASKS</span>
               <span class="ide-side-count emerald tabular" id="ide-bgtasks-count">0</span>
             </span>
@@ -215,7 +215,7 @@
         <div class="ide-side-sessions">
           <div class="ide-side-summary static">
             <span class="ide-side-summary-left">
-              <span class="ide-chevron">▾</span>
+              <span class="ide-chevron" aria-hidden="true"><svg class="ui-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6L8 9.5L11.5 6"/></svg></span>
               <span>SESSIONS</span>
               <span class="ide-side-count tabular" id="ide-sidebar-count">0</span>
             </span>
@@ -255,7 +255,7 @@
       <!-- Mobile & Compact Top Header -->
       <header class="mobile-topbar">
         <div class="mobile-brand">
-          <img src="icon.svg?v=61" alt="THEO" class="mobile-badge">
+          <img src="icon.svg?v=62" alt="THEO" class="mobile-badge">
           <div class="mobile-brand-copy">
             <div class="mobile-title-row">
               <div class="mobile-wordmark-stack">
@@ -455,10 +455,10 @@
                 </div>
                 <div class="chat-meta-row" id="chat-meta-row">
                   <span class="chat-crumb-sep">·</span>
-                  <button type="button" class="model-picker-pill tabular" id="chat-model-picker-btn" aria-haspopup="dialog" aria-expanded="false" aria-label="Select AI Model and Thinking Level">
+                  <button type="button" class="model-picker-pill tabular" id="chat-model-picker-btn" aria-haspopup="menu" aria-expanded="false" aria-label="Select AI Model and Thinking Level">
                     <span class="model-pill-dot" aria-hidden="true"></span>
                     <span id="chat-model-pill">Gemini 4 Argon (High)</span>
-                    <span class="model-pill-chev" aria-hidden="true">▾</span>
+                    <span class="model-pill-chev" aria-hidden="true"><svg class="ui-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6L8 9.5L11.5 6"/></svg></span>
                   </button>
                 </div>
               </div>
@@ -508,14 +508,11 @@
             </div>
           </div>
 
-          <!-- Interactive Model & Thinking Effort Popover -->
-          <div class="ctx-Popover model-picker-popover" id="model-picker-popover" role="dialog" aria-label="Model and Thinking Level Selector" hidden>
-            <div class="ctx-popover-head">
-              <div>
-                <div class="eyebrow">AI ENGINE &amp; REASONING DEPTH</div>
-                <h3 id="model-popover-title">Select Model &amp; Thinking Level</h3>
-              </div>
-              <button type="button" class="icon-btn-sm" id="btn-close-model-picker" aria-label="Close Model Selector">✕</button>
+          <!-- Compact VS Code Native Model & Thinking Menu Popover -->
+          <div class="vs-model-menu-popover model-picker-popover" id="model-picker-popover" role="menu" aria-label="Model and Thinking Level Selector" hidden>
+            <div class="vs-model-menu-head">
+              <span class="vs-model-menu-title" id="model-popover-title">Model Selection</span>
+              <button type="button" class="vs-model-close-btn" id="btn-close-model-picker" aria-label="Close Model Selector">✕</button>
             </div>
             <div class="model-picker-body" id="model-picker-body"></div>
           </div>
@@ -590,9 +587,9 @@
                       <button type="button" class="composer-route-toggle-pill" id="btn-toggle-composer-route" aria-label="Toggle target host and workspace routing" aria-expanded="false">
                         <span>⇄ Route</span>
                       </button>
-                      <button type="button" class="composer-model-pill tabular" id="composer-model-btn" aria-label="Change Model and Thinking Level">
+                      <button type="button" class="composer-model-pill tabular" id="composer-model-btn" aria-haspopup="menu" aria-expanded="false" aria-label="Change Model and Thinking Level">
                         <span id="composer-model-label">Gemini 4 Argon · High</span>
-                        <span aria-hidden="true">▾</span>
+                        <span class="model-pill-chev" aria-hidden="true"><svg class="ui-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6L8 9.5L11.5 6"/></svg></span>
                       </button>
 
                       <div class="composer-routing-row" id="composer-routing-row">
@@ -845,7 +842,7 @@
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=61"></script>
-  <script src="js/app.js?v=61"></script>
+  <script src="js/endpoints.js?v=62"></script>
+  <script src="js/app.js?v=62"></script>
 </body>
 </html>

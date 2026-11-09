@@ -2363,6 +2363,206 @@ async function main() {
     assert.strictEqual(v61Probe.titleAttrsCount, 0, 'Zero [title] attributes allowed anywhere in v61 DOM');
     console.log('[PASS] Adversarial #12: v61 Composer De-clutter, Desktop Tab De-duplication, Interactive Model & Thinking Level Selector, Sidebar Open-Tab Grey Dot, Last-Worked-On Ordering & 3 Negative Guards verified');
 
+    // -------------------------------------------------------------------------
+    // Adversarial Check #13: v62 Proportions (#chat-live-bgtasks aligned with
+    // #composer-box, crisp vector .ui-chev SVGs, 1-line #rail-conn-title +
+    // 24/7 Daemon), Floating VS Code Model Dropdown (position:fixed, zero
+    // clipping, 1-click [data-select-model-combo], MODEL_PLACEHOLDER_M* enum
+    // normalization), & >= 3 v62 Negative Assertions
+    // -------------------------------------------------------------------------
+    await cdp.send(
+      'Emulation.setDeviceMetricsOverride',
+      { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false },
+      sessionId
+    );
+    const v62Probe = await evalJs(`(async () => {
+      // Seed sess-alpha with live background task + MODEL_PLACEHOLDER_M319 enum to test normalization + #chat-live-bgtasks proportions
+      const cache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+      const now = Date.now();
+      const alpha = (cache.state?.rows || []).find((r) => r.id === 'sess-alpha');
+      if (alpha) {
+        alpha.model = 'MODEL_PLACEHOLDER_M319';
+        alpha.status = 'working';
+        alpha.backgroundTasks = [
+          {
+            id: 'task-cf-v62',
+            kind: 'task',
+            state: 'running',
+            summary: 'Deploy to Cloudflare Pages via deploy_cloudflare.py',
+            startedAt: now - 8000,
+            outputPreview: 'Uploading 58 assets...'
+          }
+        ];
+      }
+      const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+      delete prefs.threadModelConfig?.['sess-alpha'];
+      prefs.selectedThreadId = 'sess-alpha';
+      prefs.composerMode = 'reply';
+      prefs.edgeAccessKey = '9'.repeat(64);
+      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+      localStorage.setItem('theo_remote_cache_v3', JSON.stringify(cache));
+      location.reload();
+      return true;
+    })()`);
+    await new Promise((r) => setTimeout(r, 650));
+
+    const v62DesktopResult = await evalJs(`(async () => {
+      // 1. Verify MODEL_PLACEHOLDER_M319 normalized to 'Gemini 3.8 Flash (Medium)'
+      const m319HeaderPill = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+
+      // 2. Verify #chat-live-bgtasks is constrained to #composer-box width & left alignment (<= 2px delta)
+      const bgBar = document.getElementById('chat-live-bgtasks');
+      const compBox = document.getElementById('composer-box');
+      const bgRect = bgBar?.getBoundingClientRect();
+      const compRect = compBox?.getBoundingClientRect();
+      const bgVisible = Boolean(bgBar && !bgBar.hidden && bgRect && bgRect.height > 20);
+      const bgWidthMatchesComposer = Boolean(
+        bgRect && compRect &&
+        Math.abs(bgRect.width - compRect.width) <= 2 &&
+        Math.abs(bgRect.left - compRect.left) <= 2 &&
+        bgRect.width <= 862
+      );
+
+      // 3. Verify crisp vector .ui-chev SVGs and single-line #rail-conn-title + 24/7 Daemon badge
+      const vectorChevCount = document.querySelectorAll('svg.ui-chev').length;
+      const connTitleEl = document.getElementById('rail-conn-title');
+      const connSubEl = document.getElementById('rail-conn-sub');
+      const connTitleSingleLine = Boolean(connTitleEl && connTitleEl.clientHeight <= 20);
+      const connSubHasDaemon = String(connSubEl?.textContent || '').includes('24/7 Daemon');
+
+      // 4. Verify #model-picker-popover is position:fixed, opens below header button without clipping, and above composer button
+      const headerBtn = document.getElementById('chat-model-picker-btn');
+      headerBtn?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      const pop = document.getElementById('model-picker-popover');
+      const popStyle = pop ? getComputedStyle(pop) : null;
+      const popFixed = popStyle?.position === 'fixed';
+      const popRectHeader = pop?.getBoundingClientRect();
+      const headerRect = headerBtn?.getBoundingClientRect();
+      const anchoredBelowHeader = Boolean(
+        popRectHeader && headerRect &&
+        popRectHeader.top >= headerRect.bottom - 2 &&
+        popRectHeader.bottom <= window.innerHeight - 4 &&
+        pop.scrollHeight <= pop.clientHeight + 2
+      );
+      const comboItemsCount = pop ? pop.querySelectorAll('.vs-model-menu-item[data-select-model-combo]').length : 0;
+
+      // Close and open from bottom #composer-model-btn -> must anchor ABOVE composer pill
+      const compBtn = document.getElementById('composer-model-btn');
+      compBtn?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      const popRectComp = pop?.getBoundingClientRect();
+      const compBtnRect = compBtn?.getBoundingClientRect();
+      const anchoredAboveComposer = Boolean(
+        pop && !pop.hidden && popRectComp && compBtnRect &&
+        popRectComp.bottom <= compBtnRect.top + 4 &&
+        popRectComp.top >= 4
+      );
+
+      // 1-click VS Code model combo selection: 'gemini-4-argon:low'
+      pop?.querySelector('[data-select-model-combo="gemini-4-argon:low"]')?.click();
+      await new Promise((r) => setTimeout(r, 25));
+      const autoClosedAfterCombo = pop?.hidden === true;
+      const pillAfterCombo = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+      const compLabelAfterCombo = document.getElementById('composer-model-label')?.textContent?.trim() || '';
+
+      // Negative #1: Inject hostile/bogus [data-select-model-combo] and click it -> must NOT mutate state or execute XSS
+      const bogusCombo = document.createElement('button');
+      bogusCombo.setAttribute('data-select-model-combo', '<img src=x onerror="window.__XSS=620">:bogus');
+      document.body.appendChild(bogusCombo);
+      bogusCombo.click();
+      bogusCombo.remove();
+      await new Promise((r) => setTimeout(r, 20));
+      const pillAfterHostileCombo = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+
+      // Negative #2: PIN lock blocks [data-select-model-combo]
+      const pinOverlay = document.getElementById('pin-overlay');
+      if (pinOverlay) pinOverlay.hidden = false;
+      pop?.querySelector('[data-select-model-combo="gemini-3.8-flash:high"]')?.click();
+      await new Promise((r) => setTimeout(r, 20));
+      const pillAfterPinCombo = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+      if (pinOverlay) pinOverlay.hidden = true;
+
+      // Leave popover open for Negative #3 narrow viewport clamping test
+      headerBtn?.click();
+      await new Promise((r) => setTimeout(r, 20));
+      const headDisplay = pop?.querySelector('.vs-model-menu-head')
+        ? getComputedStyle(pop.querySelector('.vs-model-menu-head')).display
+        : '';
+      const checkGutterWidth = pop?.querySelector('.vs-model-item-check')
+        ? getComputedStyle(pop.querySelector('.vs-model-item-check')).width
+        : '';
+      const collapsedGroupChevTransform = document.querySelector('.ide-tree-group.collapsed .ide-chevron-sm .ui-chev')
+        ? getComputedStyle(document.querySelector('.ide-tree-group.collapsed .ide-chevron-sm .ui-chev')).transform
+        : 'none';
+
+      return {
+        m319HeaderPill,
+        bgVisible,
+        bgWidthMatchesComposer,
+        vectorChevCount,
+        connTitleSingleLine,
+        connSubHasDaemon,
+        popFixed,
+        anchoredBelowHeader,
+        comboItemsCount,
+        anchoredAboveComposer,
+        autoClosedAfterCombo,
+        pillAfterCombo,
+        compLabelAfterCombo,
+        pillAfterHostileCombo,
+        pillAfterPinCombo,
+        headDisplay,
+        checkGutterWidth,
+        collapsedGroupChevTransform,
+        xssTriggered: Boolean(window.__XSS),
+        titleAttrsCount: document.querySelectorAll('[title]').length
+      };
+    })()`);
+
+    // Negative #3: Resize to 320x568 with #model-picker-popover open -> must clamp inside 320px viewport with 0px overflow
+    await cdp.send(
+      'Emulation.setDeviceMetricsOverride',
+      { width: 320, height: 568, deviceScaleFactor: 2, mobile: true },
+      sessionId
+    );
+    const v62NarrowClamp = await evalJs(`(async () => {
+      window.dispatchEvent(new Event('resize'));
+      await new Promise((r) => setTimeout(r, 30));
+      const pop = document.getElementById('model-picker-popover');
+      const rect = pop?.getBoundingClientRect();
+      const clampedIn320 = Boolean(rect && rect.left >= 4 && rect.right <= 316 && rect.bottom <= 564);
+      const docOverflowX = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      const composerExpandedAfterEsc = document.getElementById('composer-model-btn')?.getAttribute('aria-expanded');
+      return { clampedIn320, docOverflowX, composerExpandedAfterEsc };
+    })()`);
+
+    assert.strictEqual(v62DesktopResult.xssTriggered, false, 'v62 Negative #1: Hostile data-select-model-combo must never execute XSS');
+    assert.strictEqual(v62DesktopResult.m319HeaderPill, 'Gemini 3.8 Flash (Medium)', 'MODEL_PLACEHOLDER_M319 must normalize to Gemini 3.8 Flash (Medium)');
+    assert.strictEqual(v62DesktopResult.bgVisible, true, '#chat-live-bgtasks must be visible when session has running background tasks');
+    assert.strictEqual(v62DesktopResult.bgWidthMatchesComposer, true, '#chat-live-bgtasks width and left edge must match #composer-box within <=2px (max 860px)');
+    assert.ok(v62DesktopResult.vectorChevCount >= 8, `Expected >=8 crisp vector .ui-chev SVGs in DOM, got ${v62DesktopResult.vectorChevCount}`);
+    assert.strictEqual(v62DesktopResult.connTitleSingleLine, true, '#rail-conn-title ("Theo Laptop · WS 1ms") must stay on 1 line without wrapping');
+    assert.strictEqual(v62DesktopResult.connSubHasDaemon, true, '#rail-conn-sub must indicate 24/7 Daemon continuity');
+    assert.strictEqual(v62DesktopResult.popFixed, true, '#model-picker-popover must use position:fixed so it is never clipped by #view-chat');
+    assert.strictEqual(v62DesktopResult.anchoredBelowHeader, true, 'Model menu opened from header must anchor cleanly below #chat-model-picker-btn with 0 scroll clipping');
+    assert.strictEqual(v62DesktopResult.comboItemsCount, 6, 'Antigravity VS Code model menu must list all 6 model+thinking combinations');
+    assert.strictEqual(v62DesktopResult.anchoredAboveComposer, true, 'Model menu opened from composer must anchor cleanly above #composer-model-btn');
+    assert.strictEqual(v62DesktopResult.autoClosedAfterCombo, true, '1-click [data-select-model-combo] must select and close menu immediately');
+    assert.strictEqual(v62DesktopResult.pillAfterCombo, 'Gemini 4 Argon (Low)', '1-click combo must update #chat-model-pill to Gemini 4 Argon (Low)');
+    assert.strictEqual(v62DesktopResult.compLabelAfterCombo, 'Gemini 4 Argon · Low', '1-click combo must update #composer-model-label to Gemini 4 Argon · Low');
+    assert.strictEqual(v62DesktopResult.pillAfterHostileCombo, 'Gemini 4 Argon (Low)', 'v62 Negative #1: Bogus/hostile combo must be rejected without mutating selection');
+    assert.strictEqual(v62DesktopResult.pillAfterPinCombo, 'Gemini 4 Argon (Low)', 'v62 Negative #2: PIN lock must block [data-select-model-combo] clicks');
+    assert.strictEqual(v62DesktopResult.headDisplay, 'flex', '.vs-model-menu-head must render as display:flex');
+    assert.strictEqual(v62DesktopResult.checkGutterWidth, '14px', '.vs-model-item-check must reserve a 14px check gutter');
+    assert.strictEqual(v62DesktopResult.collapsedGroupChevTransform, 'none', 'Collapsed sidebar group chevron must not be double-rotated by CSS');
+    assert.strictEqual(v62DesktopResult.titleAttrsCount, 0, 'Zero [title] attributes allowed anywhere in v62 DOM');
+    assert.strictEqual(v62NarrowClamp.clampedIn320, true, 'v62 Negative #3: Fixed model menu must clamp inside 320px viewport on resize');
+    assert.strictEqual(v62NarrowClamp.docOverflowX, 0, 'v62 Negative #3: 0px horizontal overflow at 320px with model menu open');
+    assert.strictEqual(v62NarrowClamp.composerExpandedAfterEsc, 'false', '#composer-model-btn aria-expanded must reset to false on close');
+    console.log('[PASS] Adversarial #13: v62 Constrained #chat-live-bgtasks Proportions, Vector .ui-chev SVGs, Floating VS Code Model Dropdown, MODEL_PLACEHOLDER_M* Parity & 3 Negative Guards verified');
+
     // Final error & network quarantine assertions (#18)
     assert.strictEqual(pageExceptions.length, 0, `Uncaught page exceptions: ${JSON.stringify(pageExceptions)}`);
     assert.strictEqual(consoleErrors.length, 0, `Console errors: ${JSON.stringify(consoleErrors)}`);

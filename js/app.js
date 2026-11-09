@@ -130,13 +130,47 @@
     { id: 'high', label: 'High', desc: 'Maximum thinking depth & edge-case rigor' }
   ];
 
+  const CHEVRON_DOWN_SVG = `<svg class="ui-chev" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6L8 9.5L11.5 6"/></svg>`;
+  const CHEVRON_RIGHT_SVG = `<svg class="ui-chev" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4.5L9.5 8L6 11.5"/></svg>`;
+  const CHECK_MARK_SVG = `<svg class="vs-model-check-ico" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-6.5"/></svg>`;
+
   function inferEffortIdFromRaw(rawModel = '', effortHint = '') {
     const eff = String(effortHint || '').trim().toLowerCase();
     if (eff === 'low' || eff === 'medium' || eff === 'high') return eff;
     const low = String(rawModel || '').toLowerCase();
-    if (low.includes('(low)') || low.endsWith('-low') || low.includes('· low')) return 'low';
-    if (low.includes('(medium)') || low.endsWith('-medium') || low.includes('· medium')) return 'medium';
-    if (low.includes('(high)') || low.endsWith('-high') || low.includes('· high')) return 'high';
+    if (
+      low === 'model_placeholder_m419' ||
+      low === 'model_placeholder_m320' ||
+      low === 'model_placeholder_m400' ||
+      low === 'model_placeholder_m403' ||
+      low.includes('(low)') ||
+      low.endsWith('-low') ||
+      low.includes('· low')
+    ) {
+      return 'low';
+    }
+    if (
+      low === 'model_placeholder_m418' ||
+      low === 'model_placeholder_m319' ||
+      low === 'model_placeholder_m401' ||
+      low === 'model_placeholder_m404' ||
+      low.includes('(medium)') ||
+      low.endsWith('-medium') ||
+      low.includes('· medium')
+    ) {
+      return 'medium';
+    }
+    if (
+      low === 'model_placeholder_m417' ||
+      low === 'model_placeholder_m318' ||
+      low === 'model_placeholder_m402' ||
+      low === 'model_placeholder_m405' ||
+      low.includes('(high)') ||
+      low.endsWith('-high') ||
+      low.includes('· high')
+    ) {
+      return 'high';
+    }
     return '';
   }
 
@@ -149,8 +183,23 @@
       if (low.includes('opus')) return 'claude-opus-4-7';
       return '';
     }
-    if (low.includes('3.8') || low.includes('flash')) return 'gemini-3.8-flash';
-    if (low.includes('argon')) return 'gemini-4-argon';
+    if (
+      low === 'model_placeholder_m318' ||
+      low === 'model_placeholder_m319' ||
+      low === 'model_placeholder_m320' ||
+      low.includes('3.8') ||
+      low.includes('flash')
+    ) {
+      return 'gemini-3.8-flash';
+    }
+    if (
+      low === 'model_placeholder_m417' ||
+      low === 'model_placeholder_m418' ||
+      low === 'model_placeholder_m419' ||
+      low.includes('argon')
+    ) {
+      return 'gemini-4-argon';
+    }
     return '';
   }
 
@@ -161,7 +210,13 @@
     const effId = inferEffortIdFromRaw(s, effortHint) || 'high';
     const effCap = effId === 'low' ? 'Low' : effId === 'medium' ? 'Medium' : 'High';
     if (provKey === 'antigravity') {
-      if (low.includes('3.8') || low.includes('flash')) {
+      if (
+        low === 'model_placeholder_m318' ||
+        low === 'model_placeholder_m319' ||
+        low === 'model_placeholder_m320' ||
+        low.includes('3.8') ||
+        low.includes('flash')
+      ) {
         return `Gemini 3.8 Flash (${effCap})`;
       }
       if (
@@ -170,6 +225,9 @@
         low === 'antigravity' ||
         low.includes('3.1') ||
         low.includes('m43') ||
+        low === 'model_placeholder_m417' ||
+        low === 'model_placeholder_m418' ||
+        low === 'model_placeholder_m419' ||
         low.includes('argon')
       ) {
         return `Gemini 4 Argon (${effCap})`;
@@ -2497,6 +2555,7 @@
     const modPop = $('model-picker-popover');
     if (modPop) modPop.hidden = true;
     $('chat-model-picker-btn')?.setAttribute('aria-expanded', 'false');
+    $('composer-model-btn')?.setAttribute('aria-expanded', 'false');
     const hoverCard = $('ide-hover-card');
     if (hoverCard) {
       hoverCard.hidden = true;
@@ -3442,6 +3501,22 @@
           } else if (msg.type === 'host_state') {
             const snap = msg.snapshot || msg.state;
             if (snap) ingestIncomingHostState(snap, msg.deviceId || '');
+          } else if (msg.type === 'thread_detail') {
+            const tObj = msg.thread?.thread || msg.thread || msg.detail || null;
+            const tid = String(msg.threadId || msg.id || tObj?.id || '').trim();
+            if (tid && tObj && typeof tObj === 'object') {
+              mergeRemoteThreads({ [tid]: tObj });
+              persistCache();
+              if (prefs.activeTab === 'chat' && prefs.selectedThreadId === tid) {
+                renderChatView(false);
+              } else if (
+                prefs.activeTab === 'chat' &&
+                prefs.splitWatchOpen &&
+                prefs.splitWatchThreadId === tid
+              ) {
+                renderSplitWatchPane();
+              }
+            }
           } else if (msg.type === 'stream_delta') {
             handleStreamDelta(msg);
           } else if (msg.type === 'rpc_res' && msg.reqId && wsPendingRpcs.has(msg.reqId)) {
@@ -3898,7 +3973,10 @@
           },
           6500
         );
-        const threadObj = rpcOut?.result?.thread || rpcOut?.thread || null;
+        const threadObj =
+          rpcOut?.result?.thread ||
+          rpcOut?.thread ||
+          (Array.isArray(rpcOut?.result?.messages) ? rpcOut.result : null);
         if (threadObj) {
           mergeRemoteThreads({ [threadId]: threadObj });
           persistCache();
@@ -4302,10 +4380,11 @@
       const wsBadge = localWsAuthed
         ? `WS${localWsRttMs > 0 ? ` ${localWsRttMs}ms` : ''}`
         : 'Live SSE';
+      const isHeadlessDaemon = Boolean(appState?.connection?.standaloneMode);
       if (dotRail) dotRail.className = 'conn-dot live';
       if (titleRail) titleRail.textContent = `${hostLabel} · ${wsBadge}`;
       if (subRail) {
-        subRail.textContent = `${fleetList.length > 1 ? `${fleetList.length} hosts · ` : ''}${rowCount} sess`;
+        subRail.textContent = `${fleetList.length > 1 ? `${fleetList.length} hosts · ` : ''}${rowCount} sess · ${isHeadlessDaemon ? 'Headless 24/7' : '24/7 Daemon'}`;
       }
       if (pillMob) pillMob.hidden = true;
       if (dotMob) dotMob.className = 'conn-dot live';
@@ -4314,7 +4393,7 @@
       const rttTxt = edgeWsRttMs > 0 ? ` · ${edgeWsRttMs}ms` : '';
       if (dotRail) dotRail.className = 'conn-dot live';
       if (titleRail) titleRail.textContent = `Edge WS · ${Math.max(1, onlineHosts)} Host${onlineHosts === 1 ? '' : 's'} Live`;
-      if (subRail) subRail.textContent = `Cloudflare DO${rttTxt} · ${rowCount} sess`;
+      if (subRail) subRail.textContent = `Cloudflare DO${rttTxt} · ${rowCount} sess · 24/7 Daemon`;
       if (pillMob) pillMob.hidden = true;
       if (dotMob) dotMob.className = 'conn-dot live';
       if (textMob) textMob.textContent = `Edge WS${rttTxt}`;
@@ -4324,7 +4403,7 @@
         titleRail.textContent =
           fleetList.length > 1 ? `Cloud Fleet · ${fleetList.length} Hosts` : 'Cloud Relay · Connected';
       }
-      if (subRail) subRail.textContent = `Sync ${snapAge || 'live'} · ${rowCount} sess`;
+      if (subRail) subRail.textContent = `Sync ${snapAge || 'live'} · ${rowCount} sess · 24/7 Daemon`;
       if (pillMob) pillMob.hidden = true;
       if (dotMob) dotMob.className = 'conn-dot cloud';
       if (textMob) textMob.textContent = snapAge ? `Live · ${snapAge.replace(' ago', '')}` : 'Cloud Live';
@@ -4336,8 +4415,8 @@
         subRail.textContent = !paired
           ? 'Enter 6-digit code or pair link'
           : snapAge
-            ? `Cached ${snapAge}`
-            : 'Waiting for connection';
+            ? `Cached ${snapAge} · 24/7 Daemon`
+            : 'Waiting · 24/7 Daemon';
       }
       if (pillMob) pillMob.hidden = paired && connMode === 'probing' && navigator.onLine !== false;
       if (dotMob) dotMob.className = 'conn-dot';
@@ -5428,7 +5507,7 @@
             <div class="ide-acct-card${isActive ? ' is-active' : ''}${isCollapsed ? ' collapsed' : ''}">
               <div class="ide-acct-head">
                 <button type="button" class="ide-acct-toggle" data-quota-collapse="${esc(collapseKey)}" aria-expanded="${!isCollapsed}">
-                  <span class="ide-chevron-sm">${isCollapsed ? '▸' : '▾'}</span>
+                  <span class="ide-chevron-sm">${isCollapsed ? CHEVRON_RIGHT_SVG : CHEVRON_DOWN_SVG}</span>
                   <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
                   <span class="ide-acct-name">${esc(label)}</span>
                   ${badgeTxt ? `<span class="ide-acct-role${isActive ? ' primary' : ''}">${esc(badgeTxt)}</span>` : ''}
@@ -5776,7 +5855,7 @@
           <div class="ide-tree-group${collapsed ? ' collapsed' : ''}">
             <div class="ide-tree-group-hdr">
               <button type="button" class="ide-tree-group-btn" data-group-act="toggle" data-group-id="${esc(g.id)}" aria-expanded="${!collapsed}">
-                <span class="ide-chevron-sm">${collapsed ? '▸' : '▾'}</span>
+                <span class="ide-chevron-sm">${collapsed ? CHEVRON_RIGHT_SVG : CHEVRON_DOWN_SVG}</span>
                 <span class="ide-tree-group-name">${esc(g.name || 'Group')}</span>
               </button>
               <span class="ide-group-pill tabular">${gItems.length}</span>
@@ -5792,7 +5871,7 @@
           <div class="ide-tree-group${ugCollapsed ? ' collapsed' : ''}">
             <div class="ide-tree-group-hdr">
               <button type="button" class="ide-tree-group-btn" data-group-act="toggle" data-group-id="ungrouped" aria-expanded="${!ugCollapsed}">
-                <span class="ide-chevron-sm">${ugCollapsed ? '▸' : '▾'}</span>
+                <span class="ide-chevron-sm">${ugCollapsed ? CHEVRON_RIGHT_SVG : CHEVRON_DOWN_SVG}</span>
                 <span class="ide-tree-group-name">Ungrouped</span>
               </button>
               <span class="ide-group-pill tabular">${ungrouped.length}</span>
@@ -6676,7 +6755,7 @@
             <span class="vs-answered-badge">${isSkipped ? 'Skipped' : anyToolPerm ? '✓ Resolved' : '✓ Answered'}</span>
             <span style="font-weight:500;color:var(--text-heading);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1">${esc(questions.length > 1 ? `${questions.length} Questions · ${firstPrompt}` : firstPrompt)}</span>
             ${summaryText ? `<span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:38%">${esc(summaryText)}</span>` : ''}
-            <span class="vs-thought-chev" aria-hidden="true">›</span>
+            <span class="vs-thought-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>
           </summary>
           <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border-hairline)">
             ${sessionTitle ? `<div class="approval-title">${esc(sessionTitle)}</div>` : ''}
@@ -9472,7 +9551,7 @@
           }
           <span class="vs-thought-lbl tabular">${esc(labelTxt)}</span>
           ${previewLine ? `<span class="vs-thought-preview">${esc(previewLine)}</span>` : ''}
-          <span class="vs-thought-chev" aria-hidden="true">›</span>
+          <span class="vs-thought-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>
         </summary>
         <div class="vs-thought-body">${stepsBodyHtml}</div>
       </details>
@@ -9746,7 +9825,7 @@
         ${fileChip}
         ${displaySummary ? `<span class="code-step-summary${kind === 'command' ? ' mono' : ''}">${esc(displaySummary)}</span>` : ''}
         ${diffBadge}
-        ${hasInspectableBody ? `<span class="code-step-chevron" aria-hidden="true">›</span>` : ''}
+        ${hasInspectableBody ? `<span class="code-step-chevron" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>` : ''}
       </div>
     `;
 
@@ -9978,6 +10057,71 @@
     return updatedCfg;
   }
 
+  let lastModelAnchorEl = null;
+
+  function positionModelPickerPopover(anchorEl = null) {
+    const modPop = $('model-picker-popover');
+    if (!modPop) return;
+    if (anchorEl) {
+      lastModelAnchorEl = anchorEl;
+    }
+    let trigger =
+      anchorEl ||
+      lastModelAnchorEl ||
+      (document.activeElement &&
+      (document.activeElement.id === 'composer-model-btn' ||
+        document.activeElement.id === 'chat-model-picker-btn')
+        ? document.activeElement
+        : null) ||
+      $('composer-model-btn') ||
+      $('chat-model-picker-btn');
+    if (!trigger || typeof trigger.getBoundingClientRect !== 'function') return;
+    let rect = trigger.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) {
+      const alt =
+        trigger.id === 'chat-model-picker-btn'
+          ? $('composer-model-btn')
+          : $('chat-model-picker-btn');
+      if (alt && typeof alt.getBoundingClientRect === 'function') {
+        const altRect = alt.getBoundingClientRect();
+        if (altRect.width > 0 || altRect.height > 0) {
+          trigger = alt;
+          rect = altRect;
+          lastModelAnchorEl = alt;
+        }
+      }
+    }
+    const vw = Math.max(280, window.innerWidth || 1280);
+    const vh = Math.max(320, window.innerHeight || 800);
+    const menuW = Math.min(280, vw - 16);
+    const clampedLeft = Math.max(8, Math.min(Math.round(rect.left), vw - menuW - 8));
+    modPop.style.width = `${menuW}px`;
+    modPop.style.left = `${clampedLeft}px`;
+    modPop.style.right = 'auto';
+    if (rect.top > vh * 0.52) {
+      const bottomPx = Math.max(10, Math.round(vh - rect.top + 6));
+      modPop.style.bottom = `${bottomPx}px`;
+      modPop.style.top = 'auto';
+      modPop.style.maxHeight = `${Math.max(160, vh - bottomPx - 10)}px`;
+    } else {
+      const topPx = Math.max(8, Math.round(rect.bottom + 6));
+      modPop.style.top = `${topPx}px`;
+      modPop.style.bottom = 'auto';
+      modPop.style.maxHeight = `${Math.max(160, vh - topPx - 10)}px`;
+    }
+  }
+
+  window.addEventListener(
+    'resize',
+    () => {
+      const modPop = $('model-picker-popover');
+      if (modPop && !modPop.hidden) {
+        positionModelPickerPopover();
+      }
+    },
+    { passive: true }
+  );
+
   function renderModelPickerPopover(provKey, modelCfg) {
     const bodyEl = $('model-picker-body');
     const titleEl = $('model-popover-title');
@@ -9985,51 +10129,47 @@
     const cleanProv = provKey === 'claude' ? 'claude' : 'antigravity';
     const catalog = MODEL_CATALOG[cleanProv] || MODEL_CATALOG.antigravity;
     if (titleEl) {
-      titleEl.textContent =
-        cleanProv === 'claude'
-          ? 'Claude Code Model & Thinking Level'
-          : 'Google Antigravity Model & Thinking Level';
+      titleEl.textContent = cleanProv === 'claude' ? 'Claude Code Model' : 'Model Selection';
     }
-    const modelsHtml = catalog
-      .map((m) => {
-        const isSel = m.id === modelCfg.modelId;
-        return `
-          <button type="button" class="model-option-card${isSel ? ' active' : ''}" data-select-ai-model="${esc(m.id)}" data-model-prov="${cleanProv}" aria-pressed="${isSel ? 'true' : 'false'}">
-            <div class="model-opt-top">
-              <span class="model-opt-name">${esc(m.label)}</span>
-              <span class="model-opt-badge">${esc(m.badge)}</span>
-            </div>
-            <div class="model-opt-desc">${esc(m.desc)}</div>
-          </button>
-        `;
+    const effortOrder = ['high', 'medium', 'low'];
+    const familyGroupsHtml = catalog
+      .map((m, famIdx) => {
+        const rowsHtml = effortOrder
+          .map((effId) => {
+            const effObj =
+              THINKING_EFFORT_LEVELS.find((e) => e.id === effId) || THINKING_EFFORT_LEVELS[2];
+            const isSel = m.id === modelCfg.modelId && effObj.id === modelCfg.effort;
+            const isPrimaryFamilyMatch = effObj.id === modelCfg.effort;
+            const tagTxt =
+              cleanProv === 'antigravity'
+                ? m.id.includes('flash')
+                  ? 'Fast'
+                  : 'New'
+                : m.badge;
+            return `
+              <button type="button" role="menuitemradio" aria-checked="${isSel ? 'true' : 'false'}" class="vs-model-menu-item${isSel ? ' active' : ''}" data-select-model-combo="${esc(`${m.id}:${effObj.id}`)}"${isPrimaryFamilyMatch ? ` data-select-ai-model="${esc(m.id)}"` : ''} data-model-prov="${cleanProv}">
+                <span class="vs-model-item-check">${isSel ? CHECK_MARK_SVG : ''}</span>
+                <span class="vs-model-item-name">${esc(`${m.label} (${effObj.label})`)}</span>
+                <span class="vs-model-item-tag">${esc(tagTxt)}</span>
+              </button>
+            `;
+          })
+          .join('');
+        return `${famIdx > 0 ? '<div class="vs-model-menu-sep" role="separator"></div>' : ''}${rowsHtml}`;
       })
       .join('');
 
-    const effortsHtml = THINKING_EFFORT_LEVELS.map((eff) => {
+    const effortsBarHtml = THINKING_EFFORT_LEVELS.map((eff) => {
       const isSel = eff.id === modelCfg.effort;
-      return `
-        <button type="button" class="effort-seg-btn${isSel ? ' active' : ''}" data-select-ai-effort="${esc(eff.id)}" data-model-prov="${cleanProv}" aria-pressed="${isSel ? 'true' : 'false'}">
-          <span class="effort-seg-lbl">${esc(eff.label)}</span>
-          <small class="effort-seg-sub">${esc(eff.id === 'low' ? 'Fast' : eff.id === 'medium' ? 'Balanced' : 'Deep')}</small>
-        </button>
-      `;
+      return `<button type="button" class="vs-effort-pill${isSel ? ' active' : ''}" data-select-ai-effort="${esc(eff.id)}" data-model-prov="${cleanProv}" aria-pressed="${isSel ? 'true' : 'false'}">${esc(eff.label)}</button>`;
     }).join('');
 
-    const activeEffortObj =
-      THINKING_EFFORT_LEVELS.find((e) => e.id === modelCfg.effort) || THINKING_EFFORT_LEVELS[2];
-
     bodyEl.innerHTML = `
-      <div class="model-picker-section">
-        <div class="model-picker-label">MODEL FAMILY</div>
-        <div class="model-option-grid">${modelsHtml}</div>
-      </div>
-      <div class="model-picker-section">
-        <div class="model-picker-label-row">
-          <span class="model-picker-label">THINKING LEVEL (REASONING EFFORT)</span>
-          <span class="model-picker-active-tag tabular">${esc(modelCfg.displayLabel)}</span>
-        </div>
-        <div class="effort-seg-group" role="group" aria-label="Thinking Effort Level">${effortsHtml}</div>
-        <div class="effort-active-desc">${esc(activeEffortObj.desc)}</div>
+      <div class="vs-model-menu-list">${familyGroupsHtml}</div>
+      <div class="vs-model-menu-sep" role="separator"></div>
+      <div class="vs-model-effort-bar" role="group" aria-label="Thinking Level">
+        <span class="vs-model-effort-lbl">Thinking</span>
+        <div class="vs-model-effort-pills">${effortsBarHtml}</div>
       </div>
     `;
   }
@@ -10444,7 +10584,7 @@
             return `
               <details class="vs-checkpoint-divider" data-turn-anchor="${esc(turnIdKey)}" data-chat-detail-key="${esc(cpKey)}" data-rendered-open="${isCpOpen ? '1' : '0'}"${isCpOpen ? ' open' : ''}>
                 <summary class="vs-checkpoint-summary">
-                  <span class="vs-checkpoint-pill">✦ Checkpoint · ${esc(cpPreview.slice(0, 88) || 'Context compacted')}&nbsp;<span class="vs-thought-chev" aria-hidden="true">›</span></span>
+                  <span class="vs-checkpoint-pill">✦ Checkpoint · ${esc(cpPreview.slice(0, 88) || 'Context compacted')}&nbsp;<span class="vs-thought-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span></span>
                 </summary>
                 <div class="vs-checkpoint-body turn-text md-rich">${formatTurnMarkdown(m.text || 'Context compacted.')}</div>
               </details>
@@ -10493,7 +10633,7 @@
           summaryHtmlParts.push(
             `<span>${toolCount} ${toolCount === 1 ? 'step' : 'steps'}</span>`
           );
-          const summaryLabelHtml = `<span class="tools-summary-left">${summaryHtmlParts.join(' <span style="opacity:0.45">·</span> ')}</span><span class="tools-summary-chevron">▾</span>`;
+          const summaryLabelHtml = `<span class="tools-summary-left">${summaryHtmlParts.join(' <span style="opacity:0.45">·</span> ')}</span><span class="tools-summary-chevron" aria-hidden="true">${CHEVRON_DOWN_SVG}</span>`;
 
           const allStepsSavedOpen =
             stepToolCalls.length >= 2 &&
@@ -10649,7 +10789,7 @@
               .filter(Boolean)
               .pop() || '';
           const streamThinkHtml = isLiveStreamingTurn
-            ? `<details class="vs-thought-card thinking-details is-streaming" data-stream-think-wrap="1" ${m.thinking ? '' : 'hidden'}><summary class="vs-thought-summary"><span class="vs-thought-live-dot" aria-hidden="true"></span><span class="vs-thought-lbl tabular">Thinking…</span><span class="vs-thought-preview" data-stream-think-preview="1">${esc(liveStreamPreview.replace(/`+/g, '').slice(0, 96))}</span><span class="vs-thought-chev" aria-hidden="true">›</span></summary><div class="vs-thought-body"><div class="vs-thought-step-text" data-stream-think-body="1">${esc(m.thinking || '')}</div></div></details>`
+            ? `<details class="vs-thought-card thinking-details is-streaming" data-stream-think-wrap="1" ${m.thinking ? '' : 'hidden'}><summary class="vs-thought-summary"><span class="vs-thought-live-dot" aria-hidden="true"></span><span class="vs-thought-lbl tabular">Thinking…</span><span class="vs-thought-preview" data-stream-think-preview="1">${esc(liveStreamPreview.replace(/`+/g, '').slice(0, 96))}</span><span class="vs-thought-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span></summary><div class="vs-thought-body"><div class="vs-thought-step-text" data-stream-think-body="1">${esc(m.thinking || '')}</div></div></details>`
             : thinkHtml;
           const streamTextHtml = isLiveStreamingTurn
             ? `<div class="turn-text md-rich" data-stream-text-body="1">${cleanedText ? formatTurnMarkdown(cleanedText) : ''}<span class="stream-cursor"></span></div>`
@@ -12295,26 +12435,57 @@
       ) {
         modPop.hidden = true;
         $('chat-model-picker-btn')?.setAttribute('aria-expanded', 'false');
+        $('composer-model-btn')?.setAttribute('aria-expanded', 'false');
       }
 
-      if (e.target.closest('#chat-model-picker-btn') || e.target.closest('#composer-model-btn')) {
+      const modTriggerBtn =
+        e.target.closest('#chat-model-picker-btn') || e.target.closest('#composer-model-btn');
+      if (modTriggerBtn) {
         e.preventDefault();
         e.stopPropagation();
         if (modPop) {
-          const nextOpen = modPop.hidden;
+          const nextOpen = modPop.hidden || modTriggerBtn !== lastModelAnchorEl;
           const ctxPop = $('ctx-popover');
           if (ctxPop) ctxPop.hidden = true;
           const bgPop = $('bg-tasks-popover');
           if (bgPop) bgPop.hidden = true;
           renderChatView(false);
           modPop.hidden = !nextOpen;
-          $('chat-model-picker-btn')?.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+          if (nextOpen) {
+            positionModelPickerPopover(modTriggerBtn);
+          }
+          $('chat-model-picker-btn')?.setAttribute(
+            'aria-expanded',
+            nextOpen && modTriggerBtn.id === 'chat-model-picker-btn' ? 'true' : 'false'
+          );
+          $('composer-model-btn')?.setAttribute(
+            'aria-expanded',
+            nextOpen && modTriggerBtn.id === 'composer-model-btn' ? 'true' : 'false'
+          );
         }
         return;
       }
       if (e.target.closest('#btn-close-model-picker')) {
         if (modPop) modPop.hidden = true;
         $('chat-model-picker-btn')?.setAttribute('aria-expanded', 'false');
+        $('composer-model-btn')?.setAttribute('aria-expanded', 'false');
+        return;
+      }
+      const selComboBtn = e.target.closest('[data-select-model-combo]');
+      if (selComboBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        haptic(8);
+        const rawCombo = String(selComboBtn.dataset.selectModelCombo || '');
+        const [mId, effId] = rawCombo.split(':');
+        const prov = selComboBtn.dataset.modelProv || '';
+        if (mId && effId) {
+          const cfg = setSessionModelConfig({ modelId: mId, effort: effId, provider: prov });
+          if (modPop) modPop.hidden = true;
+          $('chat-model-picker-btn')?.setAttribute('aria-expanded', 'false');
+          $('composer-model-btn')?.setAttribute('aria-expanded', 'false');
+          showToast(`Model set to ${cfg.displayLabel}`);
+        }
         return;
       }
       const selModelBtn = e.target.closest('[data-select-ai-model]');
@@ -12324,8 +12495,14 @@
         haptic(8);
         const mId = selModelBtn.dataset.selectAiModel || '';
         const prov = selModelBtn.dataset.modelProv || '';
+        const comboAttr = String(selModelBtn.dataset.selectModelCombo || '');
+        const comboEff = comboAttr.includes(':') ? comboAttr.split(':')[1] : '';
         if (mId) {
-          const cfg = setSessionModelConfig({ modelId: mId, provider: prov });
+          const cfg = setSessionModelConfig({
+            modelId: mId,
+            effort: comboEff || undefined,
+            provider: prov
+          });
           showToast(`Model set to ${cfg.displayLabel}`);
         }
         return;
@@ -14186,6 +14363,7 @@
         if (ctxPop) ctxPop.hidden = true;
         if (modPop) modPop.hidden = true;
         $('chat-model-picker-btn')?.setAttribute('aria-expanded', 'false');
+        $('composer-model-btn')?.setAttribute('aria-expanded', 'false');
       }
       renderChatView();
       if (nextOpen && prefs.selectedThreadId && !isNewSessionMode()) {
@@ -14273,6 +14451,7 @@
           if (bgPop) bgPop.hidden = true;
           if (modPop) modPop.hidden = true;
           $('chat-model-picker-btn')?.setAttribute('aria-expanded', 'false');
+          $('composer-model-btn')?.setAttribute('aria-expanded', 'false');
         }
       }
     });
@@ -15449,7 +15628,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=61', { updateViaCache: 'none' })
+        .register('sw.js?v=62', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
