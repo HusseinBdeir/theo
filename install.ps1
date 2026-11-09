@@ -258,6 +258,15 @@ if (Test-Path $agentStarter) {
     }
 }
 
+$desktopShortcutInstaller = Join-Path $repoDir "scripts\install_desktop_shortcut.ps1"
+if (Test-Path $desktopShortcutInstaller) {
+    try {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $desktopShortcutInstaller
+    } catch {
+        Write-Host "[WARN] Could not register THEO Desktop shortcut: $_" -ForegroundColor Yellow
+    }
+}
+
 Write-Host ""
 Write-Host "=== SUCCESS! THEO Studio Host & Multi-Device Agent are installed! ===" -ForegroundColor Green
 Write-Host "This PC is now live in your THEO Fleet (even when VS Code is closed)." -ForegroundColor Cyan
