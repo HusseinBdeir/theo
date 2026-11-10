@@ -484,6 +484,18 @@ async function main() {
   }
   console.log(`[PASS] Lockstep SW/Shell version parity verified (v${expectedVer})`);
 
+  // Static Equal-Hosts Check (v65): the app knows no PC by name or folder. A session belongs to the host that
+  // published it (the `deviceId` stamped on the row), and every direct command carries its command id so that a
+  // host can recognise the queued copy of a command it has already run.
+  {
+    for (const banned of [/users[\\/]+husseinbdeir/i, /users[\\/]+hbdei\b/i, /main-workstation/i, /theo-laptop/i, /Main Workstation/]) {
+      assert.strictEqual(banned.test(appJsSrc), false, `js/app.js must not contain ${banned} (no PC is special)`);
+    }
+    const directPayloads = appJsSrc.match(/\.\.\.cmd,\s*(?:attachments: \w+,\s*)?cmdId: cmd\.id,\s*id: cmd\.newSession \? '' : targetThreadId,/g) || [];
+    assert.strictEqual(directPayloads.length, 3, 'local WS, edge WS and local HTTP command payloads must each carry cmdId');
+    console.log('[PASS] Static: no PC named in the app, and all 3 direct command paths carry the command id');
+  }
+
   // Static Edge-Store Derivation Check (v64): the store key is derived in-page by a hand-written synchronous SHA-256.
   // It must agree with Node's crypto on every block-boundary length, and refreshCloudConfig must prefer the derived
   // Edge store over any stored legacy relay URL or key whenever the device holds an edge access key.

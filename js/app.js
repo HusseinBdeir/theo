@@ -2884,17 +2884,13 @@
 
   const initialNoSse = location.search.includes('nosse=1');
 
+  // A session belongs to the host that published it: every host stamps `deviceId` on the rows it sends, and a row
+  // without a stamp belongs to the host whose snapshot it arrived in. Nothing here knows a PC by name or folder.
+  // The name shown is the host's current name from the fleet list, so a renamed PC shows its new name at once.
   function inferFrontendRowDeviceId(r, fallbackId = '', fallbackName = '') {
-    const cwd = String(r?.cwd || r?.workspacePath || '').toLowerCase();
-    if (cwd.startsWith('c:\\users\\husseinbdeir') || cwd.startsWith('c:/users/husseinbdeir')) {
-      return { id: 'main-workstation', name: 'Main Workstation' };
-    }
-    if (cwd.startsWith('c:\\users\\hbdei') || cwd.startsWith('c:/users/hbdei')) {
-      return { id: 'theo-laptop', name: r?.deviceName || 'THEO Laptop' };
-    }
     const id = String(r?.deviceId || fallbackId || '').trim();
     const devMeta = id ? fleetDevicesMap.get(id) : null;
-    const name = String(r?.deviceName || devMeta?.name || fallbackName || id || '').trim();
+    const name = String(devMeta?.name || r?.deviceName || fallbackName || id || '').trim();
     return { id, name };
   }
 
@@ -4368,6 +4364,7 @@
             cmd: {
               ...cmd,
               attachments: wsAttachments,
+              cmdId: cmd.id,
               id: cmd.newSession ? '' : targetThreadId,
               threadId: cmd.newSession ? '' : targetThreadId
             }
@@ -4395,6 +4392,7 @@
             cmd: {
               ...cmd,
               attachments: edgeAttachments,
+              cmdId: cmd.id,
               id: cmd.newSession ? '' : targetThreadId,
               threadId: cmd.newSession ? '' : targetThreadId
             }
@@ -4422,6 +4420,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             ...cmd,
+            cmdId: cmd.id,
             id: cmd.newSession ? '' : targetThreadId,
             threadId: cmd.newSession ? '' : targetThreadId
           })
@@ -16143,7 +16142,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=64', { updateViaCache: 'none' })
+        .register('sw.js?v=65', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
