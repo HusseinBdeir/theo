@@ -484,6 +484,69 @@ async function main() {
   }
   console.log(`[PASS] Lockstep SW/Shell version parity verified (v${expectedVer})`);
 
+  // Static Edge-Store Derivation Check (v64): the store key is derived in-page by a hand-written synchronous SHA-256.
+  // It must agree with Node's crypto on every block-boundary length, and refreshCloudConfig must prefer the derived
+  // Edge store over any stored legacy relay URL or key whenever the device holds an edge access key.
+  {
+    const nodeCrypto = require('crypto');
+    const vm = require('vm');
+    const pick = (name, endToken) => {
+      const start = appJsSrc.indexOf(`  function ${name}(`);
+      assert.ok(start >= 0, `js/app.js must define ${name}`);
+      const end = appJsSrc.indexOf(endToken, start);
+      assert.ok(end > start, `could not find the end of ${name}`);
+      return appJsSrc.slice(start, end + endToken.length);
+    };
+    const src = [
+      pick('sha256HexSync', '\n  }\n'),
+      'let edgeStoreKeySrc = ""; let edgeStoreKeyHex = "";',
+      pick('getEdgeStoreKeyHex', '\n  }\n'),
+      pick('getEdgeStoreUrl', '\n  }\n'),
+      'const cloudCfg = { url: "", key: "", edgeAccessKey: "", port: 4318 };',
+      pick('refreshCloudConfig', '\n  }\n'),
+      'this.api = { sha256HexSync, refreshCloudConfig };'
+    ].join('\n');
+    const prefsBox = {};
+    const sandbox = {
+      TextEncoder,
+      Uint8Array,
+      Uint32Array,
+      DataView,
+      Math,
+      String,
+      Number,
+      atob: (s) => Buffer.from(s, 'base64').toString('binary'),
+      prefs: prefsBox,
+      window: { THEO_CLOUD_CFG: { u: '', k: '', port: 4318, edgeRelayUrl: 'https://theo-edge-relay.husseinbdeir.workers.dev/ws' } },
+      deriveEdgeAuthTokenHex: async () => ''
+    };
+    vm.runInNewContext(src, sandbox, { filename: 'app-edge-store-extract.js' });
+    const ref = (s) => nodeCrypto.createHash('sha256').update(s, 'utf8').digest('hex');
+    for (const s of ['', 'abc', 'a'.repeat(55), 'a'.repeat(56), 'a'.repeat(64), 'a'.repeat(119), 'a'.repeat(120), '😀 ملاحظة résumé']) {
+      assert.strictEqual(sandbox.api.sha256HexSync(s), ref(s), `sha256HexSync must match Node crypto for a ${s.length}-char input`);
+    }
+    const edgeKey = 'e'.repeat(64);
+    Object.assign(prefsBox, {
+      edgeAccessKey: edgeKey,
+      cloudUrl: 'https://legacy.example.invalid/relay',
+      cloudKey: 'legacy-key'
+    });
+    let cfgOut = sandbox.api.refreshCloudConfig();
+    assert.strictEqual(cfgOut.url, 'https://theo-edge-relay.husseinbdeir.workers.dev/store', 'an edge-paired device must use the Edge store URL');
+    assert.strictEqual(cfgOut.key, ref(`theo-edge-v1:${edgeKey}`), 'the store key must be SHA-256("theo-edge-v1:" + edgeAccessKey)');
+    prefsBox.edgeRelayUrl = 'wss://custom-relay.example.workers.dev/ws';
+    assert.strictEqual(sandbox.api.refreshCloudConfig().url, 'https://custom-relay.example.workers.dev/store', 'the store follows a custom edge relay URL');
+    prefsBox.edgeRelayUrl = 'ws://evil.example/ws';
+    cfgOut = sandbox.api.refreshCloudConfig();
+    assert.strictEqual(cfgOut.url, 'https://legacy.example.invalid/relay', 'a non-TLS remote edge URL must never receive the derived store key');
+    assert.strictEqual(cfgOut.key, 'legacy-key');
+    delete prefsBox.edgeRelayUrl;
+    prefsBox.edgeAccessKey = '';
+    cfgOut = sandbox.api.refreshCloudConfig();
+    assert.strictEqual(cfgOut.url, 'https://legacy.example.invalid/relay', 'a device without an edge key keeps its stored relay');
+    console.log('[PASS] Static: sync SHA-256 matches Node crypto and edge-paired devices derive the Edge store URL and key');
+  }
+
   const edgeExe = findEdgeBinary();
   const cdpPort = await getFreePort();
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'theo-cdp-verify-'));
