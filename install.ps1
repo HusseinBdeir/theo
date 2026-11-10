@@ -1,4 +1,24 @@
 $ErrorActionPreference = 'Stop'
+
+# When OneDrive has already synced System\System\THEO on this PC, delegate directly to
+# the canonical dynamic per-PC setup (handles runtimes, THEO_PAIR_TOKEN, theo-hub, hooks,
+# autoMode, git identity, pre-commit secret scan, memory gitdir and any future steps).
+$theoRootCandidates = @()
+if ($env:THEO_MEMORY_ROOT) { $theoRootCandidates += $env:THEO_MEMORY_ROOT }
+if ($env:OneDriveCommercial) { $theoRootCandidates += (Join-Path $env:OneDriveCommercial "System\System\THEO") }
+$theoRootCandidates += (Join-Path $HOME "OneDrive - BHFIRMS\System\System\THEO")
+foreach ($candRoot in $theoRootCandidates) {
+    $odSetupPs1 = Join-Path $candRoot "Admin\Setup-THEO-PC.ps1"
+    $odSetupPy  = Join-Path $candRoot "Admin\theo-pc-setup.py"
+    if ((Test-Path -LiteralPath $odSetupPs1) -and (Test-Path -LiteralPath $odSetupPy)) {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $odSetupPs1 @args
+        if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 2) {
+            throw "Setup-THEO-PC.ps1 failed with exit code $LASTEXITCODE."
+        }
+        return
+    }
+}
+
 Write-Host "=== Installing THEO Extension & Multi-Device Fleet Agent ===" -ForegroundColor Cyan
 
 $extId = "bhfirms.theo-hub"
@@ -36,7 +56,9 @@ if (-not $localZip) {
 if (Test-Path $targetDir) { Remove-Item -Recurse -Force $targetDir }
 New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
 Expand-Archive -Path $localZip -DestinationPath $targetDir -Force
-Expand-Archive -Path $localZip -DestinationPath $repoDir -Force
+if (-not (Test-Path (Join-Path $repoDir ".git"))) {
+    Expand-Archive -Path $localZip -DestinationPath $repoDir -Force
+}
 
 $agyExtRoot = Join-Path $HOME ".antigravity\extensions"
 $agyTargetDir = $null
@@ -67,21 +89,31 @@ if (Test-Path $portableNode) {
 if (-not $nodeExe) {
     try {
         $archSlug = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { 'win-arm64' } else { 'win-x64' }
+        $expectedSha = if ($archSlug -eq 'win-arm64') {
+            '737cd7046d96575c2d6cd36e0355afba54b79296b0f403ef4b3b1b5852b10ab6'
+        } else {
+            '06067d4f0d463f90ed803d5eca5b039a05dec5d70fc7b7cc254803a59bd0e27c'
+        }
         $nodeFolder = "node-v22.15.0-$archSlug"
         Write-Host "Bootstrapping portable Node.js v22.15.0 ($archSlug) into $portableNodeDir ..." -ForegroundColor Yellow
         $nZip = Join-Path $env:TEMP "$nodeFolder.zip"
         $nExtract = Join-Path $HOME ".local"
         New-Item -ItemType Directory -Force -Path $nExtract | Out-Null
         & curl.exe -L -s "https://nodejs.org/dist/v22.15.0/$nodeFolder.zip" -o $nZip
-        if ((Test-Path $nZip) -and ((Get-Item $nZip).Length -gt 10000000)) {
-            if (Test-Path $portableNodeDir) { Remove-Item -Recurse -Force $portableNodeDir }
-            Expand-Archive -Path $nZip -DestinationPath $nExtract -Force
-            Rename-Item -Path (Join-Path $nExtract $nodeFolder) -NewName "node" -Force
-            Remove-Item $nZip -Force -ErrorAction SilentlyContinue
-            if (Test-Path $portableNode) {
-                $nodeExe = $portableNode
-                Write-Host "[OK] Installed portable Node.js v22.15.0 at $portableNode" -ForegroundColor Green
+        if (Test-Path $nZip) {
+            $gotSha = (Get-FileHash -LiteralPath $nZip -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($gotSha -eq $expectedSha) {
+                if (Test-Path $portableNodeDir) { Remove-Item -Recurse -Force $portableNodeDir }
+                Expand-Archive -Path $nZip -DestinationPath $nExtract -Force
+                Rename-Item -Path (Join-Path $nExtract $nodeFolder) -NewName "node" -Force
+                if (Test-Path $portableNode) {
+                    $nodeExe = $portableNode
+                    Write-Host "[OK] Installed portable Node.js v22.15.0 at $portableNode" -ForegroundColor Green
+                }
+            } else {
+                Write-Host "[WARN] Node.js archive SHA-256 mismatch ($gotSha); skipped portable extract." -ForegroundColor Yellow
             }
+            Remove-Item $nZip -Force -ErrorAction SilentlyContinue
         }
     } catch {}
 }
@@ -115,8 +147,8 @@ const path = require('path');
 const { parsePairTokenBase64Url, saveTheoCredentials, loadTheoCredentials } = require(path.join(process.argv[2], 'device-identity.js'));
 const parsed = parsePairTokenBase64Url(process.env.THEO_PAIR_TOKEN || '');
 if (!parsed) {
-  console.error('[WARN] THEO_PAIR_TOKEN could not be decoded.');
-  process.exit(0);
+  console.error('[ERROR] THEO_PAIR_TOKEN could not be decoded.');
+  process.exit(2);
 }
 const existing = loadTheoCredentials();
 saveTheoCredentials({
@@ -134,8 +166,12 @@ process.exit(0);
     Set-Content -Path $tmpPairJs -Value $pairScript -Encoding UTF8
     if ($useElectronNode) { $env:ELECTRON_RUN_AS_NODE = "1" }
     & $nodeExe $tmpPairJs $repoDir
+    $pairExit = $LASTEXITCODE
     if ($useElectronNode) { Remove-Item Env:\ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue }
     Remove-Item $tmpPairJs -Force -ErrorAction SilentlyContinue
+    if ($pairExit -ne 0) {
+        throw "THEO_PAIR_TOKEN could not be decoded or saved to ~/.theo/credentials.json."
+    }
     $credFile = Join-Path $HOME ".theo\credentials.json"
     if (Test-Path $credFile) {
         & icacls.exe $credFile /inheritance:r /grant:r "$($env:USERNAME):(R,W)" | Out-Null
@@ -267,6 +303,58 @@ if (Test-Path $desktopShortcutInstaller) {
     }
 }
 
+# Pre-seed ~/.claude/CLAUDE.md pointer and ~/.gemini/config (AGENTS.md + THEO project) so that
+# as soon as OneDrive finishes syncing System\System\THEO on a brand-new PC, the first Claude Code
+# or Antigravity session opened anywhere on this PC knows THEO.md and Setup-THEO-PC.ps1.
+try {
+    $odBase = if ($env:OneDriveCommercial) { $env:OneDriveCommercial } else { Join-Path $HOME "OneDrive - BHFIRMS" }
+    $theoRootGuess = if ($env:THEO_MEMORY_ROOT) { $env:THEO_MEMORY_ROOT } else { Join-Path $odBase "System\System\THEO" }
+    $theoIndexPath = Join-Path $theoRootGuess "THEO.md"
+    $setupPs1Guess = Join-Path $theoRootGuess "Admin\Setup-THEO-PC.ps1"
+    $ptrText = @"
+# THEO
+
+You are THEO, Hussein Bdeir's assistant. The project memory index lives outside this folder. Unless its text (the title ends "BHFIRMS & ISABI Systems Project Memory (Index)") is already in this conversation, read it before any BHFIRMS, ISABI or THEO work:
+
+``$theoIndexPath``
+
+It routes to the topic files and holds the hard rules (per-PC bootstrap if unconfigured: ``powershell -NoProfile -ExecutionPolicy Bypass -File "$setupPs1Guess"``). Skip it only for questions unrelated to those projects.
+"@
+    $claudePointer = Join-Path $HOME ".claude\CLAUDE.md"
+    if (-not (Test-Path -LiteralPath $claudePointer)) {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $claudePointer) | Out-Null
+        [System.IO.File]::WriteAllText($claudePointer, ($ptrText -replace "`r`n", "`n"))
+    }
+    $gemConfigDir = Join-Path $HOME ".gemini\config"
+    $gemAgentsPath = Join-Path $gemConfigDir "AGENTS.md"
+    if (-not (Test-Path -LiteralPath $gemAgentsPath)) {
+        New-Item -ItemType Directory -Force -Path $gemConfigDir | Out-Null
+        [System.IO.File]::WriteAllText($gemAgentsPath, ($ptrText -replace "`r`n", "`n"))
+        [System.IO.File]::SetLastWriteTimeUtc($gemAgentsPath, [datetime]::new(2000, 1, 1, 0, 0, 0, [System.DateTimeKind]::Utc))
+    }
+    $gemProjDir = Join-Path $gemConfigDir "projects"
+    New-Item -ItemType Directory -Force -Path $gemProjDir | Out-Null
+    $theoFolderPosix = $theoRootGuess.Replace('\', '/')
+    $driveLower = $theoFolderPosix.Substring(0, 1).ToLowerInvariant()
+    $escapedRest = [System.Uri]::EscapeDataString($theoFolderPosix.Substring(2)).Replace('%2F', '/')
+    $projPayload = @"
+{
+  "id": "c509f84b-f012-4596-9da5-8fec208449e8",
+  "name": "THEO",
+  "projectResources": {
+    "resources": [
+      {
+        "folderUri": "file:///${driveLower}%3A${escapedRest}"
+      }
+    ]
+  }
+}
+"@
+    [System.IO.File]::WriteAllText((Join-Path $gemProjDir "c509f84b-f012-4596-9da5-8fec208449e8.json"), $projPayload)
+} catch {}
+
 Write-Host ""
 Write-Host "=== SUCCESS! THEO Studio Host & Multi-Device Agent are installed! ===" -ForegroundColor Green
 Write-Host "This PC is now live in your THEO Fleet (even when VS Code is closed)." -ForegroundColor Cyan
+Write-Host "Once OneDrive syncs System\System\THEO on this PC, run full dynamic PC setup:" -ForegroundColor Yellow
+Write-Host '  powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME\OneDrive - BHFIRMS\System\System\THEO\Admin\Setup-THEO-PC.ps1"' -ForegroundColor White
