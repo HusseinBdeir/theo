@@ -2894,11 +2894,60 @@
     return { id, name };
   }
 
+  function sanitizeFleetPcSetup(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const totalCount = Math.max(0, Math.min(99, Math.trunc(Number(raw.totalCount) || 0)));
+    if (totalCount <= 0) return null;
+    const okCount = Math.max(0, Math.min(totalCount, Math.trunc(Number(raw.okCount) || 0)));
+    const pendingCount = Math.max(
+      0,
+      Math.min(
+        totalCount,
+        raw.pendingCount !== undefined ? Math.trunc(Number(raw.pendingCount) || 0) : totalCount - okCount
+      )
+    );
+    const pendingIds = Array.isArray(raw.pendingIds)
+      ? raw.pendingIds
+          .map((x) => String(x || '').trim())
+          .filter((x) => /^[a-z0-9._-]{1,64}$/i.test(x))
+          .slice(0, 16)
+      : [];
+    const pendingTitles = Array.isArray(raw.pendingTitles)
+      ? raw.pendingTitles
+          .map((x) => String(x || '').replace(/[\\/]+/g, ' ').trim().slice(0, 80))
+          .filter(Boolean)
+          .slice(0, 16)
+      : [];
+    return {
+      ok: Boolean(raw.ok && pendingCount === 0),
+      checkedAt: Number(raw.checkedAt || 0),
+      totalCount,
+      okCount,
+      pendingCount,
+      pendingIds,
+      pendingTitles
+    };
+  }
+
+  function renderFleetPcSetupPillHtml(d) {
+    const ps = d && d.pcSetup ? sanitizeFleetPcSetup(d.pcSetup) : null;
+    if (!ps) return '';
+    const hostLbl = String(d?.name || d?.id || 'Host').trim();
+    if (ps.ok || ps.pendingCount === 0) {
+      return ` <span class="fleet-setup-pill is-ready tabular" aria-label="${esc(hostLbl)} PC setup ready (${ps.okCount}/${ps.totalCount})">✓ ${ps.okCount}/${ps.totalCount}</span>`;
+    }
+    return ` <span class="fleet-setup-pill is-pending tabular" aria-label="${esc(hostLbl)}: ${ps.pendingCount} PC setup update(s) pending (${ps.okCount}/${ps.totalCount})">! ${ps.okCount}/${ps.totalCount}</span>`;
+  }
+
   function updateFleetDevices(list) {
     if (!Array.isArray(list)) return;
     for (const d of list) {
       if (!d || !d.id) continue;
       const prev = fleetDevicesMap.get(d.id) || {};
+      const nextPcSetup =
+        d.pcSetup !== undefined
+          ? sanitizeFleetPcSetup(d.pcSetup)
+          : prev.pcSetup || null;
       fleetDevicesMap.set(d.id, {
         ...prev,
         ...d,
@@ -2908,7 +2957,8 @@
         lastSeen: Number(d.lastSeen || d.updatedAt || prev.lastSeen || Date.now()),
         sessionCount: Number(
           d.sessionCount !== undefined ? d.sessionCount : prev.sessionCount || 0
-        )
+        ),
+        pcSetup: nextPcSetup
       });
     }
   }
@@ -2969,7 +3019,8 @@
           name: devName,
           hostname: snap.connection?.hostname || devObj.hostname || '',
           sessionCount: normalizedRows.filter((r) => !r.archived && r.deviceId === devId).length,
-          lastSeen: Number(snap.generatedAt || Date.now())
+          lastSeen: Number(snap.generatedAt || Date.now()),
+          ...(devObj.pcSetup || snap.pcSetup ? { pcSetup: devObj.pcSetup || snap.pcSetup } : {})
         }
       ]);
     }
@@ -4825,7 +4876,8 @@
     }
   }
 
-  async function generateSixDigitPairCode() {
+  async function generateSixDigitPairCode(opts = {}) {
+    const silentToast = Boolean(opts && opts.silentToast);
     if (pairCodeGenInFlight) return null;
     if (isHeadlessBrowser && !window.__THEO_ALLOW_PAIR_MOCK_FETCH) return null;
     pairCodeGenInFlight = true;
@@ -4842,7 +4894,9 @@
           };
           renderAnalyticsView();
           renderConnModal();
-          showToast(`🔢 6-Digit Phone Code: ${activeGeneratedPairCode.formatted} (valid 10m)`);
+          if (!silentToast) {
+            showToast(`🔢 6-Digit Phone Code: ${activeGeneratedPairCode.formatted} (valid 10m)`);
+          }
           return activeGeneratedPairCode;
         }
       }
@@ -4883,14 +4937,128 @@
       };
       renderAnalyticsView();
       renderConnModal();
-      showToast(`🔢 6-Digit Phone Code: ${activeGeneratedPairCode.formatted} (valid 10m)`);
+      if (!silentToast) {
+        showToast(`🔢 6-Digit Phone Code: ${activeGeneratedPairCode.formatted} (valid 10m)`);
+      }
       return activeGeneratedPairCode;
     } catch {
-      showToast('Failed to contact Edge Relay to mint 6-digit code');
+      if (!silentToast) {
+        showToast('Failed to contact Edge Relay to mint 6-digit code');
+      }
       return null;
     } finally {
       if (timer) clearTimeout(timer);
       pairCodeGenInFlight = false;
+    }
+  }
+
+  function buildPcSetupLauncherCmd(sixDigitCode = '') {
+    const cleanDigits = String(sixDigitCode || '').replace(/\D+/g, '').slice(0, 6);
+    const codeLine =
+      cleanDigits.length === 6
+        ? `set "THEO_PAIR_CODE=${cleanDigits}"`
+        : 'rem Unpaired launcher (enter 6-digit code in the setup window if pairing a new PC)';
+    const psOneLiner = [
+      "$ErrorActionPreference='Stop'",
+      'try {',
+      "  $od=if($env:OneDriveCommercial){$env:OneDriveCommercial}else{Join-Path $HOME 'OneDrive - BHFIRMS'}",
+      "  $ps1=Join-Path $od 'System\\System\\THEO\\Admin\\Setup-THEO-PC.ps1'",
+      "  if(Test-Path -LiteralPath $ps1){& $ps1 -Gui}else{[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;$tmp=Join-Path $env:TEMP ('theo-install-'+$PID+'.ps1');Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/HusseinBdeir/theo/main/install.ps1' -OutFile $tmp -UseBasicParsing;try{& $tmp -Gui}finally{Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue}}",
+      "} catch { try { Add-Type -AssemblyName System.Windows.Forms; [void][System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'THEO PC Setup', 'OK', 'Error') } catch {}; exit 1 }"
+    ].join(';');
+    return [
+      '@echo off',
+      'setlocal',
+      ':: THEO PC Setup — Double-click on Windows to open the visual checklist & fleet setup window.',
+      ':: Carries at most a single-use 10-minute 6-digit pairing code (zero permanent secrets).',
+      codeLine,
+      `powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -STA -Command "${psOneLiner}"`,
+      'endlocal',
+      ''
+    ].join('\r\n');
+  }
+
+  let downloadPcSetupInFlight = false;
+  let lastLauncherMintedCode = null;
+
+  async function downloadPcSetupLauncher() {
+    if (downloadPcSetupInFlight) return;
+    downloadPcSetupInFlight = true;
+    const dlButtons = Array.from(document.querySelectorAll('[data-download-pc-setup]'));
+    for (const b of dlButtons) b.disabled = true;
+    try {
+      let minted = null;
+      if (hasAnyPairingCredentials()) {
+        const now = Date.now();
+        if (
+          lastLauncherMintedCode &&
+          now - Number(lastLauncherMintedCode.mintedAt || 0) < 15000 &&
+          Number(lastLauncherMintedCode.expiresAt || 0) - now > 60000
+        ) {
+          minted = lastLauncherMintedCode;
+        } else {
+          const fresh = await generateSixDigitPairCode({ silentToast: true });
+          if (fresh && fresh.code) {
+            lastLauncherMintedCode = { ...fresh, mintedAt: now };
+            minted = lastLauncherMintedCode;
+          }
+        }
+      }
+      const cmdText = buildPcSetupLauncherCmd(minted?.code || '');
+      const fileName = 'Set-Up-THEO-PC.cmd';
+      if (typeof window !== 'undefined' && window.__THEO_CAPTURE_PC_SETUP_CMD) {
+        window.__THEO_CAPTURED_PC_SETUP = {
+          fileName,
+          hasPairCode: Boolean(minted?.code),
+          cmdText
+        };
+        showToast(
+          minted?.formatted
+            ? `⬇ Downloaded Set-Up-THEO-PC.cmd (10m code ${minted.formatted})`
+            : '⬇ Downloaded Set-Up-THEO-PC.cmd'
+        );
+        return;
+      }
+      const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
+      const isIosStandalone =
+        /iPhone|iPad|iPod/i.test(ua) &&
+        document.documentElement.classList.contains('ios-standalone');
+      if (isIosStandalone) {
+        try {
+          const f = new File([cmdText], fileName, { type: 'text/plain' });
+          if (navigator.canShare && navigator.canShare({ files: [f] })) {
+            await navigator.share({ files: [f], title: fileName });
+            return;
+          }
+        } catch {}
+        showToast(
+          minted?.formatted
+            ? `🔢 6-Digit PC Code: ${minted.formatted} — open THEO on your PC or enter in Set Up This PC`
+            : 'Open THEO in your PC browser and click Download PC Setup'
+        );
+        return;
+      }
+      const blob = new Blob([cmdText], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.rel = 'noopener';
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1800);
+      showToast(
+        minted?.formatted
+          ? `⬇ Downloaded Set-Up-THEO-PC.cmd (paired with 10m code ${minted.formatted})`
+          : '⬇ Downloaded Set-Up-THEO-PC.cmd — double-click to open THEO PC Setup'
+      );
+    } finally {
+      downloadPcSetupInFlight = false;
+      for (const b of document.querySelectorAll('[data-download-pc-setup]')) {
+        b.disabled = false;
+      }
     }
   }
 
@@ -4923,6 +5091,7 @@
         <div class="quick-pair-subrow">
           <button type="button" class="btn-ghost-sm" data-pair-paste-clipboard>📋 Paste Pair Link</button>
           <button type="button" class="btn-ghost-sm" data-pair-toggle-link-box>${showQuickPairLinkFallback ? 'Hide Link Box' : 'Type / Paste Manually'}</button>
+          <button type="button" class="btn-ghost-sm" data-download-pc-setup="1">⬇ Download PC Setup</button>
         </div>
         <div class="quick-pair-manual" data-pair-manual-wrap ${showQuickPairLinkFallback ? '' : 'hidden'}>
           <input
@@ -4948,7 +5117,7 @@
 
     const conn = appState?.connection || {};
     const lanUrl = conn.lanUrl || '';
-    const hostName = conn.hostname || 'Hussein-Laptop';
+    const hostName = conn.hostname || 'Paired Host';
     const rowCount = (appState?.rows || []).length;
     const activeCount = (appState?.rows || []).filter((r) => !r.archived).length;
     const runningCount = (appState?.rows || []).filter((r) => !r.archived && r.status === 'working').length;
@@ -4980,7 +5149,7 @@
           ${fleetList
             .map(
               (d) =>
-                `<span class="sess-device-badge ${d.online ? 'is-online' : ''}">${d.online ? '●' : '◐'} ${esc(d.name || d.id)}${d.sessionCount ? ` · ${d.sessionCount}` : ''}</span>`
+                `<span class="sess-device-badge ${d.online ? 'is-online' : ''}">${d.online ? '●' : '◐'} ${esc(d.name || d.id)}${d.sessionCount ? ` · ${d.sessionCount}` : ''}${renderFleetPcSetupPillHtml(d)}</span>`
             )
             .join('')}
         </div>`
@@ -5016,6 +5185,7 @@
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
         <button type="button" class="btn-brass-sm" id="conn-modal-sync-btn" style="flex:1">↻ Sync Now with VS Code</button>
+        <button type="button" class="btn-ghost-sm" data-download-pc-setup="1">⬇ Download PC Setup</button>
         ${
           pushActive
             ? `<button type="button" class="btn-ghost-sm" data-push-act="test">🔔 Test Push</button><button type="button" class="btn-ghost-sm" data-push-act="reset" aria-label="Mint a fresh iOS APNs / Web Push subscription">🔄 Re-Pair Push</button>`
@@ -5030,6 +5200,35 @@
     `;
   }
 
+  function renderFleetPcSetupPulseBannerHtml() {
+    const pendingHosts = getUnifiedFleetDevices().filter(
+      (d) => d && d.pcSetup && Number(d.pcSetup.pendingCount || 0) > 0
+    );
+    if (pendingHosts.length === 0) return '';
+    const summaryText = pendingHosts
+      .map((d) => {
+        const ps = d.pcSetup;
+        const stepHint =
+          Array.isArray(ps.pendingTitles) && ps.pendingTitles.length > 0
+            ? `: ${ps.pendingTitles.slice(0, 2).join(', ')}${ps.pendingTitles.length > 2 ? ` +${ps.pendingTitles.length - 2}` : ''}`
+            : '';
+        return `${esc(d.name || d.id)} (${ps.okCount}/${ps.totalCount}${esc(stepHint)})`;
+      })
+      .join(' · ');
+    return `
+      <div class="pc-setup-pulse-card" id="pulse-pc-setup-card">
+        <div class="pc-setup-pulse-main">
+          <div class="eyebrow">FLEET PC SETUP UPDATE</div>
+          <div class="pc-setup-pulse-title">${pendingHosts.length === 1 ? '1 PC has pending setup updates' : `${pendingHosts.length} PCs have pending setup updates`}</div>
+          <div class="meta-timestamp">${summaryText} — click <strong>Apply Setup</strong> in the THEO sidebar on that PC, or open <strong>Set Up This PC</strong>.</div>
+        </div>
+        <div class="pc-setup-pulse-actions">
+          <button type="button" class="btn-ghost-sm" data-download-pc-setup="1">⬇ Download PC Setup</button>
+        </div>
+      </div>
+    `;
+  }
+
   function renderPulseNotifBannerHtml() {
     if (
       !hasAnyPairingCredentials() &&
@@ -5039,14 +5238,15 @@
     ) {
       return renderQuickPairOnboardingCardHtml('pulse');
     }
+    const pcSetupNotice = renderFleetPcSetupPulseBannerHtml();
     const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
     const perm = notifPerm();
     const active = Boolean(nf.enabled && pushSub && perm === 'granted');
-    if (active || loadJson(STORAGE_KEYS.PUSH_HINT, 0)) return '';
+    if (active || loadJson(STORAGE_KEYS.PUSH_HINT, 0)) return pcSetupNotice;
     const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
     const ios = /iPhone|iPad|iPod/.test(ua);
-    if (!pushSupported() && !ios) return '';
-    return `
+    if (!pushSupported() && !ios) return pcSetupNotice;
+    return `${pcSetupNotice}
       <div class="push-banner-card">
         <div class="push-banner-top">
           <span class="eyebrow">HOME SCREEN PUSH NOTIFICATIONS</span>
@@ -7518,6 +7718,7 @@
                 <button type="button" class="fleet-chip ${isAct ? 'active' : ''}" data-fleet-filter="${esc(d.id)}" aria-label="${esc(d.hostname || d.name || d.id)} · ${d.online ? 'Live WebSocket / Bridge' : 'Synced via Cloud Relay'}">
                   <span class="fleet-chip-dot ${d.online ? 'online' : 'synced'}"></span>
                   <span>${esc(d.name || d.id)}</span>
+                  ${d.pcSetup && d.pcSetup.pendingCount > 0 ? `<span class="fleet-chip-setup tabular">! ${d.pcSetup.okCount}/${d.pcSetup.totalCount}</span>` : ''}
                   <span class="fleet-chip-meta tabular">${cnt}</span>
                 </button>
               `;
@@ -11776,14 +11977,14 @@
       pairingGrid.innerHTML = `
         <div class="pairing-card">
           <div class="eyebrow">MULTI-DEVICE FLEET &amp; ZERO-SECRET PAIRING</div>
-          <p class="meta-timestamp" style="margin:6px 0">Zero secrets in git/bundle. Pair iOS Home Screen apps via 6-digit code, browsers via 1-tap hash link, or PCs via 1-line PowerShell.</p>
+          <p class="meta-timestamp" style="margin:6px 0">Zero secrets in git/bundle. Pair iOS Home Screen apps via 6-digit code, browsers via 1-tap hash link, or new PCs via the visual <strong>Set Up This PC</strong> app.</p>
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0">
             ${
               fleetDevices.length > 0
                 ? fleetDevices
                     .map(
                       (d) =>
-                        `<span class="sess-device-badge ${d.online ? 'is-online' : ''}">${d.online ? '●' : '◐'} ${esc(d.name || d.id)}${d.sessionCount ? ` (${d.sessionCount})` : ''}</span>`
+                        `<span class="sess-device-badge ${d.online ? 'is-online' : ''}">${d.online ? '●' : '◐'} ${esc(d.name || d.id)}${d.sessionCount ? ` (${d.sessionCount})` : ''}${renderFleetPcSetupPillHtml(d)}</span>`
                     )
                     .join('')
                 : `<span class="meta-timestamp">${isPaired ? 'Probing connected hosts…' : 'Not paired yet — enter 6-digit code or paste Pair Link below'}</span>`
@@ -11791,13 +11992,13 @@
           </div>
           ${
             liveCode
-              ? `<div class="pair-code-live-banner mono">🔢 iPhone 6-Digit Code: <strong>${esc(liveCode.formatted)}</strong> <span class="meta-timestamp">(10m single-use)</span></div>`
+              ? `<div class="pair-code-live-banner mono">🔢 6-Digit Fleet Code: <strong>${esc(liveCode.formatted)}</strong> <span class="meta-timestamp">(10m single-use)</span></div>`
               : ''
           }
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-            <button type="button" class="btn-brass-sm" id="btn-gen-pair-code" aria-label="Generate 6-digit pairing code for iPhone Home Screen app">🔢 6-Digit Phone Code</button>
+            <button type="button" class="btn-brass-sm" id="btn-gen-pair-code" aria-label="Generate 6-digit pairing code for iPhone or PC">🔢 6-Digit Pair Code</button>
+            <button type="button" class="btn-ghost-sm" id="btn-download-pc-setup" data-download-pc-setup="1" aria-label="Download double-clickable Windows PC Setup app with single-use 6-digit code">⬇ Download PC Setup</button>
             <button type="button" class="btn-ghost-sm" id="btn-copy-mobile-pair" aria-label="Copy 1-tap mobile pairing URL">📱 Copy Mobile Pair URL</button>
-            <button type="button" class="btn-ghost-sm" id="btn-copy-pc-install" aria-label="Copy 1-line PowerShell installer with pairing token">💻 Copy Workstation Pair PS1</button>
           </div>
           <label style="display:block;font-size:11.5px;margin-top:10px;color:var(--text-muted)">
             Pair via 6-Digit Code (from PC):
@@ -14452,6 +14653,11 @@
         return;
       }
 
+      if (e.target.closest('[data-download-pc-setup]')) {
+        await downloadPcSetupLauncher();
+        return;
+      }
+
       if (e.target.closest('#btn-gen-pair-code')) {
         await generateSixDigitPairCode();
         return;
@@ -16142,7 +16348,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=65', { updateViaCache: 'none' })
+        .register('sw.js?v=66', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

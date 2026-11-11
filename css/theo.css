@@ -10069,6 +10069,63 @@ html[data-theme="light"] .sb-q-btn.primary {
   color: var(--text-heading);
 }
 
-
-
-
+/* Zero-Terminal Fleet PC Setup Readiness Pills & Exception Notice */
+.fleet-setup-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  margin-left: 4px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+.fleet-setup-pill.is-ready {
+  background: rgba(62, 180, 137, 0.14);
+  color: var(--emerald);
+}
+.fleet-setup-pill.is-pending {
+  background: rgba(229, 169, 60, 0.18);
+  color: var(--amber);
+}
+.fleet-chip-setup {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(229, 169, 60, 0.2);
+  color: var(--amber);
+}
+.pc-setup-pulse-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(229, 169, 60, 0.11), rgba(204, 168, 114, 0.05)), var(--bg-card);
+  border: 1px solid var(--border-strong);
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.pc-setup-pulse-main {
+  flex: 1 1 210px;
+  min-width: 0;
+}
+.pc-setup-pulse-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 2px 0 3px;
+}
+.pc-setup-pulse-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}

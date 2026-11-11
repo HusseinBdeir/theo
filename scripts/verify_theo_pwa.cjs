@@ -488,7 +488,7 @@ async function main() {
   // published it (the `deviceId` stamped on the row), and every direct command carries its command id so that a
   // host can recognise the queued copy of a command it has already run.
   {
-    for (const banned of [/users[\\/]+husseinbdeir/i, /users[\\/]+hbdei\b/i, /main-workstation/i, /theo-laptop/i, /Main Workstation/]) {
+    for (const banned of [/users[\\/]+husseinbdeir/i, /users[\\/]+hbdei\b/i, /main-workstation/i, /theo-laptop/i, /Main Workstation/, /Hussein-Laptop/i]) {
       assert.strictEqual(banned.test(appJsSrc), false, `js/app.js must not contain ${banned} (no PC is special)`);
     }
     const directPayloads = appJsSrc.match(/\.\.\.cmd,\s*(?:attachments: \w+,\s*)?cmdId: cmd\.id,\s*id: cmd\.newSession \? '' : targetThreadId,/g) || [];
@@ -2871,6 +2871,144 @@ async function main() {
     assert.strictEqual(v63Verify.docOverflowX, 0, '0px horizontal overflow on v63 Chat view');
     assert.strictEqual(v63Verify.titleAttrsCount, 0, 'Zero [title] attributes allowed in v63 DOM');
     console.log('[PASS] Adversarial #14: v63 VS Code-Grade Interactive Thinking & Execution Mode, Live Activity Shimmer Bar, Rich Thought Markdown, Compact Checkpoint/Context Chips & 3 Negative Guards verified');
+
+    // Adversarial #16: Zero-Terminal PC Setup Launcher & Fleet Readiness Pills
+    await evalJs(`(() => {
+      const rawCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+      const snap = rawCache.snapshot || rawCache.state || {};
+      snap.devices = [
+        {
+          id: 'host-alpha',
+          name: 'Alpha',
+          online: true,
+          sessionCount: 2,
+          pcSetup: { ok: true, checkedAt: Date.now(), totalCount: 11, okCount: 11, pendingCount: 0, pendingIds: [], pendingTitles: [] }
+        }
+      ];
+      if (rawCache.snapshot) rawCache.snapshot = snap;
+      else rawCache.state = snap;
+      localStorage.setItem('theo_remote_cache_v3', JSON.stringify(rawCache));
+      const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+      prefs.activeTab = 'pulse';
+      prefs.edgeAccessKey = 'a'.repeat(64);
+      prefs.edgeRelayUrl = 'wss://theo-edge-relay.husseinbdeir.workers.dev/ws';
+      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+      location.reload();
+      return true;
+    })()`);
+    await new Promise((r) => setTimeout(r, 650));
+
+    const pcSetupReadyCheck = await evalJs(`(async () => {
+      const pulseCardWhenReady = Boolean(document.getElementById('pulse-pc-setup-card'));
+      document.querySelector('[data-tab="analytics"]')?.click();
+      await new Promise((r) => setTimeout(r, 35));
+      const readyPillText = document.querySelector('#pairing-grid .fleet-setup-pill.is-ready')?.textContent?.trim() || '';
+      return { pulseCardWhenReady, readyPillText };
+    })()`);
+    assert.strictEqual(pcSetupReadyCheck.pulseCardWhenReady, false, 'Pulse #pulse-pc-setup-card must stay hidden when all fleet PCs are 11/11 ready');
+    assert.strictEqual(pcSetupReadyCheck.readyPillText, '✓ 11/11', 'Settings #pairing-grid must show ✓ 11/11 pill for ready PC');
+
+    await evalJs(`(() => {
+      const rawCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+      const snap = rawCache.snapshot || rawCache.state || {};
+      snap.devices = [
+        {
+          id: 'host-beta',
+          name: 'Beta',
+          online: true,
+          sessionCount: 3,
+          pcSetup: {
+            ok: false,
+            checkedAt: Date.now(),
+            totalCount: 11,
+            okCount: 9,
+            pendingCount: 2,
+            pendingIds: ['claude-automode', 'pc-setup-shortcut'],
+            pendingTitles: ['Claude AutoMode Rules', 'PC Setup Shortcut']
+          }
+        }
+      ];
+      if (rawCache.snapshot) rawCache.snapshot = snap;
+      else rawCache.state = snap;
+      localStorage.setItem('theo_remote_cache_v3', JSON.stringify(rawCache));
+      const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+      prefs.activeTab = 'pulse';
+      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+      location.reload();
+      return true;
+    })()`);
+    await new Promise((r) => setTimeout(r, 650));
+
+    const pcSetupVerify = await evalJs(`(async () => {
+      const origFetch = window.fetch;
+      let pairCreateCalled = 0;
+      window.__THEO_ALLOW_PAIR_MOCK_FETCH = true;
+      window.__THEO_CAPTURE_PC_SETUP_CMD = true;
+      window.__THEO_CAPTURED_PC_SETUP = null;
+      window.fetch = async (url, opts) => {
+        const u = String(url || '');
+        if (u.endsWith('/pair/create')) {
+          pairCreateCalled += 1;
+          return new Response(JSON.stringify({ ok: true, code: '739184', formatted: '739-184', expiresAt: Date.now() + 600000 }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        return origFetch(url, opts);
+      };
+      try {
+        const pulseNoticeText = document.getElementById('pulse-pc-setup-card')?.textContent || '';
+        const fleetChipSetupText = document.querySelector('#pulse-fleet-strip .fleet-chip-setup')?.textContent?.trim() || '';
+        document.querySelector('[data-tab="analytics"]')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+        const pendingPillText = document.querySelector('#pairing-grid .fleet-setup-pill.is-pending')?.textContent?.trim() || '';
+        const dlBtn = document.getElementById('btn-download-pc-setup');
+        const hasDownloadBtn = Boolean(dlBtn);
+        dlBtn?.click();
+        dlBtn?.click(); // rapid second click while in-flight/fresh must NOT mint a second code
+        await new Promise((r) => setTimeout(r, 70));
+        dlBtn?.click(); // immediate repeat within 15s reuse window must also reuse minted code
+        await new Promise((r) => setTimeout(r, 40));
+        const captured = window.__THEO_CAPTURED_PC_SETUP;
+        const titleCount = document.querySelectorAll('[title]').length;
+        const overflowX = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+        return {
+          pulseNoticeText,
+          fleetChipSetupText,
+          pendingPillText,
+          hasDownloadBtn,
+          pairCreateCalled,
+          captured,
+          titleCount,
+          overflowX
+        };
+      } finally {
+        window.fetch = origFetch;
+        delete window.__THEO_ALLOW_PAIR_MOCK_FETCH;
+        delete window.__THEO_CAPTURE_PC_SETUP_CMD;
+      }
+    })()`);
+    assert.ok(pcSetupVerify.pulseNoticeText.includes('Beta (9/11'), 'Pulse #pulse-pc-setup-card must display host name and 9/11 readiness when pending');
+    assert.strictEqual(pcSetupVerify.fleetChipSetupText, '! 9/11', 'Pulse fleet chip must show ! 9/11 pill when pending');
+    assert.strictEqual(pcSetupVerify.pendingPillText, '! 9/11', 'Settings #pairing-grid must show ! 9/11 pill when pending');
+    assert.strictEqual(pcSetupVerify.hasDownloadBtn, true, '#pairing-grid must render #btn-download-pc-setup');
+    assert.strictEqual(pcSetupVerify.pairCreateCalled, 1, 'Clicking Download PC Setup on a paired device must mint a single-use 6-digit code via /pair/create');
+    assert.ok(pcSetupVerify.captured && pcSetupVerify.captured.fileName === 'Set-Up-THEO-PC.cmd', 'Download PC Setup must build Set-Up-THEO-PC.cmd');
+    assert.ok(
+      pcSetupVerify.captured.cmdText.includes('set "THEO_PAIR_CODE=739184"') &&
+        pcSetupVerify.captured.cmdText.includes('Setup-THEO-PC.ps1') &&
+        pcSetupVerify.captured.cmdText.includes('-Gui') &&
+        pcSetupVerify.captured.cmdText.includes('MessageBox'),
+      'Downloaded Set-Up-THEO-PC.cmd must carry THEO_PAIR_CODE=739184, launch Setup-THEO-PC.ps1 -Gui, and surface hidden-window bootstrap errors via MessageBox'
+    );
+    assert.strictEqual(
+      /THEO_PAIR_TOKEN|edgeAccessKey|aaaa/i.test(pcSetupVerify.captured.cmdText),
+      false,
+      'Set-Up-THEO-PC.cmd must NEVER embed permanent THEO_PAIR_TOKEN or raw edgeAccessKey'
+    );
+    assert.strictEqual(pcSetupVerify.titleCount, 0, 'Zero [title] attributes allowed after PC setup UI render');
+    assert.strictEqual(pcSetupVerify.overflowX, 0, '0px horizontal overflow after PC setup UI render');
+    console.log('[PASS] Adversarial #16: Zero-Terminal PC Setup Launcher (6-digit single-use code, zero permanent secret) & Fleet Readiness Pills verified');
 
     // Final error & network quarantine assertions (#18)
     assert.strictEqual(pageExceptions.length, 0, `Uncaught page exceptions: ${JSON.stringify(pageExceptions)}`);

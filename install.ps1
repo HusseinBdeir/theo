@@ -1,25 +1,386 @@
+﻿param(
+    [switch]$Gui,
+    [switch]$Check,
+    [switch]$Headless,
+    [string]$Only = "",
+    [string]$PairCode = "",
+    [string]$PairToken = "",
+    [switch]$SelftestGui
+)
 $ErrorActionPreference = 'Stop'
 
+if ($PairCode) { $env:THEO_PAIR_CODE = $PairCode }
+if ($PairToken) { $env:THEO_PAIR_TOKEN = $PairToken }
+$wantGui = ($Gui -or ($env:THEO_SETUP_GUI -eq '1') -or $SelftestGui) -and (-not $Headless) -and (-not $Check)
+
 # When OneDrive has already synced System\System\THEO on this PC, delegate directly to
-# the canonical dynamic per-PC setup (handles runtimes, THEO_PAIR_TOKEN, theo-hub, hooks,
-# autoMode, git identity, pre-commit secret scan, memory gitdir and any future steps).
+# the canonical dynamic per-PC setup (handles runtimes, THEO_PAIR_CODE / THEO_PAIR_TOKEN,
+# theo-hub, hooks, autoMode, git identity, pre-commit secret scan, memory gitdir, shortcut
+# and any future manifest steps).
 $theoRootCandidates = @()
 if ($env:THEO_MEMORY_ROOT) { $theoRootCandidates += $env:THEO_MEMORY_ROOT }
 if ($env:OneDriveCommercial) { $theoRootCandidates += (Join-Path $env:OneDriveCommercial "System\System\THEO") }
 $theoRootCandidates += (Join-Path $HOME "OneDrive - BHFIRMS\System\System\THEO")
-foreach ($candRoot in $theoRootCandidates) {
-    $odSetupPs1 = Join-Path $candRoot "Admin\Setup-THEO-PC.ps1"
-    $odSetupPy  = Join-Path $candRoot "Admin\theo-pc-setup.py"
-    if ((Test-Path -LiteralPath $odSetupPs1) -and (Test-Path -LiteralPath $odSetupPy)) {
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $odSetupPs1 @args
-        if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 2) {
-            throw "Setup-THEO-PC.ps1 failed with exit code $LASTEXITCODE."
+if ($env:THEO_FORCE_STANDALONE_BOOTSTRAP -ne '1') {
+    foreach ($candRoot in $theoRootCandidates) {
+        $odSetupPs1 = Join-Path $candRoot "Admin\Setup-THEO-PC.ps1"
+        $odSetupPy  = Join-Path $candRoot "Admin\theo-pc-setup.py"
+        if ((Test-Path -LiteralPath $odSetupPs1) -and (Test-Path -LiteralPath $odSetupPy)) {
+            $fwdArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass')
+            if ($wantGui) { $fwdArgs += '-STA' }
+            $fwdArgs += @('-File', $odSetupPs1)
+            if ($SelftestGui) { $fwdArgs += '-SelftestGui' }
+            elseif ($Check) {
+                $fwdArgs += '-Check'
+                if ($Only) { $fwdArgs += @('-Only', $Only) }
+            }
+            elseif ($wantGui) { $fwdArgs += '-Gui' }
+            else {
+                if ($Headless) { $fwdArgs += '-Headless' }
+                if ($Only) { $fwdArgs += @('-Only', $Only) }
+            }
+            & powershell.exe @fwdArgs
+            if ($Check) {
+                exit $LASTEXITCODE
+            }
+            if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 2) {
+                throw "Setup-THEO-PC.ps1 failed with exit code $LASTEXITCODE."
+            }
+            return
         }
-        return
     }
 }
 
-Write-Host "=== Installing THEO Extension & Multi-Device Fleet Agent ===" -ForegroundColor Cyan
+function Test-StandaloneHasLocalPairing {
+    $credPath = if ($env:THEO_CRED_PATH) { $env:THEO_CRED_PATH } else { Join-Path $HOME '.theo\credentials.json' }
+    if (-not (Test-Path -LiteralPath $credPath)) { return $false }
+    try {
+        $obj = Get-Content -LiteralPath $credPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $ek = [string]$obj.edgeAccessKey
+        $ck = [string]$obj.cloudKey
+        return (-not [string]::IsNullOrWhiteSpace($ek)) -or (-not [string]::IsNullOrWhiteSpace($ck))
+    } catch {
+        return $false
+    }
+}
+
+function Invoke-StandaloneTheoCheck {
+    $extEntry = Join-Path $HOME '.vscode\extensions\bhfirms.theo-hub-0.1.0\extension.js'
+    $claudePtr = Join-Path $HOME '.claude\CLAUDE.md'
+    $geminiPtr = Join-Path $HOME '.gemini\config\AGENTS.md'
+    $hasNode = (Test-Path -LiteralPath (Join-Path $HOME '.local\node\node.exe')) -or
+        [bool](Get-Command node -ErrorAction SilentlyContinue) -or
+        (Test-Path -LiteralPath 'C:\Program Files\nodejs\node.exe') -or
+        (Test-Path -LiteralPath "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe") -or
+        (Test-Path -LiteralPath "$env:ProgramFiles\Microsoft VS Code\Code.exe")
+    $checks = @(
+        @{ id = 'theo-hub'; ok = (Test-Path -LiteralPath $extEntry) },
+        @{ id = 'node-runtime'; ok = [bool]$hasNode },
+        @{ id = 'claude-pointer'; ok = (Test-Path -LiteralPath $claudePtr) },
+        @{ id = 'antigravity-pointer'; ok = (Test-Path -LiteralPath $geminiPtr) }
+    )
+    $allOk = $true
+    foreach ($c in $checks) {
+        $tag = if ($c.ok) { '[OK]' } else { $allOk = $false; '[PENDING]' }
+        Write-Host "  $tag $($c.id)"
+    }
+    if ($allOk) { exit 0 } else { exit 2 }
+}
+
+function Claim-StandaloneTheoPairCode {
+    param([string]$RawCode)
+    $digits = ($RawCode -replace '\D+', '')
+    if ($digits.Length -ne 6) {
+        throw "6-digit pairing code required (got '$RawCode')."
+    }
+    $edgeBase = if ($env:THEO_EDGE_HTTP_URL) { $env:THEO_EDGE_HTTP_URL.TrimEnd('/') } else { 'https://theo-edge-relay.husseinbdeir.workers.dev' }
+    if ($edgeBase -notmatch '^https://' -and $edgeBase -notmatch '^http://(127\.0\.0\.1|localhost)(:\d+)?$') {
+        throw "Refusing non-HTTPS Edge Relay URL for pair claim: $edgeBase"
+    }
+    try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
+    $claimBody = @{ code = $digits } | ConvertTo-Json -Compress
+    $resp = Invoke-RestMethod -Method Post -Uri "$edgeBase/pair/claim" -ContentType 'application/json' -Body $claimBody -TimeoutSec 15
+    if (-not $resp -or -not $resp.ok -or [string]::IsNullOrWhiteSpace([string]$resp.bundle)) {
+        $errMsg = if ($resp -and $resp.error) { [string]$resp.error } else { 'Invalid or expired 6-digit pairing code.' }
+        throw $errMsg
+    }
+    $env:THEO_PAIR_TOKEN = [string]$resp.bundle
+    Remove-Item Env:\THEO_PAIR_CODE -ErrorAction SilentlyContinue
+}
+
+function Show-StandaloneBootstrapGui {
+    param([switch]$SelftestOnly)
+
+    if (-not $SelftestOnly -and [System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
+        if ($PSCommandPath -and (Test-Path -LiteralPath $PSCommandPath)) {
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File $PSCommandPath -Gui
+            return
+        }
+    }
+
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    try {
+        Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();' -Name 'Win32Dpi' -Namespace 'TheoBootstrap' -ErrorAction SilentlyContinue | Out-Null
+        [TheoBootstrap.Win32Dpi]::SetProcessDPIAware() | Out-Null
+    } catch {}
+    [System.Windows.Forms.Application]::EnableVisualStyles()
+
+    $bgMain  = [System.Drawing.Color]::FromArgb(17, 17, 20)
+    $bgCard  = [System.Drawing.Color]::FromArgb(24, 24, 29)
+    $bgRow   = [System.Drawing.Color]::FromArgb(29, 29, 35)
+    $fgMain  = [System.Drawing.Color]::FromArgb(242, 241, 237)
+    $fgMuted = [System.Drawing.Color]::FromArgb(156, 156, 166)
+    $brass   = [System.Drawing.Color]::FromArgb(204, 168, 114)
+    $brassFg = [System.Drawing.Color]::FromArgb(18, 18, 20)
+    $okGreen = [System.Drawing.Color]::FromArgb(62, 180, 137)
+    $errRed  = [System.Drawing.Color]::FromArgb(224, 98, 98)
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "THEO PC Setup"
+    $form.ClientSize = New-Object System.Drawing.Size(540, 296)
+    $form.FormBorderStyle = 'FixedDialog'
+    $form.MaximizeBox = $false
+    $form.StartPosition = 'CenterScreen'
+    $form.BackColor = $bgMain
+    $form.ForeColor = $fgMain
+
+    $lblTitle = New-Object System.Windows.Forms.Label
+    $lblTitle.Text = "THEO  ·  First-Time PC Setup ($env:COMPUTERNAME)"
+    $lblTitle.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 13.0)
+    $lblTitle.ForeColor = $fgMain
+    $lblTitle.Location = New-Object System.Drawing.Point(20, 18)
+    $lblTitle.AutoSize = $true
+    $form.Controls.Add($lblTitle)
+
+    $lblSub = New-Object System.Windows.Forms.Label
+    $lblSub.Text = "Installs THEO Studio, pairs this PC to your fleet, and starts the background agent."
+    $lblSub.Font = New-Object System.Drawing.Font('Segoe UI', 9.0)
+    $lblSub.ForeColor = $fgMuted
+    $lblSub.Location = New-Object System.Drawing.Point(22, 46)
+    $lblSub.AutoSize = $true
+    $form.Controls.Add($lblSub)
+
+    $pairPanel = New-Object System.Windows.Forms.Panel
+    $pairPanel.Location = New-Object System.Drawing.Point(20, 82)
+    $pairPanel.Size = New-Object System.Drawing.Size(500, 48)
+    $pairPanel.BackColor = $bgCard
+    $form.Controls.Add($pairPanel)
+
+    $lblPair = New-Object System.Windows.Forms.Label
+    $lblPair.Text = "6-Digit Fleet Pair Code (optional, from phone / other PC):"
+    $lblPair.Font = New-Object System.Drawing.Font('Segoe UI', 8.8)
+    $lblPair.ForeColor = $fgMuted
+    $lblPair.Location = New-Object System.Drawing.Point(14, 15)
+    $lblPair.AutoSize = $true
+    $pairPanel.Controls.Add($lblPair)
+
+    $txtPair = New-Object System.Windows.Forms.TextBox
+    $txtPair.Font = New-Object System.Drawing.Font('Consolas', 10.0)
+    $txtPair.BackColor = $bgRow
+    $txtPair.ForeColor = $fgMain
+    $txtPair.BorderStyle = 'FixedSingle'
+    $txtPair.MaxLength = 12
+    $txtPair.Location = New-Object System.Drawing.Point(356, 12)
+    $txtPair.Size = New-Object System.Drawing.Size(128, 24)
+    $alreadyPaired = Test-StandaloneHasLocalPairing
+    if ((-not $alreadyPaired) -and $env:THEO_PAIR_CODE) { $txtPair.Text = $env:THEO_PAIR_CODE }
+    $pairPanel.Visible = (-not $alreadyPaired)
+    $pairPanel.Controls.Add($txtPair)
+
+    $statusPanel = New-Object System.Windows.Forms.Panel
+    $statusPanel.Location = New-Object System.Drawing.Point(20, 142)
+    $statusPanel.Size = New-Object System.Drawing.Size(500, 78)
+    $statusPanel.BackColor = $bgCard
+    $form.Controls.Add($statusPanel)
+
+    $lblStatus = New-Object System.Windows.Forms.Label
+    $lblStatus.Text = "Ready to install. Once OneDrive syncs System\System\THEO, full checklist steps apply automatically."
+    $lblStatus.Font = New-Object System.Drawing.Font('Segoe UI', 9.0)
+    $lblStatus.ForeColor = $fgMuted
+    $lblStatus.Location = New-Object System.Drawing.Point(14, 14)
+    $lblStatus.MaximumSize = New-Object System.Drawing.Size(472, 54)
+    $lblStatus.AutoSize = $true
+    $statusPanel.Controls.Add($lblStatus)
+
+    $btnClose = New-Object System.Windows.Forms.Button
+    $btnClose.Text = "Close"
+    $btnClose.Font = New-Object System.Drawing.Font('Segoe UI', 9.0)
+    $btnClose.FlatStyle = 'Flat'
+    $btnClose.BackColor = $bgCard
+    $btnClose.ForeColor = $fgMain
+    $btnClose.Location = New-Object System.Drawing.Point(312, 238)
+    $btnClose.Size = New-Object System.Drawing.Size(96, 36)
+    $btnClose.Add_Click({ $form.Close() })
+    $form.Controls.Add($btnClose)
+
+    $btnInstall = New-Object System.Windows.Forms.Button
+    $btnInstall.Text = "Install THEO"
+    $btnInstall.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 9.5)
+    $btnInstall.FlatStyle = 'Flat'
+    $btnInstall.BackColor = $brass
+    $btnInstall.ForeColor = $brassFg
+    $btnInstall.Location = New-Object System.Drawing.Point(416, 238)
+    $btnInstall.Size = New-Object System.Drawing.Size(104, 36)
+    $form.Controls.Add($btnInstall)
+
+    if ($SelftestOnly) {
+        $out = @{
+            guiReady   = $true
+            standalone = $true
+            pc         = [string]$env:COMPUTERNAME
+            pairPrefill = [string]$txtPair.Text
+        } | ConvertTo-Json -Compress
+        Write-Output $out
+        $form.Dispose()
+        return
+    }
+
+    $script:runProc = $null
+    $script:outQueue = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
+    $script:lastOutLine = ""
+    $pollTimer = New-Object System.Windows.Forms.Timer
+    $pollTimer.Interval = 220
+    $pollTimer.Add_Tick({
+        $line = $null
+        while ($script:outQueue.TryDequeue([ref]$line)) {
+            if (-not [string]::IsNullOrWhiteSpace($line)) {
+                $script:lastOutLine = $line.Trim()
+                $lblStatus.Text = $script:lastOutLine
+            }
+        }
+        if ($script:runProc -and $script:runProc.HasExited) {
+            $pollTimer.Stop()
+            $exitCode = $script:runProc.ExitCode
+            $script:runProc.Dispose()
+            $script:runProc = $null
+            if (Test-StandaloneHasLocalPairing) {
+                $txtPair.Text = ''
+                $pairPanel.Visible = $false
+            } else {
+                $txtPair.Enabled = $true
+            }
+            if ($exitCode -eq 0) {
+                $txtPair.Text = ''
+                $lblStatus.ForeColor = $okGreen
+                $lblStatus.Text = "Installed & live! After OneDrive syncs System\System\THEO, click 'Apply Setup' in the THEO sidebar."
+                $btnInstall.Text = "Re-Verify"
+                $btnInstall.Enabled = $true
+                $btnClose.Text = "Done"
+            } else {
+                $lblStatus.ForeColor = $errRed
+                $errTail = if ($script:lastOutLine) { $script:lastOutLine } else { "Install exited with code $exitCode." }
+                $lblStatus.Text = $errTail
+                $btnInstall.Text = "Retry"
+                $btnInstall.Enabled = $true
+            }
+        }
+    })
+
+    $btnInstall.Add_Click({
+        if ($script:runProc -and (-not $script:runProc.HasExited)) { return }
+        $isPairedNow = Test-StandaloneHasLocalPairing
+        $enteredCode = ($txtPair.Text -replace '\s+', '').Trim()
+        $cleanDigits = ""
+        if ((-not $isPairedNow) -and $enteredCode) {
+            $cleanDigits = ($enteredCode -replace '\D+', '')
+            if ($cleanDigits.Length -ne 6) {
+                $lblStatus.ForeColor = $errRed
+                $lblStatus.Text = "Pairing code must be 6 digits (for example 482-917)."
+                return
+            }
+        }
+        $btnInstall.Enabled = $false
+        $txtPair.Enabled = $false
+        $lblStatus.ForeColor = $fgMain
+        $lblStatus.Text = "Installing THEO Studio & multi-device agent..."
+        $script:lastOutLine = ""
+        $drain = $null
+        while ($script:outQueue.TryDequeue([ref]$drain)) {}
+
+        if ($PSCommandPath -and (Test-Path -LiteralPath $PSCommandPath)) {
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'powershell.exe'
+            $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Headless"
+            $psi.UseShellExecute = $false
+            $psi.CreateNoWindow = $true
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+            $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+            $psi.EnvironmentVariables['THEO_SETUP_GUI'] = '0'
+            if ($cleanDigits) {
+                $psi.EnvironmentVariables['THEO_PAIR_CODE'] = $cleanDigits
+            } else {
+                $null = $psi.EnvironmentVariables.Remove('THEO_PAIR_CODE')
+            }
+            $p = New-Object System.Diagnostics.Process
+            $p.StartInfo = $psi
+            $q = $script:outQueue
+            $handler = [System.Diagnostics.DataReceivedEventHandler]{
+                param($sender, $e)
+                if ($e.Data) { $q.Enqueue($e.Data) }
+            }
+            $p.add_OutputDataReceived($handler)
+            $p.add_ErrorDataReceived($handler)
+            [void]$p.Start()
+            $p.BeginOutputReadLine()
+            $p.BeginErrorReadLine()
+            $script:runProc = $p
+            $pollTimer.Start()
+        } else {
+            $form.Update()
+            try {
+                if ($cleanDigits) { $env:THEO_PAIR_CODE = $cleanDigits } else { Remove-Item Env:\THEO_PAIR_CODE -ErrorAction SilentlyContinue }
+                Invoke-StandaloneTheoBootstrap
+                $txtPair.Text = ''
+                $pairPanel.Visible = $false
+                $lblStatus.ForeColor = $okGreen
+                $lblStatus.Text = "Installed & live! After OneDrive syncs System\System\THEO, click 'Apply Setup' in the THEO sidebar."
+                $btnInstall.Text = "Done"
+                $btnClose.Text = "Done"
+            } catch {
+                if (Test-StandaloneHasLocalPairing) {
+                    $txtPair.Text = ''
+                    $pairPanel.Visible = $false
+                } else {
+                    $txtPair.Enabled = $true
+                }
+                $lblStatus.ForeColor = $errRed
+                $lblStatus.Text = $_.Exception.Message
+                $btnInstall.Text = "Retry"
+                $btnInstall.Enabled = $true
+            }
+        }
+    })
+
+    $form.Add_FormClosing({
+        param($sender, $e)
+        if ($script:runProc -and (-not $script:runProc.HasExited)) {
+            $ans = [System.Windows.Forms.MessageBox]::Show(
+                "THEO PC Setup is currently installing. Cancel the running install and close?",
+                "THEO PC Setup",
+                [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                [System.Windows.Forms.MessageBoxIcon]::Warning
+            )
+            if ($ans -ne [System.Windows.Forms.DialogResult]::Yes) {
+                $e.Cancel = $true
+                return
+            }
+            try { $script:runProc.Kill() } catch {}
+            try { $script:runProc.Dispose() } catch {}
+            $script:runProc = $null
+        }
+        $pollTimer.Stop()
+        $pollTimer.Dispose()
+    })
+
+    [void]$form.ShowDialog()
+    $form.Dispose()
+}
+
+function Invoke-StandaloneTheoBootstrap {
+    Write-Host "=== Installing THEO Extension & Multi-Device Fleet Agent ===" -ForegroundColor Cyan
 
 $extId = "bhfirms.theo-hub"
 $version = "0.1.0"
@@ -140,8 +501,19 @@ if (-not $nodeExe) {
     throw "Could not find Node.js or VS Code executable to register THEO bridge."
 }
 
-# Optional 1-line pairing token provisioning -> ~/.theo/credentials.json (mode 0600 / user ACL, #16)
+# Optional 1-line pairing token / 6-digit code provisioning -> ~/.theo/credentials.json (mode 0600 / user ACL, #16).
+# Claimed ONLY after bundle + Node are ready, and skipped when local pairing credentials already exist.
+$onlyAllowsHub = [string]::IsNullOrWhiteSpace($Only) -or ((($Only -split ',') | ForEach-Object { $_.Trim().ToLowerInvariant() }) -contains 'theo-hub')
+if ((Test-StandaloneHasLocalPairing) -or (-not $onlyAllowsHub)) {
+    Remove-Item Env:\THEO_PAIR_CODE -ErrorAction SilentlyContinue
+} elseif ((-not $env:THEO_PAIR_TOKEN) -and $env:THEO_PAIR_CODE) {
+    Write-Host "Claiming 6-digit THEO fleet pairing code ..." -ForegroundColor Yellow
+    Claim-StandaloneTheoPairCode -RawCode $env:THEO_PAIR_CODE
+    Write-Host "[OK] Claimed single-use pairing code" -ForegroundColor Green
+}
+
 if ($env:THEO_PAIR_TOKEN) {
+    $pairModDir = if (Test-Path (Join-Path $repoDir "device-identity.js")) { $repoDir } else { $targetDir }
     $pairScript = @'
 const path = require('path');
 const { parsePairTokenBase64Url, saveTheoCredentials, loadTheoCredentials } = require(path.join(process.argv[2], 'device-identity.js'));
@@ -165,7 +537,7 @@ process.exit(0);
     $tmpPairJs = Join-Path $env:TEMP "theo_apply_pair.cjs"
     Set-Content -Path $tmpPairJs -Value $pairScript -Encoding UTF8
     if ($useElectronNode) { $env:ELECTRON_RUN_AS_NODE = "1" }
-    & $nodeExe $tmpPairJs $repoDir
+    & $nodeExe $tmpPairJs $pairModDir
     $pairExit = $LASTEXITCODE
     if ($useElectronNode) { Remove-Item Env:\ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue }
     Remove-Item $tmpPairJs -Force -ErrorAction SilentlyContinue
@@ -303,41 +675,41 @@ if (Test-Path $desktopShortcutInstaller) {
     }
 }
 
-# Pre-seed ~/.claude/CLAUDE.md pointer and ~/.gemini/config (AGENTS.md + THEO project) so that
-# as soon as OneDrive finishes syncing System\System\THEO on a brand-new PC, the first Claude Code
-# or Antigravity session opened anywhere on this PC knows THEO.md and Setup-THEO-PC.ps1.
-try {
-    $odBase = if ($env:OneDriveCommercial) { $env:OneDriveCommercial } else { Join-Path $HOME "OneDrive - BHFIRMS" }
-    $theoRootGuess = if ($env:THEO_MEMORY_ROOT) { $env:THEO_MEMORY_ROOT } else { Join-Path $odBase "System\System\THEO" }
-    $theoIndexPath = Join-Path $theoRootGuess "THEO.md"
-    $setupPs1Guess = Join-Path $theoRootGuess "Admin\Setup-THEO-PC.ps1"
-    $ptrText = @"
+    # Pre-seed ~/.claude/CLAUDE.md pointer and ~/.gemini/config (AGENTS.md + THEO project) so that
+    # as soon as OneDrive finishes syncing System\System\THEO on a brand-new PC, the first Claude Code
+    # or Antigravity session opened anywhere on this PC knows THEO.md and the visual PC setup app.
+    try {
+        $odBase = if ($env:OneDriveCommercial) { $env:OneDriveCommercial } else { Join-Path $HOME "OneDrive - BHFIRMS" }
+        $theoRootGuess = if ($env:THEO_MEMORY_ROOT) { $env:THEO_MEMORY_ROOT } else { Join-Path $odBase "System\System\THEO" }
+        $theoIndexPath = Join-Path $theoRootGuess "THEO.md"
+        $setupAppGuess = Join-Path $theoRootGuess "Set Up This PC.cmd"
+        $ptrText = @"
 # THEO
 
 You are THEO, Hussein Bdeir's assistant. The project memory index lives outside this folder. Unless its text (the title ends "BHFIRMS & ISABI Systems Project Memory (Index)") is already in this conversation, read it before any BHFIRMS, ISABI or THEO work:
 
 ``$theoIndexPath``
 
-It routes to the topic files and holds the hard rules (per-PC bootstrap if unconfigured: ``powershell -NoProfile -ExecutionPolicy Bypass -File "$setupPs1Guess"``). Skip it only for questions unrelated to those projects.
+It routes to the topic files and holds the hard rules (if PC setup updates are pending, tell the user to click 'Apply Setup' in the THEO sidebar or open ``$setupAppGuess`` — never ask them to run a terminal command). Skip it only for questions unrelated to those projects.
 "@
-    $claudePointer = Join-Path $HOME ".claude\CLAUDE.md"
-    if (-not (Test-Path -LiteralPath $claudePointer)) {
-        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $claudePointer) | Out-Null
-        [System.IO.File]::WriteAllText($claudePointer, ($ptrText -replace "`r`n", "`n"))
-    }
-    $gemConfigDir = Join-Path $HOME ".gemini\config"
-    $gemAgentsPath = Join-Path $gemConfigDir "AGENTS.md"
-    if (-not (Test-Path -LiteralPath $gemAgentsPath)) {
-        New-Item -ItemType Directory -Force -Path $gemConfigDir | Out-Null
-        [System.IO.File]::WriteAllText($gemAgentsPath, ($ptrText -replace "`r`n", "`n"))
-        [System.IO.File]::SetLastWriteTimeUtc($gemAgentsPath, [datetime]::new(2000, 1, 1, 0, 0, 0, [System.DateTimeKind]::Utc))
-    }
-    $gemProjDir = Join-Path $gemConfigDir "projects"
-    New-Item -ItemType Directory -Force -Path $gemProjDir | Out-Null
-    $theoFolderPosix = $theoRootGuess.Replace('\', '/')
-    $driveLower = $theoFolderPosix.Substring(0, 1).ToLowerInvariant()
-    $escapedRest = [System.Uri]::EscapeDataString($theoFolderPosix.Substring(2)).Replace('%2F', '/')
-    $projPayload = @"
+        $claudePointer = Join-Path $HOME ".claude\CLAUDE.md"
+        if (-not (Test-Path -LiteralPath $claudePointer)) {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $claudePointer) | Out-Null
+            [System.IO.File]::WriteAllText($claudePointer, ($ptrText -replace "`r`n", "`n"))
+        }
+        $gemConfigDir = Join-Path $HOME ".gemini\config"
+        $gemAgentsPath = Join-Path $gemConfigDir "AGENTS.md"
+        if (-not (Test-Path -LiteralPath $gemAgentsPath)) {
+            New-Item -ItemType Directory -Force -Path $gemConfigDir | Out-Null
+            [System.IO.File]::WriteAllText($gemAgentsPath, ($ptrText -replace "`r`n", "`n"))
+            [System.IO.File]::SetLastWriteTimeUtc($gemAgentsPath, [datetime]::new(2000, 1, 1, 0, 0, 0, [System.DateTimeKind]::Utc))
+        }
+        $gemProjDir = Join-Path $gemConfigDir "projects"
+        New-Item -ItemType Directory -Force -Path $gemProjDir | Out-Null
+        $theoFolderPosix = $theoRootGuess.Replace('\', '/')
+        $driveLower = $theoFolderPosix.Substring(0, 1).ToLowerInvariant()
+        $escapedRest = [System.Uri]::EscapeDataString($theoFolderPosix.Substring(2)).Replace('%2F', '/')
+        $projPayload = @"
 {
   "id": "c509f84b-f012-4596-9da5-8fec208449e8",
   "name": "THEO",
@@ -350,11 +722,22 @@ It routes to the topic files and holds the hard rules (per-PC bootstrap if uncon
   }
 }
 "@
-    [System.IO.File]::WriteAllText((Join-Path $gemProjDir "c509f84b-f012-4596-9da5-8fec208449e8.json"), $projPayload)
-} catch {}
+        [System.IO.File]::WriteAllText((Join-Path $gemProjDir "c509f84b-f012-4596-9da5-8fec208449e8.json"), $projPayload)
+    } catch {}
 
-Write-Host ""
-Write-Host "=== SUCCESS! THEO Studio Host & Multi-Device Agent are installed! ===" -ForegroundColor Green
-Write-Host "This PC is now live in your THEO Fleet (even when VS Code is closed)." -ForegroundColor Cyan
-Write-Host "Once OneDrive syncs System\System\THEO on this PC, run full dynamic PC setup:" -ForegroundColor Yellow
-Write-Host '  powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME\OneDrive - BHFIRMS\System\System\THEO\Admin\Setup-THEO-PC.ps1"' -ForegroundColor White
+    Write-Host ""
+    Write-Host "=== SUCCESS! THEO Studio Host & Multi-Device Agent are installed! ===" -ForegroundColor Green
+    Write-Host "This PC is now live in your THEO Fleet (even when VS Code is closed)." -ForegroundColor Cyan
+    Write-Host "Once OneDrive syncs System\System\THEO on this PC, click 'Apply Setup' in the THEO sidebar or double-click 'Set Up This PC.cmd' in your THEO folder." -ForegroundColor Yellow
+}
+
+if ($Check) {
+    Invoke-StandaloneTheoCheck
+    return
+}
+
+if ($wantGui) {
+    Show-StandaloneBootstrapGui -SelftestOnly:$SelftestGui
+} else {
+    Invoke-StandaloneTheoBootstrap
+}
