@@ -13,12 +13,13 @@ if ($PairCode) { $env:THEO_PAIR_CODE = $PairCode }
 if ($PairToken) { $env:THEO_PAIR_TOKEN = $PairToken }
 $wantGui = ($Gui -or ($env:THEO_SETUP_GUI -eq '1') -or $SelftestGui) -and (-not $Headless) -and (-not $Check)
 
-# When OneDrive has already synced System\System\THEO on this PC, delegate directly to
+# When ~/bhfirms/memory (or legacy OneDrive) already exists on this PC, delegate directly to
 # the canonical dynamic per-PC setup (handles runtimes, THEO_PAIR_CODE / THEO_PAIR_TOKEN,
 # theo-hub, hooks, autoMode, git identity, pre-commit secret scan, memory gitdir, shortcut
 # and any future manifest steps).
 $theoRootCandidates = @()
 if ($env:THEO_MEMORY_ROOT) { $theoRootCandidates += $env:THEO_MEMORY_ROOT }
+$theoRootCandidates += (Join-Path $HOME "bhfirms\memory")
 if ($env:OneDriveCommercial) { $theoRootCandidates += (Join-Path $env:OneDriveCommercial "System\System\THEO") }
 $theoRootCandidates += (Join-Path $HOME "OneDrive - BHFIRMS\System\System\THEO")
 if ($env:THEO_FORCE_STANDALONE_BOOTSTRAP -ne '1') {
@@ -195,7 +196,7 @@ function Show-StandaloneBootstrapGui {
     $form.Controls.Add($statusPanel)
 
     $lblStatus = New-Object System.Windows.Forms.Label
-    $lblStatus.Text = "Ready to install. Once OneDrive syncs System\System\THEO, full checklist steps apply automatically."
+    $lblStatus.Text = "Ready to install. THEO memory syncs directly from Cloudflare into ~/bhfirms/memory."
     $lblStatus.Font = New-Object System.Drawing.Font('Segoe UI', 9.0)
     $lblStatus.ForeColor = $fgMuted
     $lblStatus.Location = New-Object System.Drawing.Point(14, 14)
@@ -263,7 +264,7 @@ function Show-StandaloneBootstrapGui {
             if ($exitCode -eq 0) {
                 $txtPair.Text = ''
                 $lblStatus.ForeColor = $okGreen
-                $lblStatus.Text = "Installed & live! After OneDrive syncs System\System\THEO, click 'Apply Setup' in the THEO sidebar."
+                $lblStatus.Text = "Installed & live! Click 'Apply Setup' in the THEO sidebar or open 'Set Up This PC.cmd' in ~/bhfirms/memory."
                 $btnInstall.Text = "Re-Verify"
                 $btnInstall.Enabled = $true
                 $btnClose.Text = "Done"
@@ -336,7 +337,7 @@ function Show-StandaloneBootstrapGui {
                 $txtPair.Text = ''
                 $pairPanel.Visible = $false
                 $lblStatus.ForeColor = $okGreen
-                $lblStatus.Text = "Installed & live! After OneDrive syncs System\System\THEO, click 'Apply Setup' in the THEO sidebar."
+                $lblStatus.Text = "Installed & live! Click 'Apply Setup' in the THEO sidebar or open 'Set Up This PC.cmd' in ~/bhfirms/memory."
                 $btnInstall.Text = "Done"
                 $btnClose.Text = "Done"
             } catch {
@@ -631,6 +632,18 @@ if (process.argv[4] && process.argv[5]) {
       console.log('[OK] Synced ' + fresh.snapshot.rows.length + ' sessions & groups from THEO Cloud Relay');
     }
   } catch (e) {}
+  try {
+    const os = require('os');
+    const memRoot = path.join(os.homedir(), 'bhfirms', 'memory');
+    const syncScript = path.join(process.argv[3], 'scripts', 'memory_cloud_sync.cjs');
+    if (!fs.existsSync(path.join(memRoot, 'THEO.md')) && fs.existsSync(syncScript)) {
+      const { runCloudSync } = require(syncScript);
+      const mRes = await runCloudSync({ mode: 'bootstrap', memoryRoot: memRoot });
+      if (mRes && mRes.ok) {
+        console.log('[OK] Bootstrapped ' + mRes.pulledCount + ' files into ' + memRoot + ' from Cloudflare memory vault');
+      }
+    }
+  } catch (e) {}
 })().finally(() => {
   process.exit(0);
 });
@@ -676,11 +689,10 @@ if (Test-Path $desktopShortcutInstaller) {
 }
 
     # Pre-seed ~/.claude/CLAUDE.md pointer and ~/.gemini/config (AGENTS.md + THEO project) so that
-    # as soon as OneDrive finishes syncing System\System\THEO on a brand-new PC, the first Claude Code
-    # or Antigravity session opened anywhere on this PC knows THEO.md and the visual PC setup app.
+    # the first Claude Code or Antigravity session opened anywhere on this PC knows ~/bhfirms/memory/THEO.md
+    # and the visual PC setup app without any OneDrive dependency.
     try {
-        $odBase = if ($env:OneDriveCommercial) { $env:OneDriveCommercial } else { Join-Path $HOME "OneDrive - BHFIRMS" }
-        $theoRootGuess = if ($env:THEO_MEMORY_ROOT) { $env:THEO_MEMORY_ROOT } else { Join-Path $odBase "System\System\THEO" }
+        $theoRootGuess = if ($env:THEO_MEMORY_ROOT) { $env:THEO_MEMORY_ROOT } else { Join-Path $HOME "bhfirms\memory" }
         $theoIndexPath = Join-Path $theoRootGuess "THEO.md"
         $setupAppGuess = Join-Path $theoRootGuess "Set Up This PC.cmd"
         $ptrText = @"
@@ -728,7 +740,7 @@ It routes to the topic files and holds the hard rules (if PC setup updates are p
     Write-Host ""
     Write-Host "=== SUCCESS! THEO Studio Host & Multi-Device Agent are installed! ===" -ForegroundColor Green
     Write-Host "This PC is now live in your THEO Fleet (even when VS Code is closed)." -ForegroundColor Cyan
-    Write-Host "Once OneDrive syncs System\System\THEO on this PC, click 'Apply Setup' in the THEO sidebar or double-click 'Set Up This PC.cmd' in your THEO folder." -ForegroundColor Yellow
+    Write-Host "Click 'Apply Setup' in the THEO sidebar or double-click 'Set Up This PC.cmd' in ~/bhfirms/memory." -ForegroundColor Yellow
 }
 
 if ($Check) {
