@@ -352,6 +352,7 @@
     selectedModelByProvider: { antigravity: 'gemini-4-argon', claude: 'claude-opus-4-7' },
     selectedThinkingEffort: { antigravity: 'high', claude: 'high' },
     threadModelConfig: {},
+    claudePermissionMode: null,
     notif: { ...DEFAULT_NOTIF }
   };
   const rawStoredPrefs = loadJson(STORAGE_KEYS.PREFS, null);
@@ -910,6 +911,477 @@
       const fk = map.keys().next().value;
       if (fk !== undefined) map.delete(fk);
     }
+  }
+
+  const CLAUDE_PERM_MODES = [
+    {
+      id: 'bypassPermissions',
+      label: 'Bypass',
+      desc: 'Full autonomous control across every PC (zero safety prompts)'
+    },
+    {
+      id: 'auto',
+      label: 'Auto',
+      desc: 'Classifier safety check on sensitive actions across every PC'
+    },
+    {
+      id: 'plan',
+      label: 'Plan',
+      desc: 'Read-only planning mode across every PC (no edits or shell writes)'
+    }
+  ];
+  const CLAUDE_PERM_EXTRA_LABELS = {
+    acceptEdits: 'Accept Edits',
+    default: 'Ask Every Tool'
+  };
+
+  function normalizeClaudePermModeClient(raw) {
+    const v = String(raw || '').trim();
+    if (!v) return '';
+    const low = v.toLowerCase();
+    if (low === 'bypasspermissions' || low === 'bypass') return 'bypassPermissions';
+    if (low === 'auto') return 'auto';
+    if (low === 'plan') return 'plan';
+    if (low === 'acceptedits') return 'acceptEdits';
+    if (low === 'default') return 'default';
+    return '';
+  }
+
+  function extractClaudeModeFields(rawDoc) {
+    if (!rawDoc) return null;
+    if (typeof rawDoc === 'string') {
+      const mode = normalizeClaudePermModeClient(rawDoc);
+      return mode
+        ? { defaultMode: mode, rev: 0, updatedAt: 0, updatedBy: '', source: '' }
+        : null;
+    }
+    if (typeof rawDoc !== 'object' || Array.isArray(rawDoc)) return null;
+    const mode = normalizeClaudePermModeClient(rawDoc.defaultMode || rawDoc.mode);
+    if (!mode) return null;
+    const revNum = Number(rawDoc.rev);
+    const tsNum = Number(rawDoc.updatedAt);
+    return {
+      defaultMode: mode,
+      rev: Number.isFinite(revNum) && revNum >= 0 ? Math.floor(revNum) : 0,
+      updatedAt: Number.isFinite(tsNum) && tsNum >= 0 ? Math.round(tsNum) : 0,
+      updatedBy: String(rawDoc.updatedBy || '').trim().slice(0, 80),
+      source: String(rawDoc.source || '').trim().slice(0, 60)
+    };
+  }
+
+  const bootClaudeModeFields =
+    extractClaudeModeFields(appState?.claudePermissionMode) ||
+    extractClaudeModeFields(prefs.claudePermissionMode) || {
+      defaultMode: 'bypassPermissions',
+      rev: 0,
+      updatedAt: 0,
+      updatedBy: '',
+      source: ''
+    };
+  if (
+    prefs.claudePermissionMode &&
+    !extractClaudeModeFields(prefs.claudePermissionMode)
+  ) {
+    prefs.claudePermissionMode = null;
+  }
+
+  let claudeModeState = { ...bootClaudeModeFields };
+  let pendingClaudeModeOverride = null;
+  let claudeModeMutationSeq = 0;
+  let claudeModeWriteChain = Promise.resolve();
+
+  function getEffectiveClaudePermissionMode() {
+    if (
+      pendingClaudeModeOverride &&
+      Date.now() - Number(pendingClaudeModeOverride.setAt || 0) < 15000
+    ) {
+      return pendingClaudeModeOverride.defaultMode;
+    }
+    return claudeModeState.defaultMode || 'bypassPermissions';
+  }
+
+  function getClaudeModeDisplayLabel(modeId) {
+    const clean = normalizeClaudePermModeClient(modeId) || 'bypassPermissions';
+    const found = CLAUDE_PERM_MODES.find((m) => m.id === clean);
+    if (found) return found.label;
+    return CLAUDE_PERM_EXTRA_LABELS[clean] || clean;
+  }
+
+  function ingestClaudePermissionModeDoc(rawDoc, opts = {}) {
+    const parsed = extractClaudeModeFields(rawDoc);
+    if (!parsed) return false;
+    const now = Date.now();
+
+    if (
+      pendingClaudeModeOverride &&
+      now - Number(pendingClaudeModeOverride.setAt || 0) >= 15000
+    ) {
+      pendingClaudeModeOverride = null;
+    }
+
+    if (!opts.forceLocal) {
+      if (pendingClaudeModeOverride) {
+        if (parsed.defaultMode === pendingClaudeModeOverride.defaultMode) {
+          if (parsed.rev >= pendingClaudeModeOverride.minRev && parsed.rev > 0) {
+            pendingClaudeModeOverride = null;
+          }
+        } else {
+          const authoritativeExternal =
+            (opts.fromWsFrame || opts.fromStore || opts.fromStoreAck) &&
+            parsed.rev >= Math.max(claudeModeState.rev, pendingClaudeModeOverride.minRev);
+          if (!authoritativeExternal) {
+            return false;
+          }
+          pendingClaudeModeOverride = null;
+        }
+      }
+
+      if (claudeModeState.rev > 0) {
+        if (parsed.rev <= 0 || parsed.rev < claudeModeState.rev) {
+          return false;
+        }
+        if (parsed.rev === claudeModeState.rev) {
+          if (parsed.defaultMode === claudeModeState.defaultMode) {
+            return false;
+          }
+          if (
+            !opts.fromStore &&
+            parsed.updatedAt > 0 &&
+            claudeModeState.updatedAt > 0 &&
+            parsed.updatedAt < claudeModeState.updatedAt
+          ) {
+            return false;
+          }
+        }
+      } else if (
+        parsed.rev === 0 &&
+        claudeModeState.updatedAt > 0 &&
+        parsed.updatedAt > 0 &&
+        parsed.updatedAt < claudeModeState.updatedAt
+      ) {
+        return false;
+      }
+    }
+
+    const changed =
+      claudeModeState.defaultMode !== parsed.defaultMode ||
+      claudeModeState.rev !== parsed.rev ||
+      claudeModeState.updatedAt !== parsed.updatedAt;
+    claudeModeState = {
+      defaultMode: parsed.defaultMode,
+      rev: parsed.rev > 0 ? parsed.rev : 0,
+      updatedAt: parsed.updatedAt || now,
+      updatedBy: parsed.updatedBy || '',
+      source: parsed.source || ''
+    };
+    prefs.claudePermissionMode = { ...claudeModeState };
+    saveJson(STORAGE_KEYS.PREFS, prefs);
+    if (appState && typeof appState === 'object') {
+      appState.claudePermissionMode = { ...claudeModeState };
+    }
+    return changed;
+  }
+
+  function renderClaudeModeSelectorHtml(variant = 'settings') {
+    const activeMode = getEffectiveClaudePermissionMode();
+    const activeEntry = CLAUDE_PERM_MODES.find((m) => m.id === activeMode);
+    const extraLabel = !activeEntry ? CLAUDE_PERM_EXTRA_LABELS[activeMode] || '' : '';
+    const buttonsHtml = CLAUDE_PERM_MODES.map((m) => {
+      const isSelected = activeMode === m.id;
+      return `<button type="button" class="claude-mode-seg-btn${isSelected ? ' is-active' : ''}" data-set-claude-mode="${esc(m.id)}" aria-pressed="${isSelected ? 'true' : 'false'}" aria-label="Switch fleet Claude Code mode to ${esc(m.label)}: ${esc(m.desc)}">${esc(m.label)}</button>`;
+    }).join('');
+    const extraPillHtml = extraLabel
+      ? `<span class="claude-mode-extra-pill" aria-label="Externally configured Claude permission mode">${esc(extraLabel)}</span>`
+      : '';
+
+    if (variant === 'sidebar') {
+      return `
+        <div class="claude-mode-bar is-sidebar" role="group" aria-label="Fleet Claude permission mode">
+          <span class="claude-mode-kicker">Mode</span>
+          <div class="claude-mode-seg">${buttonsHtml}</div>
+          ${extraPillHtml}
+        </div>
+      `;
+    }
+    if (variant === 'quota') {
+      return `
+        <div class="claude-mode-bar is-quota" role="group" aria-label="Fleet Claude permission mode">
+          <span class="claude-mode-kicker">Fleet Mode</span>
+          <div class="claude-mode-seg">${buttonsHtml}</div>
+          ${extraPillHtml}
+        </div>
+      `;
+    }
+    if (variant === 'modal') {
+      return `
+        <div class="claude-mode-bar is-modal" role="group" aria-label="Fleet Claude permission mode">
+          <div class="claude-mode-head">
+            <span class="claude-mode-kicker">Fleet Claude Mode</span>
+            ${extraPillHtml}
+          </div>
+          <div class="claude-mode-seg">${buttonsHtml}</div>
+        </div>
+      `;
+    }
+    const activeDesc = activeEntry
+      ? activeEntry.desc
+      : `Custom shared mode (${extraLabel || activeMode}) — tap Bypass, Auto, or Plan to switch fleet-wide.`;
+    const revMeta =
+      claudeModeState.rev > 0
+        ? `Store rev ${claudeModeState.rev}${claudeModeState.updatedAt ? ` · ${timeAgo(claudeModeState.updatedAt)}` : ''}`
+        : 'Synced via THEO Store + OneDrive';
+    return `
+      <div class="claude-mode-bar is-settings" role="group" aria-label="Fleet Claude permission mode">
+        <div class="claude-mode-seg is-wide">${buttonsHtml}</div>
+        <div class="claude-mode-foot">
+          <span class="claude-mode-desc">${esc(activeDesc)}</span>
+          <span class="claude-mode-rev tabular">${esc(revMeta)}${extraLabel ? ` · ${esc(extraLabel)}` : ''}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  async function setFleetClaudeModeRemote(rawMode, opts = {}) {
+    const nextMode = normalizeClaudePermModeClient(rawMode);
+    if (!CLAUDE_PERM_MODES.some((m) => m.id === nextMode)) return { ok: false, error: 'invalid_mode' };
+    refreshCloudConfig();
+    const itemCreatedAt = Number(opts.createdAt || 0);
+    if (
+      opts.fromOutbox &&
+      itemCreatedAt > 0 &&
+      itemCreatedAt < Number(claudeModeState.updatedAt || 0)
+    ) {
+      return {
+        ok: true,
+        superseded: true,
+        defaultMode: getEffectiveClaudePermissionMode()
+      };
+    }
+    const now = opts.fromOutbox && itemCreatedAt > 0 ? itemCreatedAt : Date.now();
+    const mySeq = opts.fromOutbox ? claudeModeMutationSeq : ++claudeModeMutationSeq;
+    const baseRev = Math.max(0, Math.floor(Number(claudeModeState.rev || 0) || 0));
+    const minExpectedRev = baseRev + 1;
+
+    if (!opts.fromOutbox) {
+      outbox = outbox.filter(
+        (c) => c && c.id !== 'cmd-claude-mode' && c.type !== 'setClaudePermissionMode'
+      );
+      saveJson(STORAGE_KEYS.OUTBOX, outbox);
+      renderOutboxBadge();
+      pendingClaudeModeOverride = {
+        defaultMode: nextMode,
+        setAt: now,
+        minRev: minExpectedRev
+      };
+      claudeModeState = {
+        ...claudeModeState,
+        defaultMode: nextMode,
+        updatedAt: now,
+        updatedBy: 'THEO Remote',
+        source: 'theo-remote'
+      };
+      prefs.claudePermissionMode = { ...claudeModeState };
+      saveJson(STORAGE_KEYS.PREFS, prefs);
+      if (appState && typeof appState === 'object') {
+        appState.claudePermissionMode = { ...claudeModeState };
+      }
+      recordFreqUsage('commands', `/mode-${nextMode === 'bypassPermissions' ? 'bypass' : nextMode}`);
+      persistCache();
+      renderAll();
+      haptic(18);
+      if (!opts.silent) {
+        const label = getClaudeModeDisplayLabel(nextMode);
+        showToast(`⚡ Fleet Claude Mode → ${label} across all PCs`);
+      }
+    }
+
+    if (isHeadlessBrowser && !window.__THEO_ALLOW_PROBE_MOCK_FETCH) {
+      return { ok: true, mode: 'headless', defaultMode: nextMode };
+    }
+
+    const runNetworkSync = async () => {
+      if (
+        mySeq !== claudeModeMutationSeq ||
+        (opts.fromOutbox &&
+          itemCreatedAt > 0 &&
+          itemCreatedAt < Number(claudeModeState.updatedAt || 0))
+      ) {
+        return { ok: true, superseded: true, defaultMode: getEffectiveClaudePermissionMode() };
+      }
+      const liveBaseRev = Math.max(baseRev, Math.floor(Number(claudeModeState.rev || 0) || 0));
+      let storePatched = false;
+      let hostReached = false;
+      let authoritativeDoc = null;
+
+      // 1. Authoritative Cloudflare THEO Store patch (reaches laptops even with OneDrive paused)
+      if (cloudCfg.url && cloudCfg.key) {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 12000);
+        try {
+          const res = await fetch(cloudCfg.url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+            body: JSON.stringify({
+              key: cloudCfg.key,
+              op: 'patch',
+              ackOnly: true,
+              patch: {
+                claude_permission_mode: {
+                  defaultMode: nextMode,
+                  ...(liveBaseRev > 0 ? { expectedRev: liveBaseRev } : {}),
+                  source: 'theo-remote',
+                  updatedBy: 'THEO Remote',
+                  updatedAt: now
+                }
+              }
+            }),
+            signal: ctrl.signal
+          });
+          if (res.ok) {
+            const ack = await res.json().catch(() => ({}));
+            if (ack && ack.ok !== false) {
+              storePatched = true;
+              const retDoc =
+                ack.claude_permission_mode || ack.docs?.claude_permission_mode || null;
+              if (retDoc && typeof retDoc === 'object') {
+                authoritativeDoc = retDoc;
+                const retRev = Math.max(0, Math.floor(Number(retDoc.rev || 0) || 0));
+                if (mySeq === claudeModeMutationSeq) {
+                  const ackMode = normalizeClaudePermModeClient(
+                    retDoc.defaultMode || retDoc.mode || ''
+                  );
+                  ingestClaudePermissionModeDoc(retDoc, { fromStoreAck: true });
+                  if (ackMode && ackMode !== nextMode) {
+                    persistCache();
+                    renderAll();
+                    if (!opts.silent) {
+                      showToast(
+                        `↻ Synced newer Fleet Mode (${getClaudeModeDisplayLabel(ackMode)})`
+                      );
+                    }
+                    return {
+                      ok: true,
+                      conflictReconciled: true,
+                      defaultMode: getEffectiveClaudePermissionMode(),
+                      claudePermissionMode: { ...claudeModeState }
+                    };
+                  }
+                } else if (retRev > Number(claudeModeState.rev || 0)) {
+                  // Advance known Store revision for the queued newer tap without reverting its optimistic mode.
+                  claudeModeState = { ...claudeModeState, rev: retRev };
+                  if (pendingClaudeModeOverride) {
+                    pendingClaudeModeOverride.minRev = Math.max(
+                      Number(pendingClaudeModeOverride.minRev || 0),
+                      retRev + 1
+                    );
+                  }
+                }
+              }
+            }
+          }
+        } catch {} finally {
+          clearTimeout(timer);
+        }
+      }
+
+      if (mySeq !== claudeModeMutationSeq) {
+        return { ok: true, superseded: true, defaultMode: getEffectiveClaudePermissionMode() };
+      }
+
+      const wsFrame = {
+        type: 'claude_permission_mode',
+        defaultMode: authoritativeDoc?.defaultMode || nextMode,
+        rev: storePatched ? Number(authoritativeDoc?.rev || 0) : 0,
+        alreadyStored: storePatched,
+        updatedAt: Number(authoritativeDoc?.updatedAt || now),
+        updatedBy: authoritativeDoc?.updatedBy || 'THEO Remote',
+        source: authoritativeDoc?.source || 'theo-remote'
+      };
+
+      // 2. Instant <50ms Edge WebSocket fan-out to every online host & client
+      let edgeSent = false;
+      if (edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
+        try {
+          edgeWs.send(JSON.stringify(wsFrame));
+          edgeSent = true;
+          hostReached = true;
+        } catch {}
+      }
+
+      // 3. Direct Local WebSocket or HTTP Loopback Bridge
+      if (localWsAuthed && localWs && localWs.readyState === 1) {
+        try {
+          localWs.send(JSON.stringify({ ...wsFrame, edgeBroadcasted: edgeSent }));
+          hostReached = true;
+        } catch {}
+      } else if (connMode === 'local' && localBridgeBase) {
+        try {
+          const res = await authFetchLocal(`${localBridgeBase}/api/claude-permission-mode`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              defaultMode: wsFrame.defaultMode,
+              rev: wsFrame.rev,
+              alreadyStored: storePatched,
+              edgeBroadcasted: edgeSent,
+              updatedAt: wsFrame.updatedAt,
+              source: wsFrame.source,
+              updatedBy: wsFrame.updatedBy
+            })
+          });
+          if (res.ok) {
+            const out = await res.json().catch(() => ({}));
+            if (out?.claudePermissionMode && mySeq === claudeModeMutationSeq) {
+              ingestClaudePermissionModeDoc(out.claudePermissionMode, { fromStoreAck: true });
+            }
+            hostReached = true;
+          }
+        } catch {}
+      }
+
+      if (mySeq !== claudeModeMutationSeq) {
+        return { ok: true, superseded: true, defaultMode: getEffectiveClaudePermissionMode() };
+      }
+
+      // 4. Offline Outbox fallback (deduplicated single entry so offline taps replay cleanly on reconnect)
+      if (!storePatched && !hostReached) {
+        outbox = outbox.filter(
+          (c) => c && c.id !== 'cmd-claude-mode' && c.type !== 'setClaudePermissionMode'
+        );
+        outbox.push({
+          id: 'cmd-claude-mode',
+          type: 'setClaudePermissionMode',
+          defaultMode: nextMode,
+          source: 'theo-remote',
+          updatedBy: 'THEO Remote',
+          createdAt: now,
+          status: 'pending'
+        });
+        saveJson(STORAGE_KEYS.OUTBOX, outbox);
+        renderOutboxBadge();
+        return { ok: true, mode: 'queued', defaultMode: nextMode };
+      }
+
+      outbox = outbox.filter(
+        (c) => c && c.id !== 'cmd-claude-mode' && c.type !== 'setClaudePermissionMode'
+      );
+      saveJson(STORAGE_KEYS.OUTBOX, outbox);
+      renderOutboxBadge();
+      if (mySeq === claudeModeMutationSeq) {
+        persistCache();
+        renderAll();
+      }
+      return {
+        ok: true,
+        mode: storePatched ? 'store' : 'ws',
+        defaultMode: nextMode,
+        claudePermissionMode: { ...claudeModeState }
+      };
+    };
+
+    const p = claudeModeWriteChain.then(runNetworkSync, runNetworkSync);
+    claudeModeWriteChain = p.catch(() => ({ ok: false }));
+    return p;
   }
   const alertedReminderIds = new Set();
   const seenQuotaAlertIds = new Set(
@@ -3084,9 +3556,24 @@
     let chosenSummary = primarySnap?.summary || null;
     let chosenSummaryByProv = primarySnap?.summaryByProvider || null;
     let chosenTopSessions = Array.isArray(primarySnap?.topSessions) ? primarySnap.topSessions : [];
+    let bestClaudeMode = extractClaudeModeFields(
+      primarySnap?.claudePermissionMode || primarySnap?.connection?.claudePermissionMode
+    );
 
     for (const [devId, snap] of entries) {
       maxGeneratedAt = Math.max(maxGeneratedAt, Number(snap?.generatedAt || 0));
+      const candMode = extractClaudeModeFields(
+        snap?.claudePermissionMode || snap?.connection?.claudePermissionMode
+      );
+      if (candMode) {
+        if (
+          !bestClaudeMode ||
+          candMode.rev > bestClaudeMode.rev ||
+          (candMode.rev === bestClaudeMode.rev && candMode.updatedAt > bestClaudeMode.updatedAt)
+        ) {
+          bestClaudeMode = candMode;
+        }
+      }
       if (!chosenProviders && snap?.providers) chosenProviders = snap.providers;
       if (!chosenAccountOrder.length && Array.isArray(snap?.accountOrder) && snap.accountOrder.length) {
         chosenAccountOrder = snap.accountOrder;
@@ -3140,6 +3627,10 @@
       }
     }
 
+    if (bestClaudeMode) {
+      ingestClaudePermissionModeDoc(bestClaudeMode, { fromHostSnapshot: true });
+    }
+
     return {
       ...primarySnap,
       generatedAt: maxGeneratedAt || Date.now(),
@@ -3151,14 +3642,20 @@
       accountOrder: chosenAccountOrder.length ? chosenAccountOrder : appState?.accountOrder || [],
       summary: chosenSummary || appState?.summary || null,
       summaryByProvider: chosenSummaryByProv || appState?.summaryByProvider || null,
-      topSessions: chosenTopSessions.length ? chosenTopSessions : appState?.topSessions || []
+      topSessions: chosenTopSessions.length ? chosenTopSessions : appState?.topSessions || [],
+      claudePermissionMode: { ...claudeModeState }
     };
   }
 
   function ingestIncomingHostState(st, sourceDeviceId = '') {
     if (!st || typeof st !== 'object') return;
+    const directMode = st.claudePermissionMode || st.connection?.claudePermissionMode;
+    if (directMode) {
+      ingestClaudePermissionModeDoc(directMode, { fromHostSnapshot: true });
+    }
     const devId = storeHostSnapshotEntry(st, sourceDeviceId);
     const nextState = rebuildUnifiedAppState(devId) || st;
+    nextState.claudePermissionMode = { ...claudeModeState };
 
     for (const [tid, live] of liveStreamsByThreadId.entries()) {
       if (live && live.status === 'working' && Date.now() - Number(live.receivedAt || 0) < 45000) {
@@ -3570,6 +4067,11 @@
             ingestIncomingThreadDetailFrame(msg);
           } else if (msg.type === 'stream_delta') {
             handleStreamDelta(msg);
+          } else if (msg.type === 'claude_permission_mode') {
+            if (ingestClaudePermissionModeDoc(msg, { fromWsFrame: true })) {
+              persistCache();
+              renderAll();
+            }
           } else if (msg.type === 'rpc_res' && msg.reqId && wsPendingRpcs.has(msg.reqId)) {
             const p = wsPendingRpcs.get(msg.reqId);
             clearTimeout(p.timer);
@@ -3711,6 +4213,11 @@
             ingestIncomingThreadDetailFrame(msg);
           } else if (msg.type === 'stream_delta') {
             handleStreamDelta(msg);
+          } else if (msg.type === 'claude_permission_mode') {
+            if (ingestClaudePermissionModeDoc(msg, { fromWsFrame: true })) {
+              persistCache();
+              renderAll();
+            }
           } else if (msg.type === 'rpc_res' && msg.reqId && wsPendingRpcs.has(msg.reqId)) {
             const p = wsPendingRpcs.get(msg.reqId);
             clearTimeout(p.timer);
@@ -3903,6 +4410,30 @@
     }
   }
 
+  function maybePollCloudClaudeModeBackstop() {
+    if (!cloudCfg.url || !cloudCfg.key || edgeWsAuthed) return;
+    if (isHeadlessBrowser && !window.__THEO_ALLOW_PROBE_MOCK_FETCH) return;
+    if (Date.now() - lastCloudBackstopAt < 60000) return;
+    lastCloudBackstopAt = Date.now();
+    fetch(cloudCfg.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify({ key: cloudCfg.key, op: 'get_theo' })
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((raw) => {
+        const store = raw?.docs && typeof raw.docs === 'object' ? raw.docs : raw || {};
+        if (
+          store?.claude_permission_mode &&
+          ingestClaudePermissionModeDoc(store.claude_permission_mode, { fromStore: true })
+        ) {
+          persistCache();
+          renderAll();
+        }
+      })
+      .catch(() => {});
+  }
+
   async function syncData(options = {}) {
     if (isHeadlessBrowser && !window.__THEO_ALLOW_PROBE_MOCK_FETCH) return false;
     refreshCloudConfig();
@@ -3932,6 +4463,7 @@
           connMode = 'local';
           updateConnectionBanner();
           flushOutbox().catch(() => {});
+          maybePollCloudClaudeModeBackstop();
           if (
             prefs.activeTab === 'chat' &&
             prefs.selectedThreadId &&
@@ -3976,6 +4508,7 @@
               if (options.toast) {
                 showToast(`Connected to Direct Studio Host (${(appState?.rows || []).length} sessions)`);
               }
+              maybePollCloudClaudeModeBackstop();
               return true;
             }
           } else if (res.status === 401 || res.status === 403) {
@@ -4072,12 +4605,16 @@
                 }
               }
             }
+            if (store?.claude_permission_mode) {
+              ingestClaudePermissionModeDoc(store.claude_permission_mode, { fromStore: true });
+            }
             const unified = rebuildUnifiedAppState();
             if (unified) {
               applyStoppedSessionOverrides(unified);
               applyAnsweredQuestionOverrides(unified);
               applyPendingLocalOverrides(unified);
               checkLiveStateNotifications(unified);
+              unified.claudePermissionMode = { ...claudeModeState };
               appState = unified;
               reconcilePendingNewSessionBind(unified, lastCloudQueue);
             }
@@ -4555,6 +5092,18 @@
     outbox = [];
     saveJson(STORAGE_KEYS.OUTBOX, outbox);
     for (const item of pending) {
+      if (item && item.type === 'setClaudePermissionMode' && item.defaultMode) {
+        const itemTs = Number(item.createdAt || 0);
+        if (itemTs > 0 && itemTs < Number(claudeModeState.updatedAt || 0)) {
+          continue;
+        }
+        await setFleetClaudeModeRemote(item.defaultMode, {
+          fromOutbox: true,
+          silent: true,
+          createdAt: itemTs
+        });
+        continue;
+      }
       await dispatchRemoteCommand(item);
     }
     renderOutboxBadge();
@@ -4961,8 +5510,8 @@
     const psOneLiner = [
       "$ErrorActionPreference='Stop'",
       'try {',
-      "  $od=if($env:OneDriveCommercial){$env:OneDriveCommercial}else{Join-Path $HOME 'OneDrive - BHFIRMS'}",
-      "  $ps1=Join-Path $od 'System\\System\\THEO\\Admin\\Setup-THEO-PC.ps1'",
+      "  $ps1=Join-Path $HOME 'bhfirms\\memory\\Admin\\Setup-THEO-PC.ps1'",
+      "  if(-not(Test-Path -LiteralPath $ps1)){$od=if($env:OneDriveCommercial){$env:OneDriveCommercial}else{Join-Path $HOME 'OneDrive - BHFIRMS'};$ps1=Join-Path $od 'System\\System\\THEO\\Admin\\Setup-THEO-PC.ps1'}",
       "  if(Test-Path -LiteralPath $ps1){& $ps1 -Gui}else{[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;$tmp=Join-Path $env:TEMP ('theo-install-'+$PID+'.ps1');Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/HusseinBdeir/theo/main/install.ps1' -OutFile $tmp -UseBasicParsing;try{& $tmp -Gui}finally{Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue}}",
       "} catch { try { Add-Type -AssemblyName System.Windows.Forms; [void][System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'THEO PC Setup', 'OK', 'Error') } catch {}; exit 1 }"
     ].join(';');
@@ -5176,6 +5725,7 @@
         </div>
       </div>
       ${fleetRowsHtml}
+      ${renderClaudeModeSelectorHtml('modal')}
       <div class="meta-timestamp" style="line-height:1.45">
         ${
           connMode === 'local'
@@ -5890,7 +6440,7 @@
               ${
                 isCollapsed
                   ? ''
-                  : `<div class="ide-acct-sub">${email ? `<span>${esc(email)}</span>` : '<span></span>'}<span class="ide-plan-tag">${esc(plan)}</span></div>${barsHtml ? `<div class="ide-qstack">${barsHtml}</div>` : ''}`
+                  : `<div class="ide-acct-sub">${email ? `<span>${esc(email)}</span>` : '<span></span>'}<span class="ide-plan-tag">${esc(plan)}</span></div>${barsHtml ? `<div class="ide-qstack">${barsHtml}</div>` : ''}${provKey === 'claude' && isActive ? renderClaudeModeSelectorHtml('sidebar') : ''}`
               }
             </div>
           `;
@@ -8220,7 +8770,7 @@
         ${
           isCollapsed
             ? ''
-            : `<div class="quota-sub-line">${email ? `<span class="meta-timestamp">${esc(email)}</span>` : '<span></span>'}<span class="plan-pill">${esc(shortPlan)}</span></div><div class="quota-bars-stack">${barsHtml}</div>`
+            : `<div class="quota-sub-line">${email ? `<span class="meta-timestamp">${esc(email)}</span>` : '<span></span>'}<span class="plan-pill">${esc(shortPlan)}</span></div><div class="quota-bars-stack">${barsHtml}</div>${key === 'claude' && isActive ? renderClaudeModeSelectorHtml('quota') : ''}`
         }
       </div>
     `;
@@ -11975,6 +12525,12 @@
           : null;
 
       pairingGrid.innerHTML = `
+        <div class="pairing-card claude-fleet-mode-card" id="settings-claude-mode-card">
+          <div class="eyebrow">FLEET CLAUDE PERMISSION MODE</div>
+          <p class="meta-timestamp" style="margin:6px 0">One tap switches Claude Code across every paired PC, phone CLI run, and open tab via THEO Store + OneDrive (even when OneDrive is paused on a laptop).</p>
+          ${renderClaudeModeSelectorHtml('settings')}
+        </div>
+
         <div class="pairing-card">
           <div class="eyebrow">MULTI-DEVICE FLEET &amp; ZERO-SECRET PAIRING</div>
           <p class="meta-timestamp" style="margin:6px 0">Zero secrets in git/bundle. Pair iOS Home Screen apps via 6-digit code, browsers via 1-tap hash link, or new PCs via the visual <strong>Set Up This PC</strong> app.</p>
@@ -12089,6 +12645,9 @@
     { id: '/goal', label: '/goal', desc: 'Autonomous thorough execution until goal is achieved', kind: 'prompt', insert: '/goal ', baseWeight: 80 },
     { id: '/new-agy', label: '/new-agy', desc: 'Start a fresh Google Antigravity session tab', kind: 'action', act: 'new-agy', baseWeight: 76 },
     { id: '/new-claude', label: '/new-claude', desc: 'Start a fresh Claude Code session tab', kind: 'action', act: 'new-claude', baseWeight: 74 },
+    { id: '/mode-bypass', label: '/mode-bypass', desc: 'Fleet Claude Mode: Bypass (full control across every PC)', kind: 'action', act: 'claude-mode-bypass', baseWeight: 73 },
+    { id: '/mode-auto', label: '/mode-auto', desc: 'Fleet Claude Mode: Auto (classifier safety check across every PC)', kind: 'action', act: 'claude-mode-auto', baseWeight: 71 },
+    { id: '/mode-plan', label: '/mode-plan', desc: 'Fleet Claude Mode: Plan (read-only planning across every PC)', kind: 'action', act: 'claude-mode-plan', baseWeight: 70 },
     { id: '/inspector', label: '/inspector', desc: 'Toggle Split Inspector (Code, Diff, Side Agents & Outline)', kind: 'action', act: 'inspector', baseWeight: 72 },
     { id: '/bgtasks', label: '/bgtasks', desc: 'Inspect live background tasks & subagents', kind: 'action', act: 'bgtasks', baseWeight: 68 },
     { id: '/stop', label: '/stop', desc: 'Interrupt the currently running session', kind: 'action', act: 'stop', baseWeight: 64 },
@@ -12333,6 +12892,12 @@
         enterNewSessionMode('antigravity');
       } else if (item.act === 'new-claude') {
         enterNewSessionMode('claude');
+      } else if (item.act === 'claude-mode-bypass') {
+        await setFleetClaudeModeRemote('bypassPermissions');
+      } else if (item.act === 'claude-mode-auto') {
+        await setFleetClaudeModeRemote('auto');
+      } else if (item.act === 'claude-mode-plan') {
+        await setFleetClaudeModeRemote('plan');
       } else if (item.act === 'bgtasks') {
         const ctxPop = $('ctx-popover');
         if (ctxPop) ctxPop.hidden = true;
@@ -12597,6 +13162,14 @@
       ...(hasSignedInProviderRemote('claude')
         ? [{ title: '+ New Claude Code Session', sub: 'Action', act: 'new-claude' }]
         : []),
+      ...(() => {
+        const curMode = getEffectiveClaudePermissionMode();
+        return CLAUDE_PERM_MODES.map((m) => ({
+          title: `${curMode === m.id ? '✓ ' : ''}Fleet Claude Mode: ${m.label}`,
+          sub: `${curMode === m.id ? 'Active across all PCs · ' : ''}${m.desc}`,
+          act: `claude-mode-${m.id === 'bypassPermissions' ? 'bypass' : m.id}`
+        }));
+      })(),
       { title: 'Sync with VS Code & Cloud Relay Now', sub: 'Connectivity', act: 'sync' },
       { title: 'Toggle Split Inspector (Code, Diff, Side Agents & Outline)', sub: 'Workbench · ⌘I', act: 'inspector' },
       { title: 'Switch Studio Color Palette (Graphite · Velvet · Espresso · Daylight)', sub: 'Appearance', act: 'palette' },
@@ -13047,6 +13620,13 @@
     document.addEventListener('click', async (e) => {
       if (isPinLocked() && !e.target?.closest?.('#pin-overlay')) {
         e.preventDefault();
+        return;
+      }
+      const claudeModeBtn = e.target.closest('[data-set-claude-mode]');
+      if (claudeModeBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        await setFleetClaudeModeRemote(claudeModeBtn.dataset.setClaudeMode);
         return;
       }
       if (
@@ -14941,6 +15521,12 @@
           enterNewSessionMode('antigravity');
         } else if (act === 'new-claude') {
           enterNewSessionMode('claude');
+        } else if (act === 'claude-mode-bypass') {
+          await setFleetClaudeModeRemote('bypassPermissions');
+        } else if (act === 'claude-mode-auto') {
+          await setFleetClaudeModeRemote('auto');
+        } else if (act === 'claude-mode-plan') {
+          await setFleetClaudeModeRemote('plan');
         } else if (act === 'sync') {
           syncData({ toast: true });
         } else if (act === 'push-test') {
@@ -16348,7 +16934,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=66', { updateViaCache: 'none' })
+        .register('sw.js?v=67', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
@@ -16584,6 +17170,8 @@
               return;
             }
             syncData();
+          } else {
+            maybePollCloudClaudeModeBackstop();
           }
         }, 4500);
 

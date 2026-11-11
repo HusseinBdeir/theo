@@ -2872,6 +2872,349 @@ async function main() {
     assert.strictEqual(v63Verify.titleAttrsCount, 0, 'Zero [title] attributes allowed in v63 DOM');
     console.log('[PASS] Adversarial #14: v63 VS Code-Grade Interactive Thinking & Execution Mode, Live Activity Shimmer Bar, Rich Thought Markdown, Compact Checkpoint/Context Chips & 3 Negative Guards verified');
 
+    // Adversarial Check #15: v66 One-Tap Fleet Claude Permission Mode selector (Bypass | Auto | Plan) across Settings, Pulse, IDE Sidebar, #conn-modal, ⌘K & /mode-*, Store ack/rev anti-revert, rapid double-tap race guard, offline outbox dedup, & PIN-lock block
+    await cdp.send(
+      'Emulation.setDeviceMetricsOverride',
+      { width: 1440, height: 900, deviceScaleFactor: 2, mobile: false },
+      sessionId
+    );
+    const v66Probe = await evalJs(`(async () => {
+      const origFetch = window.fetch;
+      const storePosts = [];
+      let releaseFirstPost = null;
+
+      // Seed paired Edge credentials pointing to a mock in-page store (intercepted before network)
+      const prefsInit = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+      prefsInit.edgeAccessKey = 'a'.repeat(64);
+      prefsInit.edgeRelayUrl = 'wss://mock-edge.example.invalid/ws';
+      prefsInit.activeTab = 'analytics';
+      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefsInit));
+      localStorage.removeItem('theo_remote_outbox_v1');
+
+      // Navigate fresh to hydrate paired config cleanly under headless quarantine
+      return true;
+    })()`);
+    assert.strictEqual(v66Probe, true);
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 550));
+
+    const v66Run = await evalJs(`(async () => {
+      const origFetch = window.fetch;
+      const storePatches = [];
+      const localApiCalls = [];
+      let lastConflictExpectedRev = null;
+      let highestMockRev = 10;
+      let shouldFailNetwork = false;
+      let slowAutoPromise = null;
+      let releaseSlowAuto = null;
+
+      window.__THEO_ALLOW_PROBE_MOCK_FETCH = true;
+      window.fetch = async (url, init) => {
+        const uStr = String(url || '');
+        if (uStr.endsWith('/store')) {
+          if (shouldFailNetwork) {
+            throw new Error('simulated_offline');
+          }
+          const body = JSON.parse(init?.body || '{}');
+          if (body.op === 'patch' && body.patch?.claude_permission_mode) {
+            const pObj = body.patch.claude_permission_mode;
+            const pMode = pObj.defaultMode;
+            storePatches.push(pMode);
+            if (window.__SIMULATE_CAS_CONFLICT) {
+              lastConflictExpectedRev = pObj.expectedRev;
+              highestMockRev = Math.max(highestMockRev, 25);
+              return new Response(
+                JSON.stringify({
+                  ok: true,
+                  serverTime: Date.now(),
+                  claude_permission_mode: {
+                    defaultMode: 'bypassPermissions',
+                    rev: 25,
+                    updatedAt: Date.now() + 5000,
+                    updatedBy: 'Workstation',
+                    source: 'theo-hub'
+                  }
+                }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } }
+              );
+            }
+            if (pMode === 'auto' && !slowAutoPromise) {
+              slowAutoPromise = new Promise((r) => { releaseSlowAuto = r; });
+              await slowAutoPromise;
+            }
+            highestMockRev += 1;
+            const rev = highestMockRev;
+            return new Response(
+              JSON.stringify({
+                ok: true,
+                serverTime: Date.now(),
+                claude_permission_mode: {
+                  defaultMode: pMode,
+                  rev,
+                  updatedAt: Date.now(),
+                  updatedBy: 'THEO Remote',
+                  source: 'theo-remote'
+                }
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            );
+          }
+          return new Response(JSON.stringify({ ok: true, docs: {} }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        if (uStr.endsWith('/api/claude-permission-mode')) {
+          const lBody = JSON.parse(init?.body || '{}');
+          localApiCalls.push(lBody);
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              defaultMode: lBody.defaultMode,
+              claudePermissionMode: {
+                defaultMode: lBody.defaultMode,
+                rev: lBody.rev || 0,
+                updatedAt: lBody.updatedAt || Date.now()
+              }
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return origFetch(url, init);
+      };
+
+      try {
+        // 1) Verify selector renders in Settings (#settings-claude-mode-card), Pulse (.quota-card), Desktop IDE Sidebar (.ide-acct-card), and #conn-modal
+        document.querySelector('[data-tab="analytics"]')?.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const settingsBtns = document.querySelectorAll('#settings-claude-mode-card [data-set-claude-mode]').length;
+
+        document.querySelector('[data-tab="pulse"]')?.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const pulseBtns = document.querySelectorAll('#view-pulse .quota-card [data-set-claude-mode]').length;
+
+        document.querySelector('[data-tab="chat"]')?.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const sidebarBtns = document.querySelectorAll('#ide-sidebar-accounts [data-set-claude-mode]').length;
+
+        document.getElementById('rail-conn-btn')?.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const modalBtns = document.querySelectorAll('#conn-modal [data-set-claude-mode]').length;
+        document.getElementById('conn-modal-close')?.click();
+
+        // 2) Rapid double-tap race guard: tap Auto (held in-flight) then immediately tap Plan -> Plan must win across all surfaces and Auto's late ack must NOT revert UI
+        document.querySelector('[data-tab="analytics"]')?.click();
+        await new Promise((r) => setTimeout(r, 25));
+        document.querySelector('#settings-claude-mode-card [data-set-claude-mode="auto"]')?.click();
+        await new Promise((r) => setTimeout(r, 15));
+        document.querySelector('#settings-claude-mode-card [data-set-claude-mode="plan"]')?.click();
+        await new Promise((r) => setTimeout(r, 15));
+        if (releaseSlowAuto) releaseSlowAuto();
+        await new Promise((r) => setTimeout(r, 90));
+
+        const activeInSettingsAfterRace = document.querySelector('#settings-claude-mode-card [data-set-claude-mode][aria-pressed="true"]')?.dataset?.setClaudeMode || '';
+        const activeInSidebarAfterRace = document.querySelector('#ide-sidebar-accounts [data-set-claude-mode][aria-pressed="true"]')?.dataset?.setClaudeMode || '';
+        const storedPrefsAfterRace = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+
+        // 3) Slash command /mode-bypass switches back to bypassPermissions
+        document.querySelector('[data-tab="chat"]')?.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const inp = document.getElementById('composer-input');
+        inp.focus();
+        inp.value = '/mode-bypass';
+        inp.setSelectionRange(12, 12);
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 25));
+        const slashHasModeBypass = Boolean(document.querySelector('#composer-slash-popover [data-slash-pick="0"]'));
+        document.querySelector('#composer-slash-popover [data-slash-pick="0"]')?.click();
+        await new Promise((r) => setTimeout(r, 70));
+        const activeAfterSlash = document.querySelector('#ide-sidebar-accounts [data-set-claude-mode][aria-pressed="true"]')?.dataset?.setClaudeMode || '';
+
+        // 3b) Stale-expectedRev CAS conflict rejection: Store returns rev=25 ('bypassPermissions') when tapping 'plan' -> UI reconciles immediately to 'bypassPermissions' and never broadcasts 'plan'
+        localApiCalls.length = 0;
+        window.__SIMULATE_CAS_CONFLICT = true;
+        document.querySelector('#ide-sidebar-accounts [data-set-claude-mode="plan"]')?.click();
+        await new Promise((r) => setTimeout(r, 75));
+        window.__SIMULATE_CAS_CONFLICT = false;
+        const activeAfterConflict = document.querySelector('#ide-sidebar-accounts [data-set-claude-mode][aria-pressed="true"]')?.dataset?.setClaudeMode || '';
+        const localCallsDuringConflict = localApiCalls.length;
+        const revAfterConflict = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}')?.claudePermissionMode?.rev || 0;
+
+        // 3c) Dual-channel (cloudCfg + local HTTP bridge active simultaneously): 1 tap sends at most 1 /store patch and passes alreadyStored=true locally
+        const pDual = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+        pDual.connMode = 'local';
+        pDual.customBridgeUrl = location.origin;
+        localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(pDual));
+        document.getElementById('rail-conn-btn')?.click();
+        await new Promise((r) => setTimeout(r, 20));
+        document.querySelector('#conn-modal [data-conn-mode="local"]')?.click();
+        await new Promise((r) => setTimeout(r, 25));
+        document.getElementById('conn-modal-close')?.click();
+        const patchesBeforeDual = storePatches.length;
+        localApiCalls.length = 0;
+        document.querySelector('#ide-sidebar-accounts [data-set-claude-mode="auto"]')?.click();
+        await new Promise((r) => setTimeout(r, 85));
+        const dualStoreDelta = storePatches.length - patchesBeforeDual;
+        const dualLocalAlreadyStored = localApiCalls.length === 0 ? true : Boolean(localApiCalls[0]?.alreadyStored);
+
+        // 4) Offline outbox deduplication: fail network and tap Auto then Plan -> only 1 deduplicated setClaudePermissionMode item in outbox
+        shouldFailNetwork = true;
+        const origLocalCallBehavior = true;
+        window.fetch = async (url, init) => {
+          if (shouldFailNetwork) throw new Error('simulated_offline');
+          return origFetch(url, init);
+        };
+        document.querySelector('#ide-sidebar-accounts [data-set-claude-mode="auto"]')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+        document.querySelector('#ide-sidebar-accounts [data-set-claude-mode="plan"]')?.click();
+        await new Promise((r) => setTimeout(r, 50));
+        const outboxWhileOffline = JSON.parse(localStorage.getItem('theo_remote_outbox_v1') || '[]');
+        shouldFailNetwork = false;
+        window.fetch = origFetch;
+
+        // 4b) Foreground tap while offline outbox holds an older entry purges outbox immediately, and stale createdAt outbox item never overwrites newer state on online flush
+        document.querySelector('#ide-sidebar-accounts [data-set-claude-mode="bypassPermissions"]')?.click();
+        const outboxAfterForegroundPurge = JSON.parse(localStorage.getItem('theo_remote_outbox_v1') || '[]');
+        await new Promise((r) => setTimeout(r, 75));
+        const patchesBeforeStaleFlush = storePatches.length;
+        localStorage.setItem(
+          'theo_remote_outbox_v1',
+          JSON.stringify([
+            {
+              id: 'cmd-claude-mode',
+              type: 'setClaudePermissionMode',
+              defaultMode: 'auto',
+              createdAt: 1000,
+              status: 'pending'
+            }
+          ])
+        );
+        window.dispatchEvent(new Event('online'));
+        await new Promise((r) => setTimeout(r, 60));
+        const activeAfterStaleOutbox =
+          document.querySelector('#ide-sidebar-accounts [data-set-claude-mode][aria-pressed="true"]')?.dataset
+            ?.setClaudeMode || '';
+        const staleFlushPatches = storePatches.length - patchesBeforeStaleFlush;
+        localStorage.removeItem('theo_remote_outbox_v1');
+
+        // 4c) Unversioned rev=0 host snapshot with newer updatedAt must NEVER overwrite or poison versioned Store rev (Finding 2)
+        document.querySelector('#ide-sidebar-accounts [data-set-claude-mode="plan"]')?.click();
+        await new Promise((r) => setTimeout(r, 80));
+        const revAtPlan = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}')?.claudePermissionMode?.rev || 0;
+        const origStateFetch = window.fetch;
+        window.fetch = async (url, init) => {
+          const u = String(url || '');
+          if (u.includes('/api/state')) {
+            return new Response(
+              JSON.stringify({
+                ok: true,
+                state: {
+                  generatedAt: Date.now() + 20000,
+                  device: { id: 'host-booting', name: 'BootingHost', role: 'host' },
+                  claudePermissionMode: {
+                    defaultMode: 'bypassPermissions',
+                    rev: 0,
+                    updatedAt: Date.now() + 20000,
+                    source: 'shared_file'
+                  },
+                  rows: JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}')?.snapshot?.rows || []
+                }
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            );
+          }
+          return origStateFetch(url, init);
+        };
+        document.getElementById('rail-conn-btn')?.click();
+        await new Promise((r) => setTimeout(r, 15));
+        document.getElementById('conn-modal-sync-now')?.click();
+        await new Promise((r) => setTimeout(r, 85));
+        document.getElementById('conn-modal-close')?.click();
+        window.fetch = origStateFetch;
+        const activeAfterRev0HostSnap =
+          document.querySelector('#ide-sidebar-accounts [data-set-claude-mode][aria-pressed="true"]')?.dataset
+            ?.setClaudeMode || '';
+        const revAfterRev0HostSnap =
+          JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}')?.claudePermissionMode?.rev || 0;
+
+        // Restore bypassPermissions before PIN-lock check
+        document.querySelector('#ide-sidebar-accounts [data-set-claude-mode="bypassPermissions"]')?.click();
+        await new Promise((r) => setTimeout(r, 75));
+
+        // 5) PIN-lock block: clicking [data-set-claude-mode="plan"] while PIN-locked must NOT change mode
+        const pinOverlay = document.getElementById('pin-overlay');
+        if (pinOverlay) pinOverlay.hidden = false;
+        document.documentElement.classList.add('pin-locked-boot');
+        document.querySelector('#ide-sidebar-accounts [data-set-claude-mode="plan"]')?.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const activeWhilePinLocked = document.querySelector('#ide-sidebar-accounts [data-set-claude-mode][aria-pressed="true"]')?.dataset?.setClaudeMode || '';
+        if (pinOverlay) pinOverlay.hidden = true;
+        document.documentElement.classList.remove('pin-locked-boot');
+
+        return {
+          settingsBtns,
+          pulseBtns,
+          sidebarBtns,
+          modalBtns,
+          storePatches,
+          activeInSettingsAfterRace,
+          activeInSidebarAfterRace,
+          storedRev: storedPrefsAfterRace.claudePermissionMode?.rev || 0,
+          slashHasModeBypass,
+          activeAfterSlash,
+          lastConflictExpectedRev,
+          activeAfterConflict,
+          localCallsDuringConflict,
+          revAfterConflict,
+          dualStoreDelta,
+          dualLocalAlreadyStored,
+          outboxCount: outboxWhileOffline.length,
+          outboxMode: outboxWhileOffline[0]?.defaultMode || '',
+          outboxPurgedCount: outboxAfterForegroundPurge.length,
+          activeAfterStaleOutbox,
+          staleFlushPatches,
+          revAtPlan,
+          activeAfterRev0HostSnap,
+          revAfterRev0HostSnap,
+          activeWhilePinLocked,
+          titlesCount: document.querySelectorAll('[title]').length,
+          overflowX: Math.max(0, document.documentElement.scrollWidth - window.innerWidth)
+        };
+      } finally {
+        window.__SIMULATE_CAS_CONFLICT = false;
+        window.__THEO_ALLOW_PROBE_MOCK_FETCH = false;
+        window.fetch = origFetch;
+      }
+    })()`);
+
+    assert.strictEqual(v66Run.settingsBtns, 3, 'Settings #settings-claude-mode-card must render 3 mode pills');
+    assert.strictEqual(v66Run.pulseBtns, 3, 'Pulse active Claude quota card must render 3 mode pills');
+    assert.strictEqual(v66Run.sidebarBtns, 3, 'Desktop IDE sidebar active Claude card must render 3 mode pills');
+    assert.strictEqual(v66Run.modalBtns, 3, '#conn-modal must render 3 mode pills');
+    assert.strictEqual(v66Run.activeInSettingsAfterRace, 'plan', 'Rapid Auto->Plan double-tap must settle on Plan in Settings');
+    assert.strictEqual(v66Run.activeInSidebarAfterRace, 'plan', 'Rapid Auto->Plan double-tap must settle on Plan in IDE Sidebar');
+    assert.ok(v66Run.storedRev >= 11, `Expected monotonic Store rev >= 11 persisted in prefs, got ${v66Run.storedRev}`);
+    assert.strictEqual(v66Run.slashHasModeBypass, true, '/mode-bypass must appear in composer slash popover');
+    assert.strictEqual(v66Run.activeAfterSlash, 'bypassPermissions', '/mode-bypass slash action must switch fleet mode to bypassPermissions');
+    assert.ok(v66Run.lastConflictExpectedRev > 0, `Expected Store patch to send expectedRev > 0, got ${v66Run.lastConflictExpectedRev}`);
+    assert.strictEqual(v66Run.activeAfterConflict, 'bypassPermissions', 'CAS conflict rejection must immediately reconcile UI back to authoritative Store mode');
+    assert.strictEqual(v66Run.localCallsDuringConflict, 0, 'CAS conflict rejection must never broadcast rejected mode locally');
+    assert.strictEqual(v66Run.revAfterConflict, 25, 'CAS conflict rejection must adopt authoritative Store rev=25');
+    assert.strictEqual(v66Run.dualStoreDelta, 1, 'Dual-channel tap must send strictly 1 /store patch');
+    assert.strictEqual(v66Run.dualLocalAlreadyStored, true, 'Dual-channel local fallback must pass alreadyStored=true');
+    assert.strictEqual(v66Run.outboxCount, 1, 'Offline mode switches must deduplicate to a single outbox command');
+    assert.strictEqual(v66Run.outboxMode, 'plan', 'Deduplicated offline outbox command must carry latest chosen mode (plan)');
+    assert.strictEqual(v66Run.outboxPurgedCount, 0, 'Foreground mode tap must immediately purge any stale offline outbox mode item');
+    assert.strictEqual(v66Run.activeAfterStaleOutbox, 'bypassPermissions', 'Stale createdAt outbox item must NOT overwrite newer foreground mode');
+    assert.strictEqual(v66Run.staleFlushPatches, 0, 'Stale createdAt outbox item must NOT patch Store on reconnect');
+    assert.ok(v66Run.revAtPlan > 0, 'Store-acked Plan switch must carry positive rev');
+    assert.strictEqual(v66Run.activeAfterRev0HostSnap, 'plan', 'Unversioned rev=0 host snapshot must NEVER overwrite versioned Store mode');
+    assert.strictEqual(v66Run.revAfterRev0HostSnap, v66Run.revAtPlan, 'Unversioned rev=0 host snapshot must preserve Store rev');
+    assert.strictEqual(v66Run.activeWhilePinLocked, 'bypassPermissions', 'PIN lock must block [data-set-claude-mode] clicks');
+    assert.strictEqual(v66Run.titlesCount, 0, 'Zero [title] attributes allowed on v66 mode controls');
+    assert.strictEqual(v66Run.overflowX, 0, '0px horizontal overflow with v66 mode controls');
+    console.log('[PASS] Adversarial #15: v66 Fleet Claude Permission Mode 1-tap selector, Store rev ack, double-tap race guard, /mode-* slash, offline dedup, & PIN-lock verified');
+
     // Adversarial #16: Zero-Terminal PC Setup Launcher & Fleet Readiness Pills
     await evalJs(`(() => {
       const rawCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
