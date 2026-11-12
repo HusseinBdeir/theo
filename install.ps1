@@ -13,15 +13,13 @@ if ($PairCode) { $env:THEO_PAIR_CODE = $PairCode }
 if ($PairToken) { $env:THEO_PAIR_TOKEN = $PairToken }
 $wantGui = ($Gui -or ($env:THEO_SETUP_GUI -eq '1') -or $SelftestGui) -and (-not $Headless) -and (-not $Check)
 
-# When ~/bhfirms/memory (or legacy OneDrive) already exists on this PC, delegate directly to
-# the canonical dynamic per-PC setup (handles runtimes, THEO_PAIR_CODE / THEO_PAIR_TOKEN,
-# theo-hub, hooks, autoMode, git identity, pre-commit secret scan, memory gitdir, shortcut
-# and any future manifest steps).
+# When ~/bhfirms/memory already exists on this PC, delegate directly to the canonical
+# dynamic per-PC setup (handles runtimes, THEO_PAIR_CODE / THEO_PAIR_TOKEN, theo-hub,
+# hooks, autoMode, git identity, pre-commit secret scan, memory gitdir, shortcut and any
+# future manifest steps). The retired OneDrive THEO folder is never consulted.
 $theoRootCandidates = @()
 if ($env:THEO_MEMORY_ROOT) { $theoRootCandidates += $env:THEO_MEMORY_ROOT }
 $theoRootCandidates += (Join-Path $HOME "bhfirms\memory")
-if ($env:OneDriveCommercial) { $theoRootCandidates += (Join-Path $env:OneDriveCommercial "System\System\THEO") }
-$theoRootCandidates += (Join-Path $HOME "OneDrive - BHFIRMS\System\System\THEO")
 if ($env:THEO_FORCE_STANDALONE_BOOTSTRAP -ne '1') {
     foreach ($candRoot in $theoRootCandidates) {
         $odSetupPs1 = Join-Path $candRoot "Admin\Setup-THEO-PC.ps1"

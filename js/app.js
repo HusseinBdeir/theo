@@ -1129,7 +1129,7 @@
     const revMeta =
       claudeModeState.rev > 0
         ? `Store rev ${claudeModeState.rev}${claudeModeState.updatedAt ? ` · ${timeAgo(claudeModeState.updatedAt)}` : ''}`
-        : 'Synced via THEO Store + OneDrive';
+        : 'Synced via THEO Store (Cloudflare)';
     return `
       <div class="claude-mode-bar is-settings" role="group" aria-label="Fleet Claude permission mode">
         <div class="claude-mode-seg is-wide">${buttonsHtml}</div>
@@ -1213,7 +1213,7 @@
       let hostReached = false;
       let authoritativeDoc = null;
 
-      // 1. Authoritative Cloudflare THEO Store patch (reaches laptops even with OneDrive paused)
+      // 1. Authoritative Cloudflare THEO Store patch (reaches every PC, including ones offline right now)
       if (cloudCfg.url && cloudCfg.key) {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 12000);
@@ -5512,7 +5512,6 @@
       "$ErrorActionPreference='Stop'",
       'try {',
       "  $ps1=Join-Path $HOME 'bhfirms\\memory\\Admin\\Setup-THEO-PC.ps1'",
-      "  if(-not(Test-Path -LiteralPath $ps1)){$od=if($env:OneDriveCommercial){$env:OneDriveCommercial}else{Join-Path $HOME 'OneDrive - BHFIRMS'};$ps1=Join-Path $od 'System\\System\\THEO\\Admin\\Setup-THEO-PC.ps1'}",
       "  if(Test-Path -LiteralPath $ps1){& $ps1 -Gui}else{[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;$tmp=Join-Path $env:TEMP ('theo-install-'+$PID+'.ps1');Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/HusseinBdeir/theo/main/install.ps1' -OutFile $tmp -UseBasicParsing;try{& $tmp -Gui}finally{Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue}}",
       "} catch { try { Add-Type -AssemblyName System.Windows.Forms; [void][System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'THEO PC Setup', 'OK', 'Error') } catch {}; exit 1 }"
     ].join(';');
@@ -12528,7 +12527,7 @@
       pairingGrid.innerHTML = `
         <div class="pairing-card claude-fleet-mode-card" id="settings-claude-mode-card">
           <div class="eyebrow">FLEET CLAUDE PERMISSION MODE</div>
-          <p class="meta-timestamp" style="margin:6px 0">One tap switches Claude Code across every paired PC, phone CLI run, and open tab via THEO Store + OneDrive (even when OneDrive is paused on a laptop).</p>
+          <p class="meta-timestamp" style="margin:6px 0">One tap switches Claude Code across every paired PC, phone CLI run, and open tab through THEO Store on Cloudflare. A PC that is offline picks up the new mode as soon as it reconnects.</p>
           ${renderClaudeModeSelectorHtml('settings')}
         </div>
 
@@ -16935,7 +16934,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=68', { updateViaCache: 'none' })
+        .register('sw.js?v=69', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
