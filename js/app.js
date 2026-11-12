@@ -1506,9 +1506,10 @@
           if (!bar || typeof bar !== 'object') continue;
           const resetMs = Number(bar.reset || 0);
           const isExpired = Boolean(bar.expired || (resetMs > 0 && resetMs <= nowMs));
+          const rawPct = bar.pct !== undefined ? bar.pct : bar.usedPercent;
           const pct = isExpired
             ? 0
-            : Math.max(0, Math.min(100, Math.round(Number(bar.pct || 0))));
+            : Math.max(0, Math.min(100, Math.round(Number(rawPct || 0))));
           const barLabel = String(bar.label || 'Usage Quota').trim() || 'Usage Quota';
           const barSlug =
             barLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'quota';
@@ -6399,7 +6400,6 @@
             ];
           }
           const barsHtml = limits
-            .slice(0, 2)
             .map((l) => {
               const passed = Boolean(l.expired || (l.reset && l.reset <= nowMs));
               const rawPct = l.pct !== undefined ? l.pct : l.usedPercent;
@@ -8708,7 +8708,8 @@
       ? limits
           .map((l) => {
             const passed = Boolean(l.expired || (l.reset && l.reset <= nowMs));
-            const pct = passed ? 0 : Math.min(100, Math.max(0, Math.round(Number(l.pct || 0))));
+            const rawPct = l.pct !== undefined ? l.pct : l.usedPercent;
+            const pct = passed ? 0 : Math.min(100, Math.max(0, Math.round(Number(rawPct || 0))));
             const cls = pct >= 90 ? 'crit' : pct >= 78 ? 'warn' : key === 'claude' ? 'claude' : '';
             const resetTxt = passed
               ? 'Window idle'
@@ -16934,7 +16935,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=67', { updateViaCache: 'none' })
+        .register('sw.js?v=68', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

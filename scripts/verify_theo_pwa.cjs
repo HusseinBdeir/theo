@@ -277,7 +277,10 @@ function buildSeedCachePayload() {
               active: true,
               usage: {
                 limits: [
-                  { label: 'Gemini 4 Argon (High)', usedPercent: 34, reset: now + 3600000 }
+                  { label: 'Session (5hr)', pct: 2, usedPercent: 2, reset: now + 3600000 },
+                  { label: 'Weekly (7 day)', pct: 88, usedPercent: 88, reset: now + 129600000 },
+                  { label: 'Claude & GPT (5hr)', pct: 91, usedPercent: 91, reset: now + 18000000 },
+                  { label: 'Claude & GPT (7 day)', pct: 14, usedPercent: 14, expired: true, reset: 0, resetText: 'Window idle' }
                 ]
               }
             }
@@ -3352,6 +3355,55 @@ async function main() {
     assert.strictEqual(pcSetupVerify.titleCount, 0, 'Zero [title] attributes allowed after PC setup UI render');
     assert.strictEqual(pcSetupVerify.overflowX, 0, '0px horizontal overflow after PC setup UI render');
     console.log('[PASS] Adversarial #16: Zero-Terminal PC Setup Launcher (6-digit single-use code, zero permanent secret) & Fleet Readiness Pills verified');
+
+    // Adversarial #17: Full multi-pool quota bars (Gemini + Claude & GPT on Antigravity, plus usedPercent-only Fable on Claude) across Pulse and Desktop IDE Sidebar
+    const quotaPoolVerify = await evalJs(`(async () => {
+      document.querySelector('[data-tab="pulse"]')?.click();
+      await new Promise((r) => setTimeout(r, 30));
+      const pulseBars = Array.from(document.querySelectorAll('#view-pulse .quota-card .q-bar-row')).map((row) => ({
+        label: row.querySelector('.q-bar-labels > span:first-child')?.textContent?.trim() || '',
+        pct: row.querySelector('.q-pct')?.textContent?.trim() || '',
+        reset: row.querySelector('.q-reset')?.textContent?.trim() || '',
+        crit: Boolean(row.querySelector('.q-fill.crit'))
+      }));
+      document.querySelector('[data-tab="chat"]')?.click();
+      await new Promise((r) => setTimeout(r, 30));
+      const sidebarBars = Array.from(document.querySelectorAll('#ide-sidebar-accounts .ide-acct-card .ide-qrow')).map((row) => ({
+        label: row.querySelector('.ide-qlbl')?.textContent?.trim() || '',
+        pct: row.querySelector('.ide-qmeta strong')?.textContent?.trim() || '',
+        reset: row.querySelector('.ide-qrst')?.textContent?.trim() || '',
+        crit: Boolean(row.querySelector('.ide-qfill.crit'))
+      }));
+      return { pulseBars, sidebarBars };
+    })()`);
+    const expectedPairs = [
+      ['Session (5hr)', '2%'],
+      ['Weekly (7 day)', '88%'],
+      ['Claude & GPT (5hr)', '91%'],
+      ['Claude & GPT (7 day)', '0%'],
+      ['Fable limit', '18%']
+    ];
+    for (const [expLabel, expPct] of expectedPairs) {
+      const pMatch = quotaPoolVerify.pulseBars.find((b) => b.label === expLabel && b.pct === expPct);
+      assert.ok(
+        pMatch,
+        `Pulse quota cards must render (${expLabel}, ${expPct}), got ${JSON.stringify(quotaPoolVerify.pulseBars)}`
+      );
+      const sMatch = quotaPoolVerify.sidebarBars.find((b) => b.label === expLabel && b.pct === expPct);
+      assert.ok(
+        sMatch,
+        `Desktop IDE sidebar must render (${expLabel}, ${expPct}), got ${JSON.stringify(quotaPoolVerify.sidebarBars)}`
+      );
+    }
+    const pulse3p5h = quotaPoolVerify.pulseBars.find((b) => b.label === 'Claude & GPT (5hr)');
+    const side3p5h = quotaPoolVerify.sidebarBars.find((b) => b.label === 'Claude & GPT (5hr)');
+    const pulse3p7d = quotaPoolVerify.pulseBars.find((b) => b.label === 'Claude & GPT (7 day)');
+    const side3p7d = quotaPoolVerify.sidebarBars.find((b) => b.label === 'Claude & GPT (7 day)');
+    assert.strictEqual(pulse3p5h.crit, true, 'Claude & GPT (5hr) >= 90% must render .crit bar on Pulse');
+    assert.strictEqual(side3p5h.crit, true, 'Claude & GPT (5hr) >= 90% must render .crit bar on Desktop IDE sidebar');
+    assert.strictEqual(pulse3p7d.reset, 'Window idle', 'Expired Claude & GPT (7 day) must show Window idle on Pulse');
+    assert.strictEqual(side3p7d.reset, 'Idle', 'Expired Claude & GPT (7 day) must show compact Idle on Desktop IDE sidebar');
+    console.log('[PASS] Adversarial #17: Antigravity Claude & GPT (5hr + 7 day, critical + expired) and Claude Fable (usedPercent fallback) parity verified across Pulse and Desktop IDE Sidebar');
 
     // Final error & network quarantine assertions (#18)
     assert.strictEqual(pageExceptions.length, 0, `Uncaught page exceptions: ${JSON.stringify(pageExceptions)}`);
