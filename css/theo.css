@@ -2908,14 +2908,20 @@ html[data-theme="dark"] .composer-send-btn.is-ready {
 }
 
 .uw-repo {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 700;
   font-size: 13px;
   color: var(--text-primary);
 }
 
 .uw-branch {
-  flex: 1 1 auto;
+  /* Basis 0: the repo name keeps its width (up to 55%), the branch takes what is left. */
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

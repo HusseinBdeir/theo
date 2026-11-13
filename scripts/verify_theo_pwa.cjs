@@ -3522,7 +3522,7 @@ async function main() {
       const items = [];
       for (let i = 0; i < 50; i++) {
         items.push({
-          repo: i === 3 ? 'isabi-app' : 'repo' + i,
+          repo: i === 3 ? 'isabi-app' : i === 5 ? 'manufacturing-operations-long-repo-name1' : 'repo' + i,
           branch: i === 3 ? '<img src=x onerror="window.__uwXss=1">' : 'wt/very-long-branch-name-for-folder-number-' + i,
           where: i % 2 ? 'shared worktree' : 'Claude session 203ca257',
           why: (i + 1) + ' uncommitted file(s)',
@@ -3537,7 +3537,7 @@ async function main() {
           unsavedWork: withUw ? { checkedAt: now - 5 * 3600000, staleHours: 24, unsavedCount: 2, staleCount: 1, unchecked: 0,
             items: [
               { repo: 'pos', branch: 'wt/till', where: 'Antigravity session', why: '2 commit(s) not pushed to GitHub', path: '~\\\\bhfirms\\\\pos', idleHours: 30, stale: true },
-              { repo: 'fitness', branch: 'main', where: 'main checkout', why: '1 uncommitted file(s)', path: '~\\\\bhfirms\\\\fitness', idleHours: 2, stale: false }
+              { repo: 'fitness', branch: 'main', where: 'main checkout', why: '1 uncommitted file(s)', path: '~\\\\bhfirms\\\\fitness', idleHours: 20, stale: false }
             ] } : null },
         { id: 'host-beta', name: 'Beta', online: true, sessionCount: 1,
           unsavedWork: withUw ? { checkedAt: now - 3 * 3600000 - 60000, staleHours: 24, unsavedCount: 0, staleCount: 0, unchecked: 0, items: [] } : null },
@@ -3600,6 +3600,10 @@ async function main() {
         betaText: beta ? beta.textContent.replace(/\\s+/g, ' ').trim() : '',
         betaClean: Boolean(beta && beta.classList.contains('is-clean')),
         deltaChecked: delta?.querySelector('.uw-checked.is-old')?.textContent?.trim() || '',
+        deltaMeta: delta?.querySelector('.uw-pc-meta')?.textContent?.trim() || '',
+        deltaIdles: delta ? Array.from(delta.querySelectorAll('.uw-item .uw-idle')).map((el) => el.textContent.trim()) : [],
+        alphaClean: Boolean(alpha && alpha.classList.contains('is-clean')),
+        alphaRepos: alpha ? Array.from(alpha.querySelectorAll('.uw-item .uw-repo')).map((el) => el.textContent.trim()) : [],
         xssFired: Boolean(window.__uwXss),
         imgInPanel: document.querySelectorAll('#unsaved-work-panel img').length,
         escapedBranch: Array.from(document.querySelectorAll('#unsaved-work-panel .uw-branch')).some((el) => el.textContent.includes('<img')),
@@ -3636,7 +3640,9 @@ async function main() {
     assert.strictEqual(uwTap.hidden, false, '#unsaved-work-panel must be shown when a PC reports unsaved work');
     assert.strictEqual(uwTap.panelVisible, true, `#unsaved-work-panel must be on screen after the tap (top ${uwTap.panelTop})`);
     assert.deepStrictEqual(uwTap.pcIds, ['host-alpha', 'host-delta', 'host-beta'], 'PCs with idle 24 h+ folders first; a PC with no report (Gamma) is not listed');
-    assert.strictEqual(uwTap.headText, '57 folders on 2 PCs · 43 idle 24 h+', 'Panel head totals folders and 24 h+ folders across PCs');
+    assert.strictEqual(uwTap.headText, '57 folders on 2 PCs · 44 idle 24 h+', 'Panel head totals folders and 24 h+ folders across PCs');
+    assert.deepStrictEqual(uwTap.deltaIdles, ['idle 35 h', 'idle 25 h'], 'Idle times age from the last check (Delta checked 5 h ago)');
+    assert.strictEqual(uwTap.deltaMeta, '2 unsaved · 2 idle 24 h+', 'A folder that crossed 24 h since the last check is marked');
     assert.strictEqual(uwTap.alphaItems, 50, 'All 50 sent folders of a PC are listed');
     assert.strictEqual(uwTap.alphaVisibleItems, 8, 'Only the first 8 show before "Show N more"');
     assert.strictEqual(uwTap.alphaMoreSum, 'Show 42 more');
@@ -3677,6 +3683,62 @@ async function main() {
     assert.strictEqual(uwCold.activeTab, 'workspaces', 'Cold ?tab=workspaces opens the Workspaces tab');
     assert.strictEqual(uwCold.panelVisible, true, `Cold start shows #unsaved-work-panel on screen (top ${uwCold.panelTop})`);
     assert.strictEqual(uwCold.alphaItems, 50);
+
+    // (e) The app stays open while reports change: the newest report wins, an older copy of the list carried in
+    // another host's device list never re-applies, and only the PC's own entry may clear its list.
+    const uwFeed = (state) => `(async () => {
+      window.__THEO_ALLOW_PROBE_MOCK_FETCH = true;
+      const origFetch = window.fetch;
+      const body = JSON.stringify({ ok: true, state: ${state} });
+      window.fetch = async (url, init) => {
+        const u = String(url || '');
+        if (u.includes('/api/state') || u.includes('/store')) {
+          return new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        return origFetch(url, init);
+      };
+      try {
+        document.getElementById('rail-conn-btn')?.click();
+        await new Promise((r) => setTimeout(r, 15));
+        document.getElementById('conn-modal-sync-btn')?.click();
+        await new Promise((r) => setTimeout(r, 120));
+        document.getElementById('conn-modal-close')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+      } finally {
+        window.fetch = origFetch;
+        window.__THEO_ALLOW_PROBE_MOCK_FETCH = false;
+      }
+      return true;
+    })()`;
+    const oldAlphaCopy = `{ checkedAt: Date.now() - 5 * 60000, staleHours: 24, unsavedCount: 55, staleCount: 42, unchecked: 0,
+      items: [{ repo: 'stale-copy', branch: 'wt/old', where: 'shared worktree', why: '1 uncommitted file(s)', path: '~\\\\old', idleHours: 30, stale: true }] }`;
+    const fromAlpha = (uw) => `{ generatedAt: Date.now(), rows: [], device: { id: 'host-alpha', name: 'Alpha', role: 'host', unsavedWork: ${uw} } }`;
+    const fromBetaWithOldAlpha = `{ generatedAt: Date.now(), rows: [],
+      device: { id: 'host-beta', name: 'Beta', role: 'host', unsavedWork: { checkedAt: Date.now(), staleHours: 24, unsavedCount: 0, staleCount: 0, unchecked: 0, items: [] } },
+      devices: [{ id: 'host-alpha', name: 'Alpha', online: true, unsavedWork: ${oldAlphaCopy} }] }`;
+    // A: Alpha itself reports all saved (newer than the cached 55-folder list).
+    await evalJs(uwFeed(fromAlpha(`{ checkedAt: Date.now(), staleHours: 24, unsavedCount: 0, staleCount: 0, unchecked: 0, items: [] }`)));
+    const uwA = await evalJs(uwProbe('A'));
+    // B: Beta's state arrives carrying an older copy of Alpha's list.
+    await evalJs(uwFeed(fromBetaWithOldAlpha));
+    const uwB = await evalJs(uwProbe('B'));
+    // C: Alpha reports one new unsaved folder.
+    await evalJs(uwFeed(fromAlpha(`{ checkedAt: Date.now(), staleHours: 24, unsavedCount: 1, staleCount: 0, unchecked: 0,
+      items: [{ repo: 'theo', branch: 'wt/new', where: 'Claude session 11111111', why: '1 uncommitted file(s)', path: '~\\\\bhfirms\\\\theo', idleHours: 0.2, stale: false }] }`)));
+    const uwC = await evalJs(uwProbe('C'));
+    // D: Alpha's own entry clears its report; then Beta's old copy arrives again.
+    await evalJs(uwFeed(fromAlpha('null')));
+    await evalJs(uwFeed(fromBetaWithOldAlpha));
+    const uwD = await evalJs(uwProbe('D'));
+    // E: a report stamped two days in the future is not a report.
+    await evalJs(uwFeed(fromAlpha(`{ checkedAt: Date.now() + 2 * 86400000, staleHours: 24, unsavedCount: 3, staleCount: 3, unchecked: 0, items: [] }`)));
+    const uwE = await evalJs(uwProbe('E'));
+    assert.strictEqual(uwA.alphaClean, true, `(e-A) Alpha's own newer all-saved report replaces the cached list (${JSON.stringify(uwA.pcIds)})`);
+    assert.strictEqual(uwB.alphaClean, true, '(e-B) An older copy of Alpha\'s list from Beta\'s device list never re-applies');
+    assert.deepStrictEqual(uwC.alphaRepos, ['theo'], '(e-C) Alpha\'s newer report with one folder shows that folder');
+    assert.strictEqual(uwD.pcIds.includes('host-alpha'), false, '(e-D) Alpha\'s own entry clearing its report removes it, and an older copy cannot refill it');
+    assert.strictEqual(uwE.pcIds.includes('host-alpha'), false, '(e-E) A future-dated report is ignored');
+    assert.strictEqual(uwE.overflowX, 0);
 
     // (d) No PC has a report (older builds, or none yet): the panel stays hidden.
     await evalJs(seedUnsaved(false));

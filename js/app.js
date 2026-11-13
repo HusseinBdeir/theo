@@ -3488,10 +3488,16 @@
   const UNSAVED_WORK_MAX_ITEMS = 50;
   const UNSAVED_WORK_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
   const UNSAVED_WORK_OLD_AFTER_MS = 2 * 3600 * 1000;
-  function sanitizeFleetUnsavedWork(raw, now = Date.now()) {
+  // opts.age (render time only): add the time since the check to each folder's idle hours and re-mark 24 h+, so a
+  // report from a PC that has been off for days still shows true idle times. Stored copies keep the PC's values.
+  function sanitizeFleetUnsavedWork(raw, now = Date.now(), opts = {}) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
     const checkedAt = Math.max(0, Math.trunc(Number(raw.checkedAt) || 0));
     if (!checkedAt || now - checkedAt > UNSAVED_WORK_MAX_AGE_MS) return null;
+    if (checkedAt - now > 10 * 60 * 1000) return null; // stamped in the future: would never age out
+    const ageH = opts.age ? Math.max(0, now - checkedAt) / 3600000 : 0;
+    const staleHoursRaw = Number(raw.staleHours);
+    const staleHours = Number.isFinite(staleHoursRaw) && staleHoursRaw > 0 ? staleHoursRaw : 24;
     const clip = (v, max) =>
       String(v == null ? '' : v)
         .replace(/[\u0000-\u001f\u007f]+/g, ' ')
@@ -3501,28 +3507,52 @@
     for (const it of Array.isArray(raw.items) ? raw.items : []) {
       if (!it || typeof it !== 'object') continue;
       const idle = it.idleHours == null ? NaN : Number(it.idleHours);
+      const idleHours = Number.isFinite(idle) ? Math.max(0, idle) + ageH : null;
       items.push({
         repo: clip(it.repo, 40) || '?',
         branch: clip(it.branch, 60) || '-',
         where: clip(it.where, 40),
         why: clip(it.why, 60),
         path: clip(it.path, 180),
-        idleHours: Number.isFinite(idle) ? Math.max(0, idle) : null,
-        stale: Boolean(it.stale)
+        idleHours,
+        stale: Boolean(it.stale) || (idleHours != null && idleHours >= staleHours)
       });
       if (items.length >= UNSAVED_WORK_MAX_ITEMS) break;
     }
     const count = (v, fallback) => Math.max(0, Math.min(999, Math.trunc(Number(v ?? fallback) || 0)));
     const unsavedCount = Math.max(items.length, count(raw.unsavedCount, items.length));
-    const staleHours = Number(raw.staleHours);
+    const listedStale = items.filter((i) => i.stale).length;
     return {
       checkedAt,
-      staleHours: Number.isFinite(staleHours) && staleHours > 0 ? staleHours : 24,
+      staleHours,
       unsavedCount,
-      staleCount: count(raw.staleCount, items.filter((i) => i.stale).length),
+      // The PC's own count also covers folders past the 50 sent; aging can only add to it.
+      staleCount: Math.min(unsavedCount, Math.max(listedStale, count(raw.staleCount, listedStale))),
       unchecked: count(raw.unchecked, 0),
       items
     };
+  }
+
+  // Several copies of a PC's list reach the phone (its own fleet entry, host snapshots, other hosts' device lists).
+  // The newest report wins; only the PC's own entry (authoritative) may clear it, and an older copy can never refill
+  // a list the PC itself cleared.
+  const uwAuthClearedAt = new Map();
+  function mergeFleetUnsavedWork(devId, prev, incomingRaw, authoritative) {
+    if (incomingRaw === undefined) return prev || null;
+    const inc = sanitizeFleetUnsavedWork(incomingRaw);
+    if (!inc) {
+      if (authoritative) {
+        uwAuthClearedAt.set(devId, Date.now());
+        return null;
+      }
+      return prev || null;
+    }
+    if (authoritative) uwAuthClearedAt.delete(devId);
+    if (!prev) {
+      const clearedAt = uwAuthClearedAt.get(devId) || 0;
+      return !authoritative && clearedAt && inc.checkedAt <= clearedAt ? null : inc;
+    }
+    return inc.checkedAt >= Number(prev.checkedAt || 0) ? inc : prev;
   }
 
   function renderFleetPcSetupPillHtml(d) {
@@ -3535,7 +3565,9 @@
     return ` <span class="fleet-setup-pill is-pending tabular" aria-label="${esc(hostLbl)}: ${ps.pendingCount} PC setup update(s) pending (${ps.okCount}/${ps.totalCount})">! ${ps.okCount}/${ps.totalCount}</span>`;
   }
 
-  function updateFleetDevices(list) {
+  // opts.authoritative: the list holds each PC's own entry (store device_states, or a host's own device), so a
+  // null unsaved-work list there means "no report" rather than "not mentioned".
+  function updateFleetDevices(list, opts = {}) {
     if (!Array.isArray(list)) return;
     for (const d of list) {
       if (!d || !d.id) continue;
@@ -3545,10 +3577,12 @@
           ? sanitizeFleetPcSetup(d.pcSetup)
           : prev.pcSetup || null;
       // Like pcSetup: a list that does not mention it (edge presence frames) keeps the last copy.
-      const nextUnsavedWork =
-        d.unsavedWork !== undefined
-          ? sanitizeFleetUnsavedWork(d.unsavedWork)
-          : prev.unsavedWork || null;
+      const nextUnsavedWork = mergeFleetUnsavedWork(
+        d.id,
+        prev.unsavedWork || null,
+        d.unsavedWork,
+        Boolean(opts.authoritative)
+      );
       fleetDevicesMap.set(d.id, {
         ...prev,
         ...d,
@@ -3624,7 +3658,7 @@
           lastSeen: Number(snap.generatedAt || Date.now()),
           ...(devObj.pcSetup || snap.pcSetup ? { pcSetup: devObj.pcSetup || snap.pcSetup } : {})
         }
-      ]);
+      ], { authoritative: true });
     }
 
     const prevSnap = hostSnapshotsByDevice.get(devId) || {};
@@ -4783,7 +4817,7 @@
                       ? snap.rows.filter((r) => r && !r.archived).length
                       : 0
                   }
-                ]);
+                ], { authoritative: true });
                 if (entry.threads && typeof entry.threads === 'object') {
                   mergeRemoteThreads(entry.threads);
                 }
@@ -12548,7 +12582,7 @@
   }
   function buildUnsavedWorkPanelHtml(now = Date.now()) {
     const pcs = getUnifiedFleetDevices()
-      .map((d) => ({ d, uw: d && d.unsavedWork ? sanitizeFleetUnsavedWork(d.unsavedWork, now) : null }))
+      .map((d) => ({ d, uw: d && d.unsavedWork ? sanitizeFleetUnsavedWork(d.unsavedWork, now, { age: true }) : null }))
       .filter((x) => x.uw);
     if (!pcs.length) return '';
     pcs.sort(
