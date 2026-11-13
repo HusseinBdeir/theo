@@ -3403,7 +3403,109 @@ async function main() {
     assert.strictEqual(side3p5h.crit, true, 'Claude & GPT (5hr) >= 90% must render .crit bar on Desktop IDE sidebar');
     assert.strictEqual(pulse3p7d.reset, 'Window idle', 'Expired Claude & GPT (7 day) must show Window idle on Pulse');
     assert.strictEqual(side3p7d.reset, 'Idle', 'Expired Claude & GPT (7 day) must show compact Idle on Desktop IDE sidebar');
-    console.log('[PASS] Adversarial #17: Antigravity Claude & GPT (5hr + 7 day, critical + expired) and Claude Fable (usedPercent fallback) parity verified across Pulse and Desktop IDE Sidebar');
+
+    // Pool distinction + hide/show toggle parity + stale-snapshot resistance + 90% alert muting across Pulse and Desktop IDE Sidebar
+    const togglePoolVerify = await evalJs(`(async () => {
+      document.querySelector('[data-tab="pulse"]')?.click();
+      await new Promise((r) => setTimeout(r, 30));
+      const badgeBeforeHide = document.getElementById('mobile-push-badge')?.textContent?.trim() || '';
+      const pulsePoolCardCount = document.querySelectorAll('#view-pulse .q-pool-3p').length;
+      const pulse3pFillCount = document.querySelectorAll('#view-pulse .q-pool-3p .q-fill.third-party').length;
+      const pulseHideBtn = document.querySelector('#view-pulse .q-pool-3p [data-toggle-3p-quota="hide"]');
+      pulseHideBtn?.click();
+      await new Promise((r) => setTimeout(r, 40));
+      const badgeWhileHidden = document.getElementById('mobile-push-badge')?.textContent?.trim() || '';
+      const hiddenPulseLabels = Array.from(document.querySelectorAll('#view-pulse .quota-card .q-bar-labels > span:first-child')).map((el) => el.textContent?.trim() || '');
+      const showBtnText = document.getElementById('btn-toggle-3p-quota')?.textContent?.trim() || '';
+
+      // Inject a stale host /api/state snapshot with hideThirdPartyQuota=false while pending optimistic guard is active
+      window.__THEO_ALLOW_PROBE_MOCK_FETCH = true;
+      const origFetch = window.fetch;
+      const rawCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+      const cachedSnap = rawCache.state || rawCache.snapshot || {};
+      window.fetch = async (url, init) => {
+        const u = String(url || '');
+        if (u.includes('/api/state') || u.includes('/store')) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              state: {
+                ...cachedSnap,
+                generatedAt: Date.now(),
+                device: { id: 'host-stale', name: 'StalePeer', role: 'host' },
+                hideThirdPartyQuota: false,
+                hideThirdPartyQuotaUpdatedAt: Date.now() - 5000
+              }
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return origFetch(url, init);
+      };
+      try {
+        document.getElementById('rail-conn-btn')?.click();
+        await new Promise((r) => setTimeout(r, 15));
+        document.getElementById('conn-modal-sync-btn')?.click();
+        await new Promise((r) => setTimeout(r, 85));
+        document.getElementById('conn-modal-close')?.click();
+      } finally {
+        window.fetch = origFetch;
+        window.__THEO_ALLOW_PROBE_MOCK_FETCH = false;
+      }
+
+      const stalePulseLabels = Array.from(document.querySelectorAll('#view-pulse .quota-card .q-bar-labels > span:first-child')).map((el) => el.textContent?.trim() || '');
+      const prefsWhileHidden = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+
+      document.querySelector('[data-tab="chat"]')?.click();
+      await new Promise((r) => setTimeout(r, 30));
+      const hiddenSideLabels = Array.from(document.querySelectorAll('#ide-sidebar-accounts .ide-qlbl')).map((el) => el.textContent?.trim() || '');
+      const sideShowPillText = document.getElementById('ide-toggle-3p-pill')?.textContent?.trim() || '';
+      const sidePoolBeforeRestore = document.querySelectorAll('#ide-sidebar-accounts .ide-qpool-3p').length;
+      const badgeBeforeSideRestore = document.getElementById('mobile-push-badge')?.textContent?.trim() || '';
+      document.getElementById('ide-toggle-3p-pill')?.click();
+      await new Promise((r) => setTimeout(r, 40));
+      const restoredSideLabels = Array.from(document.querySelectorAll('#ide-sidebar-accounts .ide-qlbl')).map((el) => el.textContent?.trim() || '');
+      const restoredSidePoolCount = document.querySelectorAll('#ide-sidebar-accounts .ide-qpool-3p').length;
+      const badgeAfterRestore = document.getElementById('mobile-push-badge')?.textContent?.trim() || '';
+      const titleCount = document.querySelectorAll('[title]').length;
+      const overflowX = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+      return {
+        badgeBeforeHide,
+        pulsePoolCardCount,
+        pulse3pFillCount,
+        badgeWhileHidden,
+        hiddenPulseLabels,
+        stalePulseLabels,
+        prefsHideThirdPartyQuota: Boolean(prefsWhileHidden.hideThirdPartyQuota),
+        showBtnText,
+        hiddenSideLabels,
+        sideShowPillText,
+        sidePoolBeforeRestore,
+        badgeBeforeSideRestore,
+        restoredSideLabels,
+        restoredSidePoolCount,
+        badgeAfterRestore,
+        titleCount,
+        overflowX
+      };
+    })()`);
+    assert.ok(togglePoolVerify.pulsePoolCardCount >= 1, 'Pulse must isolate Claude & GPT inside .q-pool-3p');
+    assert.ok(togglePoolVerify.pulse3pFillCount >= 1, 'Non-critical Claude & GPT bar must use .third-party fill class');
+    assert.ok(togglePoolVerify.hiddenPulseLabels.includes('Session (5hr)') && togglePoolVerify.hiddenPulseLabels.includes('Weekly (7 day)'), 'Hiding 3P must keep Gemini quota bars on Pulse');
+    assert.strictEqual(togglePoolVerify.hiddenPulseLabels.some((l) => /Claude\s*&\s*GPT/i.test(l)), false, 'Hiding 3P must remove Claude & GPT bars from Pulse');
+    assert.strictEqual(togglePoolVerify.stalePulseLabels.some((l) => /Claude\s*&\s*GPT/i.test(l)), false, 'Stale incoming /api/state snapshot with hideThirdPartyQuota=false must NOT revert optimistic hide toggle');
+    assert.strictEqual(togglePoolVerify.prefsHideThirdPartyQuota, true, 'Persisted prefs.hideThirdPartyQuota must stay true despite stale host snapshot');
+    assert.strictEqual(Number(togglePoolVerify.badgeBeforeHide || 0), Number(togglePoolVerify.badgeWhileHidden || 0) + 1, 'Hiding 3P >= 90% bar must decrement the quota alert badge count by 1');
+    assert.strictEqual(togglePoolVerify.showBtnText, 'Show Claude & GPT', 'Pulse header button must switch to Show Claude & GPT when hidden');
+    assert.strictEqual(togglePoolVerify.hiddenSideLabels.some((l) => /Claude\s*&\s*GPT/i.test(l)), false, 'Hiding 3P must remove Claude & GPT bars from Desktop IDE sidebar');
+    assert.strictEqual(togglePoolVerify.sidePoolBeforeRestore, 0, 'Desktop IDE sidebar must not render .ide-qpool-3p while hidden');
+    assert.strictEqual(togglePoolVerify.sideShowPillText, '+ 3P', 'Desktop IDE sidebar header must show + 3P pill when hidden');
+    assert.ok(togglePoolVerify.restoredSideLabels.includes('Claude & GPT (5hr)') && togglePoolVerify.restoredSideLabels.includes('Claude & GPT (7 day)'), 'Clicking + 3P must restore Claude & GPT bars');
+    assert.ok(togglePoolVerify.restoredSidePoolCount >= 1, 'Restoring 3P must re-render .ide-qpool-3p in Desktop IDE sidebar');
+    assert.strictEqual(Number(togglePoolVerify.badgeAfterRestore || 0), Number(togglePoolVerify.badgeBeforeSideRestore || 0) + 1, 'Restoring 3P >= 90% bar must increment the quota alert badge count by 1');
+    assert.strictEqual(togglePoolVerify.titleCount, 0, 'Zero [title] attributes allowed after pool toggle');
+    assert.strictEqual(togglePoolVerify.overflowX, 0, '0px horizontal overflow after pool toggle');
+    console.log('[PASS] Adversarial #17: Antigravity Gemini vs Claude & GPT pool distinction, hide/show toggle, and Claude Fable (usedPercent fallback) parity verified across Pulse and Desktop IDE Sidebar');
 
     // Final error & network quarantine assertions (#18)
     assert.strictEqual(pageExceptions.length, 0, `Uncaught page exceptions: ${JSON.stringify(pageExceptions)}`);

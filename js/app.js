@@ -353,6 +353,7 @@
     selectedThinkingEffort: { antigravity: 'high', claude: 'high' },
     threadModelConfig: {},
     claudePermissionMode: null,
+    hideThirdPartyQuota: false,
     notif: { ...DEFAULT_NOTIF }
   };
   const rawStoredPrefs = loadJson(STORAGE_KEYS.PREFS, null);
@@ -1408,12 +1409,82 @@
     saveJson(STORAGE_KEYS.SEEN_QUOTA_ALERTS, keep.slice(-120));
   }
 
+  let pendingHideThirdPartyQuota = null;
+
+  function isThirdPartyQuotaBar(bar) {
+    if (!bar || typeof bar !== 'object') return false;
+    if (bar.pool === '3p') return true;
+    if (/^3p-/i.test(String(bar.key || bar.bucketId || ''))) return true;
+    return /claude\s*(?:&|and)\s*gpt/i.test(String(bar.label || ''));
+  }
+
+  function hasAnyAntigravityThirdPartyBars() {
+    const prov = appState?.providers?.antigravity;
+    const accts = Array.isArray(prov?.accounts) && prov.accounts.length ? prov.accounts : [];
+    for (const a of accts) {
+      const lims = Array.isArray(a?.usage?.limits) ? a.usage.limits : Array.isArray(a?.usage?.allLimits) ? a.usage.allLimits : [];
+      if (lims.some(isThirdPartyQuotaBar)) return true;
+    }
+    const fallbackLims = Array.isArray(prov?.usage?.limits)
+      ? prov.usage.limits
+      : Array.isArray(appState?.usage?.limits)
+        ? appState.usage.limits
+        : [];
+    return fallbackLims.some(isThirdPartyQuotaBar);
+  }
+
+  function isThirdPartyQuotaHidden() {
+    if (pendingHideThirdPartyQuota) {
+      if (Date.now() < pendingHideThirdPartyQuota.expiresAt) {
+        return pendingHideThirdPartyQuota.value;
+      }
+      pendingHideThirdPartyQuota = null;
+    }
+    if (typeof prefs.hideThirdPartyQuota === 'boolean') {
+      return prefs.hideThirdPartyQuota;
+    }
+    if (typeof appState?.hideThirdPartyQuota === 'boolean') {
+      return appState.hideThirdPartyQuota;
+    }
+    return false;
+  }
+
+  async function setHideThirdPartyQuota(hide) {
+    const next = Boolean(hide);
+    const nowMs = Date.now();
+    prefs.hideThirdPartyQuota = next;
+    prefs.hideThirdPartyQuotaUpdatedAt = nowMs;
+    saveJson(STORAGE_KEYS.PREFS, prefs);
+    pendingHideThirdPartyQuota = { value: next, startedAt: nowMs, expiresAt: nowMs + 10000 };
+    if (appState && typeof appState === 'object') {
+      appState.hideThirdPartyQuota = next;
+      appState.hideThirdPartyQuotaUpdatedAt = nowMs;
+      persistCache();
+    }
+    renderPulseView();
+    renderIdeSidebar();
+    updateAppBadgeCount(false);
+    if (prefs.activeTab === 'analytics') renderAnalyticsView();
+    showToast(next ? 'Claude & GPT quota bars hidden' : 'Claude & GPT quota bars shown');
+    dispatchRemoteCommand({
+      type: 'sessionAction',
+      action: 'setHideThirdPartyQuota',
+      subAction: 'setHideThirdPartyQuota',
+      hide: next,
+      value: next
+    }).catch(() => {});
+  }
+
   function collectHighUsageQuotaAlerts(stateObj, nowMs = Date.now()) {
     const highAlerts = [];
     const allActiveBuckets = [];
     if (!stateObj || typeof stateObj !== 'object') {
       return { highAlerts, allActiveBuckets };
     }
+    const hide3p =
+      typeof stateObj.hideThirdPartyQuota === 'boolean'
+        ? stateObj.hideThirdPartyQuota
+        : isThirdPartyQuotaHidden();
 
     for (const provKey of ['antigravity', 'claude']) {
       const provLabel = provKey === 'claude' ? 'Claude Code' : 'Antigravity';
@@ -1504,6 +1575,7 @@
 
         for (const bar of rawLimits) {
           if (!bar || typeof bar !== 'object') continue;
+          if (provKey === 'antigravity' && hide3p && isThirdPartyQuotaBar(bar)) continue;
           const resetMs = Number(bar.reset || 0);
           const isExpired = Boolean(bar.expired || (resetMs > 0 && resetMs <= nowMs));
           const rawPct = bar.pct !== undefined ? bar.pct : bar.usedPercent;
@@ -1901,9 +1973,17 @@
     } catch {}
   }
 
+  function isHiddenThirdPartyNotifItem(x) {
+    if (!isThirdPartyQuotaHidden() || !x) return false;
+    return (
+      /^theo-quota-antigravity-.*claude-.*gpt/i.test(String(x?.tag || '')) ||
+      /^quota90:antigravity:.*claude-.*gpt/i.test(String(x?.id || ''))
+    );
+  }
+
   function computeTheoUnreadBadgeCount(items = null) {
     const list = Array.isArray(items) ? items : loadNotifLog();
-    const uncheckedNotifs = list.filter((x) => x && !x.checked);
+    const uncheckedNotifs = list.filter((x) => x && !x.checked && !isHiddenThirdPartyNotifItem(x));
     const seenSessionIds = new Set(
       uncheckedNotifs.map((x) => x.threadId).filter(Boolean)
     );
@@ -2183,7 +2263,8 @@
             it &&
             !it.checked &&
             String(it.tag || '').startsWith('theo-quota-') &&
-            !activeQuotaTags.has(it.tag)
+            !activeQuotaTags.has(it.tag) &&
+            !isHiddenThirdPartyNotifItem(it)
           ) {
             it.checked = true;
             it.checkedAt = Date.now();
@@ -3560,9 +3641,22 @@
     let bestClaudeMode = extractClaudeModeFields(
       primarySnap?.claudePermissionMode || primarySnap?.connection?.claudePermissionMode
     );
+    let bestHide3p =
+      typeof primarySnap?.hideThirdPartyQuota === 'boolean'
+        ? {
+            value: primarySnap.hideThirdPartyQuota,
+            updatedAt: Number(primarySnap.hideThirdPartyQuotaUpdatedAt || 0)
+          }
+        : null;
 
     for (const [devId, snap] of entries) {
       maxGeneratedAt = Math.max(maxGeneratedAt, Number(snap?.generatedAt || 0));
+      if (typeof snap?.hideThirdPartyQuota === 'boolean') {
+        const candAt = Number(snap.hideThirdPartyQuotaUpdatedAt || 0);
+        if (!bestHide3p || candAt > bestHide3p.updatedAt) {
+          bestHide3p = { value: snap.hideThirdPartyQuota, updatedAt: candAt };
+        }
+      }
       const candMode = extractClaudeModeFields(
         snap?.claudePermissionMode || snap?.connection?.claudePermissionMode
       );
@@ -3644,7 +3738,13 @@
       summary: chosenSummary || appState?.summary || null,
       summaryByProvider: chosenSummaryByProv || appState?.summaryByProvider || null,
       topSessions: chosenTopSessions.length ? chosenTopSessions : appState?.topSessions || [],
-      claudePermissionMode: { ...claudeModeState }
+      claudePermissionMode: { ...claudeModeState },
+      ...(bestHide3p
+        ? {
+            hideThirdPartyQuota: bestHide3p.value,
+            hideThirdPartyQuotaUpdatedAt: bestHide3p.updatedAt
+          }
+        : {})
     };
   }
 
@@ -3657,6 +3757,44 @@
     const devId = storeHostSnapshotEntry(st, sourceDeviceId);
     const nextState = rebuildUnifiedAppState(devId) || st;
     nextState.claudePermissionMode = { ...claudeModeState };
+
+    const nowMs = Date.now();
+    if (pendingHideThirdPartyQuota) {
+      if (nowMs >= pendingHideThirdPartyQuota.expiresAt) {
+        pendingHideThirdPartyQuota = null;
+      } else if (
+        typeof st.hideThirdPartyQuota === 'boolean' &&
+        st.hideThirdPartyQuota === pendingHideThirdPartyQuota.value &&
+        Number(st.hideThirdPartyQuotaUpdatedAt || 0) >= pendingHideThirdPartyQuota.startedAt
+      ) {
+        pendingHideThirdPartyQuota = null;
+      } else {
+        nextState.hideThirdPartyQuota = pendingHideThirdPartyQuota.value;
+        nextState.hideThirdPartyQuotaUpdatedAt = pendingHideThirdPartyQuota.startedAt;
+      }
+    }
+    if (!pendingHideThirdPartyQuota) {
+      const snapUpdatedAt = Number(nextState.hideThirdPartyQuotaUpdatedAt || 0);
+      const localUpdatedAt = Number(prefs.hideThirdPartyQuotaUpdatedAt || 0);
+      if (
+        typeof nextState.hideThirdPartyQuota === 'boolean' &&
+        (typeof prefs.hideThirdPartyQuota !== 'boolean' ||
+          snapUpdatedAt > localUpdatedAt ||
+          (localUpdatedAt === 0 && typeof st.hideThirdPartyQuota === 'boolean'))
+      ) {
+        if (
+          prefs.hideThirdPartyQuota !== nextState.hideThirdPartyQuota ||
+          (snapUpdatedAt > 0 && localUpdatedAt !== snapUpdatedAt)
+        ) {
+          prefs.hideThirdPartyQuota = nextState.hideThirdPartyQuota;
+          if (snapUpdatedAt > 0) prefs.hideThirdPartyQuotaUpdatedAt = snapUpdatedAt;
+          saveJson(STORAGE_KEYS.PREFS, prefs);
+        }
+      } else if (typeof prefs.hideThirdPartyQuota === 'boolean') {
+        nextState.hideThirdPartyQuota = prefs.hideThirdPartyQuota;
+        nextState.hideThirdPartyQuotaUpdatedAt = localUpdatedAt;
+      }
+    }
 
     for (const [tid, live] of liveStreamsByThreadId.entries()) {
       if (live && live.status === 'working' && Date.now() - Number(live.receivedAt || 0) < 45000) {
@@ -6355,6 +6493,15 @@
     if (!treeEl) return;
 
     // 1. Account & Usage compact VS Code Hub cards
+    const hide3pSide = isThirdPartyQuotaHidden();
+    const has3pSide = hasAnyAntigravityThirdPartyBars();
+    const side3pPill = $('ide-toggle-3p-pill');
+    if (side3pPill) {
+      side3pPill.hidden = !(has3pSide || hide3pSide);
+      side3pPill.setAttribute('data-toggle-3p-quota', hide3pSide ? 'show' : 'hide');
+      side3pPill.textContent = hide3pSide ? '+ 3P' : 'Hide 3P';
+      side3pPill.setAttribute('aria-pressed', hide3pSide ? 'true' : 'false');
+    }
     if (accountsEl) {
       const { ordered, sameProvCounts } = getOrderedPulseQuotaCards();
       const nowMs = Date.now();
@@ -6398,26 +6545,46 @@
               { label: 'Weekly (7 day)', pct: Math.min(95, Math.max(8, Math.round((tok7d / 1800000000) * 100))), resetText: `${fmtCompact(tok7d)}` }
             ];
           }
-          const barsHtml = limits
-            .map((l) => {
-              const passed = Boolean(l.expired || (l.reset && l.reset <= nowMs));
-              const rawPct = l.pct !== undefined ? l.pct : l.usedPercent;
-              const pct = passed ? 0 : Math.min(100, Math.max(0, Math.round(Number(rawPct || 0))));
-              const barCls = pct >= 90 ? 'crit' : pct >= 78 ? 'warn' : provKey === 'claude' ? 'claude' : '';
-              const rst = passed
-                ? 'Idle'
-                : String(l.resetText || (l.reset ? `Resets ${timeUntil(l.reset)}` : '')).slice(0, 26);
-              return `
-                <div class="ide-qrow tabular">
-                  <div class="ide-qlabels">
-                    <span class="ide-qlbl">${esc(String(l.label || '').replace(/\s*Ledger$/i, ''))}</span>
-                    <span class="ide-qmeta">${rst ? `<span class="ide-qrst">${esc(rst)}</span>` : ''}<strong>${pct}%</strong></span>
-                  </div>
-                  <div class="ide-qtrack"><div class="ide-qfill ${barCls}" style="width:${pct}%"></div></div>
+          const renderSideRow = (l, isThirdParty) => {
+            const passed = Boolean(l.expired || (l.reset && l.reset <= nowMs));
+            const rawPct = l.pct !== undefined ? l.pct : l.usedPercent;
+            const pct = passed ? 0 : Math.min(100, Math.max(0, Math.round(Number(rawPct || 0))));
+            const barCls = pct >= 90 ? 'crit' : pct >= 78 ? 'warn' : isThirdParty ? 'third-party' : provKey === 'claude' ? 'claude' : 'agy';
+            const rst = passed
+              ? 'Idle'
+              : String(l.resetText || (l.reset ? `Resets ${timeUntil(l.reset)}` : '')).slice(0, 26);
+            return `
+              <div class="ide-qrow tabular">
+                <div class="ide-qlabels">
+                  <span class="ide-qlbl">${esc(String(l.label || '').replace(/\s*Ledger$/i, ''))}</span>
+                  <span class="ide-qmeta">${rst ? `<span class="ide-qrst">${esc(rst)}</span>` : ''}<strong>${pct}%</strong></span>
                 </div>
-              `;
-            })
-            .join('');
+                <div class="ide-qtrack"><div class="ide-qfill ${barCls}" style="width:${pct}%"></div></div>
+              </div>
+            `;
+          };
+          let barsHtml = '';
+          if (provKey === 'antigravity') {
+            const gemBars = limits.filter((l) => !isThirdPartyQuotaBar(l));
+            const tpBars = limits.filter((l) => isThirdPartyQuotaBar(l));
+            if (hide3pSide) {
+              barsHtml = gemBars.length
+                ? gemBars.map((l) => renderSideRow(l, false)).join('')
+                : tpBars.length
+                  ? `<div class="q-pool-hidden-note"><span>Claude &amp; GPT hidden</span><button type="button" class="q-pool-toggle-btn" data-toggle-3p-quota="show" aria-label="Show Claude and GPT quota bars">Show</button></div>`
+                  : '';
+            } else if (tpBars.length) {
+              const gemHtml = gemBars.length
+                ? `<div class="ide-qpool-group"><div class="ide-qpool-head"><span class="q-pool-dot agy"></span><span class="q-pool-title">Gemini models</span></div>${gemBars.map((l) => renderSideRow(l, false)).join('')}</div>`
+                : '';
+              const tpHtml = `<div class="ide-qpool-3p"><div class="ide-qpool-head"><span class="q-pool-dot third-party"></span><span class="q-pool-title">Claude &amp; GPT pool</span><button type="button" class="q-pool-toggle-btn" data-toggle-3p-quota="hide" aria-label="Hide Claude and GPT quota bars">Hide</button></div>${tpBars.map((l) => renderSideRow(l, true)).join('')}</div>`;
+              barsHtml = gemHtml + tpHtml;
+            } else {
+              barsHtml = gemBars.map((l) => renderSideRow(l, false)).join('');
+            }
+          } else {
+            barsHtml = limits.map((l) => renderSideRow(l, false)).join('');
+          }
 
           return `
             <div class="ide-acct-card${isActive ? ' is-active' : ''}${isCollapsed ? ' collapsed' : ''}">
@@ -8419,6 +8586,15 @@
     // Quota Cards
     const quotaGrid = $('pulse-quota-grid');
     const updatedLbl = $('quota-updated-at');
+    const toggle3pBtn = $('btn-toggle-3p-quota');
+    const hide3pPulse = isThirdPartyQuotaHidden();
+    const has3pPulse = hasAnyAntigravityThirdPartyBars();
+    if (toggle3pBtn) {
+      toggle3pBtn.hidden = !(has3pPulse || hide3pPulse);
+      toggle3pBtn.setAttribute('data-toggle-3p-quota', hide3pPulse ? 'show' : 'hide');
+      toggle3pBtn.textContent = hide3pPulse ? 'Show Claude & GPT' : 'Hide Claude & GPT';
+      toggle3pBtn.setAttribute('aria-pressed', hide3pPulse ? 'true' : 'false');
+    }
     if (updatedLbl) {
       updatedLbl.textContent = appState?.generatedAt
         ? `Synced ${timeAgo(appState.generatedAt)}`
@@ -8703,30 +8879,51 @@
     }
 
     const nowMs = Date.now();
-    const barsHtml = limits.length
-      ? limits
-          .map((l) => {
-            const passed = Boolean(l.expired || (l.reset && l.reset <= nowMs));
-            const rawPct = l.pct !== undefined ? l.pct : l.usedPercent;
-            const pct = passed ? 0 : Math.min(100, Math.max(0, Math.round(Number(rawPct || 0))));
-            const cls = pct >= 90 ? 'crit' : pct >= 78 ? 'warn' : key === 'claude' ? 'claude' : '';
-            const resetTxt = passed
-              ? 'Window idle'
-              : l.resetText || (l.reset ? `Resets ${timeUntil(l.reset)}` : '');
-            return `
-              <div class="q-bar-row tabular">
-                <div class="q-bar-labels">
-                  <span>${esc(l.label)}</span>
-                  <span class="q-bar-meta">${resetTxt ? `<span class="q-reset">${esc(resetTxt)}</span>` : ''}<span class="q-pct">${pct}%</span></span>
-                </div>
-                <div class="q-track">
-                  <div class="q-fill ${cls}" style="width:${pct}%"></div>
-                </div>
-              </div>
-            `;
-          })
-          .join('')
-      : `<div class="meta-timestamp">${esc(provInfo?.usageMessage || (isActive ? 'Quota telemetry ready.' : 'Signed in · Standby'))}</div>`;
+    const renderPulseBar = (l, isThirdParty) => {
+      const passed = Boolean(l.expired || (l.reset && l.reset <= nowMs));
+      const rawPct = l.pct !== undefined ? l.pct : l.usedPercent;
+      const pct = passed ? 0 : Math.min(100, Math.max(0, Math.round(Number(rawPct || 0))));
+      const cls = pct >= 90 ? 'crit' : pct >= 78 ? 'warn' : isThirdParty ? 'third-party' : key === 'claude' ? 'claude' : '';
+      const resetTxt = passed
+        ? 'Window idle'
+        : l.resetText || (l.reset ? `Resets ${timeUntil(l.reset)}` : '');
+      return `
+        <div class="q-bar-row tabular">
+          <div class="q-bar-labels">
+            <span>${esc(l.label)}</span>
+            <span class="q-bar-meta">${resetTxt ? `<span class="q-reset">${esc(resetTxt)}</span>` : ''}<span class="q-pct">${pct}%</span></span>
+          </div>
+          <div class="q-track">
+            <div class="q-fill ${cls}" style="width:${pct}%"></div>
+          </div>
+        </div>
+      `;
+    };
+    let barsHtml = '';
+    if (!limits.length) {
+      barsHtml = `<div class="meta-timestamp">${esc(provInfo?.usageMessage || (isActive ? 'Quota telemetry ready.' : 'Signed in · Standby'))}</div>`;
+    } else if (key === 'antigravity') {
+      const hide3p = isThirdPartyQuotaHidden();
+      const gemBars = limits.filter((l) => !isThirdPartyQuotaBar(l));
+      const tpBars = limits.filter((l) => isThirdPartyQuotaBar(l));
+      if (hide3p) {
+        barsHtml = gemBars.length
+          ? gemBars.map((l) => renderPulseBar(l, false)).join('')
+          : tpBars.length
+            ? `<div class="q-pool-hidden-note"><span>Claude &amp; GPT pool hidden</span><button type="button" class="q-pool-toggle-btn" data-toggle-3p-quota="show" aria-label="Show Claude and GPT quota bars">Show</button></div>`
+            : `<div class="meta-timestamp">${esc(provInfo?.usageMessage || (isActive ? 'Quota telemetry ready.' : 'Signed in · Standby'))}</div>`;
+      } else if (tpBars.length) {
+        const gemHtml = gemBars.length
+          ? `<div class="q-pool-group"><div class="q-pool-head"><span class="q-pool-dot agy"></span><span class="q-pool-title">Gemini models</span></div>${gemBars.map((l) => renderPulseBar(l, false)).join('')}</div>`
+          : '';
+        const tpHtml = `<div class="q-pool-3p"><div class="q-pool-head"><span class="q-pool-dot third-party"></span><span class="q-pool-title">Claude &amp; GPT pool</span><button type="button" class="q-pool-toggle-btn" data-toggle-3p-quota="hide" aria-label="Hide Claude and GPT quota bars">Hide</button></div>${tpBars.map((l) => renderPulseBar(l, true)).join('')}</div>`;
+        barsHtml = gemHtml + tpHtml;
+      } else {
+        barsHtml = gemBars.map((l) => renderPulseBar(l, false)).join('');
+      }
+    } else {
+      barsHtml = limits.map((l) => renderPulseBar(l, false)).join('');
+    }
 
     const shortEmail = email.includes('@') ? email.split('@')[0] : email;
     const shortPlan = /^Google AI\s+/i.test(plan) ? plan.replace(/^Google AI\s+/i, '') : plan;
@@ -12524,11 +12721,21 @@
           ? activeGeneratedPairCode
           : null;
 
+      const hide3pSettings = isThirdPartyQuotaHidden();
       pairingGrid.innerHTML = `
         <div class="pairing-card claude-fleet-mode-card" id="settings-claude-mode-card">
           <div class="eyebrow">FLEET CLAUDE PERMISSION MODE</div>
           <p class="meta-timestamp" style="margin:6px 0">One tap switches Claude Code across every paired PC, phone CLI run, and open tab through THEO Store on Cloudflare. A PC that is offline picks up the new mode as soon as it reconnects.</p>
           ${renderClaudeModeSelectorHtml('settings')}
+        </div>
+
+        <div class="pairing-card" id="settings-agy-3p-quota-card">
+          <div class="eyebrow">ANTIGRAVITY QUOTA DISPLAY</div>
+          <p class="meta-timestamp" style="margin:6px 0">Show Gemini models together with the separate Claude &amp; GPT third-party quota pool, or hide the third-party pool across all THEO views.</p>
+          <div class="claude-mode-seg is-wide" role="group" aria-label="Antigravity third-party quota visibility">
+            <button type="button" class="claude-mode-seg-btn${!hide3pSettings ? ' is-active' : ''}" data-toggle-3p-quota="show" aria-pressed="${!hide3pSettings ? 'true' : 'false'}">Gemini + Claude &amp; GPT</button>
+            <button type="button" class="claude-mode-seg-btn${hide3pSettings ? ' is-active' : ''}" data-toggle-3p-quota="hide" aria-pressed="${hide3pSettings ? 'true' : 'false'}">Gemini Only</button>
+          </div>
         </div>
 
         <div class="pairing-card">
@@ -12907,6 +13114,8 @@
       } else if (item.act === 'inspector') {
         if (prefs.activeTab !== 'chat') switchTab('chat');
         setInspectorOpen(!prefs.inspectorOpen);
+      } else if (item.act === 'toggle-3p-quota') {
+        await setHideThirdPartyQuota(!isThirdPartyQuotaHidden());
       } else if (item.act === 'palette') {
         const pPop = $('theme-palette-popover');
         if (pPop) {
@@ -13171,6 +13380,7 @@
         }));
       })(),
       { title: 'Sync with VS Code & Cloud Relay Now', sub: 'Connectivity', act: 'sync' },
+      { title: `${isThirdPartyQuotaHidden() ? 'Show' : 'Hide'} Antigravity Claude & GPT Quota Pool`, sub: 'Quota Display', act: 'toggle-3p-quota' },
       { title: 'Toggle Split Inspector (Code, Diff, Side Agents & Outline)', sub: 'Workbench · ⌘I', act: 'inspector' },
       { title: 'Switch Studio Color Palette (Graphite · Velvet · Espresso · Daylight)', sub: 'Appearance', act: 'palette' },
       { title: 'Enable / Test Web Push Notifications', sub: 'Notifications', act: 'push-test' },
@@ -13627,6 +13837,13 @@
         e.preventDefault();
         e.stopPropagation();
         await setFleetClaudeModeRemote(claudeModeBtn.dataset.setClaudeMode);
+        return;
+      }
+      const toggle3pBtn = e.target.closest('[data-toggle-3p-quota]');
+      if (toggle3pBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        await setHideThirdPartyQuota(toggle3pBtn.getAttribute('data-toggle-3p-quota') === 'hide');
         return;
       }
       if (
@@ -15541,6 +15758,8 @@
         } else if (act === 'inspector') {
           if (prefs.activeTab !== 'chat') switchTab('chat');
           setInspectorOpen(!prefs.inspectorOpen);
+        } else if (act === 'toggle-3p-quota') {
+          await setHideThirdPartyQuota(!isThirdPartyQuotaHidden());
         } else if (act === 'palette') {
           const pPop = $('theme-palette-popover');
           if (pPop) {
@@ -16934,7 +17153,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=69', { updateViaCache: 'none' })
+        .register('sw.js?v=70', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

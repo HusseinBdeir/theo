@@ -29,6 +29,9 @@ html[data-theme="light"] {
   --steel-deep: #1E4BB8;
   --agy: #2B6CB0;
   --agy-soft: rgba(43, 108, 176, 0.11);
+  --3p-pool: #6D5CE7;
+  --3p-pool-soft: rgba(109, 92, 231, 0.08);
+  --3p-pool-border: rgba(109, 92, 231, 0.28);
   --claude: #C45A3A;
   --claude-soft: rgba(196, 90, 58, 0.12);
   --emerald: #1F8A5B;
@@ -72,6 +75,9 @@ html[data-theme="dark"] {
   --steel-deep: #5D79A6;
   --agy: #6E95C8;
   --agy-soft: rgba(110, 149, 200, 0.13);
+  --3p-pool: #8B7CF6;
+  --3p-pool-soft: rgba(139, 124, 246, 0.08);
+  --3p-pool-border: rgba(139, 124, 246, 0.28);
   --claude: #C97A5E;
   --claude-soft: rgba(201, 122, 94, 0.14);
   --emerald: #6E9E82;
@@ -1145,6 +1151,10 @@ html[data-theme="light"] .kpi-tile {
   background: linear-gradient(90deg, var(--brass), var(--claude));
 }
 
+.q-fill.third-party {
+  background: var(--3p-pool);
+}
+
 .q-fill.warn {
   background: var(--amber);
 }
@@ -1156,6 +1166,90 @@ html[data-theme="light"] .kpi-tile {
 .q-reset {
   font-size: 11px;
   color: var(--text-muted);
+}
+
+.q-pool-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.q-pool-head,
+.ide-qpool-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.q-pool-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.q-pool-dot.agy {
+  background: var(--agy);
+}
+
+.q-pool-dot.third-party {
+  background: var(--3p-pool);
+}
+
+.q-pool-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.q-pool-3p {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: var(--3p-pool-soft);
+  border: 1px solid var(--3p-pool-border);
+}
+
+.q-pool-toggle-btn {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--3p-pool-border);
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+
+.q-pool-toggle-btn:hover {
+  background: rgba(139, 124, 246, 0.16);
+  color: var(--text-primary);
+  border-color: var(--3p-pool);
+}
+
+.q-pool-hidden-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 9px;
+  border-radius: 7px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
 /* Repo Quick Launch Grid */
@@ -7140,9 +7234,28 @@ html[data-theme="dark"] .composer-send-btn.is-ready {
   margin-right: 5px;
 }
 
+.ide-qfill.agy { background: var(--agy); }
+.ide-qfill.third-party { background: var(--3p-pool); }
 .ide-qfill.warn { background: var(--amber); }
 .ide-qfill.crit { background: var(--crimson); }
 .ide-qfill.claude { background: var(--claude); }
+
+.ide-qpool-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ide-qpool-3p {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 3px;
+  padding: 6px 7px;
+  border-radius: 6px;
+  background: var(--3p-pool-soft);
+  border: 1px solid var(--3p-pool-border);
+}
 
 .ide-appr-head {
   font-size: 10.5px;
