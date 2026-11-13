@@ -3483,6 +3483,48 @@
     };
   }
 
+  // Unsaved git working folders per PC (theo-hub unsaved-work.js, hourly theo-worktree-guard report), carried on
+  // each fleet device entry like pcSetup. null = this PC has no report (older build, or none yet).
+  const UNSAVED_WORK_MAX_ITEMS = 50;
+  const UNSAVED_WORK_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
+  const UNSAVED_WORK_OLD_AFTER_MS = 2 * 3600 * 1000;
+  function sanitizeFleetUnsavedWork(raw, now = Date.now()) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const checkedAt = Math.max(0, Math.trunc(Number(raw.checkedAt) || 0));
+    if (!checkedAt || now - checkedAt > UNSAVED_WORK_MAX_AGE_MS) return null;
+    const clip = (v, max) =>
+      String(v == null ? '' : v)
+        .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+        .trim()
+        .slice(0, max);
+    const items = [];
+    for (const it of Array.isArray(raw.items) ? raw.items : []) {
+      if (!it || typeof it !== 'object') continue;
+      const idle = it.idleHours == null ? NaN : Number(it.idleHours);
+      items.push({
+        repo: clip(it.repo, 40) || '?',
+        branch: clip(it.branch, 60) || '-',
+        where: clip(it.where, 40),
+        why: clip(it.why, 60),
+        path: clip(it.path, 180),
+        idleHours: Number.isFinite(idle) ? Math.max(0, idle) : null,
+        stale: Boolean(it.stale)
+      });
+      if (items.length >= UNSAVED_WORK_MAX_ITEMS) break;
+    }
+    const count = (v, fallback) => Math.max(0, Math.min(999, Math.trunc(Number(v ?? fallback) || 0)));
+    const unsavedCount = Math.max(items.length, count(raw.unsavedCount, items.length));
+    const staleHours = Number(raw.staleHours);
+    return {
+      checkedAt,
+      staleHours: Number.isFinite(staleHours) && staleHours > 0 ? staleHours : 24,
+      unsavedCount,
+      staleCount: count(raw.staleCount, items.filter((i) => i.stale).length),
+      unchecked: count(raw.unchecked, 0),
+      items
+    };
+  }
+
   function renderFleetPcSetupPillHtml(d) {
     const ps = d && d.pcSetup ? sanitizeFleetPcSetup(d.pcSetup) : null;
     if (!ps) return '';
@@ -3502,6 +3544,11 @@
         d.pcSetup !== undefined
           ? sanitizeFleetPcSetup(d.pcSetup)
           : prev.pcSetup || null;
+      // Like pcSetup: a list that does not mention it (edge presence frames) keeps the last copy.
+      const nextUnsavedWork =
+        d.unsavedWork !== undefined
+          ? sanitizeFleetUnsavedWork(d.unsavedWork)
+          : prev.unsavedWork || null;
       fleetDevicesMap.set(d.id, {
         ...prev,
         ...d,
@@ -3512,7 +3559,8 @@
         sessionCount: Number(
           d.sessionCount !== undefined ? d.sessionCount : prev.sessionCount || 0
         ),
-        pcSetup: nextPcSetup
+        pcSetup: nextPcSetup,
+        unsavedWork: nextUnsavedWork
       });
     }
   }
@@ -12485,10 +12533,143 @@
       .join('');
   }
 
+  // Unsaved work per PC, at the top of Workspaces (the evening digest's unsaved-work notification opens here).
+  // Each PC: every unsaved git working folder (repo, branch, owner, idle time), folders idle past the report's
+  // threshold (24 h) marked amber; a PC with none shows one quiet "all saved" line; a report older than 2 h
+  // says when it was last checked.
+  const uwExpandedPcs = new Set();
+  const UW_VISIBLE_ROWS = 8;
+  function fmtUnsavedIdle(h) {
+    if (h == null || !Number.isFinite(Number(h))) return 'idle ?';
+    const n = Number(h);
+    if (n < 1) return 'idle <1 h';
+    if (n < 48) return `idle ${Math.round(n)} h`;
+    return `idle ${Math.round(n / 24)} d`;
+  }
+  function buildUnsavedWorkPanelHtml(now = Date.now()) {
+    const pcs = getUnifiedFleetDevices()
+      .map((d) => ({ d, uw: d && d.unsavedWork ? sanitizeFleetUnsavedWork(d.unsavedWork, now) : null }))
+      .filter((x) => x.uw);
+    if (!pcs.length) return '';
+    pcs.sort(
+      (a, b) =>
+        b.uw.staleCount - a.uw.staleCount ||
+        b.uw.unsavedCount - a.uw.unsavedCount ||
+        String(a.d.name || a.d.id).localeCompare(String(b.d.name || b.d.id))
+    );
+    const totalUnsaved = pcs.reduce((s, x) => s + x.uw.unsavedCount, 0);
+    const totalStale = pcs.reduce((s, x) => s + x.uw.staleCount, 0);
+    const pcsWithWork = pcs.filter((x) => x.uw.unsavedCount > 0).length;
+    const thr = Math.round(pcs[0].uw.staleHours || 24);
+    const headTxt =
+      totalUnsaved === 0
+        ? `All saved on ${pcs.length} PC${pcs.length === 1 ? '' : 's'}`
+        : `${totalUnsaved} folder${totalUnsaved === 1 ? '' : 's'} on ${pcsWithWork} PC${pcsWithWork === 1 ? '' : 's'}` +
+          (totalStale > 0 ? ` · ${totalStale} idle ${thr} h+` : '');
+    const itemHtml = (it, hrs) => `
+      <li class="uw-item${it.stale ? ' is-stale' : ''}">
+        <div class="uw-line1">
+          <span class="uw-repo">${esc(it.repo)}</span>
+          <span class="uw-branch mono">⎇ ${esc(it.branch)}</span>
+          ${it.stale ? `<span class="uw-stale-pill tabular">${hrs} h+</span>` : ''}
+          <span class="uw-idle tabular">${esc(fmtUnsavedIdle(it.idleHours))}</span>
+        </div>
+        <div class="uw-line2">${esc(it.where || 'owner unknown')}${it.why ? ` · ${esc(it.why)}` : ''}</div>
+        ${it.path ? `<div class="uw-path mono">${esc(it.path)}</div>` : ''}
+      </li>`;
+    const pcHtml = pcs
+      .map(({ d, uw }) => {
+        const pcId = String(d.id || '');
+        const name = String(d.name || d.hostname || d.id || 'PC');
+        const hrs = Math.round(uw.staleHours || 24);
+        const ageMs = Math.max(0, now - uw.checkedAt);
+        const old = ageMs > UNSAVED_WORK_OLD_AFTER_MS;
+        const checkedHtml = old
+          ? `<span class="uw-checked is-old tabular">last checked ${esc(timeAgo(uw.checkedAt))}</span>`
+          : '';
+        const uncheckedTxt = uw.unchecked > 0 ? ` · ${uw.unchecked} not checked` : '';
+        if (uw.unsavedCount === 0) {
+          return `
+          <div class="uw-pc is-clean" data-uw-pc="${esc(pcId)}">
+            <div class="uw-pc-head">
+              <span class="uw-pc-name">${esc(name)}</span>
+              <span class="uw-pc-meta">all saved${esc(uncheckedTxt)}</span>
+              ${checkedHtml}
+            </div>
+          </div>`;
+        }
+        const shown = uw.items.slice(0, UW_VISIBLE_ROWS);
+        const rest = uw.items.slice(UW_VISIBLE_ROWS);
+        const notSent = Math.max(0, uw.unsavedCount - uw.items.length);
+        const meta =
+          `${uw.unsavedCount} unsaved` + (uw.staleCount > 0 ? ` · ${uw.staleCount} idle ${hrs} h+` : '') + uncheckedTxt;
+        return `
+          <div class="uw-pc${uw.staleCount > 0 ? ' has-stale' : ''}" data-uw-pc="${esc(pcId)}">
+            <div class="uw-pc-head">
+              <span class="uw-pc-name">${esc(name)}</span>
+              <span class="uw-pc-meta tabular">${esc(meta)}</span>
+              ${checkedHtml}
+            </div>
+            <ul class="uw-list">${shown.map((it) => itemHtml(it, hrs)).join('')}</ul>
+            ${
+              rest.length
+                ? `<details class="uw-more" data-uw-more="${esc(pcId)}"${uwExpandedPcs.has(pcId) ? ' open' : ''}>
+                    <summary class="uw-more-sum">Show ${rest.length} more</summary>
+                    <ul class="uw-list">${rest.map((it) => itemHtml(it, hrs)).join('')}</ul>
+                  </details>`
+                : ''
+            }
+            ${notSent > 0 ? `<div class="uw-overflow tabular">+${notSent} more on ${esc(name)} (not listed)</div>` : ''}
+          </div>`;
+      })
+      .join('');
+    return `
+      <div class="uw-head">
+        <span class="eyebrow">UNSAVED WORK</span>
+        <span class="uw-total tabular">${esc(headTxt)}</span>
+      </div>
+      <div class="uw-pcs">${pcHtml}</div>`;
+  }
+  function renderUnsavedWorkPanel() {
+    const el = $('unsaved-work-panel');
+    if (!el) return;
+    const html = buildUnsavedWorkPanelHtml();
+    if (!html) {
+      el.hidden = true;
+      if (el.__uwHtml) {
+        el.innerHTML = '';
+        el.__uwHtml = '';
+      }
+      return;
+    }
+    el.hidden = false;
+    // Patch only when the content changed, so an open "Show N more" and the scroll position survive syncs.
+    if (el.__uwHtml !== html) {
+      el.innerHTML = html;
+      el.__uwHtml = html;
+    }
+    if (!el.__uwBound) {
+      el.__uwBound = true;
+      el.addEventListener(
+        'toggle',
+        (ev) => {
+          const det = ev.target;
+          const id = det && det.dataset ? det.dataset.uwMore : '';
+          if (!id) return;
+          if (det.open) uwExpandedPcs.add(id);
+          else uwExpandedPcs.delete(id);
+          el.__uwHtml = '';
+        },
+        true
+      );
+    }
+  }
+
   // VIEW 4: Render Workspaces & Git Inspector
   async function renderWorkspacesView() {
     const listEl = $('repo-selector-list');
     const detailEl = $('repo-detail-panel');
+    renderUnsavedWorkPanel();
     if (!listEl || !detailEl) return;
 
     const workspaces = appState?.workspaces || [];
@@ -17054,6 +17235,13 @@
           $('pulse-quota-grid')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }, 80);
       }
+      if (tab === 'workspaces') {
+        // Evening git digest / unsaved-work push: land on the per-PC unsaved list at the top of the tab.
+        setTimeout(() => {
+          const panel = $('unsaved-work-panel');
+          if (panel && !panel.hidden) panel.scrollIntoView({ behavior: 'auto', block: 'start' });
+        }, 80);
+      }
     }
 
     syncData({ force: true }).catch(() => {});
@@ -17153,7 +17341,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=70', { updateViaCache: 'none' })
+        .register('sw.js?v=71', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

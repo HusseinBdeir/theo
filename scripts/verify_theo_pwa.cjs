@@ -3507,6 +3507,188 @@ async function main() {
     assert.strictEqual(togglePoolVerify.overflowX, 0, '0px horizontal overflow after pool toggle');
     console.log('[PASS] Adversarial #17: Antigravity Gemini vs Claude & GPT pool distinction, hide/show toggle, and Claude Fable (usedPercent fallback) parity verified across Pulse and Desktop IDE Sidebar');
 
+    // Adversarial #18: v71 Unsaved work per PC at the top of Workspaces (carried on each fleet device like pcSetup),
+    // on an iPhone viewport: 50-folder cap with "+N more", 24 h+ marking, all-saved line, stale-report line,
+    // no report = nothing, XSS-safe, notification tap and cold ?tab=workspaces both land on the block.
+    await cdp.send(
+      'Emulation.setDeviceMetricsOverride',
+      { width: 390, height: 844, deviceScaleFactor: 3, mobile: true },
+      sessionId
+    );
+    const seedUnsaved = (withData) => `(() => {
+      const now = Date.now();
+      const rawCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+      const snap = rawCache.snapshot || rawCache.state || {};
+      const items = [];
+      for (let i = 0; i < 50; i++) {
+        items.push({
+          repo: i === 3 ? 'isabi-app' : 'repo' + i,
+          branch: i === 3 ? '<img src=x onerror="window.__uwXss=1">' : 'wt/very-long-branch-name-for-folder-number-' + i,
+          where: i % 2 ? 'shared worktree' : 'Claude session 203ca257',
+          why: (i + 1) + ' uncommitted file(s)',
+          path: '~\\\\bhfirms\\\\.worktrees\\\\a-really-long-worktree-folder-name-that-must-wrap-on-a-phone-' + i,
+          idleHours: 62 - i,
+          stale: 62 - i >= 24
+        });
+      }
+      const withUw = ${withData ? 'true' : 'false'};
+      snap.devices = [
+        { id: 'host-delta', name: 'Delta', online: false, sessionCount: 0,
+          unsavedWork: withUw ? { checkedAt: now - 5 * 3600000, staleHours: 24, unsavedCount: 2, staleCount: 1, unchecked: 0,
+            items: [
+              { repo: 'pos', branch: 'wt/till', where: 'Antigravity session', why: '2 commit(s) not pushed to GitHub', path: '~\\\\bhfirms\\\\pos', idleHours: 30, stale: true },
+              { repo: 'fitness', branch: 'main', where: 'main checkout', why: '1 uncommitted file(s)', path: '~\\\\bhfirms\\\\fitness', idleHours: 2, stale: false }
+            ] } : null },
+        { id: 'host-beta', name: 'Beta', online: true, sessionCount: 1,
+          unsavedWork: withUw ? { checkedAt: now - 3 * 3600000 - 60000, staleHours: 24, unsavedCount: 0, staleCount: 0, unchecked: 0, items: [] } : null },
+        { id: 'host-gamma', name: 'Gamma', online: true, sessionCount: 1, unsavedWork: null },
+        { id: 'host-alpha', name: 'Alpha', online: true, sessionCount: 2,
+          unsavedWork: withUw ? { checkedAt: now - 5 * 60000, staleHours: 24, unsavedCount: 55, staleCount: 42, unchecked: 0, items } : null }
+      ];
+      if (snap.device) snap.device = { ...snap.device, unsavedWork: null };
+      if (rawCache.snapshot) rawCache.snapshot = snap;
+      else rawCache.state = snap;
+      localStorage.setItem('theo_remote_cache_v3', JSON.stringify(rawCache));
+      const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+      prefs.activeTab = 'pulse';
+      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+      // The evening unsaved-work push as the app's notification ledger records it (same fields theo-hub sends).
+      const log = JSON.parse(localStorage.getItem('theo_remote_notifications_v1') || '[]');
+      const keep = Array.isArray(log) ? log.filter((x) => x && x.id !== 'theo-unsaved-test') : [];
+      keep.unshift({
+        id: 'theo-unsaved-test',
+        tag: 'theo-unsaved-2026-11-13-host-alpha',
+        title: 'Unsaved work on Alpha',
+        body: '42 folders with unsaved work untouched 24 h+: isabi-app wt/x (Claude session 203ca257) and 41 more. Push or clear it on purpose.',
+        tab: 'workspaces',
+        url: './?tab=workspaces',
+        at: now,
+        ts: now,
+        checked: false
+      });
+      localStorage.setItem('theo_remote_notifications_v1', JSON.stringify(keep));
+      return true;
+    })()`;
+    await evalJs(seedUnsaved(true));
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 900));
+    const uwProbe = (label) => `(async () => {
+      const panel = document.getElementById('unsaved-work-panel');
+      const pcIds = Array.from(document.querySelectorAll('#unsaved-work-panel .uw-pc')).map((el) => el.dataset.uwPc);
+      const alpha = document.querySelector('#unsaved-work-panel .uw-pc[data-uw-pc="host-alpha"]');
+      const beta = document.querySelector('#unsaved-work-panel .uw-pc[data-uw-pc="host-beta"]');
+      const delta = document.querySelector('#unsaved-work-panel .uw-pc[data-uw-pc="host-delta"]');
+      const rect = panel ? panel.getBoundingClientRect() : null;
+      const rows = Array.from(document.querySelectorAll('#unsaved-work-panel .uw-pc, #unsaved-work-panel .uw-item'));
+      const maxRight = rows.reduce((m, el) => Math.max(m, el.getBoundingClientRect().right), 0);
+      return {
+        activeTab: document.querySelector('.view-pane.active')?.dataset?.view || '',
+        hidden: panel ? panel.hidden : null,
+        panelTop: rect ? Math.round(rect.top) : -1,
+        panelVisible: Boolean(rect && rect.height > 0 && rect.top >= 0 && rect.top < window.innerHeight - 120),
+        headText: document.querySelector('#unsaved-work-panel .uw-total')?.textContent?.trim() || '',
+        pcIds,
+        alphaItems: alpha ? alpha.querySelectorAll('.uw-item').length : 0,
+        alphaVisibleItems: alpha ? alpha.querySelectorAll(':scope > .uw-list > .uw-item').length : 0,
+        alphaStale: alpha ? alpha.querySelectorAll('.uw-item.is-stale').length : 0,
+        alphaStalePill: alpha?.querySelector('.uw-item.is-stale .uw-stale-pill')?.textContent?.trim() || '',
+        alphaMoreSum: alpha?.querySelector('.uw-more-sum')?.textContent?.trim() || '',
+        alphaOverflow: alpha?.querySelector('.uw-overflow')?.textContent?.trim() || '',
+        alphaChecked: alpha?.querySelector('.uw-checked')?.textContent?.trim() || '',
+        alphaFirstIdle: alpha?.querySelector('.uw-item .uw-idle')?.textContent?.trim() || '',
+        alphaFirstOwner: alpha?.querySelector('.uw-item .uw-line2')?.textContent?.trim() || '',
+        betaText: beta ? beta.textContent.replace(/\\s+/g, ' ').trim() : '',
+        betaClean: Boolean(beta && beta.classList.contains('is-clean')),
+        deltaChecked: delta?.querySelector('.uw-checked.is-old')?.textContent?.trim() || '',
+        xssFired: Boolean(window.__uwXss),
+        imgInPanel: document.querySelectorAll('#unsaved-work-panel img').length,
+        escapedBranch: Array.from(document.querySelectorAll('#unsaved-work-panel .uw-branch')).some((el) => el.textContent.includes('<img')),
+        maxRight: Math.round(maxRight),
+        overflowX: Math.max(0, document.documentElement.scrollWidth - window.innerWidth),
+        titleCount: document.querySelectorAll('[title]').length
+      };
+    })()`;
+    // (a) The app is open on Pulse; the unsaved-work notification is tapped. Under ?nosse=1 there is no Service
+    // Worker, so tap it in the app's own Notification Center: both paths end in applyNotificationNav(tab: 'workspaces').
+    const uwBeforeTap = await evalJs(`document.querySelector('.view-pane.active')?.dataset?.view || ''`);
+    const uwTapped = await evalJs(`(async () => {
+      document.querySelector('[data-push-act="header-bell"]')?.click();
+      await new Promise((r) => setTimeout(r, 60));
+      const row = document.querySelector('[data-notif-open="theo-unsaved-test"]');
+      if (!row) return false;
+      row.click();
+      return true;
+    })()`);
+    assert.strictEqual(uwTapped, true, 'The unsaved-work notification is listed in the Notification Center');
+    await new Promise((r) => setTimeout(r, 400));
+    const uwTap = await evalJs(uwProbe('tap'));
+    if (process.env.THEO_PWA_SHOT_DIR) {
+      // Opt-in visual check of the iPhone layout: THEO_PWA_SHOT_DIR=<folder> node scripts/verify_theo_pwa.cjs
+      for (const theme of ['dark', 'light']) {
+        await evalJs(`(() => { document.documentElement.setAttribute('data-theme', '${theme}'); return true; })()`);
+        await new Promise((r) => setTimeout(r, 60));
+        const shot = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId);
+        fs.writeFileSync(path.join(process.env.THEO_PWA_SHOT_DIR, `unsaved-work-390-${theme}.png`), Buffer.from(shot.data, 'base64'));
+      }
+    }
+    assert.strictEqual(uwBeforeTap, 'pulse', 'Unsaved-work check starts on Pulse');
+    assert.strictEqual(uwTap.activeTab, 'workspaces', 'The unsaved-work notification tap must open the Workspaces tab');
+    assert.strictEqual(uwTap.hidden, false, '#unsaved-work-panel must be shown when a PC reports unsaved work');
+    assert.strictEqual(uwTap.panelVisible, true, `#unsaved-work-panel must be on screen after the tap (top ${uwTap.panelTop})`);
+    assert.deepStrictEqual(uwTap.pcIds, ['host-alpha', 'host-delta', 'host-beta'], 'PCs with idle 24 h+ folders first; a PC with no report (Gamma) is not listed');
+    assert.strictEqual(uwTap.headText, '57 folders on 2 PCs · 43 idle 24 h+', 'Panel head totals folders and 24 h+ folders across PCs');
+    assert.strictEqual(uwTap.alphaItems, 50, 'All 50 sent folders of a PC are listed');
+    assert.strictEqual(uwTap.alphaVisibleItems, 8, 'Only the first 8 show before "Show N more"');
+    assert.strictEqual(uwTap.alphaMoreSum, 'Show 42 more');
+    assert.strictEqual(uwTap.alphaOverflow, '+5 more on Alpha (not listed)', 'Beyond the 50-folder cap the PC says +N more');
+    assert.strictEqual(uwTap.alphaStale, 39, 'Folders idle 24 h+ are marked (and only those)');
+    assert.strictEqual(uwTap.alphaStalePill, '24 h+');
+    assert.strictEqual(uwTap.alphaFirstIdle, 'idle 3 d');
+    assert.strictEqual(uwTap.alphaFirstOwner, 'Claude session 203ca257 · 1 uncommitted file(s)', 'Each folder names its owner and why it is unsaved');
+    assert.strictEqual(uwTap.alphaChecked, '', 'A fresh report (5 min) shows no "last checked" line');
+    assert.ok(uwTap.betaClean && /Beta all saved last checked 3h ago/.test(uwTap.betaText), `A PC with nothing unsaved shows one quiet line with the stale-report time: "${uwTap.betaText}"`);
+    assert.strictEqual(uwTap.deltaChecked, 'last checked 5h ago', 'A report older than 2 h says when it was last checked');
+    assert.strictEqual(uwTap.xssFired, false, 'Branch names are escaped (no script runs)');
+    assert.strictEqual(uwTap.imgInPanel, 0, 'No injected element in the panel');
+    assert.strictEqual(uwTap.escapedBranch, true, 'The escaped branch text is shown literally');
+    assert.ok(uwTap.maxRight <= 390, `Every PC block and folder row fits the 390 px phone width (right edge ${uwTap.maxRight})`);
+    assert.strictEqual(uwTap.overflowX, 0, '0px horizontal overflow with the unsaved-work panel at 390 px');
+    assert.strictEqual(uwTap.titleCount, 0, 'Zero [title] attributes with the unsaved-work panel');
+
+    // (b) "Show 42 more" stays open across a re-render.
+    const uwKeepOpen = await evalJs(`(async () => {
+      const det = document.querySelector('#unsaved-work-panel .uw-more[data-uw-more="host-alpha"]');
+      det.open = true;
+      await new Promise((r) => setTimeout(r, 30));
+      document.querySelector('.mobile-bottom-dock [data-tab="pulse"]')?.click();
+      await new Promise((r) => setTimeout(r, 30));
+      document.querySelector('.mobile-bottom-dock [data-tab="workspaces"]')?.click();
+      await new Promise((r) => setTimeout(r, 60));
+      const again = document.querySelector('#unsaved-work-panel .uw-more[data-uw-more="host-alpha"]');
+      return { open: Boolean(again && again.open), overflowX: Math.max(0, document.documentElement.scrollWidth - window.innerWidth) };
+    })()`);
+    assert.strictEqual(uwKeepOpen.open, true, 'An opened "Show N more" stays open after the tab re-renders');
+    assert.strictEqual(uwKeepOpen.overflowX, 0, '0px horizontal overflow with every folder expanded');
+
+    // (c) Cold start from the notification URL (app closed): ?tab=workspaces lands on the block.
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?tab=workspaces&nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 900));
+    const uwCold = await evalJs(uwProbe('cold'));
+    assert.strictEqual(uwCold.activeTab, 'workspaces', 'Cold ?tab=workspaces opens the Workspaces tab');
+    assert.strictEqual(uwCold.panelVisible, true, `Cold start shows #unsaved-work-panel on screen (top ${uwCold.panelTop})`);
+    assert.strictEqual(uwCold.alphaItems, 50);
+
+    // (d) No PC has a report (older builds, or none yet): the panel stays hidden.
+    await evalJs(seedUnsaved(false));
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?tab=workspaces&nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 900));
+    const uwEmpty = await evalJs(uwProbe('empty'));
+    assert.strictEqual(uwEmpty.activeTab, 'workspaces');
+    assert.strictEqual(uwEmpty.hidden, true, '#unsaved-work-panel is hidden when no PC has a report');
+    assert.deepStrictEqual(uwEmpty.pcIds, []);
+    assert.strictEqual(uwEmpty.overflowX, 0);
+    console.log('[PASS] Adversarial #18: v71 Unsaved work per PC on Workspaces (50 cap +N more, 24 h+ marks, all-saved & stale-report lines, XSS-safe, tap & cold-start landing at 390 px)');
+
     // Final error & network quarantine assertions (#18)
     assert.strictEqual(pageExceptions.length, 0, `Uncaught page exceptions: ${JSON.stringify(pageExceptions)}`);
     assert.strictEqual(consoleErrors.length, 0, `Console errors: ${JSON.stringify(consoleErrors)}`);

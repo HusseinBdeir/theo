@@ -2788,6 +2788,210 @@ html[data-theme="dark"] .composer-send-btn.is-ready {
   display: block;
 }
 
+/* Unsaved work per PC (top of Workspaces; theo-worktree-guard report carried on each fleet device, v71) */
+.unsaved-work-panel {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  scroll-margin-top: 12px;
+}
+
+.unsaved-work-panel[hidden] {
+  display: none !important;
+}
+
+.uw-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  margin-bottom: 9px;
+}
+
+.uw-head .eyebrow {
+  margin: 0;
+}
+
+.uw-total {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.uw-pcs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.uw-pc {
+  min-width: 0;
+  padding: 9px 10px;
+  border-radius: 11px;
+  background: var(--bg-ink);
+  border: 1px solid var(--border-subtle);
+}
+
+.uw-pc.has-stale {
+  border-color: var(--amber-soft);
+}
+
+.uw-pc.is-clean {
+  padding: 7px 10px;
+}
+
+.uw-pc-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  min-width: 0;
+}
+
+.uw-pc-name {
+  font-weight: 700;
+  font-size: 13.5px;
+  color: var(--text-heading);
+}
+
+.uw-pc-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.uw-pc.is-clean .uw-pc-meta {
+  color: var(--emerald);
+}
+
+.uw-checked {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.uw-checked.is-old {
+  color: var(--amber);
+}
+
+.uw-list {
+  list-style: none;
+  margin: 7px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.uw-item {
+  min-width: 0;
+  padding: 6px 8px 6px 9px;
+  border-radius: 8px;
+  border-left: 3px solid var(--border-subtle);
+  background: var(--bg-card);
+}
+
+.uw-item.is-stale {
+  border-left-color: var(--amber);
+  background: var(--amber-soft);
+}
+
+.uw-line1 {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.uw-repo {
+  flex: 0 0 auto;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.uw-branch {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.uw-stale-pill {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 17px;
+  color: var(--amber);
+  border: 1px solid var(--amber);
+}
+
+@media (max-width: 480px) {
+  /* On a phone the amber bar and amber idle time already mark the folder; give the branch the room. */
+  .uw-stale-pill {
+    display: none;
+  }
+}
+
+.uw-idle {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.uw-item.is-stale .uw-idle {
+  color: var(--amber);
+}
+
+.uw-line2 {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.uw-path {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.uw-more {
+  margin-top: 6px;
+}
+
+.uw-more-sum {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--brass);
+  padding: 4px 0;
+  list-style: none;
+}
+
+.uw-more-sum::-webkit-details-marker {
+  display: none;
+}
+
+.uw-overflow {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
 /* Workspaces & Git Inspector */
 .workspaces-layout {
   display: grid;
