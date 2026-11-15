@@ -9,14 +9,14 @@
   <meta name="apple-mobile-web-app-title" content="THEO">
   <meta name="description" content="THEO — AI Coding &amp; Session Workbench for Google Antigravity and Claude Code.">
   <title>THEO — AI Session Workbench</title>
-  <link rel="manifest" href="manifest.json?v=73">
-  <link rel="icon" type="image/svg+xml" href="icon.svg?v=73">
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=73">
-  <link rel="apple-touch-icon" href="icon-180.png?v=73">
+  <link rel="manifest" href="manifest.json?v=74">
+  <link rel="icon" type="image/svg+xml" href="icon.svg?v=74">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=74">
+  <link rel="apple-touch-icon" href="icon-180.png?v=74">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/theo.css?v=73">
+  <link rel="stylesheet" href="css/theo.css?v=74">
   <script id="pre">
     (() => {
       try {
@@ -55,7 +55,7 @@
   <div id="pin-overlay" class="pin-overlay" hidden>
     <div class="pin-card">
       <div class="pin-brand">
-        <img src="icon.svg?v=73" alt="THEO" class="pin-logo">
+        <img src="icon.svg?v=74" alt="THEO" class="pin-logo">
         <div class="pin-title">THEO REMOTE</div>
         <div class="brass-double-rule"></div>
       </div>
@@ -85,7 +85,7 @@
     <aside class="ink-rail" id="ink-rail" aria-label="Primary Navigation">
       <div class="ide-activity-bar">
         <button type="button" class="activity-brand-btn" id="btn-activity-brand" data-sidebar-collapse="1" data-tip="THEO Workbench (⌘B)" aria-label="Toggle THEO Explorer Sidebar">
-          <img src="icon.svg?v=73" alt="THEO" class="brand-badge">
+          <img src="icon.svg?v=74" alt="THEO" class="brand-badge">
         </button>
 
         <nav class="rail-nav" id="rail-nav">
@@ -256,7 +256,7 @@
       <!-- Mobile & Compact Top Header -->
       <header class="mobile-topbar">
         <div class="mobile-brand">
-          <img src="icon.svg?v=73" alt="THEO" class="mobile-badge">
+          <img src="icon.svg?v=74" alt="THEO" class="mobile-badge">
           <div class="mobile-brand-copy">
             <div class="mobile-title-row">
               <div class="mobile-wordmark-stack">
@@ -486,9 +486,11 @@
                   <svg class="ctx-ring" viewBox="0 0 24 24">
                     <circle cx="12" cy="12" r="9" class="ctx-ring-bg"/>
                     <circle cx="12" cy="12" r="9" class="ctx-ring-fill" id="ctx-ring-circle" stroke-dasharray="56.5" stroke-dashoffset="48"/>
+                    <circle cx="12" cy="12" r="9" class="ctx-ring-overrun" id="ctx-ring-overrun-circle" stroke-dasharray="56.5" stroke-dashoffset="56.5" hidden/>
                   </svg>
                 </span>
                 <span id="ctx-pill-label">14k · 7%</span>
+                <span class="ctx-overrun-pill" id="ctx-overrun-pill" hidden></span>
               </button>
               <div class="studio-lens-bar" id="studio-lens-bar" role="group" aria-label="Built-in Studio Lenses">
                 <button type="button" class="studio-lens-pill" data-open-lens="git" aria-label="Open Built-in Git Lens">Git</button>
@@ -545,6 +547,7 @@
               <button type="button" class="icon-btn-sm" id="btn-close-ctx">✕</button>
             </div>
             <div class="ctx-meter-summary tabular" id="ctx-meter-summary"></div>
+            <div class="ctx-overrun-banner tabular" id="ctx-overrun-banner" hidden></div>
             <div class="ctx-stacked-bar" id="ctx-stacked-bar"></div>
             <div class="ctx-breakdown-list tabular" id="ctx-breakdown-list"></div>
             <div class="ctx-popover-actions">
@@ -566,6 +569,20 @@
               <!-- Live Active Background Tasks Strip -->
               <div class="chat-live-bgtasks" id="chat-live-bgtasks" hidden></div>
 
+              <!-- Pinned Constraints for Next Checkpoint Micro-Note -->
+              <div class="chat-pin-strip" id="chat-pin-strip" hidden>
+                <div class="chat-pin-head">
+                  <span class="chat-pin-title" id="chat-pin-title">Pinned Constraints for Next Checkpoint</span>
+                  <span class="chat-pin-status tabular" id="chat-pin-status">Auto-injects ≥85% or /compact</span>
+                </div>
+                <div class="chat-pin-row">
+                  <input type="text" id="chat-pin-input" class="chat-pin-input" maxlength="280" placeholder="Must-keep invariant across compaction…" aria-label="Pinned constraints for next checkpoint">
+                  <button type="button" class="btn-brass-sm chat-pin-save-btn" id="btn-chat-pin-save">Pin</button>
+                  <button type="button" class="btn-ghost-sm chat-pin-clear-btn" id="btn-chat-pin-clear" aria-label="Clear pinned constraints" hidden>Clear</button>
+                  <button type="button" class="icon-btn-sm chat-pin-hide-btn" id="btn-chat-pin-hide" aria-label="Hide pinned constraints bar">✕</button>
+                </div>
+              </div>
+
               <!-- Floating VS Code Command Capsule Composer -->
               <form class="chat-composer" id="chat-composer-form">
                 <div class="composer-box" id="composer-box">
@@ -586,6 +603,9 @@
                       </button>
                       <button type="button" class="composer-icon-pill" id="btn-composer-mention" aria-label="Mention workspace or file">@</button>
                       <button type="button" class="composer-icon-pill" id="btn-composer-slash" aria-label="Run slash action">/</button>
+                      <button type="button" class="composer-icon-pill composer-pin-btn" id="btn-pin-constraints" aria-label="Pin constraints for next checkpoint" aria-expanded="false">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.8 2.4l3.8 3.8-2.4 2.4.5 3.1-2-2L5 14.3 3.7 13l4.6-4.7-2-2 3.1.5z"/></svg>
+                      </button>
                       <button type="button" class="composer-route-toggle-pill" id="btn-toggle-composer-route" aria-label="Toggle target host and workspace routing" aria-expanded="false">
                         <span>⇄ Route</span>
                       </button>
@@ -846,7 +866,7 @@
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=73"></script>
-  <script src="js/app.js?v=73"></script>
+  <script src="js/endpoints.js?v=74"></script>
+  <script src="js/app.js?v=74"></script>
 </body>
 </html>

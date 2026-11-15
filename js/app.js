@@ -134,6 +134,142 @@
   const CHEVRON_RIGHT_SVG = `<svg class="ui-chev" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4.5L9.5 8L6 11.5"/></svg>`;
   const CHECK_MARK_SVG = `<svg class="vs-model-check-ico" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-6.5"/></svg>`;
 
+  let liveAntigravityCatalog = { updatedAt: 0, source: '', models: [], byAlias: new Map() };
+
+  function normalizeCatalogLookupKey(raw = '') {
+    return String(raw || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+
+  function stripEffortSuffixForCatalog(raw = '') {
+    return String(raw || '')
+      .replace(/\s*[\(\[]\s*(?:low|medium|high|xhigh|1m|thinking)\s*[\)\]]\s*/gi, ' ')
+      .replace(/\s*[·\-]\s*(?:low|medium|high|xhigh)\s*$/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function slugCatalogModelId(label = '') {
+    return String(label || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s*\((low|medium|high|xhigh)\)\s*$/i, '')
+      .replace(/[^a-z0-9.]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  function ingestLiveAntigravityCatalog(catObj) {
+    if (!catObj || typeof catObj !== 'object' || !Array.isArray(catObj.models)) return;
+    const nextAt = Number(catObj.updatedAt || 0);
+    if (
+      nextAt > 0 &&
+      liveAntigravityCatalog.updatedAt > 0 &&
+      nextAt < liveAntigravityCatalog.updatedAt &&
+      liveAntigravityCatalog.models.length > 0
+    ) {
+      return;
+    }
+    const cleanModels = [];
+    const byAlias = new Map();
+    for (const rawEntry of catObj.models) {
+      if (!rawEntry || typeof rawEntry !== 'object') continue;
+      const modelId = String(rawEntry.modelId || '').trim();
+      const label = String(rawEntry.label || '').trim();
+      const baseLabel = String(rawEntry.baseLabel || stripEffortSuffixForCatalog(label) || label).trim();
+      if (!modelId && !label && !baseLabel) continue;
+      const entry = {
+        modelId,
+        label: label || baseLabel,
+        baseLabel: baseLabel || label,
+        aliases: Array.isArray(rawEntry.aliases) ? rawEntry.aliases.map((a) => String(a || '').trim()).filter(Boolean) : [],
+        isFirstPartyGemini: Boolean(rawEntry.isFirstPartyGemini),
+        isClaudeLike: Boolean(rawEntry.isClaudeLike),
+        supportsThinking: rawEntry.supportsThinking !== false,
+        isRecommended: Boolean(rawEntry.isRecommended),
+        maxContextTokens: Number(rawEntry.maxContextTokens || 0),
+        softCompactionTargetTokens: Number(rawEntry.softCompactionTargetTokens || 0),
+        hardMaxTokens: Number(rawEntry.hardMaxTokens || 0)
+      };
+      cleanModels.push(entry);
+      const exactKeys = [modelId, label, baseLabel, ...entry.aliases];
+      for (const k of exactKeys) {
+        const nk = normalizeCatalogLookupKey(k);
+        if (nk) byAlias.set(nk, entry);
+      }
+      for (const k of exactKeys) {
+        const sk = normalizeCatalogLookupKey(stripEffortSuffixForCatalog(k));
+        if (sk && !byAlias.has(sk)) byAlias.set(sk, entry);
+      }
+    }
+    liveAntigravityCatalog = {
+      updatedAt: nextAt || Date.now(),
+      source: String(catObj.source || ''),
+      models: cleanModels,
+      byAlias
+    };
+  }
+
+  function lookupPwaLiveCatalogModel(rawModel = '') {
+    const exact = normalizeCatalogLookupKey(rawModel);
+    if (!exact || !(liveAntigravityCatalog.byAlias instanceof Map) || liveAntigravityCatalog.byAlias.size === 0) {
+      return null;
+    }
+    const hit = liveAntigravityCatalog.byAlias.get(exact);
+    if (hit) return hit;
+    const stripped = normalizeCatalogLookupKey(stripEffortSuffixForCatalog(rawModel));
+    return stripped ? liveAntigravityCatalog.byAlias.get(stripped) || null : null;
+  }
+
+  function getEffectiveModelCatalog(provKey = 'antigravity') {
+    const cleanProv = provKey === 'claude' ? 'claude' : 'antigravity';
+    const base = MODEL_CATALOG[cleanProv] || MODEL_CATALOG.antigravity;
+    if (cleanProv !== 'antigravity' || !liveAntigravityCatalog.models.length) {
+      return base;
+    }
+    const existingIds = new Set(base.map((m) => m.id));
+    const existingLabels = new Set(base.map((m) => String(m.label || '').toLowerCase()));
+    const dynamic = [];
+    const dynamicById = new Map();
+    for (const entry of liveAntigravityCatalog.models) {
+      if (!entry || !entry.isFirstPartyGemini || entry.isClaudeLike || entry.supportsThinking === false) {
+        continue;
+      }
+      const cleanBase = String(stripEffortSuffixForCatalog(entry.baseLabel || entry.label) || '').trim();
+      if (!cleanBase || /orchestrator|argon|3\.8|flash|carbon|hydrogen/i.test(cleanBase)) {
+        continue;
+      }
+      const id = slugCatalogModelId(cleanBase);
+      if (!id || existingIds.has(id)) {
+        continue;
+      }
+      const effTier = inferEffortIdFromRaw(`${entry.modelId || ''} ${entry.label || ''}`, '');
+      const existingDyn = dynamicById.get(id);
+      if (existingDyn) {
+        if (effTier && entry.modelId) {
+          existingDyn.effortModelIds[effTier] = entry.modelId;
+        }
+        continue;
+      }
+      if (existingLabels.has(cleanBase.toLowerCase())) {
+        continue;
+      }
+      existingLabels.add(cleanBase.toLowerCase());
+      const dynObj = {
+        id,
+        label: cleanBase,
+        shortLabel: cleanBase,
+        badge: entry.isRecommended ? 'Recommended' : 'Live',
+        desc: 'Live synced Antigravity Gemini model',
+        cliModel: entry.modelId || cleanBase,
+        supportsEffort: entry.supportsThinking !== false,
+        liveCatalogEntry: entry,
+        effortModelIds: effTier && entry.modelId ? { [effTier]: entry.modelId } : {}
+      };
+      dynamicById.set(id, dynObj);
+      dynamic.push(dynObj);
+    }
+    return dynamic.length ? [...base, ...dynamic] : base;
+  }
+
   function inferEffortIdFromRaw(rawModel = '', effortHint = '') {
     const eff = String(effortHint || '').trim().toLowerCase();
     if (eff === 'xhigh') return 'high';
@@ -213,6 +349,15 @@
         !low.includes('hydrogen'))
     ) {
       return 'gemini-4-argon';
+    }
+    const liveMatch = lookupPwaLiveCatalogModel(rawModel);
+    if (liveMatch && liveMatch.isFirstPartyGemini && !liveMatch.isClaudeLike) {
+      const cleanBase = String(stripEffortSuffixForCatalog(liveMatch.baseLabel || liveMatch.label) || '').trim();
+      const candId = slugCatalogModelId(cleanBase);
+      const effCatalog = getEffectiveModelCatalog('antigravity');
+      if (candId && effCatalog.some((m) => m.id === candId)) {
+        return candId;
+      }
     }
     return '';
   }
@@ -295,6 +440,14 @@
       ) {
         return `Gemini 4 Argon (${effCap})`;
       }
+      const liveMatch = lookupPwaLiveCatalogModel(s);
+      if (liveMatch) {
+        const cleanBase = String(stripEffortSuffixForCatalog(liveMatch.baseLabel || liveMatch.label) || s).trim();
+        if (liveMatch.supportsThinking === false || /orchestrator/i.test(cleanBase)) {
+          return cleanBase;
+        }
+        return `${cleanBase} (${effCap})`;
+      }
       return s;
     }
     const explicitEff = inferEffortIdFromRaw(s, effortHint);
@@ -346,27 +499,66 @@
       return 1000000;
     }
     if (!low) return 256000;
-    if (/\b840k\b/.test(low)) return 840000;
-    if (/\b512k\b/.test(low)) return 512000;
-    if (/\b200k\b/.test(low)) return 200000;
-    if (/(?:^|[^a-z0-9])(model_placeholder_m40[0-5]|claude|opus|sonnet)(?:[^a-z0-9]|$)/.test(low)) {
-      return 840000;
+    const isExplicit200k = /(?:^|[^a-z0-9])200k(?:[^a-z0-9]|$)/.test(low);
+    const isClaudeLike = !isExplicit200k && /(?:^|[^a-z0-9])(model_placeholder_m40[0-5]|claude|opus|sonnet)(?:[^a-z0-9]|$)/.test(low);
+    if (isExplicit200k) return 200000;
+    const liveEntry = lookupPwaLiveCatalogModel(modelLabel);
+    const liveSoft = liveEntry ? Number(liveEntry.softCompactionTargetTokens || 0) : 0;
+    if (liveSoft > 0) {
+      const combined = `${low} ${String(liveEntry?.label || '')}`.toLowerCase();
+      const isUnqualifiedHardware1M =
+        !isClaudeLike &&
+        Boolean(liveEntry?.isFirstPartyGemini) &&
+        (liveSoft === 1000000 || liveSoft === 1048576) &&
+        !/(?:^|[^a-z0-9])(1m|2m)(?:[^a-z0-9]|$)/.test(combined);
+      if (isClaudeLike) {
+        return isUnqualifiedHardware1M ? 840000 : Math.max(840000, liveSoft);
+      }
+      if (!isUnqualifiedHardware1M) {
+        return liveSoft;
+      }
     }
+    if (/(?:^|[^a-z0-9])1m(?:[^a-z0-9]|$)/.test(low)) return 1000000;
+    if (/(?:^|[^a-z0-9])2m(?:[^a-z0-9]|$)/.test(low)) return 2000000;
+    if (/(?:^|[^a-z0-9])900k(?:[^a-z0-9]|$)/.test(low)) return 900000;
+    if (/(?:^|[^a-z0-9])840k(?:[^a-z0-9]|$)/.test(low)) return 840000;
+    if (/(?:^|[^a-z0-9])512k(?:[^a-z0-9]|$)/.test(low)) return 512000;
+    if (/(?:^|[^a-z0-9])128k(?:[^a-z0-9]|$)/.test(low) || /gpt[-_\s]*oss[-_\s]*120b|model_openai_gpt_oss_120b/.test(low)) return 128000;
+    if (isClaudeLike) return 840000;
     return 256000;
   }
 
-  function resolveDisplayContextMetrics(provKey, modelLabel, rawUsed, rawLimit, isNewDraft = false) {
+  function resolveDisplayContextMetrics(provKey, modelLabel, rawUsed, rawLimit, isNewDraft = false, rawHardMax = 0) {
     const defaultLim = inferDefaultContextLimit(provKey, modelLabel);
+    const liveEntry = provKey === 'antigravity' ? lookupPwaLiveCatalogModel(modelLabel) : null;
     const parsedLim = Number(rawLimit);
     const numLim = Number.isFinite(parsedLim) ? parsedLim : 0;
     const upgradeClaude1M = provKey === 'claude' && numLim === 200000 && defaultLim === 1000000;
-    const upgradeAgy840k = provKey === 'antigravity' && numLim === 256000 && defaultLim === 840000;
+    const upgradeAgyHigher = provKey === 'antigravity' && numLim === 256000 && defaultLim > 256000;
     const limitTokens =
-      upgradeClaude1M || upgradeAgy840k
+      upgradeClaude1M || upgradeAgyHigher
         ? defaultLim
         : numLim > 0
           ? numLim
           : defaultLim;
+    const lowModel = String(modelLabel || '').trim().toLowerCase();
+    const isClaudeLike = /(?:^|[^a-z0-9])(model_placeholder_m40[0-5]|claude|opus|sonnet)(?:[^a-z0-9]|$)/.test(lowModel);
+    const isThirdParty = /(?:^|[^a-z0-9])(gpt|openai|o1|o3|o4|deepseek|llama|qwen|mistral|grok|kimi|glm|command|nemotron)(?:[^a-z0-9]|$)/.test(lowModel);
+    const isFirstPartyGemini =
+      provKey === 'antigravity' &&
+      !isClaudeLike &&
+      !isThirdParty &&
+      (liveEntry
+        ? Boolean(liveEntry.isFirstPartyGemini)
+        : !lowModel ||
+          /(?:^|[^a-z0-9])(gemini|orchestrator|carbon|hydrogen|argon|flash)(?:[^a-z0-9]|$)/.test(lowModel) ||
+          /^model_placeholder_m\d+$/.test(lowModel));
+    const hardMaxTokens = Math.max(
+      limitTokens,
+      Number(rawHardMax || 0) ||
+        Number(liveEntry?.hardMaxTokens || liveEntry?.maxContextTokens || 0) ||
+        (isFirstPartyGemini && limitTokens <= 256000 ? 1000000 : limitTokens)
+    );
     const parsedUsed = Number(rawUsed);
     const safeUsed = Number.isFinite(parsedUsed) ? parsedUsed : 0;
     const usedTokens = isNewDraft ? 0 : Math.max(0, Math.round(safeUsed));
@@ -376,7 +568,32 @@
         : 0;
     const remainingTokens = Math.max(0, limitTokens - usedTokens);
     const overrunTokens = Math.max(0, usedTokens - limitTokens);
-    return { usedTokens, limitTokens, pct, remainingTokens, overrunTokens };
+    const isSoftOverrun = Boolean(
+      !isNewDraft &&
+        provKey === 'antigravity' &&
+        overrunTokens > 0 &&
+        hardMaxTokens > limitTokens &&
+        usedTokens < Math.round(hardMaxTokens * 0.95)
+    );
+    const overrunArcPct = isSoftOverrun
+      ? Math.min(
+          100,
+          Math.max(
+            6,
+            Math.round((overrunTokens / Math.max(1, hardMaxTokens - limitTokens)) * 100)
+          )
+        )
+      : 0;
+    return {
+      usedTokens,
+      limitTokens,
+      hardMaxTokens,
+      pct,
+      remainingTokens,
+      overrunTokens,
+      isSoftOverrun,
+      overrunArcPct
+    };
   }
 
   function timeAgo(tsMs) {
@@ -972,6 +1189,9 @@
   });
 
   let appState = cachedStore.state || null;
+  if (appState?.antigravityModelCatalog) {
+    ingestLiveAntigravityCatalog(appState.antigravityModelCatalog);
+  }
   let threadsCache = cachedStore.threads || {};
   let workspacesDetailCache = cachedStore.workspacesDetail || {};
   let outbox = loadJson(STORAGE_KEYS.OUTBOX, []);
@@ -3332,11 +3552,28 @@
 
   // Theme, Studio Palettes & IDE Sidebar management
   let sidebarHoverTimer = null;
+  const pinStripOpenByThreadId = new Set();
+  const pinStripDismissedByThreadId = new Map();
+
+  function hidePinStripTransientUi() {
+    pinStripOpenByThreadId.clear();
+    const strip = $('chat-pin-strip');
+    const pinInp = $('chat-pin-input');
+    if (pinInp && document.activeElement === pinInp) {
+      pinInp.blur();
+    }
+    if (strip) strip.hidden = true;
+    $('btn-pin-constraints')?.setAttribute('aria-expanded', 'false');
+    $('btn-pin-constraints')?.classList.remove('is-active');
+  }
 
   function closeFloatingUiMenus() {
     if (sidebarHoverTimer) {
       clearTimeout(sidebarHoverTimer);
       sidebarHoverTimer = null;
+    }
+    if (isPinLocked()) {
+      hidePinStripTransientUi();
     }
     const palPop = $('theme-palette-popover');
     if (palPop) palPop.hidden = true;
@@ -3845,6 +4082,7 @@
     let chosenSummary = primarySnap?.summary || null;
     let chosenSummaryByProv = primarySnap?.summaryByProvider || null;
     let chosenTopSessions = Array.isArray(primarySnap?.topSessions) ? primarySnap.topSessions : [];
+    let bestModelCatalog = primarySnap?.antigravityModelCatalog || null;
     let bestClaudeMode = extractClaudeModeFields(
       primarySnap?.claudePermissionMode || primarySnap?.connection?.claudePermissionMode
     );
@@ -3890,6 +4128,15 @@
         chosenTopSessions = snap.topSessions;
       }
 
+      if (
+        snap?.antigravityModelCatalog &&
+        Array.isArray(snap.antigravityModelCatalog.models) &&
+        (!bestModelCatalog ||
+          Number(snap.antigravityModelCatalog.updatedAt || 0) >= Number(bestModelCatalog.updatedAt || 0))
+      ) {
+        bestModelCatalog = snap.antigravityModelCatalog;
+      }
+
       for (const r of snap.rows || []) {
         if (!r || !r.id) continue;
         const prev = rowMap.get(r.id);
@@ -3900,8 +4147,26 @@
           const pAt = Number(prev.at || 0);
           const rOwned = r.deviceId === devId;
           const pOwned = prev.deviceId !== r.deviceId;
+          const rPinAt = Number(r.pinnedConstraintUpdatedAt || 0);
+          const pPinAt = Number(prev.pinnedConstraintUpdatedAt || 0);
+          const winPinText =
+            rPinAt > pPinAt || (rPinAt === pPinAt && r.pinnedConstraint)
+              ? String(r.pinnedConstraint || '')
+              : String(prev.pinnedConstraint || '');
+          const winPinAt = Math.max(rPinAt, pPinAt);
           if (rAt > pAt || (rAt === pAt && rOwned && pOwned)) {
-            rowMap.set(r.id, { ...prev, ...r });
+            rowMap.set(r.id, {
+              ...prev,
+              ...r,
+              pinnedConstraint: winPinText,
+              pinnedConstraintUpdatedAt: winPinAt
+            });
+          } else if (winPinAt > pPinAt) {
+            rowMap.set(r.id, {
+              ...prev,
+              pinnedConstraint: winPinText,
+              pinnedConstraintUpdatedAt: winPinAt
+            });
           }
         }
       }
@@ -3932,6 +4197,9 @@
     if (bestClaudeMode) {
       ingestClaudePermissionModeDoc(bestClaudeMode, { fromHostSnapshot: true });
     }
+    if (bestModelCatalog) {
+      ingestLiveAntigravityCatalog(bestModelCatalog);
+    }
 
     return {
       ...primarySnap,
@@ -3945,6 +4213,7 @@
       summary: chosenSummary || appState?.summary || null,
       summaryByProvider: chosenSummaryByProv || appState?.summaryByProvider || null,
       topSessions: chosenTopSessions.length ? chosenTopSessions : appState?.topSessions || [],
+      antigravityModelCatalog: bestModelCatalog || appState?.antigravityModelCatalog || null,
       claudePermissionMode: { ...claudeModeState },
       ...(bestHide3p
         ? {
@@ -3957,6 +4226,9 @@
 
   function ingestIncomingHostState(st, sourceDeviceId = '') {
     if (!st || typeof st !== 'object') return;
+    if (st.antigravityModelCatalog) {
+      ingestLiveAntigravityCatalog(st.antigravityModelCatalog);
+    }
     const directMode = st.claudePermissionMode || st.connection?.claudePermissionMode;
     if (directMode) {
       ingestClaudePermissionModeDoc(directMode, { fromHostSnapshot: true });
@@ -5075,8 +5347,17 @@
           remoteMsgs.push(...optimisticMsgs);
         }
       }
+      const prevPinAt = Number(existing?.pinnedConstraintUpdatedAt || 0);
+      const remPinAt = Number(remoteThread.pinnedConstraintUpdatedAt || 0);
+      const usePrevPin = Boolean(existing && prevPinAt > remPinAt);
       threadsCache[tid] = {
         ...remoteThread,
+        ...(usePrevPin
+          ? {
+              pinnedConstraint: String(existing.pinnedConstraint || ''),
+              pinnedConstraintUpdatedAt: prevPinAt
+            }
+          : {}),
         messages: remoteMsgs
       };
       if (remoteMsgs.length > 0) {
@@ -5604,6 +5885,9 @@
     };
 
     if (isHeadlessBrowser) {
+      try {
+        window.__theoLastQuarantinedCmd = cmd;
+      } catch {}
       return { ok: true, mode: 'quarantined', id: cmd.id };
     }
 
@@ -5712,8 +5996,17 @@
         const rawCur = curRes.ok ? await curRes.json() : {};
         const curStore =
           rawCur?.docs && typeof rawCur.docs === 'object' ? rawCur.docs : rawCur || {};
+        const cmdSid = String(cmd.sessionId || cmd.id || '').trim();
         const existingCmds = Array.isArray(curStore?.queue?.commands)
-          ? curStore.queue.commands.filter((c) => c && c.id && c.id !== cmd.id).slice(-14)
+          ? curStore.queue.commands
+              .filter((c) => {
+                if (!c || !c.id || c.id === cmd.id) return false;
+                if (cmd.type === 'setPinnedConstraint' && c.type === 'setPinnedConstraint') {
+                  return String(c.sessionId || c.id || '').trim() !== cmdSid;
+                }
+                return true;
+              })
+              .slice(-14)
           : [];
         existingCmds.push(cmd);
 
@@ -5754,7 +6047,14 @@
     }
 
     // 5. Offline Outbox Queue
-    outbox = outbox.filter((c) => c && c.id !== cmd.id);
+    const outboxSid = String(cmd.sessionId || cmd.id || '').trim();
+    outbox = outbox.filter((c) => {
+      if (!c || c.id === cmd.id) return false;
+      if (cmd.type === 'setPinnedConstraint' && c.type === 'setPinnedConstraint') {
+        return String(c.sessionId || c.id || '').trim() !== outboxSid;
+      }
+      return true;
+    });
     outbox.push(cmd);
     saveJson(STORAGE_KEYS.OUTBOX, outbox);
     renderOutboxBadge();
@@ -11817,7 +12117,7 @@
 
   function getEffectiveSessionModelConfig(activeRow = null, provKey = 'antigravity', isNewDraft = false) {
     const cleanProv = provKey === 'claude' ? 'claude' : 'antigravity';
-    const catalog = MODEL_CATALOG[cleanProv] || MODEL_CATALOG.antigravity;
+    const catalog = getEffectiveModelCatalog(cleanProv);
     const tid = !isNewDraft ? String(activeRow?.id || prefs.selectedThreadId || '').trim() : '';
     const savedThreadCfg =
       tid && tid !== '__new__' && prefs.threadModelConfig && typeof prefs.threadModelConfig === 'object'
@@ -11891,7 +12191,9 @@
       modelId: isNonCatalogSessionModel ? '' : modelEntry.id,
       cliModel: isNonCatalogSessionModel
         ? displayLabel || rawRowModel
-        : modelEntry.cliModel || modelEntry.id,
+        : (modelEntry.effortModelIds && modelEntry.effortModelIds[effortEntry.id]) ||
+          modelEntry.cliModel ||
+          modelEntry.id,
       effort: effortEntry.id,
       effortLabel: effortEntry.label,
       modelEntry: isNonCatalogSessionModel ? null : modelEntry,
@@ -11911,7 +12213,7 @@
         ? 'claude'
         : 'antigravity';
     const current = getEffectiveSessionModelConfig(activeRow, cleanProv, isNewDraft);
-    const catalog = MODEL_CATALOG[cleanProv] || MODEL_CATALOG.antigravity;
+    const catalog = getEffectiveModelCatalog(cleanProv);
     const explicitCatalogModelId =
       modelId && catalog.some((m) => m.id === modelId) ? modelId : '';
     const keepNonCatalog = Boolean(!explicitCatalogModelId && current.isNonCatalog && !isNewDraft);
@@ -12085,7 +12387,7 @@
     const titleEl = $('model-popover-title');
     if (!bodyEl) return;
     const cleanProv = provKey === 'claude' ? 'claude' : 'antigravity';
-    const catalog = MODEL_CATALOG[cleanProv] || MODEL_CATALOG.antigravity;
+    const catalog = getEffectiveModelCatalog(cleanProv);
     if (titleEl) {
       titleEl.textContent = cleanProv === 'claude' ? 'Claude Code Model' : 'Model Selection';
     }
@@ -12102,7 +12404,9 @@
               cleanProv === 'antigravity'
                 ? m.id.includes('flash')
                   ? 'Fast'
-                  : 'New'
+                  : m.badge === 'Live' || m.badge === 'Recommended'
+                    ? m.badge
+                    : 'New'
                 : m.badge;
             return `
               <button type="button" role="menuitemradio" aria-checked="${isSel ? 'true' : 'false'}" class="vs-model-menu-item${isSel ? ' active' : ''}" data-select-model-combo="${esc(`${m.id}:${effObj.id}`)}"${isPrimaryFamilyMatch ? ` data-select-ai-model="${esc(m.id)}"` : ''} data-model-prov="${cleanProv}">
@@ -12136,7 +12440,7 @@
     const cleanProv = provKey === 'claude' ? 'claude' : 'antigravity';
     const provDisplay = cleanProv === 'claude' ? 'Claude Code' : 'Google Antigravity';
     const lpLimit = inferDefaultContextLimit(cleanProv, modelCfg?.displayLabel || '');
-    const catalog = MODEL_CATALOG[cleanProv] || MODEL_CATALOG.antigravity;
+    const catalog = getEffectiveModelCatalog(cleanProv);
     const rawWorkspaces = Array.isArray(appState?.workspaces) ? appState.workspaces : [];
     const rankedWorkspaces = rankByFreq(
       rawWorkspaces,
@@ -12386,13 +12690,17 @@
             (!isNewDraft ? activeRow?.limitTokens || activeRow?.contextLimit : 0) ||
             0
         );
+    const rawHardMax = hasThreadModelOverride ? 0 : Number(rawCtx.hardMaxTokens || activeRow?.hardMaxTokens || 0);
     const {
       usedTokens,
       limitTokens,
+      hardMaxTokens,
       pct,
       remainingTokens,
-      overrunTokens
-    } = resolveDisplayContextMetrics(provKey, modelForLimit, rawUsed, rawLimit, isNewDraft);
+      overrunTokens,
+      isSoftOverrun,
+      overrunArcPct
+    } = resolveDisplayContextMetrics(provKey, modelForLimit, rawUsed, rawLimit, isNewDraft, rawHardMax);
     const breakdownArr = isNewDraft
       ? [
           { label: 'System Prompt & Rules', tokens: 0, color: '#D9A54A' },
@@ -12409,12 +12717,19 @@
     const ctx = {
       usedTokens,
       limitTokens,
+      hardMaxTokens,
       pct,
       remainingTokens,
       overrunTokens,
+      isSoftOverrun,
+      overrunArcPct,
       modelLabel: resolvedModelLabel,
       breakdown: breakdownArr
     };
+    const pillBtn = $('btn-ctx-window');
+    if (pillBtn) {
+      pillBtn.classList.toggle('is-soft-overrun', Boolean(ctx.isSoftOverrun));
+    }
     const pillLbl = $('ctx-pill-label');
     if (pillLbl) {
       pillLbl.textContent = `${fmtCompact(ctx.usedTokens)} / ${fmtCompact(ctx.limitTokens)} · ${ctx.pct}%`;
@@ -12425,9 +12740,32 @@
       const offset = circum - (Math.min(100, Math.max(isNewDraft ? 0 : 2, ctx.pct)) / 100) * circum;
       circle.setAttribute('stroke-dashoffset', String(offset));
     }
+    const overrunCircle = $('ctx-ring-overrun-circle');
+    if (overrunCircle) {
+      if (ctx.isSoftOverrun) {
+        const circum = 56.5;
+        const arcOffset = circum - (Math.min(100, Math.max(6, ctx.overrunArcPct)) / 100) * circum;
+        overrunCircle.setAttribute('stroke-dashoffset', String(arcOffset));
+        overrunCircle.hidden = false;
+      } else {
+        overrunCircle.setAttribute('stroke-dashoffset', '56.5');
+        overrunCircle.hidden = true;
+      }
+    }
+    const overrunPill = $('ctx-overrun-pill');
+    if (overrunPill) {
+      if (ctx.isSoftOverrun) {
+        overrunPill.textContent = `+${fmtCompact(ctx.overrunTokens)}`;
+        overrunPill.hidden = false;
+      } else {
+        overrunPill.textContent = '';
+        overrunPill.hidden = true;
+      }
+    }
 
     renderContextPopover(ctx);
     renderChatBgTasks(activeRow, threadDetail, provKey, isNewDraft);
+    renderChatPinStrip(activeRow, threadDetail, ctx, isNewDraft);
 
     const messages = isNewDraft ? [] : coalesceThreadMessages(threadDetail?.messages || []);
     const sessionApprovals = isNewDraft
@@ -13084,6 +13422,16 @@
       overrun > 0
         ? `<strong>${fmtInt(ctx.usedTokens)}</strong> tokens used of <strong>${fmtInt(ctx.limitTokens)}</strong> (${ctx.pct}%) · <span>+${fmtInt(overrun)} over soft target (auto-compacts next turn)</span>`
         : `<strong>${fmtInt(ctx.usedTokens)}</strong> tokens used of <strong>${fmtInt(ctx.limitTokens)}</strong> (${ctx.pct}%) · <span>${fmtInt(rem)} remaining</span>`;
+    const bannerEl = $('ctx-overrun-banner');
+    if (bannerEl) {
+      if (ctx.isSoftOverrun && Number(ctx.hardMaxTokens || 0) > Number(ctx.limitTokens || 0)) {
+        bannerEl.textContent = `Soft compaction target ${fmtCompact(ctx.limitTokens)} · Hard context ceiling ${fmtCompact(ctx.hardMaxTokens)} (+${fmtInt(overrun)} headroom before wall)`;
+        bannerEl.hidden = false;
+      } else {
+        bannerEl.textContent = '';
+        bannerEl.hidden = true;
+      }
+    }
     const bd = Array.isArray(ctx.breakdown) ? ctx.breakdown : [];
     const totalBd = Math.max(1, bd.reduce((acc, item) => acc + Number(item.tokens || 0), 0));
     const safeCssColor = (c) => (/^(#[0-9a-fA-F]{3,8}|[a-zA-Z]+)$/.test(String(c || '').trim()) ? String(c).trim() : '#D9A54A');
@@ -13106,6 +13454,140 @@
       `
       )
       .join('');
+  }
+
+  function sanitizeClientPinnedConstraint(rawText = '') {
+    return String(rawText || '')
+      .replace(/[\r\n\t]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 280);
+  }
+
+  function getEffectivePinnedConstraint(tid, activeRow = null, threadDetail = null) {
+    const cleanId = String(tid || '').trim();
+    if (!cleanId) return { text: '', updatedAt: 0 };
+    const candidates = [];
+    const pending = pendingRowOverrides.get(cleanId);
+    if (pending && 'pinnedConstraint' in pending) {
+      candidates.push({
+        text: String(pending.pinnedConstraint || ''),
+        updatedAt: Number(pending.pinnedConstraintUpdatedAt || 0),
+        prio: 3
+      });
+    }
+    if (threadDetail && ('pinnedConstraint' in threadDetail || 'pinnedConstraintUpdatedAt' in threadDetail)) {
+      candidates.push({
+        text: String(threadDetail.pinnedConstraint || ''),
+        updatedAt: Number(threadDetail.pinnedConstraintUpdatedAt || 0),
+        prio: 2
+      });
+    }
+    if (activeRow && ('pinnedConstraint' in activeRow || 'pinnedConstraintUpdatedAt' in activeRow)) {
+      candidates.push({
+        text: String(activeRow.pinnedConstraint || ''),
+        updatedAt: Number(activeRow.pinnedConstraintUpdatedAt || 0),
+        prio: 1
+      });
+    }
+    if (!candidates.length) return { text: '', updatedAt: 0 };
+    candidates.sort((a, b) => (b.updatedAt !== a.updatedAt ? b.updatedAt - a.updatedAt : b.prio - a.prio));
+    return { text: sanitizeClientPinnedConstraint(candidates[0].text), updatedAt: candidates[0].updatedAt };
+  }
+
+  function renderChatPinStrip(activeRow, threadDetail, ctx, isNewDraft = false) {
+    const strip = $('chat-pin-strip');
+    const pinBtn = $('btn-pin-constraints');
+    const tid = String(
+      activeRow?.id || threadDetail?.id || (!isNewDraft ? prefs.selectedThreadId : '') || ''
+    ).trim();
+    if (isNewDraft || !tid || tid === '__new__' || tid.startsWith('draft-new-') || isPinLocked()) {
+      if (strip) strip.hidden = true;
+      if (pinBtn) {
+        pinBtn.classList.remove('is-active');
+        pinBtn.setAttribute('aria-expanded', 'false');
+      }
+      return;
+    }
+    const { text: pinText } = getEffectivePinnedConstraint(tid, activeRow, threadDetail);
+    const pct = Number(ctx?.pct || 0);
+    if (pct < 85 && pinStripDismissedByThreadId.get(tid) === 'dismissed85') {
+      pinStripDismissedByThreadId.delete(tid);
+    }
+    const isCollapsed = pinStripDismissedByThreadId.get(tid) === 'collapsed';
+    const autoShow =
+      pct >= 85 && pinStripDismissedByThreadId.get(tid) !== 'dismissed85' && !isCollapsed;
+    const isOpen =
+      !isCollapsed && (Boolean(pinText) || pinStripOpenByThreadId.has(tid) || autoShow);
+    if (pinBtn) {
+      pinBtn.classList.toggle('is-active', Boolean(pinText) || isOpen);
+      pinBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    }
+    if (!strip) return;
+    strip.hidden = !isOpen;
+    const prevSid = strip.dataset.sessionId || '';
+    strip.dataset.sessionId = tid;
+    const statusEl = $('chat-pin-status');
+    if (statusEl) {
+      if (pinText && pct >= 85) statusEl.textContent = 'Armed · ≥85% active';
+      else if (pinText) statusEl.textContent = 'Armed for ≥85% & /compact';
+      else if (pct >= 85) statusEl.textContent = '≥85% target · pin invariants';
+      else statusEl.textContent = 'Auto-injects ≥85% or /compact';
+    }
+    const inp = $('chat-pin-input');
+    if (inp && (document.activeElement !== inp || prevSid !== tid)) {
+      inp.value = pinText;
+    }
+    const clrBtn = $('btn-chat-pin-clear');
+    if (clrBtn) {
+      clrBtn.hidden = !pinText && !String(inp?.value || '').trim();
+    }
+  }
+
+  async function setSessionPinnedConstraint(sessionId, rawText = '') {
+    const tid = String(sessionId || prefs.selectedThreadId || '').trim();
+    if (!tid || tid === '__new__' || tid.startsWith('draft-new-')) return false;
+    const clean = sanitizeClientPinnedConstraint(rawText);
+    const updatedAt = Date.now();
+    pinStripDismissedByThreadId.delete(tid);
+    if (clean) pinStripOpenByThreadId.add(tid);
+    else pinStripOpenByThreadId.delete(tid);
+
+    const row = (appState?.rows || []).find((r) => r && r.id === tid);
+    if (row) {
+      row.pinnedConstraint = clean;
+      row.pinnedConstraintUpdatedAt = updatedAt;
+    }
+    if (threadsCache[tid] && typeof threadsCache[tid] === 'object') {
+      threadsCache[tid].pinnedConstraint = clean;
+      threadsCache[tid].pinnedConstraintUpdatedAt = updatedAt;
+    }
+    noteRowOverride(tid, {
+      pinnedConstraint: clean,
+      pinnedConstraintUpdatedAt: updatedAt
+    });
+    const inp = $('chat-pin-input');
+    if (inp) inp.value = clean;
+    persistCache();
+    renderChatView(false);
+    renderIdeSidebar();
+
+    const activeFilterDev =
+      prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
+        ? String(prefs.selectedDeviceFilter).trim()
+        : '';
+    const targetDeviceId = String(
+      row?.deviceId || threadsCache[tid]?.deviceId || activeFilterDev || ''
+    ).trim();
+    await dispatchRemoteCommand({
+      type: 'setPinnedConstraint',
+      id: tid,
+      sessionId: tid,
+      ...(targetDeviceId ? { targetDeviceId } : {}),
+      text: clean,
+      updatedAt
+    });
+    return true;
   }
 
   // Unsaved work per PC, at the top of Workspaces (the evening digest's unsaved-work notification opens here).
@@ -13603,6 +14085,7 @@
 
   const SLASH_COMMAND_CATALOG = [
     { id: '/compact', label: '/compact', desc: 'Summarize context window & free tokens', kind: 'action', act: 'compact', baseWeight: 95 },
+    { id: '/pin', label: '/pin', desc: 'Pin must-keep constraints for next checkpoint (/compact or ≥85%)', kind: 'action', act: 'pin', baseWeight: 92 },
     { id: '/plan', label: '/plan', desc: 'Draft a step-by-step architecture & implementation plan', kind: 'prompt', insert: '/plan ', baseWeight: 88 },
     { id: '/boost', label: '/boost', desc: 'Deep multi-perspective reasoning & rigorous verification', kind: 'prompt', insert: '/boost ', baseWeight: 84 },
     { id: '/goal', label: '/goal', desc: 'Autonomous thorough execution until goal is achieved', kind: 'prompt', insert: '/goal ', baseWeight: 80 },
@@ -13850,6 +14333,29 @@
             provider: activeRow?.provider || 'antigravity'
           });
           showToast('⚡ Dispatched /compact to summarize context');
+        }
+      } else if (item.act === 'pin') {
+        if (isNewSessionMode() || !cleanTargetThreadId(prefs.selectedThreadId)) {
+          showToast('Select an active session first to pin checkpoint constraints');
+        } else {
+          const pinArg = after.trim();
+          const targetTid = prefs.selectedThreadId;
+          if (/^(?:clear|off|none|reset)$/i.test(pinArg)) {
+            await setSessionPinnedConstraint(targetTid, '');
+            showToast('Cleared pinned constraints');
+          } else if (pinArg) {
+            await setSessionPinnedConstraint(targetTid, pinArg);
+            showToast('Pinned constraints for next checkpoint');
+          } else {
+            pinStripDismissedByThreadId.delete(targetTid);
+            pinStripOpenByThreadId.add(targetTid);
+            renderChatView(false);
+            const pInp = $('chat-pin-input');
+            if (pInp) {
+              pInp.focus();
+              pInp.select?.();
+            }
+          }
         }
       } else if (item.act === 'new-agy') {
         enterNewSessionMode('antigravity');
@@ -14246,6 +14752,7 @@
     }
     overlay.hidden = false;
     if (appShell) appShell.inert = true;
+    hidePinStripTransientUi();
     closeFloatingUiMenus();
     document.documentElement.classList.remove('pin-locked-boot');
     let entered = '';
@@ -16758,6 +17265,76 @@
       if (pop) pop.hidden = true;
     });
 
+    $('btn-pin-constraints')?.addEventListener('click', () => {
+      if (isPinLocked()) return;
+      const tid = String(prefs.selectedThreadId || '').trim();
+      if (isNewSessionMode() || !cleanTargetThreadId(tid)) {
+        showToast('Select an active session first to pin checkpoint constraints');
+        return;
+      }
+      const strip = $('chat-pin-strip');
+      const currentlyHidden = !strip || strip.hidden;
+      if (currentlyHidden) {
+        pinStripDismissedByThreadId.delete(tid);
+        pinStripOpenByThreadId.add(tid);
+        renderChatView(false);
+        const inp = $('chat-pin-input');
+        if (inp) {
+          inp.focus();
+          inp.select?.();
+        }
+      } else {
+        pinStripOpenByThreadId.delete(tid);
+        pinStripDismissedByThreadId.set(tid, 'collapsed');
+        renderChatView(false);
+      }
+    });
+    $('btn-chat-pin-save')?.addEventListener('click', async () => {
+      const tid = String($('chat-pin-strip')?.dataset?.sessionId || prefs.selectedThreadId || '').trim();
+      const inp = $('chat-pin-input');
+      if (!tid) return;
+      const txt = sanitizeClientPinnedConstraint(inp ? inp.value : '');
+      if (inp && document.activeElement === inp) inp.blur();
+      await setSessionPinnedConstraint(tid, txt);
+      showToast(txt ? 'Pinned constraints for next checkpoint' : 'Cleared pinned constraints');
+    });
+    $('btn-chat-pin-clear')?.addEventListener('click', async () => {
+      const tid = String($('chat-pin-strip')?.dataset?.sessionId || prefs.selectedThreadId || '').trim();
+      if (!tid) return;
+      const inp = $('chat-pin-input');
+      if (inp && document.activeElement === inp) inp.blur();
+      await setSessionPinnedConstraint(tid, '');
+      showToast('Cleared pinned constraints');
+    });
+    $('btn-chat-pin-hide')?.addEventListener('click', () => {
+      const tid = String($('chat-pin-strip')?.dataset?.sessionId || prefs.selectedThreadId || '').trim();
+      const inp = $('chat-pin-input');
+      if (inp && document.activeElement === inp) inp.blur();
+      if (tid) {
+        pinStripOpenByThreadId.delete(tid);
+        pinStripDismissedByThreadId.set(tid, 'collapsed');
+      }
+      renderChatView(false);
+    });
+    $('chat-pin-input')?.addEventListener('input', () => {
+      const clr = $('btn-chat-pin-clear');
+      if (clr) {
+        const tid = String($('chat-pin-strip')?.dataset?.sessionId || prefs.selectedThreadId || '').trim();
+        const activeRow = (appState?.rows || []).find((r) => r && r.id === tid);
+        const cur = getEffectivePinnedConstraint(tid, activeRow, threadsCache[tid] || null).text;
+        clr.hidden = !String($('chat-pin-input')?.value || '').trim() && !cur;
+      }
+    });
+    $('chat-pin-input')?.addEventListener('keydown', async (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        $('btn-chat-pin-save')?.click();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        $('btn-chat-pin-hide')?.click();
+      }
+    });
+
     $('btn-chat-open-vscode')?.addEventListener('click', async () => {
       if (isNewSessionMode()) {
         const prov = prefs.composerMode === 'new-claude' ? 'claude' : 'antigravity';
@@ -17277,6 +17854,15 @@
           settled = false;
         }
       }
+      if ('pinnedConstraint' in rec) {
+        const recPinAt = Number(rec.pinnedConstraintUpdatedAt || 0);
+        const srvPinAt = Number(r.pinnedConstraintUpdatedAt || 0);
+        if (srvPinAt < recPinAt) {
+          r.pinnedConstraint = String(rec.pinnedConstraint || '');
+          r.pinnedConstraintUpdatedAt = recPinAt;
+          settled = false;
+        }
+      }
       if (settled) pendingRowOverrides.delete(id);
     }
     rows.sort((a, b) => Number(b?.at || 0) - Number(a?.at || 0));
@@ -17471,7 +18057,38 @@
       return;
     }
 
-    // Intercept standalone local IDE action slash commands so they execute directly
+    // Intercept standalone local IDE action slash commands (plus /pin <constraints>) so they execute directly
+    if (composerAttachments.length === 0) {
+      const pinCmdMatch = rawText.match(/^\/pin(?:\s+([\s\S]+))?$/i);
+      if (pinCmdMatch) {
+        inp.value = '';
+        inp.style.height = 'auto';
+        updateComposerActionButton();
+        const tid = cleanTargetThreadId(prefs.selectedThreadId);
+        if (isNewSessionMode() || !tid) {
+          showToast('Select an active session first to pin checkpoint constraints');
+        } else {
+          const pinArg = String(pinCmdMatch[1] || '').trim();
+          if (!pinArg) {
+            pinStripDismissedByThreadId.delete(tid);
+            pinStripOpenByThreadId.add(tid);
+            renderChatView(false);
+            const pInp = $('chat-pin-input');
+            if (pInp) {
+              pInp.focus();
+              pInp.select?.();
+            }
+          } else if (/^(?:clear|off|none|reset)$/i.test(pinArg)) {
+            await setSessionPinnedConstraint(tid, '');
+            showToast('Cleared pinned constraints');
+          } else {
+            await setSessionPinnedConstraint(tid, pinArg);
+            showToast('Pinned constraints for next checkpoint');
+          }
+        }
+        return;
+      }
+    }
     if (composerAttachments.length === 0 && /^\/[a-z-]+$/i.test(rawText)) {
       const cmdMatch = SLASH_COMMAND_CATALOG.find(
         (c) => c.kind === 'action' && c.id.toLowerCase() === rawText.toLowerCase()
@@ -17922,7 +18539,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=73', { updateViaCache: 'none' })
+        .register('sw.js?v=74', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

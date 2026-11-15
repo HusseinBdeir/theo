@@ -4751,7 +4751,652 @@ async function main() {
       }
     }
 
-    // Final error & network quarantine assertions (#19)
+    // Adversarial #21: v74 Live GetUserStatus model-capacity sync, dual-tone +Nk soft-overrun ring,
+    // and Pin Constraints for Next Checkpoint micro-note (/pin, >=85% auto-reveal, focus guard & XSS guard)
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true }, sessionId);
+    const v73SeedOk = await evalJs(`(() => {
+      const now = Date.now();
+      const rawCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+      const snap = rawCache.snapshot || rawCache.state || {};
+      snap.antigravityModelCatalog = {
+        source: 'GetUserStatus',
+        updatedAt: now,
+        models: [
+          {
+            modelId: 'MODEL_PLACEHOLDER_M777',
+            label: 'Gemini 5 Nova (High)',
+            baseLabel: 'Gemini 5 Nova',
+            aliases: ['MODEL_PLACEHOLDER_M777', 'Gemini 5 Nova'],
+            isFirstPartyGemini: true,
+            isClaudeLike: false,
+            supportsThinking: true,
+            maxContextTokens: 512000,
+            softCompactionTargetTokens: 512000,
+            hardMaxTokens: 1000000
+          },
+          {
+            modelId: 'MODEL_PLACEHOLDER_M402',
+            label: 'Claude Opus 5.5 (High)',
+            baseLabel: 'Claude Opus 5.5',
+            aliases: ['MODEL_PLACEHOLDER_M402', 'Claude Opus 5.5'],
+            isFirstPartyGemini: false,
+            isClaudeLike: true,
+            supportsThinking: true,
+            maxContextTokens: 256000,
+            softCompactionTargetTokens: 256000,
+            hardMaxTokens: 256000
+          },
+          {
+            modelId: 'MODEL_OPENAI_GPT_OSS_120B_MEDIUM',
+            label: 'GPT-OSS 120B (Medium)',
+            baseLabel: 'GPT-OSS 120B',
+            aliases: ['MODEL_OPENAI_GPT_OSS_120B_MEDIUM', 'GPT-OSS 120B'],
+            isFirstPartyGemini: false,
+            isClaudeLike: false,
+            supportsThinking: false,
+            maxContextTokens: 128000,
+            softCompactionTargetTokens: 128000,
+            hardMaxTokens: 128000
+          },
+          {
+            modelId: 'MODEL_PLACEHOLDER_M409',
+            label: 'Claude Opus 6 (High)',
+            baseLabel: 'Claude Opus 6',
+            aliases: ['MODEL_PLACEHOLDER_M409', 'Claude Opus 6'],
+            isFirstPartyGemini: false,
+            isClaudeLike: true,
+            supportsThinking: true,
+            maxContextTokens: 1000000,
+            softCompactionTargetTokens: 1000000,
+            hardMaxTokens: 1000000
+          },
+          {
+            modelId: 'MODEL_PLACEHOLDER_M779',
+            label: 'Gemini Pro3',
+            baseLabel: 'Gemini Pro3',
+            aliases: ['MODEL_PLACEHOLDER_M779', 'Gemini Pro3'],
+            isFirstPartyGemini: true,
+            isClaudeLike: false,
+            supportsThinking: true,
+            maxContextTokens: 1000000,
+            softCompactionTargetTokens: 1000000,
+            hardMaxTokens: 1000000
+          }
+        ]
+      };
+      snap.rows = Array.isArray(snap.rows) ? snap.rows : [];
+      const ovRow = snap.rows.find((r) => r && r.id === 'sess-ctx-overrun');
+      if (ovRow) ovRow.deviceId = 'pc-workstation-b';
+      snap.rows.unshift(
+        {
+          id: 'sess-ctx-live777',
+          title: 'Live GetUserStatus Catalog 512k',
+          provider: 'antigravity',
+          model: 'MODEL_PLACEHOLDER_M777',
+          effort: 'high',
+          folder: 'isabi-app',
+          status: 'completed',
+          usedTokens: 256000,
+          limitTokens: 0,
+          at: now - 5000
+        },
+        {
+          id: 'sess-ctx-gpt128',
+          title: 'GPT-OSS 120B 128k Guard',
+          provider: 'antigravity',
+          model: 'MODEL_OPENAI_GPT_OSS_120B_MEDIUM',
+          effort: 'medium',
+          folder: 'isabi-app',
+          status: 'completed',
+          usedTokens: 140000,
+          limitTokens: 128000,
+          at: now - 5500
+        },
+        {
+          id: 'sess-ctx-claude1m-agy',
+          title: 'Claude 1M Antigravity Parity',
+          provider: 'antigravity',
+          model: 'MODEL_PLACEHOLDER_M409',
+          effort: 'high',
+          folder: 'isabi-app',
+          status: 'completed',
+          usedTokens: 900000,
+          limitTokens: 1000000,
+          hardMaxTokens: 1000000,
+          at: now - 6000
+        },
+        {
+          id: 'sess-ctx-pro3',
+          title: 'Gemini Pro3 256k Soft Overrun',
+          provider: 'antigravity',
+          model: 'Gemini Pro3',
+          effort: 'high',
+          folder: 'isabi-app',
+          status: 'completed',
+          usedTokens: 268600,
+          limitTokens: 0,
+          at: now - 6100
+        },
+        {
+          id: 'sess-ctx-claude200',
+          title: 'Claude Underscore 200K Guard',
+          provider: 'antigravity',
+          model: 'MODEL_CLAUDE_3_5_SONNET_200K',
+          effort: 'high',
+          folder: 'isabi-app',
+          status: 'completed',
+          usedTokens: 100000,
+          limitTokens: 0,
+          at: now - 6200
+        },
+        {
+          id: 'sess-ctx-gpt4o128',
+          title: 'GPT Underscore 128K Guard',
+          provider: 'antigravity',
+          model: 'MODEL_OPENAI_GPT_4O_128K',
+          effort: 'medium',
+          folder: 'isabi-app',
+          status: 'completed',
+          usedTokens: 64000,
+          limitTokens: 0,
+          at: now - 6300
+        },
+        {
+          id: 'sess-ctx-gemini1m',
+          title: 'Gemini Underscore 1M Explicit',
+          provider: 'antigravity',
+          model: 'MODEL_GEMINI_2_5_PRO_1M',
+          effort: 'high',
+          folder: 'isabi-app',
+          status: 'completed',
+          usedTokens: 900000,
+          limitTokens: 0,
+          at: now - 6400
+        }
+      );
+      rawCache.snapshot = snap;
+      rawCache.state = snap;
+      rawCache.threads = rawCache.threads || {};
+      if (rawCache.threads['sess-ctx-overrun']) {
+        rawCache.threads['sess-ctx-overrun'].deviceId = 'pc-workstation-b';
+      }
+      rawCache.threads['sess-ctx-gpt128'] = {
+        id: 'sess-ctx-gpt128',
+        provider: 'antigravity',
+        model: 'MODEL_OPENAI_GPT_OSS_120B_MEDIUM',
+        effort: 'medium',
+        contextWindow: {
+          provider: 'antigravity',
+          modelLabel: 'MODEL_OPENAI_GPT_OSS_120B_MEDIUM',
+          usedTokens: 140000,
+          limitTokens: 128000
+        },
+        messages: [{ id: 'ctx-mgpt', role: 'user', text: 'Verify 128k third-party hard wall.', createdAt: new Date(now - 5500).toISOString() }]
+      };
+      rawCache.threads['sess-ctx-claude1m-agy'] = {
+        id: 'sess-ctx-claude1m-agy',
+        provider: 'antigravity',
+        model: 'MODEL_PLACEHOLDER_M409',
+        effort: 'high',
+        contextWindow: {
+          provider: 'antigravity',
+          modelLabel: 'MODEL_PLACEHOLDER_M409',
+          usedTokens: 900000,
+          limitTokens: 1000000,
+          hardMaxTokens: 1000000
+        },
+        messages: [{ id: 'ctx-mc1m', role: 'user', text: 'Verify 1M Claude parity on Antigravity.', createdAt: new Date(now - 6000).toISOString() }]
+      };
+      rawCache.threads['sess-ctx-live777'] = {
+        id: 'sess-ctx-live777',
+        provider: 'antigravity',
+        model: 'MODEL_PLACEHOLDER_M777',
+        effort: 'high',
+        contextWindow: {
+          provider: 'antigravity',
+          modelLabel: 'MODEL_PLACEHOLDER_M777',
+          usedTokens: 256000,
+          limitTokens: 0
+        },
+        messages: [{ id: 'ctx-m777', role: 'user', text: 'Verify live M777 512k catalog.', createdAt: new Date(now - 5000).toISOString() }]
+      };
+      rawCache.threads['sess-ctx-pro3'] = {
+        id: 'sess-ctx-pro3',
+        provider: 'antigravity',
+        model: 'Gemini Pro3',
+        effort: 'high',
+        contextWindow: {
+          provider: 'antigravity',
+          modelLabel: 'Gemini Pro3',
+          usedTokens: 268600,
+          limitTokens: 0
+        },
+        messages: [{ id: 'ctx-mpro3', role: 'user', text: 'Verify Gemini Pro3 256k soft overrun.', createdAt: new Date(now - 6100).toISOString() }]
+      };
+      rawCache.threads['sess-ctx-claude200'] = {
+        id: 'sess-ctx-claude200',
+        provider: 'antigravity',
+        model: 'MODEL_CLAUDE_3_5_SONNET_200K',
+        effort: 'high',
+        contextWindow: {
+          provider: 'antigravity',
+          modelLabel: 'MODEL_CLAUDE_3_5_SONNET_200K',
+          usedTokens: 100000,
+          limitTokens: 0
+        },
+        messages: [{ id: 'ctx-mc200', role: 'user', text: 'Verify underscore 200k Claude.', createdAt: new Date(now - 6200).toISOString() }]
+      };
+      rawCache.threads['sess-ctx-gpt4o128'] = {
+        id: 'sess-ctx-gpt4o128',
+        provider: 'antigravity',
+        model: 'MODEL_OPENAI_GPT_4O_128K',
+        effort: 'medium',
+        contextWindow: {
+          provider: 'antigravity',
+          modelLabel: 'MODEL_OPENAI_GPT_4O_128K',
+          usedTokens: 64000,
+          limitTokens: 0
+        },
+        messages: [{ id: 'ctx-mg4o', role: 'user', text: 'Verify underscore 128k GPT-4o.', createdAt: new Date(now - 6300).toISOString() }]
+      };
+      rawCache.threads['sess-ctx-gemini1m'] = {
+        id: 'sess-ctx-gemini1m',
+        provider: 'antigravity',
+        model: 'MODEL_GEMINI_2_5_PRO_1M',
+        effort: 'high',
+        contextWindow: {
+          provider: 'antigravity',
+          modelLabel: 'MODEL_GEMINI_2_5_PRO_1M',
+          usedTokens: 900000,
+          limitTokens: 0
+        },
+        messages: [{ id: 'ctx-mg1m', role: 'user', text: 'Verify underscore 1M Gemini.', createdAt: new Date(now - 6400).toISOString() }]
+      };
+      localStorage.setItem('theo_remote_cache_v3', JSON.stringify(rawCache));
+      localStorage.removeItem('theo_remote_outbox_v1');
+      const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+      prefs.selectedThreadId = 'sess-ctx-live777';
+      prefs.threadModelConfig = {};
+      prefs.selectedThinkingEffort = {};
+      prefs.pendingRowOverrides = {};
+      prefs.edgeRelayUrl = '';
+      prefs.edgeAccessKey = '';
+      prefs.cloudUrl = '';
+      prefs.cloudKey = '';
+      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+      return true;
+    })()`);
+    assert.strictEqual(v73SeedOk, true);
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 650));
+
+    // 1. Live GetUserStatus M777 -> 512k resolution, picker entry, and M402 Claude 840k non-downgrade guard
+    const v73CatalogCheck = await evalJs(`(() => {
+      document.getElementById('chat-model-picker-btn')?.click();
+      const pickerHtml = document.getElementById('model-picker-body')?.innerHTML || '';
+      document.getElementById('chat-model-picker-btn')?.click();
+      return {
+        modelPill: document.getElementById('chat-model-pill')?.textContent?.trim() || '',
+        ctxPill: document.getElementById('ctx-pill-label')?.textContent?.trim() || '',
+        pickerHasLiveModel: pickerHtml.includes('Gemini 5 Nova'),
+        titleCount: document.querySelectorAll('[title]').length,
+        overflowX: Math.max(0, document.documentElement.scrollWidth - window.innerWidth)
+      };
+    })()`);
+    assert.strictEqual(v73CatalogCheck.modelPill, 'Gemini 5 Nova (High)');
+    assert.strictEqual(v73CatalogCheck.ctxPill, '256k / 512k · 50%');
+    assert.strictEqual(v73CatalogCheck.pickerHasLiveModel, true, 'Model picker must expose live-synced Gemini 5 Nova');
+    assert.strictEqual(v73CatalogCheck.titleCount, 0);
+    assert.strictEqual(v73CatalogCheck.overflowX, 0);
+
+    // M402 non-Gemini Claude entry must NOT be downgraded to 256k by an untrusted/mismatched catalog entry
+    const chatM402Guard = await probeChatContext('sess-ctx-claude840');
+    assert.strictEqual(chatM402Guard.ctxPill, '412k / 840k · 49%');
+    const chatLegacyM402Guard = await probeChatContext('sess-ctx-legacy840');
+    assert.strictEqual(chatLegacyM402Guard.ctxPill, '412k / 840k · 49%');
+
+    // Override from a Gemini 1M-hardMax session to Claude Opus 5.5 (840k) must NOT leak stale hardMaxTokens: 1M
+    await evalJs(`(() => {
+      const now = Date.now();
+      const rawCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+      const snap = rawCache.snapshot || rawCache.state || {};
+      snap.rows = Array.isArray(snap.rows) ? snap.rows : [];
+      if (!snap.rows.some((r) => r && r.id === 'sess-ctx-gemini-1m-override')) {
+        snap.rows.unshift({
+          id: 'sess-ctx-gemini-1m-override',
+          title: 'Gemini 1M Override Guard',
+          provider: 'antigravity',
+          model: 'MODEL_PLACEHOLDER_M667',
+          effort: 'high',
+          folder: 'isabi-app',
+          status: 'completed',
+          usedTokens: 900000,
+          limitTokens: 256000,
+          hardMaxTokens: 1000000,
+          at: now - 4000
+        });
+      }
+      rawCache.snapshot = snap;
+      rawCache.state = snap;
+      rawCache.threads = rawCache.threads || {};
+      rawCache.threads['sess-ctx-gemini-1m-override'] = {
+        id: 'sess-ctx-gemini-1m-override',
+        provider: 'antigravity',
+        model: 'MODEL_PLACEHOLDER_M667',
+        effort: 'high',
+        contextWindow: {
+          provider: 'antigravity',
+          modelLabel: 'MODEL_PLACEHOLDER_M667',
+          usedTokens: 900000,
+          limitTokens: 256000,
+          hardMaxTokens: 1000000
+        },
+        messages: [{ id: 'ctx-m1m-ov', role: 'user', text: 'Verify override drops stale 1M hardMax.', createdAt: new Date(now - 4000).toISOString() }]
+      };
+      localStorage.setItem('theo_remote_cache_v3', JSON.stringify(rawCache));
+      const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+      prefs.threadModelConfig = prefs.threadModelConfig && typeof prefs.threadModelConfig === 'object' ? prefs.threadModelConfig : {};
+      prefs.threadModelConfig['sess-ctx-gemini-1m-override'] = {
+        customModel: 'Claude Opus 5.5',
+        modelId: 'claude-opus-5-5',
+        effort: 'high'
+      };
+      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+      return true;
+    })()`);
+    const chatOverrideNo1MLeak = await probeChatContext('sess-ctx-gemini-1m-override');
+    const overrideDomState = await evalJs(`(() => {
+      const btn = document.getElementById('btn-ctx-window');
+      const arc = document.getElementById('ctx-ring-overrun-circle');
+      const banner = document.getElementById('ctx-overrun-banner');
+      const state = {
+        modelPill: document.getElementById('chat-model-pill')?.textContent?.trim() || '',
+        ctxPill: document.getElementById('ctx-pill-label')?.textContent?.trim() || '',
+        isSoftOverrun: Boolean(btn?.classList?.contains('is-soft-overrun')),
+        arcHidden: Boolean(arc?.hidden),
+        bannerHidden: Boolean(banner?.hidden)
+      };
+      const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+      prefs.threadModelConfig = {};
+      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+      return state;
+    })()`);
+    assert.strictEqual(chatOverrideNo1MLeak.modelPill, 'Claude Opus 5.5 (High)');
+    assert.strictEqual(overrideDomState.modelPill, 'Claude Opus 5.5 (High)');
+    assert.strictEqual(overrideDomState.ctxPill, '900k / 840k · 100%');
+    assert.strictEqual(overrideDomState.isSoftOverrun, false, 'Claude 840k override must not inherit Gemini 1M hardMax as soft overrun');
+    assert.strictEqual(overrideDomState.arcHidden, true, 'Claude 840k override must hide soft-overrun violet arc');
+    assert.strictEqual(overrideDomState.bannerHidden, true, 'Claude 840k override must hide soft-overrun banner');
+
+    // 2. Dual-tone +Nk soft-overrun progress ring on sess-ctx-overrun vs exact 256k non-overrun on sess-ctx-zero
+    await probeChatContext('sess-ctx-overrun');
+    const v73Overrun = await evalJs(`(() => {
+      const btn = document.getElementById('btn-ctx-window');
+      const arc = document.getElementById('ctx-ring-overrun-circle');
+      const pill = document.getElementById('ctx-overrun-pill');
+      const banner = document.getElementById('ctx-overrun-banner');
+      const strip = document.getElementById('chat-pin-strip');
+      const pinBtn = document.getElementById('btn-pin-constraints');
+      const pinInp = document.getElementById('chat-pin-input');
+      const pinStatus = document.getElementById('chat-pin-status');
+      return {
+        isSoftOverrun: Boolean(btn?.classList?.contains('is-soft-overrun')),
+        arcHidden: Boolean(arc?.hidden),
+        arcStroke: arc ? getComputedStyle(arc).stroke : '',
+        arcOffset: Number(arc?.getAttribute('stroke-dashoffset') || 56.5),
+        overrunPillHidden: Boolean(pill?.hidden),
+        overrunPillText: pill?.textContent?.trim() || '',
+        ctxPill: document.getElementById('ctx-pill-label')?.textContent?.trim() || '',
+        bannerHidden: Boolean(banner?.hidden),
+        bannerText: banner?.textContent?.trim() || '',
+        pinStripHidden: Boolean(strip?.hidden),
+        pinExpanded: pinBtn?.getAttribute('aria-expanded') || '',
+        pinStatusText: pinStatus?.textContent?.trim() || '',
+        pinFontSize: pinInp ? getComputedStyle(pinInp).fontSize : '',
+        titleCount: document.querySelectorAll('[title]').length,
+        overflowX: Math.max(0, document.documentElement.scrollWidth - window.innerWidth)
+      };
+    })()`);
+    assert.strictEqual(v73Overrun.isSoftOverrun, true);
+    assert.strictEqual(v73Overrun.arcHidden, false);
+    assert.strictEqual(v73Overrun.arcStroke, 'rgb(168, 85, 247)', 'Overrun ring must render violet #a855f7');
+    assert.ok(v73Overrun.arcOffset < 56.5, `Expected non-empty overrun arc stroke, got offset ${v73Overrun.arcOffset}`);
+    assert.strictEqual(v73Overrun.overrunPillHidden, false);
+    assert.strictEqual(v73Overrun.overrunPillText, '+12.6k');
+    assert.strictEqual(v73Overrun.ctxPill, '269k / 256k · 100%');
+    assert.strictEqual(v73Overrun.bannerHidden, false);
+    assert.ok(v73Overrun.bannerText.includes('Soft compaction target 256k') && v73Overrun.bannerText.includes('Hard context ceiling 1M'), `Unexpected overrun banner: ${v73Overrun.bannerText}`);
+    assert.strictEqual(v73Overrun.pinStripHidden, false, 'Pinned constraints strip must auto-reveal at >=85% context');
+    assert.strictEqual(v73Overrun.pinExpanded, 'true');
+    assert.ok(v73Overrun.pinStatusText.includes('85%'), `Unexpected pin status: ${v73Overrun.pinStatusText}`);
+    assert.strictEqual(v73Overrun.pinFontSize, '16px', 'Mobile <=768px pin input must use 16px to prevent iOS auto-zoom');
+    assert.strictEqual(v73Overrun.titleCount, 0);
+    assert.strictEqual(v73Overrun.overflowX, 0);
+
+    // Non-overrun exact 256k boundary must hide dual-tone overrun arc/pill/banner
+    await probeChatContext('sess-ctx-zero');
+    const v73ZeroCheck = await evalJs(`(() => ({
+      isSoftOverrun: Boolean(document.getElementById('btn-ctx-window')?.classList?.contains('is-soft-overrun')),
+      arcHidden: Boolean(document.getElementById('ctx-ring-overrun-circle')?.hidden),
+      overrunPillHidden: Boolean(document.getElementById('ctx-overrun-pill')?.hidden),
+      bannerHidden: Boolean(document.getElementById('ctx-overrun-banner')?.hidden)
+    }))()`);
+    assert.strictEqual(v73ZeroCheck.isSoftOverrun, false);
+    assert.strictEqual(v73ZeroCheck.arcHidden, true);
+    assert.strictEqual(v73ZeroCheck.overrunPillHidden, true);
+    assert.strictEqual(v73ZeroCheck.bannerHidden, true);
+
+    // Non-Gemini third-party 128k (GPT-OSS 120B) & 1M Claude-on-Antigravity parity guards
+    await probeChatContext('sess-ctx-gpt128');
+    const v73Gpt128 = await evalJs(`(() => ({
+      ctxPill: document.getElementById('ctx-pill-label')?.textContent?.trim() || '',
+      isSoftOverrun: Boolean(document.getElementById('btn-ctx-window')?.classList?.contains('is-soft-overrun')),
+      arcHidden: Boolean(document.getElementById('ctx-ring-overrun-circle')?.hidden)
+    }))()`);
+    assert.strictEqual(v73Gpt128.ctxPill, '140k / 128k · 100%');
+    assert.strictEqual(v73Gpt128.isSoftOverrun, false, 'Third-party 128k model must never trigger Gemini soft-overrun headroom');
+    assert.strictEqual(v73Gpt128.arcHidden, true);
+
+    await probeChatContext('sess-ctx-claude1m-agy');
+    const v73Claude1M = await evalJs(`(() => ({
+      ctxPill: document.getElementById('ctx-pill-label')?.textContent?.trim() || '',
+      isSoftOverrun: Boolean(document.getElementById('btn-ctx-window')?.classList?.contains('is-soft-overrun')),
+      arcHidden: Boolean(document.getElementById('ctx-ring-overrun-circle')?.hidden)
+    }))()`);
+    assert.strictEqual(v73Claude1M.ctxPill, '900k / 1M · 90%');
+    assert.strictEqual(v73Claude1M.isSoftOverrun, false, 'Explicit 1M Claude config on Antigravity must agree with backend 1M soft target');
+    assert.strictEqual(v73Claude1M.arcHidden, true);
+
+    // Axis 7 negative boundary assertions in live PWA DOM: Pro3 o3 guard, _200K, _128K, and _1M underscore boundaries
+    await probeChatContext('sess-ctx-pro3');
+    const v74Pro3 = await evalJs(`(() => ({
+      ctxPill: document.getElementById('ctx-pill-label')?.textContent?.trim() || '',
+      isSoftOverrun: Boolean(document.getElementById('btn-ctx-window')?.classList?.contains('is-soft-overrun')),
+      arcHidden: Boolean(document.getElementById('ctx-ring-overrun-circle')?.hidden)
+    }))()`);
+    assert.strictEqual(v74Pro3.ctxPill, '269k / 256k · 100%');
+    assert.strictEqual(v74Pro3.isSoftOverrun, true, 'Gemini Pro3 must keep 256k soft compaction target');
+    assert.strictEqual(v74Pro3.arcHidden, false);
+
+    await probeChatContext('sess-ctx-claude200');
+    const v74C200 = await evalJs(`(() => ({
+      ctxPill: document.getElementById('ctx-pill-label')?.textContent?.trim() || '',
+      isSoftOverrun: Boolean(document.getElementById('btn-ctx-window')?.classList?.contains('is-soft-overrun'))
+    }))()`);
+    assert.strictEqual(v74C200.ctxPill, '100k / 200k · 50%');
+    assert.strictEqual(v74C200.isSoftOverrun, false);
+
+    await probeChatContext('sess-ctx-gpt4o128');
+    const v74G128 = await evalJs(`(() => ({
+      ctxPill: document.getElementById('ctx-pill-label')?.textContent?.trim() || '',
+      isSoftOverrun: Boolean(document.getElementById('btn-ctx-window')?.classList?.contains('is-soft-overrun'))
+    }))()`);
+    assert.strictEqual(v74G128.ctxPill, '64k / 128k · 50%');
+    assert.strictEqual(v74G128.isSoftOverrun, false);
+
+    await probeChatContext('sess-ctx-gemini1m');
+    const v74Gem1M = await evalJs(`(() => ({
+      ctxPill: document.getElementById('ctx-pill-label')?.textContent?.trim() || '',
+      isSoftOverrun: Boolean(document.getElementById('btn-ctx-window')?.classList?.contains('is-soft-overrun'))
+    }))()`);
+    assert.strictEqual(v74Gem1M.ctxPill, '900k / 1M · 90%');
+    assert.strictEqual(v74Gem1M.isSoftOverrun, false);
+
+    // 3. Pin strip save via UI, focus guard against concurrent UI re-render, /pin & /pin clear via composer, tombstone survival & XSS guard
+    await probeChatContext('sess-ctx-overrun');
+    const v73PinSave = await evalJs(`(async () => {
+      const inp = document.getElementById('chat-pin-input');
+      inp.focus();
+      inp.value = 'Keep LF line endings & <img src=x onerror=alert(1)>';
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+      window.dispatchEvent(new Event('online'));
+      await new Promise((r) => setTimeout(r, 30));
+      const focusedStill = document.activeElement === inp;
+      const valuePreserved = inp.value;
+      document.getElementById('btn-chat-pin-save').click();
+      await new Promise((r) => setTimeout(r, 60));
+      const rawCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+      const savedRows = Array.isArray(rawCache?.snapshot?.rows)
+        ? rawCache.snapshot.rows
+        : Array.isArray(rawCache?.state?.rows)
+          ? rawCache.state.rows
+          : [];
+      const savedRow = savedRows.find((r) => r && r.id === 'sess-ctx-overrun') || null;
+      const savedTh = rawCache?.threads?.['sess-ctx-overrun'] || null;
+      return {
+        focusedStill,
+        valuePreserved,
+        status: document.getElementById('chat-pin-status')?.textContent?.trim() || '',
+        clearHidden: Boolean(document.getElementById('btn-chat-pin-clear')?.hidden),
+        ovText: savedRow?.pinnedConstraint || '',
+        ovTs: Number(savedRow?.pinnedConstraintUpdatedAt || 0),
+        thText: savedTh?.pinnedConstraint || '',
+        quarantinedCmd: window.__theoLastQuarantinedCmd || null
+      };
+    })()`);
+    assert.strictEqual(v73PinSave.focusedStill, true);
+    assert.strictEqual(v73PinSave.valuePreserved, 'Keep LF line endings & <img src=x onerror=alert(1)>');
+    assert.strictEqual(v73PinSave.status, 'Armed · ≥85% active');
+    assert.strictEqual(v73PinSave.clearHidden, false);
+    assert.strictEqual(v73PinSave.ovText, 'Keep LF line endings & <img src=x onerror=alert(1)>');
+    assert.ok(v73PinSave.ovTs > 0, 'Saved pin must record non-zero timestamp override');
+    assert.strictEqual(v73PinSave.thText, 'Keep LF line endings & <img src=x onerror=alert(1)>');
+    assert.strictEqual(v73PinSave.quarantinedCmd?.type, 'setPinnedConstraint');
+    assert.strictEqual(v73PinSave.quarantinedCmd?.targetDeviceId, 'pc-workstation-b', 'setSessionPinnedConstraint must forward concrete row targetDeviceId');
+
+    // Reload recovery + stale snapshot rejection: older server pin must not overwrite newer local pin
+    await evalJs(`(() => {
+      const rawCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+      if (rawCache.threads?.['sess-ctx-overrun']) {
+        rawCache.threads['sess-ctx-overrun'].pinnedConstraint = 'Stale old server pin';
+        rawCache.threads['sess-ctx-overrun'].pinnedConstraintUpdatedAt = 1000;
+      }
+      localStorage.setItem('theo_remote_cache_v3', JSON.stringify(rawCache));
+      const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+      prefs.selectedThreadId = 'sess-ctx-overrun';
+      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+      return true;
+    })()`);
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 600));
+    const v73AfterReloadPin = await evalJs(`document.getElementById('chat-pin-input')?.value || ''`);
+    assert.strictEqual(
+      v73AfterReloadPin,
+      'Keep LF line endings & <img src=x onerror=alert(1)>',
+      'Newer local pin override must beat older snapshot pin across reload'
+    );
+
+    // Switch to 50% session, verify strip starts collapsed, test /pin <text> + /pin clear tombstone + toggle + dismiss
+    await probeChatContext('sess-ctx-live777');
+    const v73SlashPin = await evalJs(`(async () => {
+      const stripInitiallyHidden = Boolean(document.getElementById('chat-pin-strip')?.hidden);
+      const composer = document.getElementById('composer-input');
+      const sendBtn = document.getElementById('composer-send-btn');
+      composer.value = '/pin Zero Microsoft deps';
+      composer.dispatchEvent(new Event('input', { bubbles: true }));
+      sendBtn.click();
+      await new Promise((r) => setTimeout(r, 60));
+      const afterPinText = {
+        stripHidden: Boolean(document.getElementById('chat-pin-strip')?.hidden),
+        pinValue: document.getElementById('chat-pin-input')?.value || '',
+        status: document.getElementById('chat-pin-status')?.textContent?.trim() || '',
+        btnActive: Boolean(document.getElementById('btn-pin-constraints')?.classList?.contains('is-active'))
+      };
+      composer.value = '/pin clear';
+      composer.dispatchEvent(new Event('input', { bubbles: true }));
+      sendBtn.click();
+      await new Promise((r) => setTimeout(r, 60));
+      const rawClearedCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+      const clearedRows = Array.isArray(rawClearedCache?.snapshot?.rows)
+        ? rawClearedCache.snapshot.rows
+        : Array.isArray(rawClearedCache?.state?.rows)
+          ? rawClearedCache.state.rows
+          : [];
+      const clearedRow = clearedRows.find((r) => r && r.id === 'sess-ctx-live777') || null;
+      const afterClear = {
+        stripHidden: Boolean(document.getElementById('chat-pin-strip')?.hidden),
+        pinValue: document.getElementById('chat-pin-input')?.value || '',
+        btnActive: Boolean(document.getElementById('btn-pin-constraints')?.classList?.contains('is-active')),
+        clearedText: clearedRow?.pinnedConstraint ?? null,
+        clearedTs: Number(clearedRow?.pinnedConstraintUpdatedAt || 0)
+      };
+      document.getElementById('btn-pin-constraints').click();
+      const afterOpen = {
+        stripHidden: Boolean(document.getElementById('chat-pin-strip')?.hidden),
+        expanded: document.getElementById('btn-pin-constraints')?.getAttribute('aria-expanded') || ''
+      };
+      document.getElementById('btn-chat-pin-hide').click();
+      const afterHide = {
+        stripHidden: Boolean(document.getElementById('chat-pin-strip')?.hidden),
+        expanded: document.getElementById('btn-pin-constraints')?.getAttribute('aria-expanded') || ''
+      };
+      return {
+        stripInitiallyHidden,
+        afterPinText,
+        afterClear,
+        afterOpen,
+        afterHide
+      };
+    })()`);
+    assert.strictEqual(v73SlashPin.stripInitiallyHidden, true);
+    assert.strictEqual(v73SlashPin.afterPinText.stripHidden, false);
+    assert.strictEqual(v73SlashPin.afterPinText.pinValue, 'Zero Microsoft deps');
+    assert.strictEqual(v73SlashPin.afterPinText.status, 'Armed for ≥85% & /compact');
+    assert.strictEqual(v73SlashPin.afterPinText.btnActive, true);
+    assert.strictEqual(v73SlashPin.afterClear.stripHidden, true);
+    assert.strictEqual(v73SlashPin.afterClear.pinValue, '');
+    assert.strictEqual(v73SlashPin.afterClear.btnActive, false);
+    assert.strictEqual(v73SlashPin.afterClear.clearedText, '');
+    assert.ok(v73SlashPin.afterClear.clearedTs > 0, 'Cleared pin must keep non-zero tombstone timestamp');
+    assert.strictEqual(v73SlashPin.afterOpen.stripHidden, false);
+    assert.strictEqual(v73SlashPin.afterOpen.expanded, 'true');
+    assert.strictEqual(v73SlashPin.afterHide.stripHidden, true);
+    assert.strictEqual(v73SlashPin.afterHide.expanded, 'false');
+
+    // Cleared tombstone must prevent stale server pin resurrection across reload
+    await evalJs(`(() => {
+      const rawCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+      if (rawCache.threads?.['sess-ctx-live777']) {
+        rawCache.threads['sess-ctx-live777'].pinnedConstraint = 'Resurrected old pin';
+        rawCache.threads['sess-ctx-live777'].pinnedConstraintUpdatedAt = 1000;
+      }
+      localStorage.setItem('theo_remote_cache_v3', JSON.stringify(rawCache));
+      const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+      prefs.selectedThreadId = 'sess-ctx-live777';
+      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+      return true;
+    })()`);
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 600));
+    const v73TombstoneCheck = await evalJs(`({
+      pinVal: document.getElementById('chat-pin-input')?.value || '',
+      stripHidden: Boolean(document.getElementById('chat-pin-strip')?.hidden)
+    })`);
+    assert.strictEqual(v73TombstoneCheck.pinVal, '', 'Tombstone timestamp must block stale pin resurrection across reload');
+    assert.strictEqual(v73TombstoneCheck.stripHidden, true);
+    console.log('[PASS] Adversarial #21: v74 Live GetUserStatus model-capacity sync, dual-tone +Nk soft-overrun ring, & Pin Constraints (cache persistence, stale-timestamp & tombstone survival, legacy 840k & override guards, & XSS guard) verified');
+
+    // Final error & network quarantine assertions (#21)
     assert.strictEqual(pageExceptions.length, 0, `Uncaught page exceptions: ${JSON.stringify(pageExceptions)}`);
     assert.strictEqual(consoleErrors.length, 0, `Console errors: ${JSON.stringify(consoleErrors)}`);
     assert.strictEqual(
