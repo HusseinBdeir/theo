@@ -136,10 +136,13 @@
 
   function inferEffortIdFromRaw(rawModel = '', effortHint = '') {
     const eff = String(effortHint || '').trim().toLowerCase();
+    if (eff === 'xhigh') return 'high';
     if (eff === 'low' || eff === 'medium' || eff === 'high') return eff;
     const low = String(rawModel || '').toLowerCase();
     if (
       low === 'model_placeholder_m419' ||
+      low === 'model_placeholder_m438' ||
+      low === 'model_placeholder_m527' ||
       low === 'model_placeholder_m320' ||
       low === 'model_placeholder_m400' ||
       low === 'model_placeholder_m403' ||
@@ -151,6 +154,8 @@
     }
     if (
       low === 'model_placeholder_m418' ||
+      low === 'model_placeholder_m437' ||
+      low === 'model_placeholder_m526' ||
       low === 'model_placeholder_m319' ||
       low === 'model_placeholder_m401' ||
       low === 'model_placeholder_m404' ||
@@ -162,11 +167,17 @@
     }
     if (
       low === 'model_placeholder_m417' ||
+      low === 'model_placeholder_m427' ||
+      low === 'model_placeholder_m525' ||
+      low === 'model_placeholder_m528' ||
       low === 'model_placeholder_m318' ||
+      low === 'model_placeholder_m322' ||
       low === 'model_placeholder_m402' ||
       low === 'model_placeholder_m405' ||
       low.includes('(high)') ||
+      low.includes('(xhigh)') ||
       low.endsWith('-high') ||
+      low.endsWith('-xhigh') ||
       low.includes('· high')
     ) {
       return 'high';
@@ -196,7 +207,10 @@
       low === 'model_placeholder_m417' ||
       low === 'model_placeholder_m418' ||
       low === 'model_placeholder_m419' ||
-      low.includes('argon')
+      (low.includes('argon') &&
+        !low.includes('orchestrator') &&
+        !low.includes('carbon') &&
+        !low.includes('hydrogen'))
     ) {
       return 'gemini-4-argon';
     }
@@ -210,10 +224,60 @@
     const effId = inferEffortIdFromRaw(s, effortHint) || 'high';
     const effCap = effId === 'low' ? 'Low' : effId === 'medium' ? 'Medium' : 'High';
     if (provKey === 'antigravity') {
+      if (low === 'model_placeholder_m667' || (low.includes('orchestrator') && low.includes('carbon'))) {
+        return 'Orchestrator (Carbon)';
+      }
+      if (low === 'model_placeholder_m681' || (low.includes('orchestrator') && low.includes('argon'))) {
+        return 'Orchestrator (Argon)';
+      }
+      if (low.includes('orchestrator')) {
+        return s;
+      }
+      if (
+        low === 'model_placeholder_m400' ||
+        low === 'model_placeholder_m401' ||
+        low === 'model_placeholder_m402' ||
+        low.includes('opus-5-5') ||
+        low.includes('opus 5.5')
+      ) {
+        return `Claude Opus 5.5 (${effCap})`;
+      }
+      if (
+        low === 'model_placeholder_m403' ||
+        low === 'model_placeholder_m404' ||
+        low === 'model_placeholder_m405' ||
+        low.includes('sonnet-5-5') ||
+        low.includes('sonnet 5.5')
+      ) {
+        return `Claude Sonnet 5.5 (${effCap})`;
+      }
+      if (low === 'model_openai_gpt_oss_120b_medium' || low.includes('gpt-oss-120b')) {
+        return 'GPT-OSS 120B (Medium)';
+      }
+      if (
+        low === 'model_placeholder_m427' ||
+        low === 'model_placeholder_m437' ||
+        low === 'model_placeholder_m438' ||
+        low.includes('carbon')
+      ) {
+        return `Gemini 4 Carbon (${effCap})`;
+      }
+      if (low === 'model_placeholder_m528' || (low.includes('hydrogen') && low.includes('xhigh'))) {
+        return 'Gemini 4 Hydrogen (XHigh)';
+      }
+      if (
+        low === 'model_placeholder_m525' ||
+        low === 'model_placeholder_m526' ||
+        low === 'model_placeholder_m527' ||
+        low.includes('hydrogen')
+      ) {
+        return `Gemini 4 Hydrogen (${effCap})`;
+      }
       if (
         low === 'model_placeholder_m318' ||
         low === 'model_placeholder_m319' ||
         low === 'model_placeholder_m320' ||
+        low === 'model_placeholder_m322' ||
         low.includes('3.8') ||
         low.includes('flash')
       ) {
@@ -224,7 +288,6 @@
         low === 'gemini' ||
         low === 'antigravity' ||
         low.includes('3.1') ||
-        low.includes('m43') ||
         low === 'model_placeholder_m417' ||
         low === 'model_placeholder_m418' ||
         low === 'model_placeholder_m419' ||
@@ -252,14 +315,68 @@
   }
 
   function inferDefaultContextLimit(provider, modelLabel = '') {
+    const low = String(modelLabel || '').trim().toLowerCase();
     if (provider === 'claude') {
-      const low = String(modelLabel || '').toLowerCase();
-      if (low.includes('4.5') || low.includes('4-5') || low.includes('4.6') || low.includes('4-6') || low.includes('haiku')) {
+      if (
+        low.includes('[1m]') ||
+        low.includes('1m') ||
+        low.includes('fable') ||
+        low.includes('mythos') ||
+        low.includes('opus-4-7') ||
+        low.includes('opus 4.7') ||
+        low.includes('opus-4-8') ||
+        low.includes('opus 4.8') ||
+        low.includes('sonnet-5') ||
+        low.includes('sonnet 5') ||
+        low.includes('opus-5') ||
+        low.includes('opus 5') ||
+        /\b5\.[0-9]/.test(low)
+      ) {
+        return 1000000;
+      }
+      if (
+        low.includes('4.5') ||
+        low.includes('4-5') ||
+        low.includes('4.6') ||
+        low.includes('4-6') ||
+        low.includes('haiku')
+      ) {
         return 200000;
       }
       return 1000000;
     }
+    if (!low) return 256000;
+    if (/\b840k\b/.test(low)) return 840000;
+    if (/\b512k\b/.test(low)) return 512000;
+    if (/\b200k\b/.test(low)) return 200000;
+    if (/(?:^|[^a-z0-9])(model_placeholder_m40[0-5]|claude|opus|sonnet)(?:[^a-z0-9]|$)/.test(low)) {
+      return 840000;
+    }
     return 256000;
+  }
+
+  function resolveDisplayContextMetrics(provKey, modelLabel, rawUsed, rawLimit, isNewDraft = false) {
+    const defaultLim = inferDefaultContextLimit(provKey, modelLabel);
+    const parsedLim = Number(rawLimit);
+    const numLim = Number.isFinite(parsedLim) ? parsedLim : 0;
+    const upgradeClaude1M = provKey === 'claude' && numLim === 200000 && defaultLim === 1000000;
+    const upgradeAgy840k = provKey === 'antigravity' && numLim === 256000 && defaultLim === 840000;
+    const limitTokens =
+      upgradeClaude1M || upgradeAgy840k
+        ? defaultLim
+        : numLim > 0
+          ? numLim
+          : defaultLim;
+    const parsedUsed = Number(rawUsed);
+    const safeUsed = Number.isFinite(parsedUsed) ? parsedUsed : 0;
+    const usedTokens = isNewDraft ? 0 : Math.max(0, Math.round(safeUsed));
+    const pct =
+      !isNewDraft && usedTokens > 0
+        ? Math.min(100, Math.max(1, Math.round((usedTokens / Math.max(1, limitTokens)) * 100)))
+        : 0;
+    const remainingTokens = Math.max(0, limitTokens - usedTokens);
+    const overrunTokens = Math.max(0, usedTokens - limitTokens);
+    return { usedTokens, limitTokens, pct, remainingTokens, overrunTokens };
   }
 
   function timeAgo(tsMs) {
@@ -442,15 +559,19 @@
         const prov = cfg.provider === 'claude' ? 'claude' : 'antigravity';
         const cat = MODEL_CATALOG[prov] || MODEL_CATALOG.antigravity;
         const mOk = cat.some((m) => m.id === cfg.modelId);
+        const customOk = typeof cfg.customModel === 'string' && cfg.customModel.trim().length > 0;
         const eOk = ['low', 'medium', 'high'].includes(String(cfg.effort || '').toLowerCase());
-        return mOk && eOk;
+        return (mOk || customOk) && eOk;
       })
       .sort((a, b) => Number(b[1]?.updatedAt || 0) - Number(a[1]?.updatedAt || 0))
       .slice(0, 100);
     for (const [tid, cfg] of validEntries) {
       const prov = cfg.provider === 'claude' ? 'claude' : 'antigravity';
+      const customModel =
+        typeof cfg.customModel === 'string' ? cfg.customModel.trim().slice(0, 80) : '';
       cleanThreadModelCfg[tid] = {
-        modelId: String(cfg.modelId),
+        modelId: customModel ? '' : String(cfg.modelId),
+        ...(customModel ? { customModel } : {}),
         effort: String(cfg.effort).toLowerCase(),
         provider: prov,
         updatedAt: Number(cfg.updatedAt || Date.now())
@@ -9061,27 +9182,27 @@
     const grpObj = r.group ? groups.find((g) => g && g.id === r.group) : null;
     const td = threadsCache[r.id];
     const ctxW = td?.contextWindow;
-    const displayModel = normalizeDisplayModel(
-      ctxW?.modelLabel || td?.model || r.model,
-      provKey
+    const hasThreadModelOverride = Boolean(
+      r.id && prefs.threadModelConfig && prefs.threadModelConfig[r.id]
     );
-    const defaultLim = inferDefaultContextLimit(provKey, displayModel);
-    const usedTok = Number(ctxW?.usedTokens || r.usedTokens || 0);
-    const rawLim = Number(ctxW?.limitTokens || r.limitTokens || 0);
-    const limTok =
-      provKey === 'antigravity' && (!rawLim || rawLim === 1000000 || rawLim > 256000)
-        ? 256000
-        : provKey === 'claude' && rawLim === 200000 && defaultLim === 1000000
-          ? 1000000
-          : rawLim || defaultLim;
-    const safeUsed =
-      provKey === 'antigravity' && (rawLim === 1000000 || usedTok > limTok)
-        ? Math.min(220000, Math.max(22019, Math.round(usedTok * 0.145)))
-        : usedTok;
-    const ctxPct =
-      safeUsed > 0
-        ? Math.min(100, Math.max(1, Math.round((safeUsed / Math.max(1, limTok)) * 100)))
-        : 0;
+    const cardCfg = hasThreadModelOverride
+      ? getEffectiveSessionModelConfig(r, provKey, false)
+      : null;
+    const rawCardModel = hasThreadModelOverride
+      ? cardCfg.displayLabel
+      : ctxW?.modelLabel || ctxW?.modelName || td?.model || r.model;
+    const displayModel = hasThreadModelOverride
+      ? cardCfg.displayLabel
+      : normalizeDisplayModel(rawCardModel, provKey);
+    const rawUsedTok = ctxW?.usedTokens ?? r.usedTokens ?? r.contextTokens ?? 0;
+    const rawLimTok = hasThreadModelOverride
+      ? inferDefaultContextLimit(provKey, displayModel)
+      : ctxW?.limitTokens || ctxW?.maxContextTokens || r.limitTokens || r.contextLimit || 0;
+    const {
+      usedTokens: safeUsed,
+      limitTokens: limTok,
+      pct: ctxPct
+    } = resolveDisplayContextMetrics(provKey, rawCardModel || displayModel, rawUsedTok, rawLimTok, false);
     const statusCls =
       r.status === 'waiting'
         ? 'waiting'
@@ -11369,13 +11490,25 @@
       tid && tid !== '__new__' && prefs.threadModelConfig && typeof prefs.threadModelConfig === 'object'
         ? prefs.threadModelConfig[tid] || null
         : null;
+    const savedCatalogMatch = Boolean(
+      savedThreadCfg && catalog.some((m) => m.id === savedThreadCfg.modelId)
+    );
+    const savedCustomModel = String(savedThreadCfg?.customModel || '').trim();
 
-    const rawRowModel = String(activeRow?.model || '').trim();
+    const rawRowModel = savedCustomModel || String(activeRow?.model || '').trim();
     const inferredRowModelId = inferModelIdFromRaw(rawRowModel, cleanProv);
     const inferredRowEffort = inferEffortIdFromRaw(rawRowModel, activeRow?.effort || '');
 
+    const isNonCatalogSessionModel =
+      !isNewDraft &&
+      !savedCatalogMatch &&
+      (Boolean(savedCustomModel) ||
+        (!inferredRowModelId &&
+          Boolean(rawRowModel) &&
+          !/gemini\s*3\.1|antigravity|^gemini$/i.test(rawRowModel)));
+
     let modelId =
-      (savedThreadCfg && catalog.some((m) => m.id === savedThreadCfg.modelId) && savedThreadCfg.modelId) ||
+      (savedCatalogMatch && savedThreadCfg.modelId) ||
       (inferredRowModelId && catalog.some((m) => m.id === inferredRowModelId) && inferredRowModelId) ||
       (prefs.selectedModelByProvider &&
         catalog.some((m) => m.id === prefs.selectedModelByProvider[cleanProv]) &&
@@ -11383,7 +11516,7 @@
       catalog[0].id;
 
     // If the user explicitly changed their provider default or thread config, honor it over generic server defaults
-    if (savedThreadCfg && catalog.some((m) => m.id === savedThreadCfg.modelId)) {
+    if (savedCatalogMatch) {
       modelId = savedThreadCfg.modelId;
     } else if (
       isNewDraft ||
@@ -11396,25 +11529,39 @@
       }
     }
 
-    let effort =
-      (savedThreadCfg && ['low', 'medium', 'high'].includes(savedThreadCfg.effort) && savedThreadCfg.effort) ||
-      (prefs.selectedThinkingEffort &&
-        ['low', 'medium', 'high'].includes(prefs.selectedThinkingEffort[cleanProv]) &&
-        prefs.selectedThinkingEffort[cleanProv]) ||
-      inferredRowEffort ||
-      'high';
+    let effort = isNonCatalogSessionModel
+      ? (savedThreadCfg && ['low', 'medium', 'high'].includes(savedThreadCfg.effort) && savedThreadCfg.effort) ||
+        inferredRowEffort ||
+        (prefs.selectedThinkingEffort &&
+          ['low', 'medium', 'high'].includes(prefs.selectedThinkingEffort[cleanProv]) &&
+          prefs.selectedThinkingEffort[cleanProv]) ||
+        'high'
+      : (savedThreadCfg && ['low', 'medium', 'high'].includes(savedThreadCfg.effort) && savedThreadCfg.effort) ||
+        (prefs.selectedThinkingEffort &&
+          ['low', 'medium', 'high'].includes(prefs.selectedThinkingEffort[cleanProv]) &&
+          prefs.selectedThinkingEffort[cleanProv]) ||
+        inferredRowEffort ||
+        'high';
 
     const modelEntry = catalog.find((m) => m.id === modelId) || catalog[0];
     const effortEntry = THINKING_EFFORT_LEVELS.find((e) => e.id === effort) || THINKING_EFFORT_LEVELS[2];
-    const displayLabel = `${modelEntry.label} (${effortEntry.label})`;
-    const compactLabel = `${modelEntry.shortLabel || modelEntry.label} · ${effortEntry.label}`;
+    const displayLabel = isNonCatalogSessionModel
+      ? normalizeDisplayModel(rawRowModel, cleanProv, effortEntry.id)
+      : `${modelEntry.label} (${effortEntry.label})`;
+    const compactLabel = isNonCatalogSessionModel
+      ? displayLabel.replace(/\s*\((Low|Medium|High|XHigh)\)$/i, ' · $1')
+      : `${modelEntry.shortLabel || modelEntry.label} · ${effortEntry.label}`;
     return {
       provider: cleanProv,
-      modelId: modelEntry.id,
-      cliModel: modelEntry.cliModel || modelEntry.id,
+      isNonCatalog: isNonCatalogSessionModel,
+      customModel: isNonCatalogSessionModel ? rawRowModel : '',
+      modelId: isNonCatalogSessionModel ? '' : modelEntry.id,
+      cliModel: isNonCatalogSessionModel
+        ? displayLabel || rawRowModel
+        : modelEntry.cliModel || modelEntry.id,
       effort: effortEntry.id,
       effortLabel: effortEntry.label,
-      modelEntry,
+      modelEntry: isNonCatalogSessionModel ? null : modelEntry,
       displayLabel,
       compactLabel
     };
@@ -11426,14 +11573,19 @@
       ? (appState?.rows || []).find((r) => r && r.id === (threadId || prefs.selectedThreadId))
       : null;
     const cleanProv =
-      (provider || ( isNewDraft ? (prefs.composerMode === 'new-claude' ? 'claude' : 'antigravity') : activeRow?.provider )) ===
+      (provider || (isNewDraft ? (prefs.composerMode === 'new-claude' ? 'claude' : 'antigravity') : activeRow?.provider)) ===
       'claude'
         ? 'claude'
         : 'antigravity';
     const current = getEffectiveSessionModelConfig(activeRow, cleanProv, isNewDraft);
     const catalog = MODEL_CATALOG[cleanProv] || MODEL_CATALOG.antigravity;
-    const nextModelId =
-      modelId && catalog.some((m) => m.id === modelId) ? modelId : current.modelId;
+    const explicitCatalogModelId =
+      modelId && catalog.some((m) => m.id === modelId) ? modelId : '';
+    const keepNonCatalog = Boolean(!explicitCatalogModelId && current.isNonCatalog && !isNewDraft);
+    const nextModelId = explicitCatalogModelId || (keepNonCatalog ? '' : current.modelId || catalog[0].id);
+    const nextCustomModel = keepNonCatalog
+      ? String(current.customModel || current.displayLabel || '').trim()
+      : '';
     const nextEffort =
       effort && ['low', 'medium', 'high'].includes(String(effort).toLowerCase())
         ? String(effort).toLowerCase()
@@ -11449,13 +11601,16 @@
       prefs.threadModelConfig = {};
     }
 
-    prefs.selectedModelByProvider[cleanProv] = nextModelId;
+    if (nextModelId) {
+      prefs.selectedModelByProvider[cleanProv] = nextModelId;
+    }
     prefs.selectedThinkingEffort[cleanProv] = nextEffort;
 
     const targetTid = !isNewDraft ? String(threadId || prefs.selectedThreadId || '').trim() : '';
     if (targetTid && targetTid !== '__new__') {
       prefs.threadModelConfig[targetTid] = {
         modelId: nextModelId,
+        ...(nextCustomModel ? { customModel: nextCustomModel } : {}),
         effort: nextEffort,
         provider: cleanProv,
         updatedAt: Date.now()
@@ -11475,15 +11630,36 @@
     saveJson(STORAGE_KEYS.PREFS, prefs);
 
     const updatedCfg = getEffectiveSessionModelConfig(activeRow, cleanProv, isNewDraft);
+    const nextLimit = inferDefaultContextLimit(cleanProv, updatedCfg.displayLabel);
     if (activeRow) {
       activeRow.model = updatedCfg.displayLabel;
       activeRow.effort = updatedCfg.effort;
-      noteRowOverride(activeRow.id, { model: updatedCfg.displayLabel, effort: updatedCfg.effort });
+      if (nextLimit > 0) {
+        activeRow.limitTokens = nextLimit;
+        const rowUsed = Math.max(0, Math.round(Number(activeRow.usedTokens || 0)));
+        activeRow.contextPct =
+          rowUsed > 0 ? Math.min(100, Math.max(1, Math.round((rowUsed / nextLimit) * 100))) : 0;
+      }
+      noteRowOverride(activeRow.id, {
+        model: updatedCfg.displayLabel,
+        effort: updatedCfg.effort,
+        ...(nextLimit > 0 ? { limitTokens: nextLimit } : {})
+      });
     }
     if (targetTid && threadsCache[targetTid]) {
       threadsCache[targetTid].model = updatedCfg.displayLabel;
       if (threadsCache[targetTid].contextWindow) {
-        threadsCache[targetTid].contextWindow.modelLabel = updatedCfg.displayLabel;
+        const cw = threadsCache[targetTid].contextWindow;
+        cw.modelLabel = updatedCfg.displayLabel;
+        if (nextLimit > 0) {
+          const cwUsed = Math.max(0, Math.round(Number(cw.usedTokens || 0)));
+          cw.limitTokens = nextLimit;
+          cw.maxContextTokens = nextLimit;
+          cw.remainingTokens = Math.max(0, nextLimit - cwUsed);
+          cw.overrunTokens = Math.max(0, cwUsed - nextLimit);
+          cw.pct =
+            cwUsed > 0 ? Math.min(100, Math.max(1, Math.round((cwUsed / nextLimit) * 100))) : 0;
+        }
       }
     }
     persistCache();
@@ -11626,6 +11802,7 @@
   function renderNewSessionLaunchpadHtml(provKey, modelCfg, grpObj) {
     const cleanProv = provKey === 'claude' ? 'claude' : 'antigravity';
     const provDisplay = cleanProv === 'claude' ? 'Claude Code' : 'Google Antigravity';
+    const lpLimit = inferDefaultContextLimit(cleanProv, modelCfg?.displayLabel || '');
     const catalog = MODEL_CATALOG[cleanProv] || MODEL_CATALOG.antigravity;
     const rawWorkspaces = Array.isArray(appState?.workspaces) ? appState.workspaces : [];
     const rankedWorkspaces = rankByFreq(
@@ -11664,7 +11841,7 @@
             <span class="prov-glyph lp-glyph">${PROVIDER_ICONS[cleanProv]}</span>
             <div>
               <div class="lp-title">${esc(provDisplay)} Workbench${grpObj ? ` · ${esc(grpObj.name)}` : ''}</div>
-              <div class="lp-sub tabular">Clean 256k context window · Smart IDE &amp; CLI hybrid routing</div>
+              <div class="lp-sub tabular">Clean ${esc(fmtCompact(lpLimit))} context window · Smart IDE &amp; CLI hybrid routing</div>
             </div>
           </div>
           <div class="lp-prov-switch" role="group" aria-label="Switch AI Provider">
@@ -11833,7 +12010,14 @@
     }
 
     const rawCtx = threadDetail?.contextWindow || {};
-    const modelCfg = getEffectiveSessionModelConfig(activeRow, provKey, isNewDraft);
+    const effectiveRowForModel =
+      !isNewDraft &&
+      activeRow &&
+      (!activeRow.model || /^gemini$/i.test(String(activeRow.model).trim())) &&
+      (rawCtx.modelLabel || threadDetail?.model)
+        ? { ...activeRow, model: rawCtx.modelLabel || threadDetail.model }
+        : activeRow;
+    const modelCfg = getEffectiveSessionModelConfig(effectiveRowForModel, provKey, isNewDraft);
     const resolvedModelLabel = modelCfg.displayLabel;
     const modelEl = $('chat-model-pill');
     if (modelEl) {
@@ -11845,24 +12029,37 @@
     }
     renderModelPickerPopover(provKey, modelCfg);
 
-    // Context Window Pill & Popover (256k for Antigravity, 1M / 200k for Claude Code)
-    const defaultLimit = inferDefaultContextLimit(provKey, resolvedModelLabel);
-    const rawLimit = Number(rawCtx.limitTokens || rawCtx.maxContextTokens || defaultLimit);
-    const limitTokens =
-      provKey === 'antigravity' && (!rawLimit || rawLimit === 1000000 || rawLimit > 256000)
-        ? 256000
-        : provKey === 'claude' && rawLimit === 200000 && defaultLimit === 1000000
-          ? 1000000
-          : rawLimit || defaultLimit;
-    let usedTokens = isNewDraft
+    // Context Window Pill & Popover (256k / 840k on Antigravity, 1M / 200k on Claude Code)
+    const hasThreadModelOverride = Boolean(
+      !isNewDraft &&
+        prefs.threadModelConfig &&
+        prefs.threadModelConfig[activeRow?.id || prefs.selectedThreadId || '']
+    );
+    const modelForLimit =
+      !isNewDraft && !hasThreadModelOverride
+        ? rawCtx.modelLabel || rawCtx.modelName || threadDetail?.model || activeRow?.model || resolvedModelLabel
+        : resolvedModelLabel;
+    const explicitUsedRaw = rawCtx.usedTokens ?? activeRow?.usedTokens ?? activeRow?.contextTokens;
+    const rawUsed = isNewDraft
       ? 0
-      : Number(rawCtx.usedTokens || activeRow?.usedTokens || 22019);
-    if (!isNewDraft && provKey === 'antigravity' && (rawLimit === 1000000 || usedTokens > 256000)) {
-      usedTokens = Math.min(220000, Math.max(22019, Math.round(usedTokens * 0.145)));
-    }
-    const pct = isNewDraft
-      ? 0
-      : Math.min(100, Math.max(1, Math.round((usedTokens / Math.max(1, limitTokens)) * 100)));
+      : explicitUsedRaw != null && explicitUsedRaw !== ''
+        ? Number(explicitUsedRaw)
+        : 22019;
+    const rawLimit = hasThreadModelOverride
+      ? inferDefaultContextLimit(provKey, resolvedModelLabel)
+      : Number(
+          rawCtx.limitTokens ||
+            rawCtx.maxContextTokens ||
+            (!isNewDraft ? activeRow?.limitTokens || activeRow?.contextLimit : 0) ||
+            0
+        );
+    const {
+      usedTokens,
+      limitTokens,
+      pct,
+      remainingTokens,
+      overrunTokens
+    } = resolveDisplayContextMetrics(provKey, modelForLimit, rawUsed, rawLimit, isNewDraft);
     const breakdownArr = isNewDraft
       ? [
           { label: 'System Prompt & Rules', tokens: 0, color: '#D9A54A' },
@@ -11880,7 +12077,8 @@
       usedTokens,
       limitTokens,
       pct,
-      remainingTokens: Math.max(0, limitTokens - usedTokens),
+      remainingTokens,
+      overrunTokens,
       modelLabel: resolvedModelLabel,
       breakdown: breakdownArr
     };
@@ -12542,7 +12740,17 @@
     const listEl = $('ctx-breakdown-list');
     if (!sumEl || !barEl || !listEl) return;
 
-    sumEl.innerHTML = `<strong>${fmtInt(ctx.usedTokens)}</strong> tokens used of <strong>${fmtInt(ctx.limitTokens)}</strong> (${ctx.pct}%) · <span>${fmtInt(ctx.remainingTokens || ctx.limitTokens - ctx.usedTokens)} remaining</span>`;
+    const overrun = Math.max(0, Number(ctx.usedTokens || 0) - Number(ctx.limitTokens || 0));
+    const rem = Math.max(
+      0,
+      Number.isFinite(Number(ctx.remainingTokens))
+        ? Number(ctx.remainingTokens)
+        : Number(ctx.limitTokens || 0) - Number(ctx.usedTokens || 0)
+    );
+    sumEl.innerHTML =
+      overrun > 0
+        ? `<strong>${fmtInt(ctx.usedTokens)}</strong> tokens used of <strong>${fmtInt(ctx.limitTokens)}</strong> (${ctx.pct}%) · <span>+${fmtInt(overrun)} over soft target (auto-compacts next turn)</span>`
+        : `<strong>${fmtInt(ctx.usedTokens)}</strong> tokens used of <strong>${fmtInt(ctx.limitTokens)}</strong> (${ctx.pct}%) · <span>${fmtInt(rem)} remaining</span>`;
     const bd = Array.isArray(ctx.breakdown) ? ctx.breakdown : [];
     const totalBd = Math.max(1, bd.reduce((acc, item) => acc + Number(item.tokens || 0), 0));
     const safeCssColor = (c) => (/^(#[0-9a-fA-F]{3,8}|[a-zA-Z]+)$/.test(String(c || '').trim()) ? String(c).trim() : '#D9A54A');
@@ -16727,6 +16935,12 @@
         if (r.model !== rec.model) {
           r.model = rec.model;
           if (rec.effort) r.effort = rec.effort;
+          if (Number(rec.limitTokens || 0) > 0) {
+            r.limitTokens = Number(rec.limitTokens);
+            const rUsed = Math.max(0, Math.round(Number(r.usedTokens || 0)));
+            r.contextPct =
+              rUsed > 0 ? Math.min(100, Math.max(1, Math.round((rUsed / r.limitTokens) * 100))) : 0;
+          }
           settled = false;
         }
       }
@@ -17004,7 +17218,7 @@
           : 'BHFIRMS Workspace',
         contextWindow: {
           usedTokens: Math.max(120, Math.round(text.length / 4)),
-          limitTokens: provider === 'claude' ? 1000000 : 256000,
+          limitTokens: inferDefaultContextLimit(provider, modelCfg.displayLabel),
           modelLabel: modelCfg.displayLabel
         },
         messages: [
@@ -17375,7 +17589,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=71', { updateViaCache: 'none' })
+        .register('sw.js?v=72', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

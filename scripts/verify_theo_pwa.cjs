@@ -3751,7 +3751,352 @@ async function main() {
     assert.strictEqual(uwEmpty.overflowX, 0);
     console.log('[PASS] Adversarial #18: v71 Unsaved work per PC on Workspaces (50 cap +N more, 24 h+ marks, all-saved & stale-report lines, XSS-safe, tap & cold-start landing at 390 px)');
 
-    // Final error & network quarantine assertions (#18)
+    // Adversarial #19: v72 Antigravity 840k Claude capacity, >256k Gemini soft-overrun telemetry,
+    // Orchestrator/Carbon/Hydrogen labels, & 0-remaining boundary
+    await cdp.send(
+      'Emulation.setDeviceMetricsOverride',
+      { width: 390, height: 844, deviceScaleFactor: 3, mobile: true },
+      sessionId
+    );
+    await evalJs(`(() => {
+      const now = Date.now();
+      const rawCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+      const snap = rawCache.snapshot || rawCache.state || {};
+      snap.rows = [
+        {
+          id: 'sess-ctx-claude840',
+          title: 'Antigravity Claude 840k',
+          provider: 'antigravity',
+          model: 'MODEL_PLACEHOLDER_M402',
+          folder: 'theo-hub',
+          status: 'completed',
+          usedTokens: 412000,
+          limitTokens: 840000,
+          at: now - 10000
+        },
+        {
+          id: 'sess-ctx-overrun',
+          title: 'Orchestrator Soft Overrun',
+          provider: 'antigravity',
+          model: 'MODEL_PLACEHOLDER_M667',
+          folder: 'isabi-app',
+          status: 'completed',
+          usedTokens: 268592,
+          limitTokens: 256000,
+          at: now - 20000
+        },
+        {
+          id: 'sess-ctx-zero',
+          title: 'Carbon Exact 256k',
+          provider: 'antigravity',
+          model: 'MODEL_PLACEHOLDER_M437',
+          folder: 'theo',
+          status: 'completed',
+          usedTokens: 256000,
+          limitTokens: 256000,
+          at: now - 30000
+        },
+        {
+          id: 'sess-ctx-legacy840',
+          title: 'Legacy Cache M402 at 256k',
+          provider: 'antigravity',
+          model: 'MODEL_PLACEHOLDER_M402',
+          folder: 'theo',
+          status: 'completed',
+          usedTokens: 412000,
+          limitTokens: 256000,
+          at: now - 40000
+        },
+        {
+          id: 'sess-ctx-orch-argon',
+          title: 'Orchestrator Argon NonCatalog',
+          provider: 'antigravity',
+          model: 'MODEL_PLACEHOLDER_M681',
+          folder: 'theo-hub',
+          status: 'completed',
+          usedTokens: 64000,
+          limitTokens: 256000,
+          at: now - 50000
+        },
+        {
+          id: 'sess-ctx-sonnet1m',
+          title: 'Claude Sonnet 4.6 1M Omit Limit',
+          provider: 'claude',
+          model: 'Claude Sonnet 4.6 (1M)',
+          folder: 'theo',
+          status: 'completed',
+          usedTokens: 300000,
+          limitTokens: 0,
+          at: now - 60000
+        },
+        {
+          id: 'sess-ctx-nan',
+          title: 'Malformed Used Tokens Guard',
+          provider: 'antigravity',
+          model: 'MODEL_PLACEHOLDER_M405',
+          folder: 'theo',
+          status: 'completed',
+          usedTokens: 'unknown',
+          limitTokens: 0,
+          at: now - 70000
+        },
+        {
+          id: 'sess-ctx-claude1m-switch',
+          title: 'Claude Switch 1M to 200k',
+          provider: 'claude',
+          model: 'claude-opus-4-7',
+          folder: 'theo',
+          status: 'completed',
+          usedTokens: 150000,
+          limitTokens: 1000000,
+          at: now - 80000
+        }
+      ];
+      rawCache.snapshot = snap;
+      rawCache.state = snap;
+      rawCache.threads = rawCache.threads || {};
+      rawCache.threads['sess-ctx-claude840'] = {
+        id: 'sess-ctx-claude840',
+        provider: 'antigravity',
+        model: 'MODEL_PLACEHOLDER_M402',
+        contextWindow: {
+          provider: 'antigravity',
+          modelLabel: 'MODEL_PLACEHOLDER_M402',
+          usedTokens: 412000,
+          limitTokens: 840000,
+          remainingTokens: 428000,
+          pct: 49,
+          breakdown: [{ key: 'user', label: 'Prompts & Replies', tokens: 412000 }]
+        },
+        messages: [{ id: 'ctx-m1', role: 'user', text: 'Verify 840k window.', createdAt: new Date(now - 10000).toISOString() }]
+      };
+      rawCache.threads['sess-ctx-overrun'] = {
+        id: 'sess-ctx-overrun',
+        provider: 'antigravity',
+        model: 'MODEL_PLACEHOLDER_M667',
+        contextWindow: {
+          provider: 'antigravity',
+          modelLabel: 'MODEL_PLACEHOLDER_M667',
+          usedTokens: 268592,
+          limitTokens: 256000,
+          remainingTokens: 0,
+          pct: 100,
+          breakdown: [{ key: 'tools', label: 'Tool Outputs', tokens: 268592 }]
+        },
+        messages: [{ id: 'ctx-m2', role: 'user', text: 'Verify soft overrun.', createdAt: new Date(now - 20000).toISOString() }]
+      };
+      rawCache.threads['sess-ctx-zero'] = {
+        id: 'sess-ctx-zero',
+        provider: 'antigravity',
+        model: 'MODEL_PLACEHOLDER_M437',
+        contextWindow: {
+          provider: 'antigravity',
+          modelLabel: 'MODEL_PLACEHOLDER_M437',
+          usedTokens: 256000,
+          limitTokens: 256000,
+          remainingTokens: 0,
+          pct: 100,
+          breakdown: [{ key: 'user', label: 'Prompts & Replies', tokens: 256000 }]
+        },
+        messages: [{ id: 'ctx-m3', role: 'user', text: 'Verify zero remaining.', createdAt: new Date(now - 30000).toISOString() }]
+      };
+      rawCache.threads['sess-ctx-legacy840'] = {
+        id: 'sess-ctx-legacy840',
+        provider: 'antigravity',
+        model: 'MODEL_PLACEHOLDER_M402',
+        contextWindow: {
+          provider: 'antigravity',
+          modelLabel: 'MODEL_PLACEHOLDER_M402',
+          usedTokens: 412000,
+          limitTokens: 256000,
+          remainingTokens: 0,
+          pct: 100,
+          breakdown: [{ key: 'user', label: 'Prompts & Replies', tokens: 412000 }]
+        },
+        messages: [{ id: 'ctx-m4', role: 'user', text: 'Verify pre-v72 256k -> 840k upgrade.', createdAt: new Date(now - 40000).toISOString() }]
+      };
+      rawCache.threads['sess-ctx-orch-argon'] = {
+        id: 'sess-ctx-orch-argon',
+        provider: 'antigravity',
+        model: 'MODEL_PLACEHOLDER_M681',
+        contextWindow: {
+          provider: 'antigravity',
+          modelLabel: 'MODEL_PLACEHOLDER_M681',
+          usedTokens: 64000,
+          limitTokens: 256000,
+          remainingTokens: 192000,
+          pct: 25
+        },
+        messages: [{ id: 'ctx-m5', role: 'user', text: 'Verify Orchestrator (Argon) non-catalog preservation.', createdAt: new Date(now - 50000).toISOString() }]
+      };
+      rawCache.threads['sess-ctx-nan'] = {
+        id: 'sess-ctx-nan',
+        provider: 'antigravity',
+        model: 'MODEL_PLACEHOLDER_M405',
+        contextWindow: {
+          provider: 'antigravity',
+          modelLabel: 'MODEL_PLACEHOLDER_M405',
+          usedTokens: 'unknown',
+          limitTokens: 0
+        },
+        messages: [{ id: 'ctx-m6', role: 'user', text: 'Verify malformed token guard.', createdAt: new Date(now - 70000).toISOString() }]
+      };
+      rawCache.threads['sess-ctx-claude1m-switch'] = {
+        id: 'sess-ctx-claude1m-switch',
+        provider: 'claude',
+        model: 'claude-opus-4-7',
+        contextWindow: {
+          provider: 'claude',
+          modelLabel: 'Claude Opus 4.7 (1M)',
+          usedTokens: 150000,
+          limitTokens: 1000000,
+          remainingTokens: 850000,
+          pct: 15
+        },
+        messages: [{ id: 'ctx-m7', role: 'user', text: 'Verify 1M to 200k switch.', createdAt: new Date(now - 80000).toISOString() }]
+      };
+      localStorage.setItem('theo_remote_cache_v3', JSON.stringify(rawCache));
+      const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+      prefs.activeTab = 'sessions';
+      prefs.selectedThreadId = 'sess-ctx-claude840';
+      prefs.threadModelConfig = {};
+      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+      return true;
+    })()`);
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 700));
+
+    const ctxCardsProbe = await evalJs(`(() => {
+      const readCard = (id) => {
+        const el = document.querySelector('#view-sessions .session-card[data-session-id="' + id + '"]');
+        return el ? el.textContent.replace(/\\s+/g, ' ').trim() : '';
+      };
+      return {
+        claude: readCard('sess-ctx-claude840'),
+        overrun: readCard('sess-ctx-overrun'),
+        zero: readCard('sess-ctx-zero'),
+        legacy840: readCard('sess-ctx-legacy840'),
+        orchArgon: readCard('sess-ctx-orch-argon'),
+        sonnet1m: readCard('sess-ctx-sonnet1m'),
+        nanGuard: readCard('sess-ctx-nan'),
+        titleCount: document.querySelectorAll('[title]').length,
+        overflowX: Math.max(0, document.documentElement.scrollWidth - window.innerWidth)
+      };
+    })()`);
+    assert.ok(ctxCardsProbe.claude.includes('Claude Opus 5.5 (High)'), `Expected Claude Opus 5.5 (High) card label, got: ${ctxCardsProbe.claude}`);
+    assert.ok(ctxCardsProbe.claude.includes('412k / 840k · 49%'), `Expected 412k / 840k · 49% on card, got: ${ctxCardsProbe.claude}`);
+    assert.ok(ctxCardsProbe.overrun.includes('Orchestrator (Carbon)'), `Expected Orchestrator (Carbon) card label, got: ${ctxCardsProbe.overrun}`);
+    assert.ok(ctxCardsProbe.overrun.includes('269k / 256k · 100%'), `Expected 269k / 256k · 100% on card, got: ${ctxCardsProbe.overrun}`);
+    assert.ok(ctxCardsProbe.zero.includes('Gemini 4 Carbon (Medium)'), `Expected Gemini 4 Carbon (Medium) card label, got: ${ctxCardsProbe.zero}`);
+    assert.ok(ctxCardsProbe.zero.includes('256k / 256k · 100%'), `Expected 256k / 256k · 100% on card, got: ${ctxCardsProbe.zero}`);
+    assert.ok(ctxCardsProbe.legacy840.includes('412k / 840k · 49%'), `Legacy 256k cache for M402 must auto-upgrade to 840k, got: ${ctxCardsProbe.legacy840}`);
+    assert.ok(ctxCardsProbe.orchArgon.includes('Orchestrator (Argon)'), `Expected Orchestrator (Argon) card label, got: ${ctxCardsProbe.orchArgon}`);
+    assert.ok(ctxCardsProbe.sonnet1m.includes('300k / 1M · 30%'), `Expected Claude Sonnet 4.6 (1M) card at 300k / 1M, got: ${ctxCardsProbe.sonnet1m}`);
+    assert.ok(ctxCardsProbe.nanGuard.includes('Claude Sonnet 5.5 (High)'), `Malformed usedTokens card should keep clean model label, got: ${ctxCardsProbe.nanGuard}`);
+    assert.strictEqual(ctxCardsProbe.nanGuard.includes('NaN'), false, 'Card text must never render NaN');
+    assert.strictEqual(ctxCardsProbe.titleCount, 0, 'PWA must keep zero [title] attributes');
+    assert.strictEqual(ctxCardsProbe.overflowX, 0, 'Mobile sessions list must have 0px horizontal overflow');
+
+    const probeChatContext = async (tid) => {
+      await evalJs(`(() => {
+        const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+        prefs.activeTab = 'chat';
+        prefs.selectedThreadId = ${JSON.stringify(tid)};
+        localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+        return true;
+      })()`);
+      await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+      await new Promise((r) => setTimeout(r, 600));
+      return evalJs(`(() => {
+        document.getElementById('btn-ctx-window')?.click();
+        return {
+          modelPill: document.getElementById('chat-model-pill')?.textContent?.trim() || '',
+          ctxPill: document.getElementById('ctx-pill-label')?.textContent?.trim() || '',
+          summary: document.getElementById('ctx-meter-summary')?.textContent?.replace(/\\s+/g, ' ').trim() || '',
+          titleCount: document.querySelectorAll('[title]').length,
+          overflowX: Math.max(0, document.documentElement.scrollWidth - window.innerWidth)
+        };
+      })()`);
+    };
+
+    const chatClaude840 = await probeChatContext('sess-ctx-claude840');
+    assert.strictEqual(chatClaude840.modelPill, 'Claude Opus 5.5 (High)');
+    assert.strictEqual(chatClaude840.ctxPill, '412k / 840k · 49%');
+    assert.ok(chatClaude840.summary.includes('412,000 tokens used of 840,000 (49%)'), `Unexpected 840k summary: ${chatClaude840.summary}`);
+    assert.ok(chatClaude840.summary.includes('428,000 remaining'), `Expected 428,000 remaining, got: ${chatClaude840.summary}`);
+    assert.strictEqual(chatClaude840.titleCount, 0);
+    assert.strictEqual(chatClaude840.overflowX, 0);
+
+    const chatOverrun = await probeChatContext('sess-ctx-overrun');
+    assert.strictEqual(chatOverrun.modelPill, 'Orchestrator (Carbon)');
+    assert.strictEqual(chatOverrun.ctxPill, '269k / 256k · 100%');
+    assert.ok(chatOverrun.summary.includes('268,592 tokens used of 256,000 (100%)'), `Unexpected overrun summary: ${chatOverrun.summary}`);
+    assert.ok(chatOverrun.summary.includes('+12,592 over soft target (auto-compacts next turn)'), `Expected soft overrun copy, got: ${chatOverrun.summary}`);
+    assert.strictEqual(chatOverrun.titleCount, 0);
+    assert.strictEqual(chatOverrun.overflowX, 0);
+
+    const chatZero = await probeChatContext('sess-ctx-zero');
+    assert.strictEqual(chatZero.modelPill, 'Gemini 4 Carbon (Medium)');
+    assert.strictEqual(chatZero.ctxPill, '256k / 256k · 100%');
+    assert.ok(chatZero.summary.includes('0 remaining'), `Expected explicit 0 remaining on exact 256k boundary, got: ${chatZero.summary}`);
+    assert.strictEqual(chatZero.summary.includes('over soft target'), false, 'Exact 256k boundary must not claim soft overrun');
+    assert.strictEqual(chatZero.titleCount, 0);
+    assert.strictEqual(chatZero.overflowX, 0);
+
+    // Pre-v72 M402 cache at 256k must auto-upgrade to 840k in chat pill & popover
+    const chatLegacy840 = await probeChatContext('sess-ctx-legacy840');
+    assert.strictEqual(chatLegacy840.modelPill, 'Claude Opus 5.5 (High)');
+    assert.strictEqual(chatLegacy840.ctxPill, '412k / 840k · 49%');
+    assert.ok(chatLegacy840.summary.includes('428,000 remaining'), `Expected legacy M402 upgrade to 840k, got: ${chatLegacy840.summary}`);
+
+    // Toggle effort on non-catalog Claude Opus 5.5 must preserve Claude Opus 5.5 (Medium) across reload
+    const afterEffortNonCatalog = await evalJs(`(() => {
+      document.getElementById('chat-model-picker-btn')?.click();
+      const activeMenuCount = document.querySelectorAll('#model-picker-body .vs-model-menu-item.active').length;
+      document.querySelector('#model-picker-body [data-select-ai-effort="medium"]')?.click();
+      return {
+        activeMenuCount,
+        pillAfterEffort: document.getElementById('chat-model-pill')?.textContent?.trim() || ''
+      };
+    })()`);
+    assert.strictEqual(afterEffortNonCatalog.activeMenuCount, 0, 'Non-catalog session must not check a catalog model item');
+    assert.strictEqual(afterEffortNonCatalog.pillAfterEffort, 'Claude Opus 5.5 (Medium)');
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 550));
+    const pillAfterReload = await evalJs(`document.getElementById('chat-model-pill')?.textContent?.trim() || ''`);
+    assert.strictEqual(pillAfterReload, 'Claude Opus 5.5 (Medium)', 'Non-catalog customModel effort override must survive reload');
+
+    // Orchestrator (Argon) must not alias to Gemini 4 Argon, and effort toggle must preserve Orchestrator (Argon)
+    const chatOrchArgon = await probeChatContext('sess-ctx-orch-argon');
+    assert.strictEqual(chatOrchArgon.modelPill, 'Orchestrator (Argon)');
+    const orchAfterEffort = await evalJs(`(() => {
+      document.getElementById('chat-model-picker-btn')?.click();
+      document.querySelector('#model-picker-body [data-select-ai-effort="medium"]')?.click();
+      return document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+    })()`);
+    assert.strictEqual(orchAfterEffort, 'Orchestrator (Argon)');
+
+    // Malformed usedTokens must never emit NaN in chat popover
+    const chatNan = await probeChatContext('sess-ctx-nan');
+    assert.strictEqual(chatNan.ctxPill, '0 / 840k · 0%');
+    assert.strictEqual(chatNan.summary.includes('NaN'), false, `Chat summary must not contain NaN: ${chatNan.summary}`);
+
+    // Switching active 1M Claude session -> Claude Sonnet 4.6 must immediately update denominator 1M -> 200k
+    const chatBeforeSwitch = await probeChatContext('sess-ctx-claude1m-switch');
+    assert.strictEqual(chatBeforeSwitch.ctxPill, '150k / 1M · 15%');
+    const chatAfterSwitch = await evalJs(`(() => {
+      document.getElementById('chat-model-picker-btn')?.click();
+      document.querySelector('#model-picker-body [data-select-model-combo="claude-sonnet-4-6:high"]')?.click();
+      return {
+        modelPill: document.getElementById('chat-model-pill')?.textContent?.trim() || '',
+        ctxPill: document.getElementById('ctx-pill-label')?.textContent?.trim() || ''
+      };
+    })()`);
+    assert.strictEqual(chatAfterSwitch.modelPill, 'Claude Sonnet 4.6 (High)');
+    assert.strictEqual(chatAfterSwitch.ctxPill, '150k / 200k · 75%');
+    console.log('[PASS] Adversarial #19: v72 840k Claude-on-Antigravity, >256k Gemini soft-overrun telemetry, Orchestrator/Carbon/Hydrogen labels, 256k->840k upgrade, model switch recompute & NaN guard verified');
+
+    // Final error & network quarantine assertions (#19)
     assert.strictEqual(pageExceptions.length, 0, `Uncaught page exceptions: ${JSON.stringify(pageExceptions)}`);
     assert.strictEqual(consoleErrors.length, 0, `Console errors: ${JSON.stringify(consoleErrors)}`);
     assert.strictEqual(
