@@ -4096,6 +4096,661 @@ async function main() {
     assert.strictEqual(chatAfterSwitch.ctxPill, '150k / 200k · 75%');
     console.log('[PASS] Adversarial #19: v72 840k Claude-on-Antigravity, >256k Gemini soft-overrun telemetry, Orchestrator/Carbon/Hydrogen labels, 256k->840k upgrade, model switch recompute & NaN guard verified');
 
+    // Adversarial #20: Incremental WS rowPatch delta sync, cross-provider bare-id guard, seq resync & dual-socket failover
+    {
+      const nodeCrypto = require('crypto');
+      const wsClients = new Set();
+      const wsByRole = { local: null, edge: null };
+      const recvLocalMsgs = [];
+      const recvEdgeMsgs = [];
+      let localAuthDone = false;
+      let edgeAuthDone = false;
+
+      const encodeWsTextFrame = (obj) => {
+        const payload = Buffer.from(JSON.stringify(obj), 'utf8');
+        const len = payload.length;
+        let header;
+        if (len < 126) {
+          header = Buffer.allocUnsafe(2);
+          header[0] = 0x81;
+          header[1] = len;
+        } else if (len < 65536) {
+          header = Buffer.allocUnsafe(4);
+          header[0] = 0x81;
+          header[1] = 126;
+          header.writeUInt16BE(len, 2);
+        } else {
+          header = Buffer.allocUnsafe(10);
+          header[0] = 0x81;
+          header[1] = 127;
+          header.writeBigUInt64BE(BigInt(len), 2);
+        }
+        return Buffer.concat([header, payload]);
+      };
+
+      const sendWsJson = (sock, obj) => {
+        if (!sock || sock.destroyed || !sock.writable) return false;
+        sock.write(encodeWsTextFrame(obj));
+        return true;
+      };
+
+      const mockWsSrv = http.createServer((_req, res) => {
+        res.writeHead(404);
+        res.end();
+      });
+
+      mockWsSrv.on('upgrade', (req, socket) => {
+        const key = req.headers['sec-websocket-key'];
+        if (!key) {
+          socket.destroy();
+          return;
+        }
+        const accept = nodeCrypto
+          .createHash('sha1')
+          .update(String(key).trim() + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
+          .digest('base64');
+        socket.write(
+          [
+            'HTTP/1.1 101 Switching Protocols',
+            'Upgrade: websocket',
+            'Connection: Upgrade',
+            `Sec-WebSocket-Accept: ${accept}`,
+            '',
+            ''
+          ].join('\r\n')
+        );
+        wsClients.add(socket);
+        const reqPath = String(req.url || '/');
+        const isEdge = reqPath.startsWith('/edge/ws');
+        if (isEdge) wsByRole.edge = socket;
+        else wsByRole.local = socket;
+
+        let buf = Buffer.alloc(0);
+        socket.on('data', (chunk) => {
+          buf = Buffer.concat([buf, chunk]);
+          while (buf.length >= 2) {
+            const b0 = buf[0];
+            const b1 = buf[1];
+            const opcode = b0 & 0x0f;
+            const masked = (b1 & 0x80) !== 0;
+            let len = b1 & 0x7f;
+            let offset = 2;
+            if (len === 126) {
+              if (buf.length < 4) return;
+              len = buf.readUInt16BE(2);
+              offset = 4;
+            } else if (len === 127) {
+              if (buf.length < 10) return;
+              len = Number(buf.readBigUInt64BE(2));
+              offset = 10;
+            }
+            const totalNeeded = offset + (masked ? 4 : 0) + len;
+            if (buf.length < totalNeeded) return;
+            const maskKey = masked ? buf.subarray(offset, offset + 4) : null;
+            const payloadStart = offset + (masked ? 4 : 0);
+            const rawPayload = Buffer.from(buf.subarray(payloadStart, payloadStart + len));
+            buf = buf.subarray(totalNeeded);
+            if (masked && maskKey) {
+              for (let i = 0; i < rawPayload.length; i += 1) {
+                rawPayload[i] ^= maskKey[i % 4];
+              }
+            }
+            if (opcode === 0x8) {
+              try {
+                socket.end();
+              } catch {}
+              return;
+            }
+            if (opcode === 0x9) {
+              if (!socket.destroyed && socket.writable) {
+                const pongHdr = Buffer.from([0x8a, Math.min(125, rawPayload.length)]);
+                socket.write(Buffer.concat([pongHdr, rawPayload.subarray(0, 125)]));
+              }
+              continue;
+            }
+            if (opcode !== 0x1) continue;
+            let msg = null;
+            try {
+              msg = JSON.parse(rawPayload.toString('utf8'));
+            } catch {
+              continue;
+            }
+            if (!msg || typeof msg !== 'object') continue;
+            if (isEdge) recvEdgeMsgs.push(msg);
+            else recvLocalMsgs.push(msg);
+            if (msg.type === 'auth' || msg.type === 'auth_client') {
+              if (msg.token === 'test-token-hex') {
+                if (isEdge) edgeAuthDone = true;
+                else localAuthDone = true;
+                sendWsJson(socket, {
+                  type: 'auth_ok',
+                  device: { id: 'ws-dev-1', name: 'WS Dev 1', role: 'primary' },
+                  devices: [{ id: 'ws-dev-1', name: 'WS Dev 1', online: true, local: !isEdge, sessionCount: 620 }]
+                });
+              } else {
+                sendWsJson(socket, { type: 'auth_err' });
+              }
+            } else if (msg.type === 'ping') {
+              sendWsJson(socket, { type: 'pong', echoTs: msg.ts });
+            }
+          }
+        });
+        socket.on('close', () => wsClients.delete(socket));
+        socket.on('error', () => wsClients.delete(socket));
+      });
+
+      const waitForCond = async (fn, label, timeoutMs = 5000) => {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          const val = await fn();
+          if (val) return val;
+          await new Promise((r) => setTimeout(r, 40));
+        }
+        throw new Error(`Adversarial #20 timed out waiting for: ${label}`);
+      };
+
+      await new Promise((resolve, reject) => {
+        mockWsSrv.listen(0, '127.0.0.1', resolve);
+        mockWsSrv.on('error', reject);
+      });
+
+      try {
+        const wsPort = mockWsSrv.address().port;
+        const wsHttpBase = `http://127.0.0.1:${wsPort}`;
+        const baseAt = Date.now();
+        const fullRows620 = [];
+        for (let i = 0; i < 618; i += 1) {
+          fullRows620.push({
+            id: `ws-r-${i}`,
+            key: `antigravity:ws-r-${i}`,
+            provider: 'antigravity',
+            title: `WS Row ${i}`,
+            status: 'idle',
+            at: baseAt - i * 100
+          });
+        }
+        fullRows620.push({
+          id: 'shared-x',
+          key: 'antigravity:shared-x',
+          provider: 'antigravity',
+          title: 'AG Shared',
+          status: 'idle',
+          at: baseAt + 200
+        });
+        fullRows620.push({
+          id: 'shared-x',
+          key: 'claude:shared-x',
+          provider: 'claude',
+          title: 'Claude Shared',
+          status: 'idle',
+          at: baseAt + 100
+        });
+        fullRows620.push({
+          id: 'keyless-shared',
+          provider: 'claude',
+          title: 'Keyless Claude',
+          status: 'idle',
+          at: baseAt + 300
+        });
+        fullRows620.push({
+          id: 'keyless-shared',
+          key: 'antigravity:keyless-shared',
+          provider: 'antigravity',
+          title: 'AG Keyed Shared',
+          status: 'idle',
+          at: baseAt + 250
+        });
+        fullRows620.push({
+          id: 'keyless-del',
+          provider: 'claude',
+          title: 'Keyless To Delete',
+          status: 'idle',
+          at: baseAt + 50
+        });
+        const expectedInitRawRows = fullRows620.length; // 623
+        const expectedInitUnifiedRows = 621; // 618 + shared-x + keyless-shared + keyless-del
+        const expectedAfterPatchUnifiedRows = 621; // +ws-r-new -keyless-del (claude:shared-x remains)
+        const expectedAfterPatchRawRows = 622; // 623 + ws-r-new - antigravity:shared-x - keyless-del
+
+        const buildWsSnapshot = (rowsArr, genAt = Date.now()) => ({
+          generatedAt: genAt,
+          device: { id: 'ws-dev-1', name: 'WS Dev 1', role: 'primary' },
+          devices: [{ id: 'ws-dev-1', name: 'WS Dev 1', online: true, local: true, sessionCount: rowsArr.length, lastSeen: genAt }],
+          total: rowsArr.length,
+          rows: rowsArr,
+          providers: {
+            antigravity: { signedIn: true, accounts: [] },
+            claude: { signedIn: true, accounts: [] }
+          },
+          summary: { today: { tokens: 12000, sessions: rowsArr.length } },
+          topSessions: rowsArr.slice(0, 5)
+        });
+
+        // 1. Connect localWs on /api/ws and receive initial seq: 1 state (620 rows)
+        await evalJs(`(() => {
+          window.__THEO_ALLOW_MOCK_WS = true;
+          window.__THEO_MOCK_BRIDGE_TOKEN = 'test-token-hex';
+          window.__theoTestWs.connectLocalWs(${JSON.stringify(wsHttpBase)}, { wsPath: '/api/ws' });
+          return true;
+        })()`);
+        await waitForCond(() => localAuthDone && wsByRole.local, 'localWs auth');
+        const localAuthMsg = recvLocalMsgs.find((m) => m.type === 'auth');
+        assert(localAuthMsg, 'Expected localWs auth message');
+        assert.strictEqual(localAuthMsg.protocol, 2, 'Expected protocol === 2 on localWs auth');
+        assert.strictEqual(localAuthMsg.supportsRowPatch, true, 'Expected supportsRowPatch === true on localWs auth');
+        sendWsJson(wsByRole.local, {
+          type: 'state',
+          seq: 1,
+          deviceId: 'ws-dev-1',
+          state: buildWsSnapshot(fullRows620, baseAt)
+        });
+
+        const s1 = await waitForCond(
+          () =>
+            evalJs(`(() => {
+              const st = window.__theoTestWs.getState();
+              const stats = window.__theoWsDeltaStats || {};
+              const devRows = (st?.rows || []).filter((r) => r.deviceId === 'ws-dev-1');
+              const baseRows = window.__theoTestWs.getBaselineRows('local', 'ws-dev-1');
+              if (stats.stateFrames < 1 || stats.lastSeq !== 1 || devRows.length !== ${expectedInitUnifiedRows}) return null;
+              return { devRowsCount: devRows.length, baseRowsCount: baseRows.length, stats: { ...stats } };
+            })()`),
+          'initial seq:1 baseline state'
+        );
+        assert.strictEqual(
+          s1.devRowsCount,
+          expectedInitUnifiedRows,
+          `Initial unified ws-dev-1 rows should equal ${expectedInitUnifiedRows}`
+        );
+        assert.strictEqual(
+          s1.baseRowsCount,
+          expectedInitRawRows,
+          `Initial baseline ws-dev-1 raw rows should equal ${expectedInitRawRows}`
+        );
+
+        // 2. Apply local optimistic override on ws-r-1, then send seq: 2 rowPatch with upsert, add, keyless promotion/removal & cross-provider shared-id removal
+        await evalJs(`(() => {
+          window.__theoTestWs.noteRowOverride('ws-r-1', { unread: true });
+          return true;
+        })()`);
+        sendWsJson(wsByRole.local, {
+          type: 'rowPatch',
+          seq: 2,
+          deviceId: 'ws-dev-1',
+          generatedAt: baseAt + 2000,
+          total: expectedAfterPatchRawRows,
+          upserts: [
+            {
+              id: 'ws-r-2',
+              key: 'antigravity:ws-r-2',
+              provider: 'antigravity',
+              title: 'WS Row 2',
+              status: 'running',
+              at: baseAt + 500
+            },
+            {
+              id: 'ws-r-new',
+              key: 'antigravity:ws-r-new',
+              provider: 'antigravity',
+              title: 'Added By Patch',
+              status: 'running',
+              at: baseAt + 400
+            },
+            {
+              id: 'keyless-shared',
+              key: 'claude:keyless-shared',
+              provider: 'claude',
+              title: 'Promoted Claude Keyless',
+              status: 'running',
+              at: baseAt + 600
+            }
+          ],
+          removedIds: ['shared-x', 'keyless-del'],
+          removedKeys: ['antigravity:shared-x']
+        });
+
+        const s2 = await waitForCond(
+          () =>
+            evalJs(`(() => {
+              const stats = window.__theoWsDeltaStats || {};
+              if (stats.patchFrames < 1 || stats.lastSeq < 2) return null;
+              const rows = (window.__theoTestWs.getState()?.rows || []).filter((r) => r.deviceId === 'ws-dev-1');
+              const baseRows = window.__theoTestWs.getBaselineRows('local', 'ws-dev-1');
+              const r1 = rows.find((r) => r.id === 'ws-r-1');
+              const r2 = rows.find((r) => r.id === 'ws-r-2');
+              const rNew = rows.find((r) => r.id === 'ws-r-new');
+              const rShared = rows.find((r) => r.id === 'shared-x');
+              const keylessShared = baseRows.filter((r) => r.id === 'keyless-shared');
+              const promotedClaude = keylessShared.find((r) => r.key === 'claude:keyless-shared');
+              const agKeyed = keylessShared.find((r) => r.key === 'antigravity:keyless-shared');
+              return {
+                devRowsCount: rows.length,
+                baseRowsCount: baseRows.length,
+                r1Unread: Boolean(r1?.unread),
+                r2Status: r2?.status || '',
+                rNewTitle: rNew?.title || '',
+                rSharedProvider: rShared?.provider || '',
+                rSharedTitle: rShared?.title || '',
+                rSharedKey: rShared?.key || '',
+                keylessSharedCount: keylessShared.length,
+                promotedStatus: promotedClaude?.status || '',
+                promotedTitle: promotedClaude?.title || '',
+                agKeyedTitle: agKeyed?.title || '',
+                hasKeylessDel: baseRows.some((r) => r.id === 'keyless-del')
+              };
+            })()`),
+          'seq:2 rowPatch with override & cross-provider/keyless guards'
+        );
+        assert.strictEqual(
+          s2.devRowsCount,
+          expectedAfterPatchUnifiedRows,
+          `After removing antigravity:shared-x and keyless-del and adding ws-r-new, unified row count should be ${expectedAfterPatchUnifiedRows}`
+        );
+        assert.strictEqual(
+          s2.baseRowsCount,
+          expectedAfterPatchRawRows,
+          `Baseline raw rows after seq:2 rowPatch should be ${expectedAfterPatchRawRows}`
+        );
+        assert.strictEqual(s2.r1Unread, true, 'Local optimistic override (unread: true) on ws-r-1 must survive rowPatch');
+        assert.strictEqual(s2.r2Status, 'running', 'rowPatch upsert should update ws-r-2 status');
+        assert.strictEqual(s2.rNewTitle, 'Added By Patch', 'rowPatch should insert ws-r-new');
+        assert.strictEqual(s2.rSharedProvider, 'claude', 'Cross-provider shared-id removal must keep claude:shared-x intact');
+        assert.strictEqual(s2.rSharedTitle, 'Claude Shared');
+        assert.strictEqual(s2.keylessSharedCount, 2, 'Keyless row promotion must update existing keyless entry without duplicating provider row');
+        assert.strictEqual(s2.promotedStatus, 'running');
+        assert.strictEqual(s2.promotedTitle, 'Promoted Claude Keyless');
+        assert.strictEqual(s2.agKeyedTitle, 'AG Keyed Shared');
+        assert.strictEqual(s2.hasKeylessDel, false, 'Explicit removedKeys must still delete baseline rows with empty raw key matched via removedIds');
+
+        // 3. Connect edgeWs sending 100-row compact host_state for ws-dev-1; assert suppressed while localWs is authoritative
+        await evalJs(`(() => {
+          window.__theoTestWs.connectEdgeWs(${JSON.stringify(wsHttpBase + '/edge/ws')});
+          return true;
+        })()`);
+        await waitForCond(() => edgeAuthDone && wsByRole.edge, 'edgeWs auth');
+        const edgeAuthMsg = recvEdgeMsgs.find((m) => m.type === 'auth_client');
+        assert(edgeAuthMsg, 'Expected edgeWs auth_client message');
+        assert.strictEqual(edgeAuthMsg.protocol, 2, 'Expected protocol === 2 on edgeWs auth_client');
+        assert.strictEqual(edgeAuthMsg.supportsRowPatch, true, 'Expected supportsRowPatch === true on edgeWs auth_client');
+        const edgeRows100 = [];
+        for (let i = 0; i < 100; i += 1) {
+          edgeRows100.push({
+            id: `edge-r-${i}`,
+            key: `antigravity:edge-r-${i}`,
+            provider: 'antigravity',
+            title: `Edge Row ${i}`,
+            status: 'idle',
+            at: baseAt + 4000 - i
+          });
+        }
+        sendWsJson(wsByRole.edge, {
+          type: 'host_state',
+          deviceId: 'ws-dev-1',
+          snapshot: buildWsSnapshot(edgeRows100, baseAt + 5000)
+        });
+        const s3 = await waitForCond(
+          () =>
+            evalJs(`(() => {
+              const stats = window.__theoWsDeltaStats || {};
+              if (stats.edgeSuppressedForLocal < 1) return null;
+              const rows = (window.__theoTestWs.getState()?.rows || []).filter((r) => r.deviceId === 'ws-dev-1');
+              return { devRowsCount: rows.length, hasWs0: rows.some((r) => r.id === 'ws-r-0'), hasEdge0: rows.some((r) => r.id === 'edge-r-0') };
+            })()`),
+          'edgeWs suppression while localWs authoritative'
+        );
+        assert.strictEqual(
+          s3.devRowsCount,
+          expectedAfterPatchUnifiedRows,
+          'Compact edge host_state must not truncate authoritative localWs rows'
+        );
+        assert.strictEqual(s3.hasWs0, true);
+        assert.strictEqual(s3.hasEdge0, false);
+
+        // 4. Out-of-order seq: 9 rowPatch deletes ws-r-4 -> rejected + triggers resync_state -> seq: 10 state + seq: 11 rowPatch recovers
+        sendWsJson(wsByRole.local, {
+          type: 'rowPatch',
+          seq: 9,
+          deviceId: 'ws-dev-1',
+          generatedAt: baseAt + 7000,
+          upserts: [],
+          removedIds: ['ws-r-4'],
+          removedKeys: ['antigravity:ws-r-4']
+        });
+        await waitForCond(
+          () => recvLocalMsgs.some((m) => m.type === 'resync_state'),
+          'server receipt of resync_state on seq gap'
+        );
+        const midCheck = await evalJs(`(() => {
+          const stats = window.__theoWsDeltaStats || {};
+          const rows = (window.__theoTestWs.getState()?.rows || []).filter((r) => r.deviceId === 'ws-dev-1');
+          return { resyncRequests: stats.resyncRequests, hasWs4: rows.some((r) => r.id === 'ws-r-4'), lastSeq: stats.lastSeq };
+        })()`);
+        assert(midCheck.resyncRequests >= 1, 'Expected resyncRequests >= 1 on seq gap');
+        assert.strictEqual(midCheck.hasWs4, true, 'Out-of-order seq:9 removal must not apply before resync');
+        assert.strictEqual(midCheck.lastSeq, 2);
+
+        sendWsJson(wsByRole.local, {
+          type: 'state',
+          seq: 10,
+          deviceId: 'ws-dev-1',
+          state: buildWsSnapshot(fullRows620, baseAt + 8000)
+        });
+        await new Promise((r) => setTimeout(r, 40));
+        sendWsJson(wsByRole.local, {
+          type: 'rowPatch',
+          seq: 11,
+          deviceId: 'ws-dev-1',
+          generatedAt: baseAt + 9000,
+          upserts: [
+            {
+              id: 'ws-r-4',
+              key: 'antigravity:ws-r-4',
+              provider: 'antigravity',
+              title: 'Recovered After Resync',
+              status: 'running',
+              at: baseAt + 900
+            }
+          ],
+          removedIds: [],
+          removedKeys: []
+        });
+        const s4 = await waitForCond(
+          () =>
+            evalJs(`(() => {
+              const stats = window.__theoWsDeltaStats || {};
+              if (stats.lastSeq !== 11) return null;
+              const r4 = (window.__theoTestWs.getState()?.rows || []).find((r) => r.id === 'ws-r-4' && r.deviceId === 'ws-dev-1');
+              return { lastSeq: stats.lastSeq, r4Title: r4?.title || '' };
+            })()`),
+          'seq:10 state + seq:11 recovery'
+        );
+        assert.strictEqual(s4.r4Title, 'Recovered After Resync');
+
+        // 5. Edge failover when newer edge host_state is cached and localWs closes
+        sendWsJson(wsByRole.edge, {
+          type: 'host_state',
+          deviceId: 'ws-dev-1',
+          snapshot: buildWsSnapshot(edgeRows100, baseAt + 25000)
+        });
+        await waitForCond(
+          () => evalJs('(window.__theoWsDeltaStats?.edgeSuppressedForLocal || 0) >= 2'),
+          'second edge host_state cached while suppressed'
+        );
+        await evalJs(`(() => {
+          window.__theoTestWs.disconnectLocal();
+          return true;
+        })()`);
+        const s5 = await waitForCond(
+          () =>
+            evalJs(`(() => {
+              const rows = (window.__theoTestWs.getState()?.rows || []).filter((r) => r.deviceId === 'ws-dev-1');
+              if (rows.length !== 100) return null;
+              return { devRowsCount: rows.length, hasEdge0: rows.some((r) => r.id === 'edge-r-0') };
+            })()`),
+          'edgeWs failover on localWs close'
+        );
+        assert.strictEqual(s5.devRowsCount, 100);
+        assert.strictEqual(s5.hasEdge0, true);
+
+        // 6. Edge WS host_row_patch seq gap -> rpc_cmd getState -> cooldown suppression when seq omitted -> seq:26 recovery + seq:27 patch
+        const edgeRpcCmdCount = () =>
+          recvEdgeMsgs.filter((m) => m.type === 'rpc_cmd' && m.action === 'getState').length;
+        const patchFramesBeforeEdge = await evalJs('(window.__theoWsDeltaStats?.patchFrames || 0)');
+        sendWsJson(wsByRole.edge, {
+          type: 'host_row_patch',
+          deviceId: 'ws-dev-1',
+          seq: 25,
+          generatedAt: baseAt + 26000,
+          upserts: [
+            {
+              id: 'edge-r-0',
+              key: 'antigravity:edge-r-0',
+              provider: 'antigravity',
+              title: 'Premature',
+              status: 'running',
+              at: baseAt + 26000
+            }
+          ],
+          removedIds: [],
+          removedKeys: []
+        });
+        const firstEdgeRpc = await waitForCond(
+          () => recvEdgeMsgs.find((m) => m.type === 'rpc_cmd' && m.action === 'getState'),
+          'Edge WS rpc_cmd getState on host_row_patch seq gap'
+        );
+        sendWsJson(wsByRole.edge, {
+          type: 'rpc_res',
+          reqId: firstEdgeRpc.reqId,
+          deviceId: 'ws-dev-1',
+          ok: true,
+          result: { ok: true, state: buildWsSnapshot(edgeRows100, baseAt + 26500) }
+        });
+        await new Promise((r) => setTimeout(r, 80));
+        const resyncCountBeforeCooldown = await evalJs('(window.__theoWsDeltaStats?.resyncRequests || 0)');
+        sendWsJson(wsByRole.edge, {
+          type: 'host_row_patch',
+          deviceId: 'ws-dev-1',
+          seq: 25,
+          generatedAt: baseAt + 26600,
+          upserts: [
+            {
+              id: 'edge-r-0',
+              key: 'antigravity:edge-r-0',
+              provider: 'antigravity',
+              title: 'Premature 2',
+              status: 'running',
+              at: baseAt + 26600
+            }
+          ],
+          removedIds: [],
+          removedKeys: []
+        });
+        await new Promise((r) => setTimeout(r, 60));
+        const cooldownCheck = await evalJs(`(() => ({
+          resyncRequests: window.__theoWsDeltaStats?.resyncRequests || 0,
+          edge0Title: (window.__theoTestWs.getState()?.rows || []).find((r) => r.id === 'edge-r-0' && r.deviceId === 'ws-dev-1')?.title || ''
+        }))()`);
+        assert.strictEqual(
+          cooldownCheck.resyncRequests,
+          resyncCountBeforeCooldown,
+          '1500ms resync cooldown must suppress immediate duplicate Edge getState after seq-less rpc_res'
+        );
+        assert.strictEqual(edgeRpcCmdCount(), 1, 'Expected only 1 Edge getState RPC during cooldown window');
+        assert.strictEqual(cooldownCheck.edge0Title, 'Edge Row 0', 'Out-of-order seq:25 patch must not mutate edge-r-0');
+
+        await new Promise((r) => setTimeout(r, 1550));
+        sendWsJson(wsByRole.edge, {
+          type: 'host_row_patch',
+          deviceId: 'ws-dev-1',
+          seq: 25,
+          generatedAt: baseAt + 26800,
+          upserts: [
+            {
+              id: 'edge-r-0',
+              key: 'antigravity:edge-r-0',
+              provider: 'antigravity',
+              title: 'Premature 3',
+              status: 'running',
+              at: baseAt + 26800
+            }
+          ],
+          removedIds: [],
+          removedKeys: []
+        });
+        const secondEdgeRpc = await waitForCond(
+          () => recvEdgeMsgs.find((m) => m.type === 'rpc_cmd' && m.action === 'getState' && m.reqId !== firstEdgeRpc.reqId),
+          'Second Edge WS rpc_cmd getState after cooldown'
+        );
+        sendWsJson(wsByRole.edge, {
+          type: 'rpc_res',
+          reqId: secondEdgeRpc.reqId,
+          deviceId: 'ws-dev-1',
+          ok: true,
+          result: { ok: true, seq: 26, state: buildWsSnapshot(edgeRows100, baseAt + 27000) }
+        });
+        await waitForCond(
+          () => evalJs('(window.__theoWsDeltaStats?.lastSeq || 0) === 26'),
+          'Edge WS getState seq:26 recovery'
+        );
+        sendWsJson(wsByRole.edge, {
+          type: 'host_row_patch',
+          deviceId: 'ws-dev-1',
+          seq: 27,
+          generatedAt: baseAt + 28000,
+          upserts: [
+            {
+              id: 'edge-r-0',
+              key: 'antigravity:edge-r-0',
+              provider: 'antigravity',
+              title: 'Edge Patched Seq 27',
+              status: 'running',
+              at: baseAt + 28000
+            }
+          ],
+          removedIds: [],
+          removedKeys: []
+        });
+        const s6 = await waitForCond(
+          () =>
+            evalJs(`(() => {
+              const stats = window.__theoWsDeltaStats || {};
+              const row = (window.__theoTestWs.getState()?.rows || []).find((r) => r.id === 'edge-r-0' && r.deviceId === 'ws-dev-1');
+              if (stats.lastSeq !== 27 || !row || row.title !== 'Edge Patched Seq 27') return null;
+              return { lastSeq: stats.lastSeq, patchFrames: stats.patchFrames, title: row.title, status: row.status };
+            })()`),
+          'Edge WS host_row_patch seq:27 apply'
+        );
+        assert.strictEqual(s6.lastSeq, 27);
+        assert(s6.patchFrames > patchFramesBeforeEdge, 'Expected patchFrames to increment on Edge seq:27 patch');
+        assert.strictEqual(s6.title, 'Edge Patched Seq 27');
+        assert.strictEqual(s6.status, 'running');
+
+        await cdp.send(
+          'Emulation.setDeviceMetricsOverride',
+          { width: 1440, height: 900, deviceScaleFactor: 2, mobile: false },
+          sessionId
+        );
+        await new Promise((r) => setTimeout(r, 80));
+        const uiGate = await evalJs(`(() => ({
+          titles: document.querySelectorAll('[title]').length,
+          overflow: document.documentElement.scrollWidth - window.innerWidth
+        }))()`);
+        assert.strictEqual(uiGate.titles, 0, 'Expected 0 [title] elements after WS delta updates');
+        assert(uiGate.overflow <= 0, `Expected <= 0 horizontal overflow on desktop, got ${uiGate.overflow}`);
+        console.log('[PASS] Adversarial #20: Incremental WS rowPatch delta sync, cross-provider bare-id guard, seq gap resync & dual-socket failover verified');
+      } finally {
+        try {
+          await evalJs('window.__theoTestWs?.disconnectAll?.()');
+        } catch {}
+        for (const s of wsClients) {
+          try {
+            s.destroy();
+          } catch {}
+        }
+        await new Promise((r) => mockWsSrv.close(r));
+      }
+    }
+
     // Final error & network quarantine assertions (#19)
     assert.strictEqual(pageExceptions.length, 0, `Uncaught page exceptions: ${JSON.stringify(pageExceptions)}`);
     assert.strictEqual(consoleErrors.length, 0, `Console errors: ${JSON.stringify(consoleErrors)}`);

@@ -977,6 +977,7 @@
   let outbox = loadJson(STORAGE_KEYS.OUTBOX, []);
   let connMode = 'probing'; // 'local' | 'edge' | 'cloud' | 'offline'
   let localBridgeBase = '';
+  let localBridgeWsPath = '/ws';
   let sseSource = null;
   let localWs = null;
   let localWsAuthed = false;
@@ -3450,6 +3451,9 @@
   }
 
   async function getBridgeAuthTokenHex() {
+    if (window.__THEO_MOCK_BRIDGE_TOKEN) {
+      return String(window.__THEO_MOCK_BRIDGE_TOKEN).trim();
+    }
     if (localBootInfo && typeof localBootInfo.token === 'string' && localBootInfo.token.trim()) {
       return localBootInfo.token.trim();
     }
@@ -4323,17 +4327,263 @@
     });
   }
 
-  function connectLocalWs(base) {
+  const wsBaselineBySocket = new WeakMap();
+  const wsDeltaStats = {
+    stateFrames: 0,
+    patchFrames: 0,
+    patchedRows: 0,
+    resyncRequests: 0,
+    lastSeq: 0,
+    edgeSuppressedForLocal: 0
+  };
+  window.__theoWsDeltaStats = wsDeltaStats;
+
+  function getSocketBaselineMap(ws) {
+    if (!ws || typeof ws !== 'object') return null;
+    let map = wsBaselineBySocket.get(ws);
+    if (!map) {
+      map = new Map();
+      wsBaselineBySocket.set(ws, map);
+    }
+    return map;
+  }
+
+  function cloneBaselineSnapshot(snap) {
+    if (!snap || typeof snap !== 'object') return null;
+    return {
+      ...snap,
+      rows: Array.isArray(snap.rows)
+        ? snap.rows.map((r) => (r && typeof r === 'object' ? { ...r } : r))
+        : []
+    };
+  }
+
+  function isLocalWsAuthoritativeForDevice(devId) {
+    const cleanId = String(devId || '').trim();
+    if (!cleanId || !localWsAuthed || !localWs || localWs.readyState !== 1) {
+      return false;
+    }
+    if (localWsDevice?.id && String(localWsDevice.id).trim() === cleanId) {
+      return true;
+    }
+    return Boolean(wsBaselineBySocket.get(localWs)?.has(cleanId));
+  }
+
+  function recordWsFullState(ws, snap, fallbackDevId = '', seq = null, transport = 'local') {
+    if (!snap || typeof snap !== 'object') return false;
+    const devId = String(snap?.device?.id || fallbackDevId || localWsDevice?.id || '').trim();
+    const mapKey = devId || '__default__';
+    const sockMap = getSocketBaselineMap(ws);
+    if (sockMap) {
+      const prevEntry = sockMap.get(mapKey);
+      const nextSeq = typeof seq === 'number' && Number.isFinite(seq) ? seq : null;
+      sockMap.set(mapKey, {
+        seq: nextSeq,
+        snapshot: cloneBaselineSnapshot(snap),
+        lastResyncReqAt: nextSeq === null ? Number(prevEntry?.lastResyncReqAt || 0) : 0
+      });
+    }
+    wsDeltaStats.stateFrames += 1;
+    if (typeof seq === 'number' && Number.isFinite(seq)) {
+      wsDeltaStats.lastSeq = seq;
+    }
+    if (transport === 'edge' && isLocalWsAuthoritativeForDevice(devId)) {
+      wsDeltaStats.edgeSuppressedForLocal += 1;
+      return false;
+    }
+    ingestIncomingHostState(cloneBaselineSnapshot(snap), devId || fallbackDevId);
+    return true;
+  }
+
+  function requestWsStateResync(ws, devId = '', transport = 'local') {
+    if (!ws || ws.readyState !== 1) return false;
+    const sockMap = getSocketBaselineMap(ws);
+    const mapKey = String(devId || '').trim() || '__default__';
+    let entry = sockMap ? sockMap.get(mapKey) : null;
+    const now = Date.now();
+    if (entry && now - Number(entry.lastResyncReqAt || 0) < 1500) {
+      return false;
+    }
+    if (!entry) {
+      entry = { seq: null, snapshot: null, lastResyncReqAt: now };
+      if (sockMap) sockMap.set(mapKey, entry);
+    } else {
+      entry.lastResyncReqAt = now;
+    }
+    wsDeltaStats.resyncRequests += 1;
+    if (transport === 'local') {
+      try {
+        ws.send(JSON.stringify({ type: 'resync_state', targetDeviceId: devId || undefined }));
+      } catch {}
+      return true;
+    }
+    sendWsRpc(ws, { type: 'rpc_cmd', action: 'getState', targetDeviceId: devId || undefined }, 8000)
+      .then((res) => {
+        const st = res?.result?.state || res?.state || null;
+        const resolvedSeq =
+          typeof res?.result?.seq === 'number'
+            ? res.result.seq
+            : typeof res?.seq === 'number'
+              ? res.seq
+              : typeof st?.seq === 'number'
+                ? st.seq
+                : null;
+        if (st && typeof st === 'object') {
+          recordWsFullState(ws, st, devId, resolvedSeq, 'edge');
+        }
+      })
+      .catch(() => {});
+    return true;
+  }
+
+  function applyIncomingWsRowPatch(ws, msg, fallbackDevId = '', transport = 'local') {
+    if (!msg || typeof msg !== 'object') return false;
+    const sockMap = getSocketBaselineMap(ws);
+    const rawDevId = String(msg.deviceId || msg.device?.id || fallbackDevId || '').trim();
+    const lookupKey = rawDevId || '__default__';
+    const base = (sockMap && (sockMap.get(lookupKey) || sockMap.get('__default__'))) || null;
+    const hasSeq = typeof msg.seq === 'number' && Number.isFinite(msg.seq);
+    const seqValid =
+      !hasSeq ||
+      (base && typeof base.seq === 'number' && Number.isFinite(base.seq) && msg.seq === base.seq + 1);
+    if (!base || !base.snapshot || !seqValid) {
+      requestWsStateResync(ws, rawDevId, transport);
+      return false;
+    }
+
+    const remIds = new Set(Array.isArray(msg.removedIds) ? msg.removedIds.map(String) : []);
+    const remKeys = new Set(Array.isArray(msg.removedKeys) ? msg.removedKeys.map(String) : []);
+    const hasExplicitRemKeys = remKeys.size > 0;
+    const prevRows = Array.isArray(base.snapshot.rows) ? base.snapshot.rows : [];
+    const nextRows = [];
+    const idxByKey = new Map();
+    const idxById = new Map();
+    for (let i = 0; i < prevRows.length; i += 1) {
+      const r = prevRows[i];
+      if (!r || typeof r !== 'object') continue;
+      const rawKey = String(r.key || '').trim();
+      const rid = String(r.id || '').trim();
+      const rk = rawKey || rid;
+      const shouldDrop = hasExplicitRemKeys
+        ? Boolean((rk && remKeys.has(rk)) || (!rawKey && rid && remIds.has(rid)))
+        : Boolean((rid && remIds.has(rid)) || (rk && remKeys.has(rk)));
+      if (shouldDrop) {
+        continue;
+      }
+      const cloned = { ...r };
+      const idx = nextRows.length;
+      nextRows.push(cloned);
+      if (rawKey) idxByKey.set(rawKey, idx);
+      if (rid) {
+        const list = idxById.get(rid) || [];
+        list.push({ idx, rawKey });
+        idxById.set(rid, list);
+      }
+    }
+
+    const rawUpserts = Array.isArray(msg.upserts) ? msg.upserts : [];
+    for (let i = 0; i < rawUpserts.length; i += 1) {
+      const u = rawUpserts[i];
+      if (!u || typeof u !== 'object') continue;
+      const rawUKey = String(u.key || '').trim();
+      const rid = String(u.id || u.key || '').trim();
+      const rk = rawUKey || rid;
+      if (!rid && !rk) continue;
+      let hitIdx = rawUKey && idxByKey.has(rawUKey) ? idxByKey.get(rawUKey) : undefined;
+      if (hitIdx === undefined && rid && idxById.has(rid)) {
+        const idEntries = idxById.get(rid);
+        if (!rawUKey) {
+          if (idEntries.length === 1) {
+            hitIdx = idEntries[0].idx;
+          } else {
+            const keylessMatch = idEntries.find((e) => !e.rawKey);
+            if (keylessMatch) hitIdx = keylessMatch.idx;
+          }
+        } else {
+          const keylessMatch = idEntries.find((e) => !e.rawKey);
+          if (keylessMatch) hitIdx = keylessMatch.idx;
+        }
+      }
+      if (hitIdx !== undefined) {
+        const prevKey = String(nextRows[hitIdx]?.key || '').trim();
+        const mergedKey = rawUKey || prevKey;
+        const cloned = mergedKey ? { ...u, id: rid || mergedKey, key: mergedKey } : { ...u, id: rid };
+        nextRows[hitIdx] = cloned;
+        if (mergedKey) idxByKey.set(mergedKey, hitIdx);
+        if (rid && idxById.has(rid)) {
+          for (const entry of idxById.get(rid)) {
+            if (entry.idx === hitIdx) entry.rawKey = mergedKey;
+          }
+        }
+      } else {
+        const cloned = rawUKey ? { ...u, id: rid || rawUKey, key: rawUKey } : { ...u, id: rid };
+        const newIdx = nextRows.length;
+        nextRows.push(cloned);
+        if (rawUKey) idxByKey.set(rawUKey, newIdx);
+        if (rid) {
+          const list = idxById.get(rid) || [];
+          list.push({ idx: newIdx, rawKey: rawUKey });
+          idxById.set(rid, list);
+        }
+      }
+    }
+
+    nextRows.sort(
+      (a, b) =>
+        Number(b.at || 0) - Number(a.at || 0) ||
+        String(a.id || '').localeCompare(String(b.id || ''))
+    );
+
+    const nextSnap = {
+      ...base.snapshot,
+      generatedAt: Number(msg.generatedAt || Date.now()),
+      total: typeof msg.total === 'number' ? msg.total : nextRows.length,
+      rows: nextRows,
+      ...(msg.pendingActiveKey !== undefined ? { pendingActiveKey: msg.pendingActiveKey } : {}),
+      ...(msg.summary !== undefined ? { summary: msg.summary } : {}),
+      ...(msg.summaryByProvider !== undefined ? { summaryByProvider: msg.summaryByProvider } : {}),
+      ...(Array.isArray(msg.topSessions) ? { topSessions: msg.topSessions } : {}),
+      ...(msg.connection !== undefined && msg.connection !== null ? { connection: msg.connection } : {})
+    };
+
+    base.snapshot = cloneBaselineSnapshot(nextSnap);
+    if (hasSeq) {
+      base.seq = msg.seq;
+      wsDeltaStats.lastSeq = msg.seq;
+    }
+    wsDeltaStats.patchFrames += 1;
+    wsDeltaStats.patchedRows += rawUpserts.length + Math.max(remIds.size, remKeys.size);
+
+    const effectiveDevId = rawDevId || String(nextSnap?.device?.id || '').trim();
+    if (transport === 'edge' && isLocalWsAuthoritativeForDevice(effectiveDevId)) {
+      wsDeltaStats.edgeSuppressedForLocal += 1;
+      return false;
+    }
+    ingestIncomingHostState(cloneBaselineSnapshot(nextSnap), effectiveDevId || fallbackDevId);
+    return true;
+  }
+
+  function connectLocalWs(base, opts = {}) {
     if (
-      isHeadlessBrowser ||
-      initialNoSse ||
-      location.search.includes('nosse=1') ||
+      (isHeadlessBrowser && !window.__THEO_ALLOW_MOCK_WS) ||
+      (!window.__THEO_ALLOW_MOCK_WS && (initialNoSse || location.search.includes('nosse=1'))) ||
       !base ||
       typeof WebSocket === 'undefined'
     ) {
       return;
     }
-    const wsUrl = `${base.replace(/^http/i, 'ws').replace(/\/+$/, '')}/ws`;
+    const cleanBase = String(base || '').replace(/\/+$/, '');
+    const sameBase = Boolean(localBridgeBase && localBridgeBase === cleanBase);
+    localBridgeBase = cleanBase;
+    const rawSubpath =
+      opts && opts.wsPath
+        ? String(opts.wsPath)
+        : sameBase && localBridgeWsPath
+          ? localBridgeWsPath
+          : '/ws';
+    const wsSubpath = rawSubpath.startsWith('/') ? rawSubpath : `/${rawSubpath}`;
+    localBridgeWsPath = wsSubpath;
+    const wsUrl = `${cleanBase.replace(/^http/i, 'ws')}${wsSubpath}`;
     if (localWs && localWsAuthed && (localWs.readyState === 0 || localWs.readyState === 1)) {
       return;
     }
@@ -4357,7 +4607,7 @@
       ws.addEventListener('open', async () => {
         try {
           const token = await getBridgeAuthTokenHex();
-          ws.send(JSON.stringify({ type: 'auth', role: 'client', token }));
+          ws.send(JSON.stringify({ type: 'auth', role: 'client', token, protocol: 2, supportsRowPatch: true }));
           ws.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
         } catch {}
         if (localWsPingTimer) clearInterval(localWsPingTimer);
@@ -4370,6 +4620,7 @@
         }, 20000);
       });
       ws.addEventListener('message', (ev) => {
+        if (ws !== localWs) return;
         try {
           const msg = JSON.parse(ev.data);
           if (!msg || typeof msg !== 'object') return;
@@ -4388,7 +4639,15 @@
               discoveredEdgeUrl = String(wEdge).trim();
             }
             const wSnap = msg.state || msg.snapshot;
-            if (wSnap) ingestIncomingHostState(wSnap, wDev?.id || '');
+            if (wSnap) {
+              recordWsFullState(
+                ws,
+                wSnap,
+                wDev?.id || '',
+                typeof msg.seq === 'number' ? msg.seq : null,
+                'local'
+              );
+            }
             flushOutbox().catch(() => {});
             updateConnectionBanner();
           } else if (msg.type === 'pong') {
@@ -4397,7 +4656,17 @@
             updateConnectionBanner();
           } else if (msg.type === 'state' || msg.type === 'host_state') {
             const snap = msg.state || msg.snapshot;
-            if (snap) ingestIncomingHostState(snap, msg.deviceId || localWsDevice?.id || '');
+            if (snap) {
+              recordWsFullState(
+                ws,
+                snap,
+                msg.deviceId || localWsDevice?.id || '',
+                typeof msg.seq === 'number' ? msg.seq : null,
+                'local'
+              );
+            }
+          } else if (msg.type === 'rowPatch' || msg.type === 'host_row_patch') {
+            applyIncomingWsRowPatch(ws, msg, localWsDevice?.id || '', 'local');
           } else if (msg.type === 'devices_presence') {
             if (Array.isArray(msg.devices)) {
               updateFleetDevices(msg.devices);
@@ -4424,6 +4693,14 @@
       });
       ws.addEventListener('close', (ev) => {
         rejectPendingRpcsForSocket(ws, 'local_ws_closed');
+        const closedDevIds = new Set();
+        if (localWsDevice?.id) closedDevIds.add(String(localWsDevice.id));
+        const closedSockMap = wsBaselineBySocket.get(ws);
+        if (closedSockMap) {
+          for (const k of closedSockMap.keys()) {
+            if (k && k !== '__default__') closedDevIds.add(k);
+          }
+        }
         if (localWs === ws) {
           localWs = null;
           localWsAuthed = false;
@@ -4432,12 +4709,30 @@
           clearInterval(localWsPingTimer);
           localWsPingTimer = null;
         }
+        if (edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
+          const edgeMap = wsBaselineBySocket.get(edgeWs);
+          if (edgeMap) {
+            for (const devId of closedDevIds) {
+              const edgeEntry = edgeMap.get(devId);
+              const curSnap = hostSnapshotsByDevice.get(devId);
+              if (
+                edgeEntry?.snapshot &&
+                Number(edgeEntry.snapshot.generatedAt || 0) > Number(curSnap?.generatedAt || 0)
+              ) {
+                ingestIncomingHostState(cloneBaselineSnapshot(edgeEntry.snapshot), devId);
+              }
+            }
+          }
+        }
         updateConnectionBanner();
         const code = Number(ev?.code || 0);
         localWsReconnectAttempts += 1;
         const delay = code === 4001 ? 30000 : Math.min(20000, 2500 * localWsReconnectAttempts);
         if (!initialNoSse && localBridgeBase) {
-          localWsReconnectTimer = setTimeout(() => connectLocalWs(localBridgeBase), delay);
+          localWsReconnectTimer = setTimeout(
+            () => connectLocalWs(localBridgeBase, { wsPath: localBridgeWsPath }),
+            delay
+          );
         }
       });
     } catch {}
@@ -4453,12 +4748,11 @@
   }
 
   async function connectEdgeWs(rawUrl) {
-    if (isHeadlessBrowser) return;
+    if (isHeadlessBrowser && !window.__THEO_ALLOW_MOCK_WS) return;
     const cleanTarget = normalizeEdgeWsUrl(rawUrl || prefs.edgeRelayUrl || discoveredEdgeUrl);
     const token = await getBridgeAuthTokenHex();
     if (
-      initialNoSse ||
-      location.search.includes('nosse=1') ||
+      (!window.__THEO_ALLOW_MOCK_WS && (initialNoSse || location.search.includes('nosse=1'))) ||
       !cleanTarget ||
       !token ||
       typeof WebSocket === 'undefined'
@@ -4498,12 +4792,15 @@
             JSON.stringify({
               type: 'auth_client',
               token: freshToken,
+              protocol: 2,
+              supportsRowPatch: true,
               clientLabel: (navigator.userAgent || 'THEO Studio PWA').slice(0, 64)
             })
           );
         } catch {}
       });
       ws.addEventListener('message', (ev) => {
+        if (ws !== edgeWs) return;
         try {
           const msg = JSON.parse(ev.data);
           if (!msg || typeof msg !== 'object') return;
@@ -4515,7 +4812,19 @@
             if (msg.cachedSnapshots && typeof msg.cachedSnapshots === 'object') {
               for (const [devId, entry] of Object.entries(msg.cachedSnapshots)) {
                 const snap = entry?.snapshot || entry?.state || entry;
-                if (snap) ingestIncomingHostState(snap, devId);
+                if (snap) {
+                  recordWsFullState(
+                    ws,
+                    snap,
+                    devId,
+                    typeof entry?.seq === 'number'
+                      ? entry.seq
+                      : typeof snap?.seq === 'number'
+                        ? snap.seq
+                        : null,
+                    'edge'
+                  );
+                }
               }
             }
             try {
@@ -4548,9 +4857,33 @@
               renderPulseView();
               renderSessionsView();
             }
-          } else if (msg.type === 'host_state') {
+          } else if (msg.type === 'host_state' || msg.type === 'state') {
             const snap = msg.snapshot || msg.state;
-            if (snap) ingestIncomingHostState(snap, msg.deviceId || '');
+            if (snap) {
+              const frameSeq =
+                typeof msg.seq === 'number'
+                  ? msg.seq
+                  : typeof snap?.seq === 'number'
+                    ? snap.seq
+                    : null;
+              recordWsFullState(
+                ws,
+                snap,
+                msg.deviceId || '',
+                frameSeq,
+                'edge'
+              );
+            }
+          } else if (msg.type === 'rowPatch' || msg.type === 'host_row_patch') {
+            const patchPayload =
+              msg.patch && typeof msg.patch === 'object'
+                ? {
+                    ...msg.patch,
+                    deviceId: msg.deviceId || msg.patch.deviceId,
+                    seq: msg.seq ?? msg.patch.seq
+                  }
+                : msg;
+            applyIncomingWsRowPatch(ws, patchPayload, msg.deviceId || '', 'edge');
           } else if (msg.type === 'thread_detail') {
             ingestIncomingThreadDetailFrame(msg);
           } else if (msg.type === 'stream_delta') {
@@ -17589,7 +17922,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=72', { updateViaCache: 'none' })
+        .register('sw.js?v=73', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
@@ -17859,6 +18192,49 @@
       registerServiceWorker();
     }
   }
+
+  window.__theoTestWs = {
+    connectLocalWs,
+    connectEdgeWs,
+    noteRowOverride,
+    getState: () => appState,
+    getBaselineRows: (transport = 'local', devId = '') => {
+      const sock = transport === 'edge' ? edgeWs : localWs;
+      const m = sock ? wsBaselineBySocket.get(sock) : null;
+      if (!m) return [];
+      const entry = (devId && m.get(devId)) || m.get('__default__') || m.values().next().value;
+      return Array.isArray(entry?.snapshot?.rows) ? entry.snapshot.rows.slice() : [];
+    },
+    disconnectLocal: () => {
+      try {
+        if (localWsReconnectTimer) {
+          clearTimeout(localWsReconnectTimer);
+          localWsReconnectTimer = null;
+        }
+        localBridgeBase = '';
+        localBridgeWsPath = '/ws';
+        localWs?.close();
+      } catch {}
+    },
+    disconnectAll: () => {
+      try {
+        if (localWsReconnectTimer) {
+          clearTimeout(localWsReconnectTimer);
+          localWsReconnectTimer = null;
+        }
+        if (edgeWsReconnectTimer) {
+          clearTimeout(edgeWsReconnectTimer);
+          edgeWsReconnectTimer = null;
+        }
+        localBridgeBase = '';
+        localBridgeWsPath = '/ws';
+        localWs?.close();
+        edgeWs?.close();
+      } catch {}
+      window.__THEO_ALLOW_MOCK_WS = false;
+      delete window.__THEO_MOCK_BRIDGE_TOKEN;
+    }
+  };
 
   init();
 })();
