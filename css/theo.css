@@ -1383,6 +1383,19 @@ html[data-theme="light"] .kpi-tile {
   gap: 8px;
 }
 
+.sess-pin-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--brass);
+  flex-shrink: 0;
+}
+
+.sess-pin-glyph svg {
+  width: 12px;
+  height: 12px;
+}
+
 .sess-title {
   font-weight: 600;
   font-size: 13.5px;
@@ -1417,6 +1430,9 @@ html[data-theme="light"] .kpi-tile {
 }
 
 .sess-act-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 5px 8px;
   border-radius: 7px;
   font-size: 11.5px;
@@ -1424,8 +1440,20 @@ html[data-theme="light"] .kpi-tile {
   color: var(--text-secondary);
 }
 
+.sess-act-btn svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
 .sess-act-btn:hover {
   color: var(--brass);
+}
+
+.sess-act-btn.pin-btn.active {
+  color: var(--brass);
+  background: rgba(201, 152, 70, 0.14);
+  border: 1px solid rgba(201, 152, 70, 0.36);
 }
 
 .sess-act-btn.stop-btn {
@@ -7660,6 +7688,32 @@ html[data-theme="dark"] .composer-send-btn.is-ready {
 
 .ide-row-act.stop {
   color: var(--crimson);
+}
+
+.ide-pin-ind {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--brass);
+  opacity: 0.9;
+  flex-shrink: 0;
+}
+
+.ide-pin-ind svg,
+.ide-row-act.pin-act svg {
+  width: 12px;
+  height: 12px;
+}
+
+.ide-tree-row:hover .ide-pin-ind {
+  display: none;
+}
+
+.ide-row-act.pin-act.active {
+  color: var(--brass);
 }
 
 /* Quiet Mixed-Case VS Code Trace Verbs (Analyzed / Edited / Created / Ran) */

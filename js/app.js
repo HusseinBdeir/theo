@@ -55,6 +55,25 @@
     claude: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z" fill="#D97757"/></svg>`
   };
 
+  const PIN_OUTLINE_SVG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.8 2.4l3.8 3.8-2.3 2.3.4 2.9-2-2L5.2 13.9 3.9 12.6l4.5-4.5-2-2 2.9.4z"/></svg>';
+  const PIN_FILLED_SVG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.8 2.4l3.8 3.8-2.3 2.3.4 2.9-2-2L5.2 13.9 3.9 12.6l4.5-4.5-2-2 2.9.4z" fill="currentColor"/></svg>';
+  const isRowPinned = (r) => Boolean(r && r.pinned && !r.archived);
+  const compareRowsPinnedFirst = (a, b) =>
+    (isRowPinned(b) ? 1 : 0) - (isRowPinned(a) ? 1 : 0) ||
+    Number(b?.at || 0) - Number(a?.at || 0) ||
+    Number(b?.pinnedAt || 0) - Number(a?.pinnedAt || 0);
+  const rankSearchMatchesWithPinnedFirst = (rawFiltered, q, weightFn) => {
+    const rankPart = (list) => {
+      if (!list.length) return [];
+      const exact = list.filter((r) => String(r.title || '').toLowerCase() === q);
+      const rest = list.filter((r) => String(r.title || '').toLowerCase() !== q);
+      return exact.concat(rankByFreq(rest, 'threads', (r) => r.id, weightFn));
+    };
+    return rankPart(rawFiltered.filter((r) => isRowPinned(r))).concat(
+      rankPart(rawFiltered.filter((r) => !isRowPinned(r)))
+    );
+  };
+
   const $ = (id) => document.getElementById(id);
   const esc = (v) =>
     String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -4144,8 +4163,40 @@
           const pAt = Number(prev.at || 0);
           const rOwned = r.deviceId === devId;
           const pOwned = prev.deviceId !== r.deviceId;
-          if (rAt > pAt || (rAt === pAt && rOwned && pOwned)) {
-            rowMap.set(r.id, { ...prev, ...r });
+          const rWinsRow = rAt > pAt || (rAt === pAt && rOwned && pOwned);
+          const effArchived = rWinsRow ? Boolean(r.archived) : Boolean(prev.archived);
+          const rChatUpd = Number(r.pinUpdatedAt || (r.pinned ? r.pinnedAt || 1 : 0));
+          const pChatUpd = Number(prev.pinUpdatedAt || (prev.pinned ? prev.pinnedAt || 1 : 0));
+          let winChatPinned = Boolean(prev.pinned && !effArchived);
+          let winChatPinnedAt = winChatPinned ? Number(prev.pinnedAt || 0) : 0;
+          let winChatPinUpd = pChatUpd;
+          if (effArchived) {
+            winChatPinned = false;
+            winChatPinnedAt = 0;
+            winChatPinUpd = Math.max(rChatUpd, pChatUpd);
+          } else if (
+            rChatUpd > pChatUpd ||
+            (rChatUpd === pChatUpd && rChatUpd > 0 && !r.pinned && Boolean(prev.pinned))
+          ) {
+            winChatPinned = Boolean(r.pinned);
+            winChatPinnedAt = winChatPinned ? Number(r.pinnedAt || rChatUpd || 1) : 0;
+            winChatPinUpd = rChatUpd;
+          }
+          if (rWinsRow) {
+            rowMap.set(r.id, {
+              ...prev,
+              ...r,
+              pinned: winChatPinned,
+              pinnedAt: winChatPinnedAt,
+              pinUpdatedAt: winChatPinUpd
+            });
+          } else if (winChatPinUpd > pChatUpd || winChatPinned !== Boolean(prev.pinned)) {
+            rowMap.set(r.id, {
+              ...prev,
+              pinned: winChatPinned,
+              pinnedAt: winChatPinnedAt,
+              pinUpdatedAt: winChatPinUpd
+            });
           }
         }
       }
@@ -4183,7 +4234,12 @@
     return {
       ...primarySnap,
       generatedAt: maxGeneratedAt || Date.now(),
-      rows: Array.from(rowMap.values()).sort((a, b) => Number(b.at || 0) - Number(a.at || 0)),
+      rows: Array.from(rowMap.values()).sort(
+        (a, b) =>
+          (isRowPinned(b) ? 1 : 0) - (isRowPinned(a) ? 1 : 0) ||
+          Number(b.at || 0) - Number(a.at || 0) ||
+          Number(b.pinnedAt || 0) - Number(a.pinnedAt || 0)
+      ),
       approvals: Array.from(appMap.values()),
       workspaces: Array.from(wsMap.values()),
       groups: Array.from(grpMap.values()),
@@ -4444,6 +4500,7 @@
           at: Date.now()
         };
         appState.rows.unshift(row);
+        appState.rows.sort(compareRowsPinnedFirst);
       } else if (row) {
         row.at = Date.now();
         noteRowOverride(row.id, { lastWorkedAt: row.at });
@@ -4462,7 +4519,7 @@
           row.statusLabel = 'Completed';
           row.dot = row.open ? 'idle' : null;
         }
-        appState.rows.sort((a, b) => Number(b?.at || 0) - Number(a?.at || 0));
+        appState.rows.sort(compareRowsPinnedFirst);
       }
     }
 
@@ -4878,7 +4935,9 @@
 
     nextRows.sort(
       (a, b) =>
+        (isRowPinned(b) ? 1 : 0) - (isRowPinned(a) ? 1 : 0) ||
         Number(b.at || 0) - Number(a.at || 0) ||
+        Number(b.pinnedAt || 0) - Number(a.pinnedAt || 0) ||
         String(a.id || '').localeCompare(String(b.id || ''))
     );
 
@@ -7297,6 +7356,9 @@
       <button type="button" class="ctx-menu-item" data-ctx-menu-act="open-vscode" data-id="${esc(r.id)}" data-prov="${provKey}">
         <span>Reveal in Desktop VS Code</span>
       </button>
+      <button type="button" class="ctx-menu-item" data-sess-act="pin" data-id="${esc(r.id)}" data-val="${isRowPinned(r) ? 'false' : 'true'}">
+        <span>${isRowPinned(r) ? 'Unpin Chat' : 'Pin Chat'}</span>
+      </button>
       <button type="button" class="ctx-menu-item" data-sess-act="group" data-id="${esc(r.id)}">
         <span>Move to Group…</span>
       </button>
@@ -7759,15 +7821,13 @@
       (r.status === 'working' ? 500 : r.status === 'waiting' ? 400 : 0) +
       Math.max(0, 299 - Math.min(299, Math.floor(Math.max(0, nowRankMs - getRowLastWorkedMs(r)) / 3600000)));
     const filtered = q
-      ? (() => {
-          const exact = rawFiltered.filter((r) => String(r.title || '').toLowerCase() === q);
-          const rest = rawFiltered.filter((r) => String(r.title || '').toLowerCase() !== q);
-          return exact.concat(rankByFreq(rest, 'threads', (r) => r.id, rowBaseWeight));
-        })()
+      ? rankSearchMatchesWithPinnedFirst(rawFiltered, q, rowBaseWeight)
       : [...rawFiltered].sort(
           (a, b) =>
+            (isRowPinned(b) ? 1 : 0) - (isRowPinned(a) ? 1 : 0) ||
             (isSessionActivelyRunning(b.id) ? 1 : 0) - (isSessionActivelyRunning(a.id) ? 1 : 0) ||
-            getRowLastWorkedMs(b) - getRowLastWorkedMs(a)
+            getRowLastWorkedMs(b) - getRowLastWorkedMs(a) ||
+            Number(b.pinnedAt || 0) - Number(a.pinnedAt || 0)
         );
 
     const renderTreeRow = (r) => {
@@ -7775,6 +7835,7 @@
       const isSelected = r.id === curSelected;
       const isRunningNow = isSessionActivelyRunning(r.id);
       const isOpenTab = isSessionOpenTab(r);
+      const isPinnedRow = isRowPinned(r);
       const qCnt = getSessionPendingQuestionCount(r);
       const dotCls = isRunningNow
         ? 'working'
@@ -7786,12 +7847,17 @@
       const age = shortSidebarAge(getRowLastWorkedMs(r));
       const bgBadge = r.bgTask?.state === 'running' ? getSessionRunningBgBadge(r) : '';
       return `
-        <div class="ide-tree-row${isSelected ? ' active' : ''}${isOpenTab ? ' is-open-tab' : ''}${r.unread ? ' is-unread' : ''}" role="button" tabindex="0" data-ide-open-session="${esc(r.id)}" data-session-prov="${provKey}">
+        <div class="ide-tree-row${isSelected ? ' active' : ''}${isPinnedRow ? ' is-pinned' : ''}${isOpenTab ? ' is-open-tab' : ''}${r.unread ? ' is-unread' : ''}" role="button" tabindex="0" data-ide-open-session="${esc(r.id)}" data-session-prov="${provKey}">
           <span class="ide-dot ${dotCls}"></span>
           <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
           <span class="ide-tree-title">${esc(r.title || 'Untitled Session')}</span>
           ${qCnt > 0 ? `<span class="ide-row-pill q-pill tabular">?${qCnt}</span>` : ''}
           ${bgBadge ? `<span class="ide-row-pill bg-pill tabular">${esc(bgBadge)}</span>` : ''}
+          ${
+            isPinnedRow
+              ? `<button type="button" class="ide-pin-ind" data-sess-act="pin" data-id="${esc(r.id)}" data-val="false" aria-label="Unpin chat">${PIN_FILLED_SVG}</button>`
+              : ''
+          }
           <span class="ide-tree-age tabular">${esc(age)}</span>
           <span class="ide-tree-acts">
             ${
@@ -7804,6 +7870,7 @@
                 ? `<button type="button" class="ide-row-act close-tab" data-close-editor-tab="${esc(r.id)}" aria-label="Close open tab">×</button>`
                 : ''
             }
+            <button type="button" class="ide-row-act pin-act${isPinnedRow ? ' active' : ''}" data-sess-act="pin" data-id="${esc(r.id)}" data-val="${isPinnedRow ? 'false' : 'true'}" aria-pressed="${isPinnedRow}" aria-label="${isPinnedRow ? 'Unpin chat' : 'Pin chat'}">${isPinnedRow ? PIN_FILLED_SVG : PIN_OUTLINE_SVG}</button>
             <button type="button" class="ide-row-act" data-sess-ctx-menu="${esc(r.id)}" aria-label="Session actions">⋯</button>
             <button type="button" class="ide-row-act" data-sess-act="archive" data-id="${esc(r.id)}" data-val="true" aria-label="Archive session">✕</button>
           </span>
@@ -9910,13 +9977,15 @@
     const devBadgeHtml = devLabel
       ? `<span class="sess-device-badge ${devEntry?.online ? 'is-online' : ''}" aria-label="Host machine: ${esc(devLabel)}">${devEntry?.online ? '●' : '◐'} ${esc(devLabel)}</span>`
       : '';
+    const isPinnedCard = isRowPinned(r);
     return `
-      <div class="session-card ${statusCls}" data-session-id="${esc(r.id || '')}" data-session-prov="${provKey}">
+      <div class="session-card ${statusCls}${isPinnedCard ? ' is-pinned' : ''}" data-session-id="${esc(r.id || '')}" data-session-prov="${provKey}">
         <div class="sess-left">
           <span class="sess-status-dot ${statusCls}" aria-label="${esc(r.status || 'idle')}"></span>
           <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
           <div class="sess-body">
             <div class="sess-title-row">
+              ${isPinnedCard ? `<span class="sess-pin-glyph" aria-label="Pinned chat">${PIN_FILLED_SVG}</span>` : ''}
               <span class="sess-title">${esc(r.title || 'Untitled Session')}</span>
             </div>
             <div class="sess-sub-row tabular">
@@ -9939,6 +10008,11 @@
           ${
             r.status === 'working' || r.dot === 'running' || r.bgTask?.state === 'running'
               ? `<button type="button" class="sess-act-btn stop-btn" data-sess-act="stop" data-id="${esc(r.id || '')}" aria-label="Stop / interrupt running session">■ Stop</button>`
+              : ''
+          }
+          ${
+            !r.archived && r.id
+              ? `<button type="button" class="sess-act-btn pin-btn${isPinnedCard ? ' active' : ''}" data-sess-act="pin" data-id="${esc(r.id)}" data-val="${!isPinnedCard}" aria-pressed="${isPinnedCard}" aria-label="${isPinnedCard ? 'Unpin chat' : 'Pin chat'}">${isPinnedCard ? PIN_FILLED_SVG : PIN_OUTLINE_SVG}<span>${isPinnedCard ? 'Pinned' : 'Pin'}</span></button>`
               : ''
           }
           <button type="button" class="sess-act-btn" data-sess-act="group" data-id="${esc(r.id || '')}" aria-label="Assign or move session to a group">
@@ -10134,23 +10208,19 @@
       return true;
     });
     const filtered = q
-      ? (() => {
-          const exact = rawFiltered.filter((r) => String(r.title || '').toLowerCase() === q);
-          const rest = rawFiltered.filter((r) => String(r.title || '').toLowerCase() !== q);
-          const freqOrdered = rankByFreq(
-            rest,
-            'threads',
-            (r) => r.id,
-            (r) =>
-              (r.status === 'working' ? 500 : r.status === 'waiting' ? 400 : 0) +
-              Math.max(0, 299 - Math.min(299, Math.floor(Math.max(0, Date.now() - getRowLastWorkedMs(r)) / 3600000)))
-          );
-          return exact.concat(freqOrdered);
-        })()
+      ? rankSearchMatchesWithPinnedFirst(
+          rawFiltered,
+          q,
+          (r) =>
+            (r.status === 'working' ? 500 : r.status === 'waiting' ? 400 : 0) +
+            Math.max(0, 299 - Math.min(299, Math.floor(Math.max(0, Date.now() - getRowLastWorkedMs(r)) / 3600000)))
+        )
       : [...rawFiltered].sort(
           (a, b) =>
+            (isRowPinned(b) ? 1 : 0) - (isRowPinned(a) ? 1 : 0) ||
             (isSessionActivelyRunning(b.id) ? 1 : 0) - (isSessionActivelyRunning(a.id) ? 1 : 0) ||
-            getRowLastWorkedMs(b) - getRowLastWorkedMs(a)
+            getRowLastWorkedMs(b) - getRowLastWorkedMs(a) ||
+            Number(b.pinnedAt || 0) - Number(a.pinnedAt || 0)
         );
 
     if (isFocusInsideContainerInputs(container)) return;
@@ -10220,6 +10290,7 @@
           .filter(
             (r) =>
               r.id &&
+              !isRowPinned(r) &&
               !isSessionOpenTab(r) &&
               r.status !== 'working' &&
               r.status !== 'waiting' &&
@@ -14547,6 +14618,7 @@
       { title: 'Enable / Test Web Push Notifications', sub: 'Notifications', act: 'push-test' },
       { title: 'Inspect Background Tasks & Subagents', sub: 'Workbench Overview', act: 'bgtasks' },
       { title: 'Run /compact on Active Session', sub: 'Context Window', act: 'compact' },
+      { title: 'Pin / Unpin Active Chat in Session List', sub: 'Sessions', act: 'pin-chat' },
       { title: 'Switch Dark Studio / Studio Daylight Theme', sub: 'Appearance', act: 'theme' }
     ];
 
@@ -14839,7 +14911,7 @@
       row.at = Date.now();
       noteRowOverride(row.id, { lastWorkedAt: row.at });
       if (Array.isArray(appState?.rows)) {
-        appState.rows.sort((a, b) => Number(b?.at || 0) - Number(a?.at || 0));
+        appState.rows.sort(compareRowsPinnedFirst);
       }
     }
 
@@ -16251,6 +16323,7 @@
               (r) =>
                 r.id &&
                 !r.archived &&
+                !isRowPinned(r) &&
                 (!r.group || !groupIds.has(r.group)) &&
                 !isSessionOpenTab(r) &&
                 r.status !== 'working' &&
@@ -16284,11 +16357,19 @@
       const sessAct = e.target.closest('[data-sess-act]');
       if (sessAct) {
         e.stopPropagation();
+        if (ctxMenuEl && !ctxMenuEl.hidden && sessAct.closest('#ide-context-menu')) {
+          ctxMenuEl.hidden = true;
+        }
         const action = sessAct.dataset.sessAct;
         const id = sessAct.dataset.id;
         const val = sessAct.dataset.val === 'true';
         if (action === 'stop' && id) {
           await stopActiveSession(id);
+          return;
+        }
+        if (action === 'pin' && id) {
+          const forceVal = sessAct.dataset.val !== undefined ? val : undefined;
+          await toggleSessionPin(id, forceVal);
           return;
         }
         const targetRow = (appState?.rows || []).find((r) => r.id === id);
@@ -16385,12 +16466,31 @@
           if (action === 'archive') {
             targetRow.archived = val;
             if (val) {
+              const arcTs = Date.now();
               targetRow.group = '';
-              noteRowOverride(id, { archived: true, group: '' });
+              targetRow.pinned = false;
+              targetRow.pinnedAt = 0;
+              targetRow.pinUpdatedAt = arcTs;
+              noteRowOverride(id, {
+                archived: true,
+                group: '',
+                pinned: false,
+                pinnedAt: 0,
+                pinUpdatedAt: arcTs
+              });
               markNotificationsCheckedForSession(id);
               removeEditorTabIds([id], true);
             } else {
-              noteRowOverride(id, { archived: false });
+              const unarcTs = Math.max(Number(targetRow.pinUpdatedAt || 0), Date.now());
+              targetRow.pinned = false;
+              targetRow.pinnedAt = 0;
+              targetRow.pinUpdatedAt = unarcTs;
+              noteRowOverride(id, {
+                archived: false,
+                pinned: false,
+                pinnedAt: 0,
+                pinUpdatedAt: unarcTs
+              });
               ensureEditorTabOpen(id);
             }
           }
@@ -16936,6 +17036,8 @@
             dispatchRemoteCommand({ type: 'sessionAction', action: 'compact', subAction: 'compact', id: prefs.selectedThreadId });
             showToast('Dispatched /compact');
           }
+        } else if (act === 'pin-chat') {
+          await toggleSessionPin(prefs.selectedThreadId);
         } else if (act === 'theme') {
           applyTheme(prefs.theme === 'dark' ? 'light' : 'dark', true);
         }
@@ -17570,6 +17672,45 @@
     pendingRowOverrides.set(cleanId, { ...prev, ...patch, at: Date.now() });
   }
 
+  async function toggleSessionPin(sessionId, forceVal) {
+    if (isPinLocked()) return;
+    const id = cleanTargetThreadId(sessionId);
+    if (!id || id === '__new__') {
+      showToast('Select an active session first to pin');
+      return;
+    }
+    const targetRow = (appState?.rows || []).find((r) => r && r.id === id);
+    if (!targetRow || targetRow.archived) return;
+    const val = typeof forceVal === 'boolean' ? forceVal : !isRowPinned(targetRow);
+    const ts = Date.now();
+    targetRow.pinned = val;
+    targetRow.pinnedAt = val ? ts : 0;
+    targetRow.pinUpdatedAt = ts;
+    noteRowOverride(id, {
+      pinned: val,
+      pinnedAt: val ? ts : 0,
+      pinUpdatedAt: ts
+    });
+    if (Array.isArray(appState?.rows)) {
+      appState.rows.sort(compareRowsPinnedFirst);
+    }
+    haptic(12);
+    persistCache();
+    renderAll();
+    await dispatchRemoteCommand({
+      type: 'sessionAction',
+      action: 'pin',
+      subAction: 'pin',
+      id,
+      ids: [id],
+      provider: targetRow.provider || 'antigravity',
+      value: val,
+      updatedAt: ts,
+      targetDeviceId: targetRow.deviceId || undefined
+    });
+    showToast(val ? 'Pinned chat' : 'Unpinned chat');
+  }
+
   function noteGroupOverride(gId, patch) {
     const cleanId = String(gId || '').trim();
     if (!cleanId || !patch) return;
@@ -17642,6 +17783,7 @@
       }
       const r = rows.find((x) => x && x.id === id);
       if (!r) continue;
+      const srvArchived = Boolean(r.archived);
       let settled = true;
       if ('unread' in rec) {
         if (Boolean(r.unread) !== rec.unread) {
@@ -17685,9 +17827,40 @@
           settled = false;
         }
       }
+      if ('pinned' in rec) {
+        const srvPinned = Boolean(r.pinned && !srvArchived);
+        const srvPinUpd = Number(r.pinUpdatedAt || (r.pinned ? r.pinnedAt : 0) || 0);
+        const recPinUpd = Number(rec.pinUpdatedAt || rec.pinnedAt || rec.at || 0);
+        if (r.archived) {
+          r.pinned = false;
+          r.pinnedAt = 0;
+          r.pinUpdatedAt = Math.max(srvPinUpd, recPinUpd);
+          if (srvArchived || srvPinUpd >= recPinUpd) {
+            delete rec.pinned;
+            delete rec.pinnedAt;
+            delete rec.pinUpdatedAt;
+          } else {
+            settled = false;
+          }
+        } else if (srvPinUpd > recPinUpd || (srvPinned === Boolean(rec.pinned) && srvPinUpd >= recPinUpd)) {
+          delete rec.pinned;
+          delete rec.pinnedAt;
+          delete rec.pinUpdatedAt;
+        } else {
+          r.pinned = Boolean(rec.pinned);
+          r.pinnedAt = rec.pinned ? Number(rec.pinnedAt || recPinUpd || Date.now()) : 0;
+          r.pinUpdatedAt = recPinUpd;
+          settled = false;
+        }
+      }
       if (settled) pendingRowOverrides.delete(id);
     }
-    rows.sort((a, b) => Number(b?.at || 0) - Number(a?.at || 0));
+    rows.sort(
+      (a, b) =>
+        (isRowPinned(b) ? 1 : 0) - (isRowPinned(a) ? 1 : 0) ||
+        Number(b?.at || 0) - Number(a?.at || 0) ||
+        Number(b?.pinnedAt || 0) - Number(a?.pinnedAt || 0)
+    );
   }
 
   function applyStoppedSessionOverrides(stateObj) {
@@ -18042,7 +18215,7 @@
         activeRow.model = modelCfg.displayLabel;
         activeRow.effort = modelCfg.effort;
         if (Array.isArray(appState?.rows)) {
-          appState.rows.sort((a, b) => Number(b?.at || 0) - Number(a?.at || 0));
+          appState.rows.sort(compareRowsPinnedFirst);
         }
       }
       if (!threadsCache[targetId]) {
@@ -18330,7 +18503,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=76', { updateViaCache: 'none' })
+        .register('sw.js?v=77', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

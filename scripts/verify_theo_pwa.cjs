@@ -472,6 +472,7 @@ async function main() {
   const expectedVer = swCacheMatch[1];
   for (const [label, src, regex] of [
     ['index.html css', indexSrc, /css\/theo\.css\?v=(\d+)/g],
+    ['index.html endpoints.js', indexSrc, /js\/endpoints\.js\?v=(\d+)/g],
     ['index.html app.js', indexSrc, /js\/app\.js\?v=(\d+)/g],
     ['index.html manifest', indexSrc, /manifest\.json\?v=(\d+)/g],
     ['index.html icon.svg', indexSrc, /icon\.svg\?v=(\d+)/g],
@@ -5128,7 +5129,7 @@ async function main() {
     assert.strictEqual(overrideDomState.arcHidden, true, 'Claude 840k override must hide soft-overrun violet arc');
     assert.strictEqual(overrideDomState.bannerHidden, true, 'Claude 840k override must hide soft-overrun banner');
 
-    // 2. Dual-tone +Nk soft-overrun progress ring on sess-ctx-overrun vs exact 256k non-overrun on sess-ctx-zero
+    // 2. Dual-tone +Nk soft-overrun progress ring on sess-ctx-overrun vs exact 256k non-overrun on sess-ctx-zero & Pinned Constraints DOM removed
     await probeChatContext('sess-ctx-overrun');
     const v73Overrun = await evalJs(`(() => {
       const btn = document.getElementById('btn-ctx-window');
@@ -5676,6 +5677,471 @@ async function main() {
         try { await evalJs('window.__theoTestWs?.disconnectAll?.()'); } catch {}
         for (const s of hintSockets) { try { s.destroy(); } catch {} }
         await new Promise((r) => hintWsServer.close(r));
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Adversarial #23: v76 Cross-Device Chat Pinning UI, Sorting, Archive & LWW Sync
+    // -------------------------------------------------------------------------
+    {
+      const nodeCrypto23 = require('crypto');
+      const pinSockets = new Set();
+      const now23 = Date.now();
+      const basePinRows = [
+        {
+          id: 'pin-grp-old-pinned',
+          key: 'antigravity:pin-grp-old-pinned',
+          deviceId: 'pin-dev-local',
+          provider: 'antigravity',
+          title: 'Group Old Pinned',
+          status: 'completed',
+          group: 'grp-alpha',
+          open: false,
+          pinned: true,
+          pinnedAt: now23 - 5000,
+          pinUpdatedAt: now23 - 5000,
+          at: now23 - 90000
+        },
+        {
+          id: 'pin-grp-new-unpinned',
+          key: 'claude:pin-grp-new-unpinned',
+          deviceId: 'pin-dev-local',
+          provider: 'claude',
+          title: 'Group New Unpinned',
+          status: 'completed',
+          group: 'grp-alpha',
+          open: false,
+          pinned: false,
+          pinnedAt: 0,
+          pinUpdatedAt: 0,
+          at: now23 - 1000
+        },
+        {
+          id: 'pin-ug-pinned-closed',
+          key: 'antigravity:pin-ug-pinned-closed',
+          deviceId: 'pin-dev-local',
+          provider: 'antigravity',
+          title: 'Ungrouped Pinned Closed',
+          status: 'completed',
+          unread: false,
+          open: false,
+          pinned: true,
+          pinnedAt: now23 - 4000,
+          pinUpdatedAt: now23 - 4000,
+          at: now23 - 80000
+        },
+        {
+          id: 'pin-ug-new-unpinned',
+          key: 'claude:pin-ug-new-unpinned',
+          deviceId: 'pin-dev-local',
+          provider: 'claude',
+          title: 'Ungrouped New Unpinned',
+          status: 'completed',
+          unread: false,
+          open: false,
+          pinned: false,
+          pinnedAt: 0,
+          pinUpdatedAt: 0,
+          at: now23 - 500
+        }
+      ];
+
+      const encodePinWsFrame = (obj) => {
+        const payload = Buffer.from(JSON.stringify(obj), 'utf8');
+        const len = payload.length;
+        let header;
+        if (len < 126) header = Buffer.from([0x81, len]);
+        else if (len < 65536) {
+          header = Buffer.allocUnsafe(4);
+          header[0] = 0x81;
+          header[1] = 126;
+          header.writeUInt16BE(len, 2);
+        } else {
+          header = Buffer.allocUnsafe(10);
+          header[0] = 0x81;
+          header[1] = 127;
+          header.writeBigUInt64BE(BigInt(len), 2);
+        }
+        return Buffer.concat([header, payload]);
+      };
+      const sendPinWsJson = (sock, obj) => {
+        if (!sock || sock.destroyed || !sock.writable) return false;
+        sock.write(encodePinWsFrame(obj));
+        return true;
+      };
+
+      const pinWsServer = http.createServer((_req, res) => {
+        res.writeHead(404);
+        res.end();
+      });
+      pinWsServer.on('upgrade', (req, socket) => {
+        const key = req.headers['sec-websocket-key'];
+        if (!key) {
+          socket.destroy();
+          return;
+        }
+        const accept = nodeCrypto23
+          .createHash('sha1')
+          .update(String(key).trim() + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
+          .digest('base64');
+        socket.write(
+          ['HTTP/1.1 101 Switching Protocols', 'Upgrade: websocket', 'Connection: Upgrade', `Sec-WebSocket-Accept: ${accept}`, '', ''].join('\r\n')
+        );
+        pinSockets.add(socket);
+        let buf = Buffer.alloc(0);
+        socket.on('data', (chunk) => {
+          buf = Buffer.concat([buf, chunk]);
+          while (buf.length >= 2) {
+            const opcode = buf[0] & 0x0f;
+            const masked = (buf[1] & 0x80) !== 0;
+            let len = buf[1] & 0x7f;
+            let offset = 2;
+            if (len === 126) {
+              if (buf.length < 4) return;
+              len = buf.readUInt16BE(2);
+              offset = 4;
+            } else if (len === 127) {
+              if (buf.length < 10) return;
+              len = Number(buf.readBigUInt64BE(2));
+              offset = 10;
+            }
+            const totalNeeded = offset + (masked ? 4 : 0) + len;
+            if (buf.length < totalNeeded) return;
+            const maskKey = masked ? buf.subarray(offset, offset + 4) : null;
+            const rawPayload = Buffer.from(buf.subarray(offset + (masked ? 4 : 0), totalNeeded));
+            buf = buf.subarray(totalNeeded);
+            if (masked && maskKey) for (let i = 0; i < rawPayload.length; i += 1) rawPayload[i] ^= maskKey[i % 4];
+            if (opcode === 0x8) { try { socket.end(); } catch {} return; }
+            if (opcode === 0x9) {
+              if (!socket.destroyed && socket.writable) {
+                socket.write(Buffer.concat([Buffer.from([0x8a, Math.min(125, rawPayload.length)]), rawPayload.subarray(0, 125)]));
+              }
+              continue;
+            }
+            if (opcode !== 0x1) continue;
+            let m;
+            try { m = JSON.parse(rawPayload.toString('utf8')); } catch { continue; }
+            if (m && (m.type === 'auth' || m.type === 'auth_client')) {
+              sendPinWsJson(socket, {
+                type: 'auth_ok',
+                role: 'client',
+                supportsRowPatch: true,
+                seq: 1,
+                device: { id: 'pin-dev-local', name: 'Pin Local PC', role: 'host' },
+                devices: [{ id: 'pin-dev-local', name: 'Pin Local PC', online: true, local: true }],
+                state: {
+                  generatedAt: now23,
+                  device: { id: 'pin-dev-local', name: 'Pin Local PC' },
+                  groups: [{ id: 'grp-alpha', name: 'Alpha', color: 'blue', collapsed: false }],
+                  rows: basePinRows.map((r) => ({ ...r }))
+                }
+              });
+            } else if (m && m.type === 'ping') {
+              sendPinWsJson(socket, { type: 'pong', echoTs: m.ts });
+            }
+          }
+        });
+        socket.on('close', () => pinSockets.delete(socket));
+        socket.on('error', () => pinSockets.delete(socket));
+      });
+
+      const waitPinCond = async (fn, label, timeoutMs = 5000) => {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          const val = await fn();
+          if (val) return val;
+          await new Promise((r) => setTimeout(r, 40));
+        }
+        throw new Error(`Adversarial #23 timed out waiting for: ${label}`);
+      };
+
+      await new Promise((resolve, reject) => {
+        pinWsServer.listen(0, '127.0.0.1', resolve);
+        pinWsServer.on('error', reject);
+      });
+      const pinPort = pinWsServer.address().port;
+
+      try {
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 2, mobile: false }, sessionId);
+        await evalJs(`(() => {
+          localStorage.removeItem('theo_remote_prefs_v1');
+          window.__THEO_ALLOW_MOCK_WS = true;
+          window.__THEO_MOCK_BRIDGE_TOKEN = 'test-token-hex';
+          window.__theoLastQuarantinedCmd = null;
+          window.__theoTestWs.connectLocalWs('http://127.0.0.1:${pinPort}', { wsPath: '/ws' });
+          document.querySelector('[data-tab="chat"]')?.click();
+          return true;
+        })()`);
+        await waitPinCond(
+          () => evalJs(`Boolean((window.__theoTestWs.getState()?.rows || []).some((r) => r.id === 'pin-grp-old-pinned'))`),
+          'Adversarial #23 initial pin state loaded'
+        );
+
+        // 1. Desktop IDE sidebar: pinned-first sort inside group & Ungrouped, pin indicator, hover click & contextmenu close
+        const ideDesktopCheck = await evalJs(`(() => {
+          const treeIds = [...document.querySelectorAll('#ide-sidebar-tree .ide-tree-row[data-ide-open-session]')].map((el) => el.dataset.ideOpenSession);
+          const grpPinnedEl = document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-grp-old-pinned"]');
+          const ugUnpinnedRow = document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-ug-new-unpinned"]');
+          const pinBtn = ugUnpinnedRow?.querySelector('.ide-row-act.pin-act');
+          const hasPinInd = Boolean(grpPinnedEl?.classList.contains('is-pinned') && grpPinnedEl?.querySelector('.ide-pin-ind'));
+          return { treeIds, hasPinInd, hasPinBtn: Boolean(pinBtn), titles: document.querySelectorAll('[title]').length };
+        })()`);
+        assert.strictEqual(ideDesktopCheck.hasPinInd, true, 'Pinned IDE row must carry .is-pinned and .ide-pin-ind');
+        assert.strictEqual(ideDesktopCheck.hasPinBtn, true);
+        assert.strictEqual(ideDesktopCheck.titles, 0);
+        assert.ok(
+          ideDesktopCheck.treeIds.indexOf('pin-grp-old-pinned') < ideDesktopCheck.treeIds.indexOf('pin-grp-new-unpinned'),
+          `Pinned older group chat must sort before newer unpinned chat: ${JSON.stringify(ideDesktopCheck.treeIds)}`
+        );
+        assert.ok(
+          ideDesktopCheck.treeIds.indexOf('pin-ug-pinned-closed') < ideDesktopCheck.treeIds.indexOf('pin-ug-new-unpinned'),
+          `Pinned older ungrouped chat must sort before newer unpinned chat: ${JSON.stringify(ideDesktopCheck.treeIds)}`
+        );
+
+        const idePinToggle = await evalJs(`(() => {
+          window.__theoLastQuarantinedCmd = null;
+          const btn = document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-ug-new-unpinned"] .ide-row-act.pin-act');
+          btn?.click();
+          const cmdAfterPin = window.__theoLastQuarantinedCmd;
+          const rowAfterPin = document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-ug-new-unpinned"]');
+          const isNowPinned = Boolean(rowAfterPin?.classList.contains('is-pinned') && rowAfterPin?.querySelector('.ide-pin-ind'));
+          rowAfterPin?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 80, clientY: 120 }));
+          const ctxEl = document.getElementById('ide-context-menu');
+          const ctxBtn = ctxEl?.querySelector('[data-sess-act="pin"][data-id="pin-ug-new-unpinned"]');
+          const ctxLabel = ctxBtn?.textContent?.trim() || '';
+          const ctxVisible = Boolean(ctxEl && !ctxEl.hidden);
+          window.__theoLastQuarantinedCmd = null;
+          ctxBtn?.click();
+          const ctxClosedAfterClick = Boolean(document.getElementById('ide-context-menu')?.hidden);
+          const unpinnedRow = (window.__theoTestWs.getState()?.rows || []).find((r) => r.id === 'pin-ug-new-unpinned');
+          return {
+            cmdAfterPin,
+            isNowPinned,
+            ctxVisible,
+            ctxLabel,
+            ctxClosedAfterClick,
+            cmdAfterCtxUnpin: window.__theoLastQuarantinedCmd,
+            finalPinned: Boolean(unpinnedRow?.pinned)
+          };
+        })()`);
+        assert.strictEqual(idePinToggle.cmdAfterPin?.action, 'pin');
+        assert.strictEqual(idePinToggle.cmdAfterPin?.subAction, 'pin');
+        assert.strictEqual(idePinToggle.cmdAfterPin?.threadId, 'pin-ug-new-unpinned');
+        assert.deepStrictEqual(idePinToggle.cmdAfterPin?.ids, ['pin-ug-new-unpinned']);
+        assert.strictEqual(idePinToggle.cmdAfterPin?.value, true);
+        assert.strictEqual(idePinToggle.isNowPinned, true);
+        assert.strictEqual(idePinToggle.ctxVisible, true);
+        assert.strictEqual(idePinToggle.ctxLabel, 'Unpin Chat');
+        assert.strictEqual(idePinToggle.ctxClosedAfterClick, true, 'Context menu Pin click must close #ide-context-menu');
+        assert.strictEqual(idePinToggle.cmdAfterCtxUnpin?.action, 'pin');
+        assert.strictEqual(idePinToggle.cmdAfterCtxUnpin?.value, false);
+        assert.strictEqual(idePinToggle.finalPinned, false);
+
+        // 2. Command Palette (⌘K) pin-chat toggles selected active chat
+        const cmdPalettePin = await evalJs(`(async () => {
+          document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-grp-new-unpinned"]')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+          const inp = document.getElementById('cmd-input');
+          if (inp) {
+            inp.value = 'pin';
+            inp.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          const pinItem = document.querySelector('#cmd-results [data-cmd-act="pin-chat"]');
+          const foundLabel = pinItem?.textContent?.trim() || '';
+          window.__theoLastQuarantinedCmd = null;
+          pinItem?.click();
+          const rowPinned = Boolean((window.__theoTestWs.getState()?.rows || []).find((r) => r.id === 'pin-grp-new-unpinned')?.pinned);
+          const cmdSent = window.__theoLastQuarantinedCmd;
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          // Unpin via same pin-chat action back to baseline
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+          const inp2 = document.getElementById('cmd-input');
+          if (inp2) { inp2.value = 'pin'; inp2.dispatchEvent(new Event('input', { bubbles: true })); }
+          document.querySelector('#cmd-results [data-cmd-act="pin-chat"]')?.click();
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          return { foundLabel, rowPinned, cmdSent };
+        })()`);
+        assert.ok(cmdPalettePin.foundLabel.includes('Pin / Unpin Active Chat'), `Expected Pin / Unpin Active Chat in Cmd Palette, got: ${cmdPalettePin.foundLabel}`);
+        assert.strictEqual(cmdPalettePin.rowPinned, true);
+        assert.strictEqual(cmdPalettePin.cmdSent?.action, 'pin');
+        assert.strictEqual(cmdPalettePin.cmdSent?.threadId, 'pin-grp-new-unpinned');
+        assert.deepStrictEqual(cmdPalettePin.cmdSent?.ids, ['pin-grp-new-unpinned']);
+        assert.strictEqual(cmdPalettePin.cmdSent?.value, true);
+
+        // 2b. Desktop #ide-sidebar-search flat results keep older/low-freq pinned chat above high-freq/newer unpinned match
+        const ideSearchPinOrder = await evalJs(`(() => {
+          const inp = document.getElementById('ide-sidebar-search');
+          inp.value = 'group';
+          inp.dispatchEvent(new Event('input', { bubbles: true }));
+          const ids = [...document.querySelectorAll('#ide-sidebar-tree .ide-tree-row[data-ide-open-session]')].map((el) => el.dataset.ideOpenSession);
+          inp.value = '';
+          inp.dispatchEvent(new Event('input', { bubbles: true }));
+          return ids;
+        })()`);
+        assert.ok(
+          ideSearchPinOrder.indexOf('pin-grp-old-pinned') >= 0 &&
+            ideSearchPinOrder.indexOf('pin-grp-old-pinned') < ideSearchPinOrder.indexOf('pin-grp-new-unpinned'),
+          `Desktop #ide-sidebar-search must keep pinned chat first above higher-frequency unpinned match: ${JSON.stringify(ideSearchPinOrder)}`
+        );
+
+        // 3. Mobile (390x844) Sessions cards, dark/light themes, 0px horizontal overflow, bulk archive & single archive auto-unpin
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true }, sessionId);
+        for (const theme of ['dark', 'light']) {
+          const mobPin = await evalJs(`(async () => {
+            document.documentElement.setAttribute('data-theme', '${theme}');
+            document.querySelector('[data-tab="sessions"]')?.click();
+            await new Promise((r) => setTimeout(r, 60));
+            const cardIds = [...document.querySelectorAll('#view-sessions .session-card[data-session-id]')].map((c) => c.dataset.sessionId);
+            const pCard = document.querySelector('#view-sessions .session-card[data-session-id="pin-ug-pinned-closed"]');
+            const hasGlyph = Boolean(pCard?.querySelector('.sess-pin-glyph'));
+            const hasActiveBtn = Boolean(pCard?.querySelector('.sess-act-btn.pin-btn.active'));
+            const overflowX = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+            const titles = document.querySelectorAll('[title]').length;
+            return { cardIds, hasGlyph, hasActiveBtn, overflowX, titles };
+          })()`);
+          assert.strictEqual(mobPin.hasGlyph, true, `Mobile ${theme} session card must show .sess-pin-glyph`);
+          assert.strictEqual(mobPin.hasActiveBtn, true, `Mobile ${theme} session card must mark .sess-act-btn.pin-btn.active`);
+          assert.strictEqual(mobPin.overflowX, 0, `Mobile 390x844 ${theme} Sessions with pins must have 0px overflow`);
+          assert.strictEqual(mobPin.titles, 0);
+          assert.ok(
+            mobPin.cardIds.indexOf('pin-ug-pinned-closed') < mobPin.cardIds.indexOf('pin-ug-new-unpinned'),
+            `Mobile ${theme} cards must order pinned ungrouped chat first: ${JSON.stringify(mobPin.cardIds)}`
+          );
+        }
+
+        const mobSearchPinOrder = await evalJs(`(() => {
+          const sInp = document.getElementById('sess-search-input');
+          sInp.value = 'ungrouped';
+          sInp.dispatchEvent(new Event('input', { bubbles: true }));
+          const ids = [...document.querySelectorAll('#view-sessions .session-card[data-session-id]')].map((c) => c.dataset.sessionId);
+          sInp.value = '';
+          sInp.dispatchEvent(new Event('input', { bubbles: true }));
+          return ids;
+        })()`);
+        assert.ok(
+          mobSearchPinOrder.indexOf('pin-ug-pinned-closed') >= 0 &&
+            mobSearchPinOrder.indexOf('pin-ug-pinned-closed') < mobSearchPinOrder.indexOf('pin-ug-new-unpinned'),
+          `Mobile #sess-search-input must keep pinned chat ahead of newer unpinned match: ${JSON.stringify(mobSearchPinOrder)}`
+        );
+
+        const archivePinCheck = await evalJs(`(() => {
+          window.__theoLastQuarantinedCmd = null;
+          document.querySelector('[data-group-act="archive-closed"]')?.click();
+          const bulkCmd = window.__theoLastQuarantinedCmd;
+          const rowsAfterBulk = window.__theoTestWs.getState()?.rows || [];
+          const ugUnpArch = Boolean(rowsAfterBulk.find((r) => r.id === 'pin-ug-new-unpinned')?.archived);
+          const ugPinArch = Boolean(rowsAfterBulk.find((r) => r.id === 'pin-ug-pinned-closed')?.archived);
+          const ugPinStillPinned = Boolean(rowsAfterBulk.find((r) => r.id === 'pin-ug-pinned-closed')?.pinned);
+          window.__theoLastQuarantinedCmd = null;
+          document.querySelector('#view-sessions .session-card[data-session-id="pin-ug-pinned-closed"] [data-sess-act="archive"]')?.click();
+          const singleCmd = window.__theoLastQuarantinedCmd;
+          const rowsAfterSingle = window.__theoTestWs.getState()?.rows || [];
+          const pinnedAfterArch = rowsAfterSingle.find((r) => r.id === 'pin-ug-pinned-closed');
+          return { bulkCmd, ugUnpArch, ugPinArch, ugPinStillPinned, singleCmd, pinnedAfterArch };
+        })()`);
+        assert.ok(archivePinCheck.bulkCmd?.ids?.includes('pin-ug-new-unpinned'), 'Archive closed must archive unpinned closed ungrouped chat');
+        assert.strictEqual(archivePinCheck.bulkCmd?.ids?.includes('pin-ug-pinned-closed'), false, 'Archive closed must exclude pinned chat');
+        assert.strictEqual(archivePinCheck.ugUnpArch, true);
+        assert.strictEqual(archivePinCheck.ugPinArch, false);
+        assert.strictEqual(archivePinCheck.ugPinStillPinned, true);
+        assert.strictEqual(archivePinCheck.singleCmd?.action, 'archive');
+        assert.strictEqual(archivePinCheck.pinnedAfterArch?.archived, true);
+        assert.strictEqual(archivePinCheck.pinnedAfterArch?.pinned, false, 'Single archive must auto-unpin the session');
+
+        // Unarchiving a previously pinned session must NOT resurrect its old pin even if a stale snapshot arrives
+        const unarchiveRes = await evalJs(`(() => {
+          document.querySelector('#sess-status-chips [data-status-filter="archived"]')?.click();
+          document.querySelector('#view-sessions .session-card[data-session-id="pin-ug-pinned-closed"] [data-sess-act="archive"]')?.click();
+          document.querySelector('#sess-status-chips [data-status-filter="all"]')?.click();
+          const row = (window.__theoTestWs.getState()?.rows || []).find((r) => r.id === 'pin-ug-pinned-closed');
+          return { archived: Boolean(row?.archived), pinned: Boolean(row?.pinned) };
+        })()`);
+        assert.strictEqual(unarchiveRes.archived, false);
+        assert.strictEqual(unarchiveRes.pinned, false, 'Unarchiving must keep pinned === false');
+
+        // 4. Multi-Host LWW override vs stale snapshot, then newer WS rowPatch(seq:2) re-pin
+        const lwwPrep = await evalJs(`(() => {
+          document.querySelector('#view-sessions .session-card[data-session-id="pin-grp-old-pinned"] .sess-act-btn.pin-btn')?.click();
+          return Boolean((window.__theoTestWs.getState()?.rows || []).find((r) => r.id === 'pin-grp-old-pinned')?.pinned);
+        })()`);
+        assert.strictEqual(lwwPrep, false);
+        for (const s of pinSockets) {
+          sendPinWsJson(s, {
+            type: 'state',
+            deviceId: 'pin-dev-local',
+            seq: 1,
+            state: {
+              generatedAt: now23 + 1000,
+              device: { id: 'pin-dev-local', name: 'Pin Local PC' },
+              groups: [{ id: 'grp-alpha', name: 'Alpha', color: 'blue', collapsed: false }],
+              rows: basePinRows.map((r) => ({ ...r }))
+            }
+          });
+        }
+        await new Promise((r) => setTimeout(r, 120));
+        const staleBlocked = await evalJs(`Boolean((window.__theoTestWs.getState()?.rows || []).find((r) => r.id === 'pin-grp-old-pinned')?.pinned)`);
+        assert.strictEqual(staleBlocked, false, 'Stale WS snapshot must not resurrect locally unpinned chat');
+
+        const futurePinTs = Date.now() + 60000;
+        for (const s of pinSockets) {
+          sendPinWsJson(s, {
+            type: 'rowPatch',
+            deviceId: 'pin-dev-local',
+            seq: 2,
+            generatedAt: futurePinTs,
+            upserts: [
+              {
+                ...basePinRows[0],
+                pinned: true,
+                pinnedAt: futurePinTs,
+                pinUpdatedAt: futurePinTs
+              }
+            ],
+            removedIds: [],
+            removedKeys: []
+          });
+        }
+        await waitPinCond(
+          () => evalJs(`Boolean((window.__theoTestWs.getState()?.rows || []).find((r) => r.id === 'pin-grp-old-pinned')?.pinned)`),
+          'Newer WS rowPatch re-pins chat over stale local override'
+        );
+        const finalMobOrder = await evalJs(`[...document.querySelectorAll('#view-sessions .session-card[data-session-id]')].map((c) => c.dataset.sessionId)`);
+        assert.ok(
+          finalMobOrder.indexOf('pin-grp-old-pinned') < finalMobOrder.indexOf('pin-grp-new-unpinned'),
+          `Newer WS rowPatch pin must re-sort pinned chat above newer unpinned chat: ${JSON.stringify(finalMobOrder)}`
+        );
+        const ugAfterStaleSnap = await evalJs(`Boolean((window.__theoTestWs.getState()?.rows || []).find((r) => r.id === 'pin-ug-pinned-closed')?.pinned)`);
+        assert.strictEqual(ugAfterStaleSnap, false, 'Stale WS state must not resurrect pin on unarchived session');
+
+        // Live stream_delta on newer unpinned row must NOT demote pinned chat in Pulse Recent Sessions
+        for (const s of pinSockets) {
+          sendPinWsJson(s, {
+            type: 'stream_delta',
+            threadId: 'pin-grp-new-unpinned',
+            provider: 'claude',
+            status: 'working',
+            text: 'Active stream chunk'
+          });
+        }
+        await new Promise((r) => setTimeout(r, 80));
+        const pulsePinOrder = await evalJs(`(() => {
+          document.querySelector('[data-tab="pulse"]')?.click();
+          return [...document.querySelectorAll('#pulse-recent-sessions .session-card[data-session-id]')].map((c) => c.dataset.sessionId);
+        })()`);
+        assert.ok(
+          pulsePinOrder.indexOf('pin-grp-old-pinned') >= 0 &&
+            pulsePinOrder.indexOf('pin-grp-old-pinned') < pulsePinOrder.indexOf('pin-grp-new-unpinned'),
+          `Pulse #pulse-recent-sessions must keep pinned chat first after stream_delta: ${JSON.stringify(pulsePinOrder)}`
+        );
+
+        console.log('[PASS] Adversarial #23: v77 Cross-Device Chat Pinning UI, flat search, 390x844 mobile 0px overflow, Ctrl+K, archive/unarchive auto-unpin & LWW rowPatch verified');
+      } finally {
+        try { await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 2, mobile: false }, sessionId); } catch {}
+        try { await evalJs("document.documentElement.setAttribute('data-theme', 'dark')"); } catch {}
+        try { await evalJs('window.__theoTestWs?.disconnectAll?.()'); } catch {}
+        for (const s of pinSockets) { try { s.destroy(); } catch {} }
+        await new Promise((r) => pinWsServer.close(r));
       }
     }
 
