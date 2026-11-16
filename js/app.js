@@ -1195,6 +1195,13 @@
   let threadsCache = cachedStore.threads || {};
   let workspacesDetailCache = cachedStore.workspacesDetail || {};
   let outbox = loadJson(STORAGE_KEYS.OUTBOX, []);
+  // Command types the hub no longer accepts. A copy queued offline by an older app version is dropped at boot:
+  // the hub answers it "Unknown command type", so it would be re-sent on every sync and hold the queued badge.
+  const LEGACY_DROPPED_CMD_TYPES = new Set(['setPinnedConstraint']);
+  if (Array.isArray(outbox) && outbox.some((c) => c && LEGACY_DROPPED_CMD_TYPES.has(c.type))) {
+    outbox = outbox.filter((c) => !(c && LEGACY_DROPPED_CMD_TYPES.has(c.type)));
+    saveJson(STORAGE_KEYS.OUTBOX, outbox);
+  }
   let connMode = 'probing'; // 'local' | 'edge' | 'cloud' | 'offline'
   let localBridgeBase = '';
   let localBridgeWsPath = '/ws';
@@ -3559,28 +3566,11 @@
 
   // Theme, Studio Palettes & IDE Sidebar management
   let sidebarHoverTimer = null;
-  const pinStripOpenByThreadId = new Set();
-  const pinStripDismissedByThreadId = new Map();
-
-  function hidePinStripTransientUi() {
-    pinStripOpenByThreadId.clear();
-    const strip = $('chat-pin-strip');
-    const pinInp = $('chat-pin-input');
-    if (pinInp && document.activeElement === pinInp) {
-      pinInp.blur();
-    }
-    if (strip) strip.hidden = true;
-    $('btn-pin-constraints')?.setAttribute('aria-expanded', 'false');
-    $('btn-pin-constraints')?.classList.remove('is-active');
-  }
 
   function closeFloatingUiMenus() {
     if (sidebarHoverTimer) {
       clearTimeout(sidebarHoverTimer);
       sidebarHoverTimer = null;
-    }
-    if (isPinLocked()) {
-      hidePinStripTransientUi();
     }
     const palPop = $('theme-palette-popover');
     if (palPop) palPop.hidden = true;
@@ -4154,26 +4144,8 @@
           const pAt = Number(prev.at || 0);
           const rOwned = r.deviceId === devId;
           const pOwned = prev.deviceId !== r.deviceId;
-          const rPinAt = Number(r.pinnedConstraintUpdatedAt || 0);
-          const pPinAt = Number(prev.pinnedConstraintUpdatedAt || 0);
-          const winPinText =
-            rPinAt > pPinAt || (rPinAt === pPinAt && r.pinnedConstraint)
-              ? String(r.pinnedConstraint || '')
-              : String(prev.pinnedConstraint || '');
-          const winPinAt = Math.max(rPinAt, pPinAt);
           if (rAt > pAt || (rAt === pAt && rOwned && pOwned)) {
-            rowMap.set(r.id, {
-              ...prev,
-              ...r,
-              pinnedConstraint: winPinText,
-              pinnedConstraintUpdatedAt: winPinAt
-            });
-          } else if (winPinAt > pPinAt) {
-            rowMap.set(r.id, {
-              ...prev,
-              pinnedConstraint: winPinText,
-              pinnedConstraintUpdatedAt: winPinAt
-            });
+            rowMap.set(r.id, { ...prev, ...r });
           }
         }
       }
@@ -5453,17 +5425,8 @@
           remoteMsgs.push(...optimisticMsgs);
         }
       }
-      const prevPinAt = Number(existing?.pinnedConstraintUpdatedAt || 0);
-      const remPinAt = Number(remoteThread.pinnedConstraintUpdatedAt || 0);
-      const usePrevPin = Boolean(existing && prevPinAt > remPinAt);
       threadsCache[tid] = {
         ...remoteThread,
-        ...(usePrevPin
-          ? {
-              pinnedConstraint: String(existing.pinnedConstraint || ''),
-              pinnedConstraintUpdatedAt: prevPinAt
-            }
-          : {}),
         messages: remoteMsgs
       };
       if (remoteMsgs.length > 0) {
@@ -6102,16 +6065,9 @@
         const rawCur = curRes.ok ? await curRes.json() : {};
         const curStore =
           rawCur?.docs && typeof rawCur.docs === 'object' ? rawCur.docs : rawCur || {};
-        const cmdSid = String(cmd.sessionId || cmd.id || '').trim();
         const existingCmds = Array.isArray(curStore?.queue?.commands)
           ? curStore.queue.commands
-              .filter((c) => {
-                if (!c || !c.id || c.id === cmd.id) return false;
-                if (cmd.type === 'setPinnedConstraint' && c.type === 'setPinnedConstraint') {
-                  return String(c.sessionId || c.id || '').trim() !== cmdSid;
-                }
-                return true;
-              })
+              .filter((c) => c && c.id && c.id !== cmd.id)
               .slice(-14)
           : [];
         existingCmds.push(cmd);
@@ -6153,14 +6109,7 @@
     }
 
     // 5. Offline Outbox Queue
-    const outboxSid = String(cmd.sessionId || cmd.id || '').trim();
-    outbox = outbox.filter((c) => {
-      if (!c || c.id === cmd.id) return false;
-      if (cmd.type === 'setPinnedConstraint' && c.type === 'setPinnedConstraint') {
-        return String(c.sessionId || c.id || '').trim() !== outboxSid;
-      }
-      return true;
-    });
+    outbox = outbox.filter((c) => c && c.id !== cmd.id);
     outbox.push(cmd);
     saveJson(STORAGE_KEYS.OUTBOX, outbox);
     renderOutboxBadge();
@@ -12874,7 +12823,6 @@
 
     renderContextPopover(ctx);
     renderChatBgTasks(activeRow, threadDetail, provKey, isNewDraft);
-    renderChatPinStrip(activeRow, threadDetail, ctx, isNewDraft);
 
     const messages = isNewDraft ? [] : coalesceThreadMessages(threadDetail?.messages || []);
     const sessionApprovals = isNewDraft
@@ -13565,140 +13513,6 @@
       .join('');
   }
 
-  function sanitizeClientPinnedConstraint(rawText = '') {
-    return String(rawText || '')
-      .replace(/[\r\n\t]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 280);
-  }
-
-  function getEffectivePinnedConstraint(tid, activeRow = null, threadDetail = null) {
-    const cleanId = String(tid || '').trim();
-    if (!cleanId) return { text: '', updatedAt: 0 };
-    const candidates = [];
-    const pending = pendingRowOverrides.get(cleanId);
-    if (pending && 'pinnedConstraint' in pending) {
-      candidates.push({
-        text: String(pending.pinnedConstraint || ''),
-        updatedAt: Number(pending.pinnedConstraintUpdatedAt || 0),
-        prio: 3
-      });
-    }
-    if (threadDetail && ('pinnedConstraint' in threadDetail || 'pinnedConstraintUpdatedAt' in threadDetail)) {
-      candidates.push({
-        text: String(threadDetail.pinnedConstraint || ''),
-        updatedAt: Number(threadDetail.pinnedConstraintUpdatedAt || 0),
-        prio: 2
-      });
-    }
-    if (activeRow && ('pinnedConstraint' in activeRow || 'pinnedConstraintUpdatedAt' in activeRow)) {
-      candidates.push({
-        text: String(activeRow.pinnedConstraint || ''),
-        updatedAt: Number(activeRow.pinnedConstraintUpdatedAt || 0),
-        prio: 1
-      });
-    }
-    if (!candidates.length) return { text: '', updatedAt: 0 };
-    candidates.sort((a, b) => (b.updatedAt !== a.updatedAt ? b.updatedAt - a.updatedAt : b.prio - a.prio));
-    return { text: sanitizeClientPinnedConstraint(candidates[0].text), updatedAt: candidates[0].updatedAt };
-  }
-
-  function renderChatPinStrip(activeRow, threadDetail, ctx, isNewDraft = false) {
-    const strip = $('chat-pin-strip');
-    const pinBtn = $('btn-pin-constraints');
-    const tid = String(
-      activeRow?.id || threadDetail?.id || (!isNewDraft ? prefs.selectedThreadId : '') || ''
-    ).trim();
-    if (isNewDraft || !tid || tid === '__new__' || tid.startsWith('draft-new-') || isPinLocked()) {
-      if (strip) strip.hidden = true;
-      if (pinBtn) {
-        pinBtn.classList.remove('is-active');
-        pinBtn.setAttribute('aria-expanded', 'false');
-      }
-      return;
-    }
-    const { text: pinText } = getEffectivePinnedConstraint(tid, activeRow, threadDetail);
-    const pct = Number(ctx?.pct || 0);
-    if (pct < 85 && pinStripDismissedByThreadId.get(tid) === 'dismissed85') {
-      pinStripDismissedByThreadId.delete(tid);
-    }
-    const isCollapsed = pinStripDismissedByThreadId.get(tid) === 'collapsed';
-    const autoShow =
-      pct >= 85 && pinStripDismissedByThreadId.get(tid) !== 'dismissed85' && !isCollapsed;
-    const isOpen =
-      !isCollapsed && (Boolean(pinText) || pinStripOpenByThreadId.has(tid) || autoShow);
-    if (pinBtn) {
-      pinBtn.classList.toggle('is-active', Boolean(pinText) || isOpen);
-      pinBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-    }
-    if (!strip) return;
-    strip.hidden = !isOpen;
-    const prevSid = strip.dataset.sessionId || '';
-    strip.dataset.sessionId = tid;
-    const statusEl = $('chat-pin-status');
-    if (statusEl) {
-      if (pinText && pct >= 85) statusEl.textContent = 'Armed · ≥85% active';
-      else if (pinText) statusEl.textContent = 'Armed for ≥85% & /compact';
-      else if (pct >= 85) statusEl.textContent = '≥85% target · pin invariants';
-      else statusEl.textContent = 'Auto-injects ≥85% or /compact';
-    }
-    const inp = $('chat-pin-input');
-    if (inp && (document.activeElement !== inp || prevSid !== tid)) {
-      inp.value = pinText;
-    }
-    const clrBtn = $('btn-chat-pin-clear');
-    if (clrBtn) {
-      clrBtn.hidden = !pinText && !String(inp?.value || '').trim();
-    }
-  }
-
-  async function setSessionPinnedConstraint(sessionId, rawText = '') {
-    const tid = String(sessionId || prefs.selectedThreadId || '').trim();
-    if (!tid || tid === '__new__' || tid.startsWith('draft-new-')) return false;
-    const clean = sanitizeClientPinnedConstraint(rawText);
-    const updatedAt = Date.now();
-    pinStripDismissedByThreadId.delete(tid);
-    if (clean) pinStripOpenByThreadId.add(tid);
-    else pinStripOpenByThreadId.delete(tid);
-
-    const row = (appState?.rows || []).find((r) => r && r.id === tid);
-    if (row) {
-      row.pinnedConstraint = clean;
-      row.pinnedConstraintUpdatedAt = updatedAt;
-    }
-    if (threadsCache[tid] && typeof threadsCache[tid] === 'object') {
-      threadsCache[tid].pinnedConstraint = clean;
-      threadsCache[tid].pinnedConstraintUpdatedAt = updatedAt;
-    }
-    noteRowOverride(tid, {
-      pinnedConstraint: clean,
-      pinnedConstraintUpdatedAt: updatedAt
-    });
-    const inp = $('chat-pin-input');
-    if (inp) inp.value = clean;
-    persistCache();
-    renderChatView(false);
-    renderIdeSidebar();
-
-    const activeFilterDev =
-      prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
-        ? String(prefs.selectedDeviceFilter).trim()
-        : '';
-    const targetDeviceId = String(
-      row?.deviceId || threadsCache[tid]?.deviceId || activeFilterDev || ''
-    ).trim();
-    await dispatchRemoteCommand({
-      type: 'setPinnedConstraint',
-      id: tid,
-      sessionId: tid,
-      ...(targetDeviceId ? { targetDeviceId } : {}),
-      text: clean,
-      updatedAt
-    });
-    return true;
-  }
-
   // Unsaved work per PC, at the top of Workspaces (the evening digest's unsaved-work notification opens here).
   // Each PC: every unsaved git working folder (repo, branch, owner, idle time), folders idle past the report's
   // threshold (24 h) marked amber; a PC with none shows one quiet "all saved" line; a report older than 2 h
@@ -14194,7 +14008,6 @@
 
   const SLASH_COMMAND_CATALOG = [
     { id: '/compact', label: '/compact', desc: 'Summarize context window & free tokens', kind: 'action', act: 'compact', baseWeight: 95 },
-    { id: '/pin', label: '/pin', desc: 'Pin must-keep constraints for next checkpoint (/compact or ≥85%)', kind: 'action', act: 'pin', baseWeight: 92 },
     { id: '/plan', label: '/plan', desc: 'Draft a step-by-step architecture & implementation plan', kind: 'prompt', insert: '/plan ', baseWeight: 88 },
     { id: '/boost', label: '/boost', desc: 'Deep multi-perspective reasoning & rigorous verification', kind: 'prompt', insert: '/boost ', baseWeight: 84 },
     { id: '/goal', label: '/goal', desc: 'Autonomous thorough execution until goal is achieved', kind: 'prompt', insert: '/goal ', baseWeight: 80 },
@@ -14442,29 +14255,6 @@
             provider: activeRow?.provider || 'antigravity'
           });
           showToast('⚡ Dispatched /compact to summarize context');
-        }
-      } else if (item.act === 'pin') {
-        if (isNewSessionMode() || !cleanTargetThreadId(prefs.selectedThreadId)) {
-          showToast('Select an active session first to pin checkpoint constraints');
-        } else {
-          const pinArg = after.trim();
-          const targetTid = prefs.selectedThreadId;
-          if (/^(?:clear|off|none|reset)$/i.test(pinArg)) {
-            await setSessionPinnedConstraint(targetTid, '');
-            showToast('Cleared pinned constraints');
-          } else if (pinArg) {
-            await setSessionPinnedConstraint(targetTid, pinArg);
-            showToast('Pinned constraints for next checkpoint');
-          } else {
-            pinStripDismissedByThreadId.delete(targetTid);
-            pinStripOpenByThreadId.add(targetTid);
-            renderChatView(false);
-            const pInp = $('chat-pin-input');
-            if (pInp) {
-              pInp.focus();
-              pInp.select?.();
-            }
-          }
         }
       } else if (item.act === 'new-agy') {
         enterNewSessionMode('antigravity');
@@ -14861,7 +14651,6 @@
     }
     overlay.hidden = false;
     if (appShell) appShell.inert = true;
-    hidePinStripTransientUi();
     closeFloatingUiMenus();
     document.documentElement.classList.remove('pin-locked-boot');
     let entered = '';
@@ -17377,76 +17166,6 @@
       if (pop) pop.hidden = true;
     });
 
-    $('btn-pin-constraints')?.addEventListener('click', () => {
-      if (isPinLocked()) return;
-      const tid = String(prefs.selectedThreadId || '').trim();
-      if (isNewSessionMode() || !cleanTargetThreadId(tid)) {
-        showToast('Select an active session first to pin checkpoint constraints');
-        return;
-      }
-      const strip = $('chat-pin-strip');
-      const currentlyHidden = !strip || strip.hidden;
-      if (currentlyHidden) {
-        pinStripDismissedByThreadId.delete(tid);
-        pinStripOpenByThreadId.add(tid);
-        renderChatView(false);
-        const inp = $('chat-pin-input');
-        if (inp) {
-          inp.focus();
-          inp.select?.();
-        }
-      } else {
-        pinStripOpenByThreadId.delete(tid);
-        pinStripDismissedByThreadId.set(tid, 'collapsed');
-        renderChatView(false);
-      }
-    });
-    $('btn-chat-pin-save')?.addEventListener('click', async () => {
-      const tid = String($('chat-pin-strip')?.dataset?.sessionId || prefs.selectedThreadId || '').trim();
-      const inp = $('chat-pin-input');
-      if (!tid) return;
-      const txt = sanitizeClientPinnedConstraint(inp ? inp.value : '');
-      if (inp && document.activeElement === inp) inp.blur();
-      await setSessionPinnedConstraint(tid, txt);
-      showToast(txt ? 'Pinned constraints for next checkpoint' : 'Cleared pinned constraints');
-    });
-    $('btn-chat-pin-clear')?.addEventListener('click', async () => {
-      const tid = String($('chat-pin-strip')?.dataset?.sessionId || prefs.selectedThreadId || '').trim();
-      if (!tid) return;
-      const inp = $('chat-pin-input');
-      if (inp && document.activeElement === inp) inp.blur();
-      await setSessionPinnedConstraint(tid, '');
-      showToast('Cleared pinned constraints');
-    });
-    $('btn-chat-pin-hide')?.addEventListener('click', () => {
-      const tid = String($('chat-pin-strip')?.dataset?.sessionId || prefs.selectedThreadId || '').trim();
-      const inp = $('chat-pin-input');
-      if (inp && document.activeElement === inp) inp.blur();
-      if (tid) {
-        pinStripOpenByThreadId.delete(tid);
-        pinStripDismissedByThreadId.set(tid, 'collapsed');
-      }
-      renderChatView(false);
-    });
-    $('chat-pin-input')?.addEventListener('input', () => {
-      const clr = $('btn-chat-pin-clear');
-      if (clr) {
-        const tid = String($('chat-pin-strip')?.dataset?.sessionId || prefs.selectedThreadId || '').trim();
-        const activeRow = (appState?.rows || []).find((r) => r && r.id === tid);
-        const cur = getEffectivePinnedConstraint(tid, activeRow, threadsCache[tid] || null).text;
-        clr.hidden = !String($('chat-pin-input')?.value || '').trim() && !cur;
-      }
-    });
-    $('chat-pin-input')?.addEventListener('keydown', async (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        $('btn-chat-pin-save')?.click();
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        $('btn-chat-pin-hide')?.click();
-      }
-    });
-
     $('btn-chat-open-vscode')?.addEventListener('click', async () => {
       if (isNewSessionMode()) {
         const prov = prefs.composerMode === 'new-claude' ? 'claude' : 'antigravity';
@@ -17966,15 +17685,6 @@
           settled = false;
         }
       }
-      if ('pinnedConstraint' in rec) {
-        const recPinAt = Number(rec.pinnedConstraintUpdatedAt || 0);
-        const srvPinAt = Number(r.pinnedConstraintUpdatedAt || 0);
-        if (srvPinAt < recPinAt) {
-          r.pinnedConstraint = String(rec.pinnedConstraint || '');
-          r.pinnedConstraintUpdatedAt = recPinAt;
-          settled = false;
-        }
-      }
       if (settled) pendingRowOverrides.delete(id);
     }
     rows.sort((a, b) => Number(b?.at || 0) - Number(a?.at || 0));
@@ -18169,38 +17879,7 @@
       return;
     }
 
-    // Intercept standalone local IDE action slash commands (plus /pin <constraints>) so they execute directly
-    if (composerAttachments.length === 0) {
-      const pinCmdMatch = rawText.match(/^\/pin(?:\s+([\s\S]+))?$/i);
-      if (pinCmdMatch) {
-        inp.value = '';
-        inp.style.height = 'auto';
-        updateComposerActionButton();
-        const tid = cleanTargetThreadId(prefs.selectedThreadId);
-        if (isNewSessionMode() || !tid) {
-          showToast('Select an active session first to pin checkpoint constraints');
-        } else {
-          const pinArg = String(pinCmdMatch[1] || '').trim();
-          if (!pinArg) {
-            pinStripDismissedByThreadId.delete(tid);
-            pinStripOpenByThreadId.add(tid);
-            renderChatView(false);
-            const pInp = $('chat-pin-input');
-            if (pInp) {
-              pInp.focus();
-              pInp.select?.();
-            }
-          } else if (/^(?:clear|off|none|reset)$/i.test(pinArg)) {
-            await setSessionPinnedConstraint(tid, '');
-            showToast('Cleared pinned constraints');
-          } else {
-            await setSessionPinnedConstraint(tid, pinArg);
-            showToast('Pinned constraints for next checkpoint');
-          }
-        }
-        return;
-      }
-    }
+    // Intercept standalone local IDE action slash commands so they execute directly
     if (composerAttachments.length === 0 && /^\/[a-z-]+$/i.test(rawText)) {
       const cmdMatch = SLASH_COMMAND_CATALOG.find(
         (c) => c.kind === 'action' && c.id.toLowerCase() === rawText.toLowerCase()
@@ -18651,7 +18330,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=75', { updateViaCache: 'none' })
+        .register('sw.js?v=76', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

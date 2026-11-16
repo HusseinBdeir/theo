@@ -4752,7 +4752,7 @@ async function main() {
     }
 
     // Adversarial #21: v74 Live GetUserStatus model-capacity sync, dual-tone +Nk soft-overrun ring,
-    // and Pin Constraints for Next Checkpoint micro-note (/pin, >=85% auto-reveal, focus guard & XSS guard)
+    // and (v76) Pinned Constraints removed: no strip, no composer button, no /pin command, stale cached pins inert
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true }, sessionId);
     const v73SeedOk = await evalJs(`(() => {
       const now = Date.now();
@@ -5135,10 +5135,6 @@ async function main() {
       const arc = document.getElementById('ctx-ring-overrun-circle');
       const pill = document.getElementById('ctx-overrun-pill');
       const banner = document.getElementById('ctx-overrun-banner');
-      const strip = document.getElementById('chat-pin-strip');
-      const pinBtn = document.getElementById('btn-pin-constraints');
-      const pinInp = document.getElementById('chat-pin-input');
-      const pinStatus = document.getElementById('chat-pin-status');
       return {
         isSoftOverrun: Boolean(btn?.classList?.contains('is-soft-overrun')),
         arcHidden: Boolean(arc?.hidden),
@@ -5149,10 +5145,7 @@ async function main() {
         ctxPill: document.getElementById('ctx-pill-label')?.textContent?.trim() || '',
         bannerHidden: Boolean(banner?.hidden),
         bannerText: banner?.textContent?.trim() || '',
-        pinStripHidden: Boolean(strip?.hidden),
-        pinExpanded: pinBtn?.getAttribute('aria-expanded') || '',
-        pinStatusText: pinStatus?.textContent?.trim() || '',
-        pinFontSize: pinInp ? getComputedStyle(pinInp).fontSize : '',
+        pinNodeCount: document.querySelectorAll('[id*="chat-pin"], [id*="pin-constraints"], [class*="chat-pin"], .composer-pin-btn').length,
         titleCount: document.querySelectorAll('[title]').length,
         overflowX: Math.max(0, document.documentElement.scrollWidth - window.innerWidth)
       };
@@ -5166,10 +5159,7 @@ async function main() {
     assert.strictEqual(v73Overrun.ctxPill, '269k / 256k · 100%');
     assert.strictEqual(v73Overrun.bannerHidden, false);
     assert.ok(v73Overrun.bannerText.includes('Soft compaction target 256k') && v73Overrun.bannerText.includes('Hard context ceiling 1M'), `Unexpected overrun banner: ${v73Overrun.bannerText}`);
-    assert.strictEqual(v73Overrun.pinStripHidden, false, 'Pinned constraints strip must auto-reveal at >=85% context');
-    assert.strictEqual(v73Overrun.pinExpanded, 'true');
-    assert.ok(v73Overrun.pinStatusText.includes('85%'), `Unexpected pin status: ${v73Overrun.pinStatusText}`);
-    assert.strictEqual(v73Overrun.pinFontSize, '16px', 'Mobile <=768px pin input must use 16px to prevent iOS auto-zoom');
+    assert.strictEqual(v73Overrun.pinNodeCount, 0, 'Pinned constraints strip and composer pin button must not exist at >=85% context (removed in v76)');
     assert.strictEqual(v73Overrun.titleCount, 0);
     assert.strictEqual(v73Overrun.overflowX, 0);
 
@@ -5242,145 +5232,170 @@ async function main() {
     assert.strictEqual(v74Gem1M.ctxPill, '900k / 1M · 90%');
     assert.strictEqual(v74Gem1M.isSoftOverrun, false);
 
-    // 3. Pin strip save via UI, focus guard against concurrent UI re-render, /pin & /pin clear via composer, tombstone survival & XSS guard
-    await probeChatContext('sess-ctx-overrun');
-    const v73PinSave = await evalJs(`(async () => {
-      const inp = document.getElementById('chat-pin-input');
-      inp.focus();
-      inp.value = 'Keep LF line endings & <img src=x onerror=alert(1)>';
-      inp.dispatchEvent(new Event('input', { bubbles: true }));
-      window.dispatchEvent(new Event('online'));
-      await new Promise((r) => setTimeout(r, 30));
-      const focusedStill = document.activeElement === inp;
-      const valuePreserved = inp.value;
-      document.getElementById('btn-chat-pin-save').click();
-      await new Promise((r) => setTimeout(r, 60));
-      const rawCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
-      const savedRows = Array.isArray(rawCache?.snapshot?.rows)
-        ? rawCache.snapshot.rows
-        : Array.isArray(rawCache?.state?.rows)
-          ? rawCache.state.rows
-          : [];
-      const savedRow = savedRows.find((r) => r && r.id === 'sess-ctx-overrun') || null;
-      const savedTh = rawCache?.threads?.['sess-ctx-overrun'] || null;
-      return {
-        focusedStill,
-        valuePreserved,
-        status: document.getElementById('chat-pin-status')?.textContent?.trim() || '',
-        clearHidden: Boolean(document.getElementById('btn-chat-pin-clear')?.hidden),
-        ovText: savedRow?.pinnedConstraint || '',
-        ovTs: Number(savedRow?.pinnedConstraintUpdatedAt || 0),
-        thText: savedTh?.pinnedConstraint || '',
-        quarantinedCmd: window.__theoLastQuarantinedCmd || null
-      };
-    })()`);
-    assert.strictEqual(v73PinSave.focusedStill, true);
-    assert.strictEqual(v73PinSave.valuePreserved, 'Keep LF line endings & <img src=x onerror=alert(1)>');
-    assert.strictEqual(v73PinSave.status, 'Armed · ≥85% active');
-    assert.strictEqual(v73PinSave.clearHidden, false);
-    assert.strictEqual(v73PinSave.ovText, 'Keep LF line endings & <img src=x onerror=alert(1)>');
-    assert.ok(v73PinSave.ovTs > 0, 'Saved pin must record non-zero timestamp override');
-    assert.strictEqual(v73PinSave.thText, 'Keep LF line endings & <img src=x onerror=alert(1)>');
-    assert.strictEqual(v73PinSave.quarantinedCmd?.type, 'setPinnedConstraint');
-    assert.strictEqual(v73PinSave.quarantinedCmd?.targetDeviceId, 'pc-workstation-b', 'setSessionPinnedConstraint must forward concrete row targetDeviceId');
-
-    // Reload recovery + stale snapshot rejection: older server pin must not overwrite newer local pin
+    // 3. Pinned Constraints removed (v76). A cache written by v74 / v75 still carries pinnedConstraint on rows and
+    // threads and a queued setPinnedConstraint in the outbox: none of it may render, throw or be re-sent as a pin.
     await evalJs(`(() => {
       const rawCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
-      if (rawCache.threads?.['sess-ctx-overrun']) {
-        rawCache.threads['sess-ctx-overrun'].pinnedConstraint = 'Stale old server pin';
-        rawCache.threads['sess-ctx-overrun'].pinnedConstraintUpdatedAt = 1000;
+      const staleText = 'Stale v75 pin <img src=x onerror=alert(1)>';
+      for (const key of ['snapshot', 'state']) {
+        const rows = Array.isArray(rawCache?.[key]?.rows) ? rawCache[key].rows : [];
+        for (const r of rows) {
+          if (r && (r.id === 'sess-ctx-live777' || r.id === 'sess-ctx-overrun')) {
+            r.pinnedConstraint = staleText;
+            r.pinnedConstraintUpdatedAt = Date.now();
+          }
+        }
+      }
+      for (const tid of ['sess-ctx-live777', 'sess-ctx-overrun']) {
+        if (rawCache.threads?.[tid]) {
+          rawCache.threads[tid].pinnedConstraint = staleText;
+          rawCache.threads[tid].pinnedConstraintUpdatedAt = Date.now();
+        }
       }
       localStorage.setItem('theo_remote_cache_v3', JSON.stringify(rawCache));
-      const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
-      prefs.selectedThreadId = 'sess-ctx-overrun';
-      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+      // A pin queued offline under v75, next to an ordinary queued command that must survive the boot clean-up.
+      let staleOutbox = [];
+      try { staleOutbox = JSON.parse(localStorage.getItem('theo_remote_outbox_v1') || '[]'); } catch {}
+      if (!Array.isArray(staleOutbox)) staleOutbox = [];
+      staleOutbox.push(
+        { id: 'cmd-stale-pin', type: 'setPinnedConstraint', sessionId: 'sess-ctx-overrun', text: 'x', updatedAt: Date.now(), createdAt: Date.now() },
+        { id: 'cmd-keep-rename', type: 'renameSession', sessionId: 'sess-ctx-overrun', title: 'Kept', createdAt: Date.now() }
+      );
+      localStorage.setItem('theo_remote_outbox_v1', JSON.stringify(staleOutbox));
+      window.__theoLastQuarantinedCmd = null;
       return true;
     })()`);
-    await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
-    await new Promise((r) => setTimeout(r, 600));
-    const v73AfterReloadPin = await evalJs(`document.getElementById('chat-pin-input')?.value || ''`);
-    assert.strictEqual(
-      v73AfterReloadPin,
-      'Keep LF line endings & <img src=x onerror=alert(1)>',
-      'Newer local pin override must beat older snapshot pin across reload'
+    // Boot only (no sync yet): the stale pin is dropped from storage at load, the ordinary command is kept.
+    const { identifier: v76BootProbeId } = await cdp.send(
+      'Page.addScriptToEvaluateOnNewDocument',
+      { source: `try { window.__theoOutboxAtBoot = localStorage.getItem('theo_remote_outbox_v1'); } catch {}` },
+      sessionId
     );
+    await probeChatContext('sess-ctx-overrun');
+    await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: v76BootProbeId }, sessionId);
+    const v76OutboxClean = await evalJs(`(() => {
+      const before = JSON.parse(window.__theoOutboxAtBoot || '[]');
+      const after = JSON.parse(localStorage.getItem('theo_remote_outbox_v1') || '[]');
+      const state = {
+        seededPin: before.filter((c) => c && c.type === 'setPinnedConstraint').length,
+        pinAfter: after.filter((c) => c && c.type === 'setPinnedConstraint').length,
+        keptAfter: after.filter((c) => c && c.id === 'cmd-keep-rename').length,
+        lastCmdType: window.__theoLastQuarantinedCmd?.type || ''
+      };
+      localStorage.setItem('theo_remote_outbox_v1', JSON.stringify(after.filter((c) => c && c.id !== 'cmd-keep-rename')));
+      return state;
+    })()`);
+    assert.strictEqual(v76OutboxClean.seededPin, 1, 'The stale pin command must have been in storage when v76 booted');
+    // pinAfter is the check that catches a broken clean-up: this harness never flushes the outbox during #21
+    // (no local bridge, no mock WebSocket), so the two "dispatched / sent" checks below only guard a future change.
+    assert.strictEqual(v76OutboxClean.pinAfter, 0, 'A setPinnedConstraint queued under v75 must be dropped from the outbox at boot');
+    assert.notStrictEqual(v76OutboxClean.lastCmdType, 'setPinnedConstraint', 'The stale pin command must never be dispatched');
+    assert.ok(
+      v76OutboxClean.keptAfter === 1 || v76OutboxClean.lastCmdType === 'renameSession',
+      `An ordinary queued command must survive the boot clean-up (still queued, or sent): ${JSON.stringify(v76OutboxClean)}`
+    );
+    const v76PinGoneOverrun = await evalJs(`({
+      pinNodeCount: document.querySelectorAll('[id*="chat-pin"], [id*="pin-constraints"], [class*="chat-pin"], .composer-pin-btn').length,
+      staleShown: document.body.innerHTML.includes('Stale v75 pin'),
+      composerPresent: Boolean(document.getElementById('composer-input')),
+      titleCount: document.querySelectorAll('[title]').length,
+      overflowX: Math.max(0, document.documentElement.scrollWidth - window.innerWidth)
+    })`);
+    assert.strictEqual(v76PinGoneOverrun.pinNodeCount, 0, 'No pin strip or pin button may exist on a >=85% session');
+    assert.strictEqual(v76PinGoneOverrun.staleShown, false, 'A stale cached pinnedConstraint must never render');
+    assert.strictEqual(v76PinGoneOverrun.composerPresent, true);
+    assert.strictEqual(v76PinGoneOverrun.titleCount, 0);
+    assert.strictEqual(v76PinGoneOverrun.overflowX, 0);
 
-    // Switch to 50% session, verify strip starts collapsed, test /pin <text> + /pin clear tombstone + toggle + dismiss
     await probeChatContext('sess-ctx-live777');
-    const v73SlashPin = await evalJs(`(async () => {
-      const stripInitiallyHidden = Boolean(document.getElementById('chat-pin-strip')?.hidden);
+    const v76SlashPin = await evalJs(`(async () => {
       const composer = document.getElementById('composer-input');
       const sendBtn = document.getElementById('composer-send-btn');
+      const pop = document.getElementById('composer-slash-popover');
+      composer.focus();
+      composer.value = '/pi';
+      composer.setSelectionRange(3, 3);
+      composer.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 40));
+      const slashLabels = Array.from(pop.querySelectorAll('.slash-pop-lbl')).map((el) => el.textContent.trim());
+      composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 20));
+      composer.value = '/';
+      composer.setSelectionRange(1, 1);
+      composer.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 40));
+      const allSlashLabels = Array.from(pop.querySelectorAll('.slash-pop-lbl')).map((el) => el.textContent.trim());
+      composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 20));
+
+      // "/pin <text>" is no longer intercepted: it goes to the session as an ordinary prompt, unchanged.
+      window.__theoLastQuarantinedCmd = null;
       composer.value = '/pin Zero Microsoft deps';
       composer.dispatchEvent(new Event('input', { bubbles: true }));
       sendBtn.click();
-      await new Promise((r) => setTimeout(r, 60));
-      const afterPinText = {
-        stripHidden: Boolean(document.getElementById('chat-pin-strip')?.hidden),
-        pinValue: document.getElementById('chat-pin-input')?.value || '',
-        status: document.getElementById('chat-pin-status')?.textContent?.trim() || '',
-        btnActive: Boolean(document.getElementById('btn-pin-constraints')?.classList?.contains('is-active'))
-      };
-      composer.value = '/pin clear';
-      composer.dispatchEvent(new Event('input', { bubbles: true }));
-      sendBtn.click();
-      await new Promise((r) => setTimeout(r, 60));
-      const rawClearedCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
-      const clearedRows = Array.isArray(rawClearedCache?.snapshot?.rows)
-        ? rawClearedCache.snapshot.rows
-        : Array.isArray(rawClearedCache?.state?.rows)
-          ? rawClearedCache.state.rows
-          : [];
-      const clearedRow = clearedRows.find((r) => r && r.id === 'sess-ctx-live777') || null;
-      const afterClear = {
-        stripHidden: Boolean(document.getElementById('chat-pin-strip')?.hidden),
-        pinValue: document.getElementById('chat-pin-input')?.value || '',
-        btnActive: Boolean(document.getElementById('btn-pin-constraints')?.classList?.contains('is-active')),
-        clearedText: clearedRow?.pinnedConstraint ?? null,
-        clearedTs: Number(clearedRow?.pinnedConstraintUpdatedAt || 0)
-      };
-      document.getElementById('btn-pin-constraints').click();
-      const afterOpen = {
-        stripHidden: Boolean(document.getElementById('chat-pin-strip')?.hidden),
-        expanded: document.getElementById('btn-pin-constraints')?.getAttribute('aria-expanded') || ''
-      };
-      document.getElementById('btn-chat-pin-hide').click();
-      const afterHide = {
-        stripHidden: Boolean(document.getElementById('chat-pin-strip')?.hidden),
-        expanded: document.getElementById('btn-pin-constraints')?.getAttribute('aria-expanded') || ''
-      };
+      await new Promise((r) => setTimeout(r, 80));
+      const sent = window.__theoLastQuarantinedCmd || null;
+      const outbox = JSON.parse(localStorage.getItem('theo_remote_outbox_v1') || '[]');
       return {
-        stripInitiallyHidden,
-        afterPinText,
-        afterClear,
-        afterOpen,
-        afterHide
+        slashLabels,
+        allSlashLabels,
+        sentType: sent?.type || '',
+        sentPrompt: String(sent?.prompt || ''),
+        sentId: String(sent?.id || sent?.threadId || ''),
+        outboxPinCmds: (Array.isArray(outbox) ? outbox : []).filter((c) => c && c.type === 'setPinnedConstraint').length,
+        pinNodeCount: document.querySelectorAll('[id*="chat-pin"], [id*="pin-constraints"], [class*="chat-pin"], .composer-pin-btn').length,
+        staleShown: document.body.innerHTML.includes('Stale v75 pin'),
+        composerValue: composer.value
       };
     })()`);
-    assert.strictEqual(v73SlashPin.stripInitiallyHidden, true);
-    assert.strictEqual(v73SlashPin.afterPinText.stripHidden, false);
-    assert.strictEqual(v73SlashPin.afterPinText.pinValue, 'Zero Microsoft deps');
-    assert.strictEqual(v73SlashPin.afterPinText.status, 'Armed for ≥85% & /compact');
-    assert.strictEqual(v73SlashPin.afterPinText.btnActive, true);
-    assert.strictEqual(v73SlashPin.afterClear.stripHidden, true);
-    assert.strictEqual(v73SlashPin.afterClear.pinValue, '');
-    assert.strictEqual(v73SlashPin.afterClear.btnActive, false);
-    assert.strictEqual(v73SlashPin.afterClear.clearedText, '');
-    assert.ok(v73SlashPin.afterClear.clearedTs > 0, 'Cleared pin must keep non-zero tombstone timestamp');
-    assert.strictEqual(v73SlashPin.afterOpen.stripHidden, false);
-    assert.strictEqual(v73SlashPin.afterOpen.expanded, 'true');
-    assert.strictEqual(v73SlashPin.afterHide.stripHidden, true);
-    assert.strictEqual(v73SlashPin.afterHide.expanded, 'false');
+    assert.ok(!v76SlashPin.slashLabels.includes('/pin'), `/pin must be gone from the slash menu, got: ${v76SlashPin.slashLabels.join(', ')}`);
+    assert.ok(v76SlashPin.allSlashLabels.includes('/compact'), `Slash menu must still list /compact, got: ${v76SlashPin.allSlashLabels.join(', ')}`);
+    assert.ok(!v76SlashPin.allSlashLabels.includes('/pin'), '/pin must be gone from the full slash menu');
+    assert.strictEqual(v76SlashPin.sentType, 'send', 'A "/pin ..." message must be sent as an ordinary prompt');
+    assert.strictEqual(v76SlashPin.sentPrompt, '/pin Zero Microsoft deps', 'The prompt must be forwarded unchanged');
+    assert.strictEqual(v76SlashPin.outboxPinCmds, 0, 'No setPinnedConstraint command may be queued');
+    assert.strictEqual(v76SlashPin.pinNodeCount, 0);
+    assert.strictEqual(v76SlashPin.staleShown, false);
+    assert.strictEqual(v76SlashPin.composerValue, '', 'Composer must clear after the send');
 
-    // Cleared tombstone must prevent stale server pin resurrection across reload
-    await evalJs(`(() => {
-      const rawCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
-      if (rawCache.threads?.['sess-ctx-live777']) {
-        rawCache.threads['sess-ctx-live777'].pinnedConstraint = 'Resurrected old pin';
-        rawCache.threads['sess-ctx-live777'].pinnedConstraintUpdatedAt = 1000;
+    // Static: the shipped app, shell and stylesheet carry no pin-constraint code at all.
+    {
+      const fsPin = require('fs');
+      const pathPin = require('path');
+      const rootPin = pathPin.join(__dirname, '..');
+      const pinRe = /pinnedConstraint|setPinnedConstraint|chat-pin|pin-constraints|PinStrip|composer-pin-btn|act === 'pin'/;
+      for (const rel of ['js/app.js', 'index.html', 'css/theo.css', 'sw.js']) {
+        // The one allowed mention: the boot clean-up that names the retired command type in order to drop it.
+        const src = fsPin
+          .readFileSync(pathPin.join(rootPin, rel), 'utf8')
+          .split('\n')
+          .filter((ln) => !ln.includes('LEGACY_DROPPED_CMD_TYPES = new Set('))
+          .join('\n');
+        const hit = src.match(pinRe);
+        assert.strictEqual(hit, null, `${rel} still carries pin-constraint code: ${hit ? hit[0] : ''}`);
       }
-      localStorage.setItem('theo_remote_cache_v3', JSON.stringify(rawCache));
+    }
+
+    // The PIN lock (unrelated to pin constraints, but its lock path called the removed helper) still engages cleanly.
+    // (An exception on the lock path also fails the run through the suite-wide pageExceptions count.)
+    await evalJs(`(() => { localStorage.setItem('theo_remote_pin_v1', '4321'); return true; })()`);
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 600));
+    const v76PinLockAfter = await evalJs(`(() => {
+      const overlay = document.getElementById('pin-overlay');
+      const state = {
+        overlayShown: Boolean(overlay && !overlay.hidden),
+        shellInert: Boolean(document.querySelector('.app-shell')?.inert),
+        bootClassCleared: !document.documentElement.classList.contains('pin-locked-boot')
+      };
+      localStorage.removeItem('theo_remote_pin_v1');
+      localStorage.removeItem('theo_remote_pin_hash_v1');
+      return state;
+    })()`);
+    assert.strictEqual(v76PinLockAfter.overlayShown, true, 'PIN lock overlay must show after reload with a PIN set (lock path must not throw)');
+    assert.strictEqual(v76PinLockAfter.shellInert, true, 'App shell must be inert while PIN-locked');
+    assert.strictEqual(v76PinLockAfter.bootClassCleared, true, 'pin-locked-boot must clear once the overlay is up (the lock function ran to the end)');
+    await evalJs(`(() => {
       const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
       prefs.selectedThreadId = 'sess-ctx-live777';
       localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
@@ -5388,13 +5403,13 @@ async function main() {
     })()`);
     await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
     await new Promise((r) => setTimeout(r, 600));
-    const v73TombstoneCheck = await evalJs(`({
-      pinVal: document.getElementById('chat-pin-input')?.value || '',
-      stripHidden: Boolean(document.getElementById('chat-pin-strip')?.hidden)
+    const v76Unlocked = await evalJs(`({
+      overlayHidden: Boolean(document.getElementById('pin-overlay')?.hidden),
+      shellInert: Boolean(document.querySelector('.app-shell')?.inert)
     })`);
-    assert.strictEqual(v73TombstoneCheck.pinVal, '', 'Tombstone timestamp must block stale pin resurrection across reload');
-    assert.strictEqual(v73TombstoneCheck.stripHidden, true);
-    console.log('[PASS] Adversarial #21: v74 Live GetUserStatus model-capacity sync, dual-tone +Nk soft-overrun ring, & Pin Constraints (cache persistence, stale-timestamp & tombstone survival, legacy 840k & override guards, & XSS guard) verified');
+    assert.strictEqual(v76Unlocked.overlayHidden, true, 'PIN overlay must be gone once the test PIN is removed');
+    assert.strictEqual(v76Unlocked.shellInert, false);
+    console.log('[PASS] Adversarial #21: v74 Live GetUserStatus model-capacity sync, dual-tone +Nk soft-overrun ring, legacy 840k & override guards, & v76 Pinned Constraints removal (no strip, no button, no /pin, stale cached pins inert, PIN lock intact) verified');
 
     // -------------------------------------------------------------------------
     // Adversarial #22: v75 Cross-device prewarm_hint emission, deduplication & guards
