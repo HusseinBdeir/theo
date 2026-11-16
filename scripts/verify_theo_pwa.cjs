@@ -5396,6 +5396,274 @@ async function main() {
     assert.strictEqual(v73TombstoneCheck.stripHidden, true);
     console.log('[PASS] Adversarial #21: v74 Live GetUserStatus model-capacity sync, dual-tone +Nk soft-overrun ring, & Pin Constraints (cache persistence, stale-timestamp & tombstone survival, legacy 840k & override guards, & XSS guard) verified');
 
+    // -------------------------------------------------------------------------
+    // Adversarial #22: v75 Cross-device prewarm_hint emission, deduplication & guards
+    // -------------------------------------------------------------------------
+    {
+      const nodeCrypto22 = require('crypto');
+      const hintSockets = new Set();
+      const recvHints = [];
+
+      const encodeHintWsFrame = (obj) => {
+        const payload = Buffer.from(JSON.stringify(obj), 'utf8');
+        const len = payload.length;
+        let header;
+        if (len < 126) {
+          header = Buffer.from([0x81, len]);
+        } else if (len < 65536) {
+          header = Buffer.allocUnsafe(4);
+          header[0] = 0x81;
+          header[1] = 126;
+          header.writeUInt16BE(len, 2);
+        } else {
+          header = Buffer.allocUnsafe(10);
+          header[0] = 0x81;
+          header[1] = 127;
+          header.writeBigUInt64BE(BigInt(len), 2);
+        }
+        return Buffer.concat([header, payload]);
+      };
+      const sendHintWsJson = (sock, obj) => {
+        if (!sock || sock.destroyed || !sock.writable) return false;
+        sock.write(encodeHintWsFrame(obj));
+        return true;
+      };
+
+      const hintWsServer = http.createServer((_req, res) => {
+        res.writeHead(404);
+        res.end();
+      });
+      hintWsServer.on('upgrade', (req, socket) => {
+        const key = req.headers['sec-websocket-key'];
+        if (!key) {
+          socket.destroy();
+          return;
+        }
+        const accept = nodeCrypto22
+          .createHash('sha1')
+          .update(String(key).trim() + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
+          .digest('base64');
+        socket.write(
+          [
+            'HTTP/1.1 101 Switching Protocols',
+            'Upgrade: websocket',
+            'Connection: Upgrade',
+            `Sec-WebSocket-Accept: ${accept}`,
+            '',
+            ''
+          ].join('\r\n')
+        );
+        hintSockets.add(socket);
+        const isEdge = String(req.url || '/').startsWith('/edge/ws');
+        let buf = Buffer.alloc(0);
+        socket.on('data', (chunk) => {
+          buf = Buffer.concat([buf, chunk]);
+          while (buf.length >= 2) {
+            const opcode = buf[0] & 0x0f;
+            const masked = (buf[1] & 0x80) !== 0;
+            let len = buf[1] & 0x7f;
+            let offset = 2;
+            if (len === 126) {
+              if (buf.length < 4) return;
+              len = buf.readUInt16BE(2);
+              offset = 4;
+            } else if (len === 127) {
+              if (buf.length < 10) return;
+              len = Number(buf.readBigUInt64BE(2));
+              offset = 10;
+            }
+            const totalNeeded = offset + (masked ? 4 : 0) + len;
+            if (buf.length < totalNeeded) return;
+            const maskKey = masked ? buf.subarray(offset, offset + 4) : null;
+            const payloadStart = offset + (masked ? 4 : 0);
+            const rawPayload = Buffer.from(buf.subarray(payloadStart, payloadStart + len));
+            buf = buf.subarray(totalNeeded);
+            if (masked && maskKey) {
+              for (let i = 0; i < rawPayload.length; i += 1) rawPayload[i] ^= maskKey[i % 4];
+            }
+            if (opcode === 0x8) {
+              try { socket.end(); } catch {}
+              return;
+            }
+            if (opcode === 0x9) {
+              if (!socket.destroyed && socket.writable) {
+                socket.write(Buffer.concat([Buffer.from([0x8a, Math.min(125, rawPayload.length)]), rawPayload.subarray(0, 125)]));
+              }
+              continue;
+            }
+            if (opcode !== 0x1) continue;
+            let m;
+            try { m = JSON.parse(rawPayload.toString('utf8')); } catch { continue; }
+            if (!m || typeof m !== 'object') continue;
+            if (m.type === 'auth' || m.type === 'auth_client') {
+              sendHintWsJson(socket, {
+                type: 'auth_ok',
+                role: 'client',
+                device: { id: 'hint-dev-local', name: 'Local PC', role: 'host' },
+                devices: [
+                  { id: 'hint-dev-local', name: 'Local PC', online: true, local: !isEdge },
+                  { id: 'hint-dev-peer', name: 'Peer PC', online: true }
+                ],
+                ...(!isEdge
+                  ? {
+                      state: {
+                        generatedAt: Date.now(),
+                        device: { id: 'hint-dev-local', name: 'Local PC' },
+                        rows: [
+                          {
+                            id: 'hint-local-1',
+                            key: 'antigravity:hint-local-1',
+                            deviceId: 'hint-dev-local',
+                            provider: 'antigravity',
+                            title: 'Local Session',
+                            status: 'completed',
+                            at: Date.now() - 1000
+                          }
+                        ],
+                        groups: []
+                      }
+                    }
+                  : {})
+              });
+              if (isEdge) {
+                sendHintWsJson(socket, {
+                  type: 'host_state',
+                  deviceId: 'hint-dev-peer',
+                  deviceName: 'Peer PC',
+                  seq: 1,
+                  snapshot: {
+                    generatedAt: Date.now(),
+                    device: { id: 'hint-dev-peer', name: 'Peer PC' },
+                    rows: [
+                      {
+                        id: 'hint-peer-2',
+                        key: 'claude:hint-peer-2',
+                        deviceId: 'hint-dev-peer',
+                        provider: 'claude',
+                        title: 'Peer Session',
+                        status: 'completed',
+                        at: Date.now() - 2000
+                      }
+                    ],
+                    groups: []
+                  }
+                });
+              }
+            } else if (m.type === 'ping') {
+              sendHintWsJson(socket, { type: 'pong', echoTs: m.ts });
+            } else if (m.type === 'prewarm_hint') {
+              recvHints.push({ transport: isEdge ? 'edge' : 'local', ...m });
+            }
+          }
+        });
+        socket.on('close', () => hintSockets.delete(socket));
+        socket.on('error', () => hintSockets.delete(socket));
+      });
+
+      const waitHintCond = async (fn, label, timeoutMs = 5000) => {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          const val = await fn();
+          if (val) return val;
+          await new Promise((r) => setTimeout(r, 40));
+        }
+        throw new Error(`Adversarial #22 timed out waiting for: ${label}`);
+      };
+
+      await new Promise((resolve, reject) => {
+        hintWsServer.listen(0, '127.0.0.1', resolve);
+        hintWsServer.on('error', reject);
+      });
+      const hintPort = hintWsServer.address().port;
+
+      try {
+        await evalJs(`(() => {
+          window.__THEO_ALLOW_MOCK_WS = true;
+          window.__THEO_MOCK_BRIDGE_TOKEN = 'test-token-hex';
+          window.__theoTestWs.resetPrewarmHintCooldowns();
+          window.__theoTestWs.connectLocalWs('http://127.0.0.1:${hintPort}', { wsPath: '/ws' });
+          window.__theoTestWs.connectEdgeWs('ws://127.0.0.1:${hintPort}/edge/ws');
+          return true;
+        })()`);
+        await waitHintCond(
+          () => evalJs(`(() => {
+            const rows = window.__theoTestWs.getState()?.rows || [];
+            return rows.some((r) => r.id === 'hint-local-1') && rows.some((r) => r.id === 'hint-peer-2');
+          })()`),
+          'Adversarial #22 dual WS auth_ok'
+        );
+
+        const hintCheck = await evalJs(`(() => {
+          const before = window.__theoWsDeltaStats?.prewarmHintsSent || 0;
+          const rNew = window.__theoTestWs.emitPrewarmHint('__new__');
+          const rDraft = window.__theoTestWs.emitPrewarmHint('draft-new-99');
+          const rLocal1 = window.__theoTestWs.emitPrewarmHint('hint-local-1', { source: 'tap' });
+          const rLocalDup = window.__theoTestWs.emitPrewarmHint('hint-local-1', { source: 'tap' });
+          const rPeer = window.__theoTestWs.emitPrewarmHint('hint-peer-2', { source: 'inspector' });
+          return {
+            rNew, rDraft, rLocal1, rLocalDup, rPeer,
+            deltaSent: (window.__theoWsDeltaStats?.prewarmHintsSent || 0) - before
+          };
+        })()`);
+        assert.strictEqual(hintCheck.rNew, false, '__new__ must never emit prewarm_hint');
+        assert.strictEqual(hintCheck.rDraft, false, 'draft-new-* must never emit prewarm_hint');
+        assert.strictEqual(hintCheck.rLocal1, 'local', 'Local row routes prewarm_hint via local WS');
+        assert.strictEqual(hintCheck.rLocalDup, false, '12s cooldown must suppress immediate duplicate prewarm_hint');
+        assert.strictEqual(hintCheck.rPeer, 'edge', 'Peer device row routes prewarm_hint via Edge WS');
+        assert.strictEqual(hintCheck.deltaSent, 2);
+
+        await waitHintCond(() => recvHints.length >= 2, 'Server receives both prewarm_hint frames');
+        assert.strictEqual(recvHints[0].transport, 'local');
+        assert.strictEqual(recvHints[0].threadId, 'hint-local-1');
+        assert.strictEqual(recvHints[0].provider, 'antigravity');
+        assert.strictEqual(recvHints[1].transport, 'edge');
+        assert.strictEqual(recvHints[1].threadId, 'hint-peer-2');
+        assert.strictEqual(recvHints[1].targetDeviceId, 'hint-dev-peer');
+        assert.strictEqual(recvHints[1].source, 'inspector');
+
+        // Clicking a rendered session card emits prewarm_hint via setPinnedNav
+        const clickedCard = await evalJs(`(() => {
+          window.__theoTestWs.resetPrewarmHintCooldowns();
+          document.querySelector('[data-tab="sessions"]')?.click();
+          const card = document.querySelector('.session-card[data-session-id="hint-local-1"]');
+          if (card) card.click();
+          return Boolean(card);
+        })()`);
+        assert.strictEqual(clickedCard, true, 'Expected rendered .session-card for hint-local-1');
+        await waitHintCond(
+          () => recvHints.filter((m) => m.threadId === 'hint-local-1').length >= 2,
+          'Session card click emits prewarm_hint'
+        );
+        // Cold-boot queued hint: disconnect WS, focus session while offline, reconnect -> flushes on welcome/auth_ok
+        await evalJs(`(() => {
+          window.__theoTestWs.disconnectAll();
+          return true;
+        })()`);
+        await new Promise((r) => setTimeout(r, 80));
+        const queuedCardOk = await evalJs(`(() => {
+          window.__THEO_ALLOW_MOCK_WS = true;
+          window.__THEO_MOCK_BRIDGE_TOKEN = 'test-token-hex';
+          window.__theoTestWs.resetPrewarmHintCooldowns();
+          document.querySelector('[data-tab="sessions"]')?.click();
+          const card = document.querySelector('.session-card[data-session-id="hint-local-1"]');
+          if (card) card.click();
+          window.__theoTestWs.connectLocalWs('http://127.0.0.1:${hintPort}', { wsPath: '/ws' });
+          return Boolean(card);
+        })()`);
+        assert.strictEqual(queuedCardOk, true, 'Expected rendered .session-card for offline cold-boot check');
+        await waitHintCond(
+          () => recvHints.filter((m) => m.threadId === 'hint-local-1').length >= 3,
+          'Pending cold-boot prewarm_hint flushes immediately upon WS welcome/auth_ok'
+        );
+
+        console.log('[PASS] Adversarial #22: v75 Cross-device prewarm_hint emission, cold-boot flush, cooldown dedup, & invalid-id guards verified');
+      } finally {
+        try { await evalJs('window.__theoTestWs?.disconnectAll?.()'); } catch {}
+        for (const s of hintSockets) { try { s.destroy(); } catch {} }
+        await new Promise((r) => hintWsServer.close(r));
+      }
+    }
+
     // Final error & network quarantine assertions (#21)
     assert.strictEqual(pageExceptions.length, 0, `Uncaught page exceptions: ${JSON.stringify(pageExceptions)}`);
     assert.strictEqual(consoleErrors.length, 0, `Console errors: ${JSON.stringify(consoleErrors)}`);

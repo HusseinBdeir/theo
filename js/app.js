@@ -2028,11 +2028,13 @@
     let prov = provider;
     let ttl = title;
     let dur = durationMs;
+    let skipHint = false;
     if (threadIdOrObj && typeof threadIdOrObj === 'object') {
       tid = threadIdOrObj.threadId || threadIdOrObj.sessionId || '';
       prov = threadIdOrObj.provider || '';
       ttl = threadIdOrObj.title || threadIdOrObj.sessionTitle || '';
       if (threadIdOrObj.durationMs) dur = Number(threadIdOrObj.durationMs);
+      skipHint = Boolean(threadIdOrObj.skipPrewarmHint);
     }
     if (!tid) return;
     pinnedNavThreadId = String(tid);
@@ -2051,6 +2053,11 @@
         })
       );
     } catch {}
+    if (!skipHint && typeof emitPrewarmHint === 'function') {
+      try {
+        emitPrewarmHint(pinnedNavThreadId, { provider: pinnedNavProvider, source: 'focus' });
+      } catch {}
+    }
   }
 
   function restorePinnedNavFromSession() {
@@ -4606,9 +4613,106 @@
     patchedRows: 0,
     resyncRequests: 0,
     lastSeq: 0,
-    edgeSuppressedForLocal: 0
+    edgeSuppressedForLocal: 0,
+    prewarmHintsSent: 0
   };
   window.__theoWsDeltaStats = wsDeltaStats;
+
+  const PREWARM_HINT_MIN_INTERVAL_MS = 12000;
+  const PREWARM_HINT_PENDING_TTL_MS = 45000;
+  const lastPrewarmHintById = new Map();
+  let pendingPrewarmHint = null;
+
+  function flushPendingPrewarmHint() {
+    if (!pendingPrewarmHint) return false;
+    const item = pendingPrewarmHint;
+    pendingPrewarmHint = null;
+    if (
+      !item ||
+      !item.threadId ||
+      Date.now() - Number(item.at || 0) > PREWARM_HINT_PENDING_TTL_MS ||
+      isPinLocked()
+    ) {
+      return false;
+    }
+    const stillActive =
+      item.threadId === prefs.selectedThreadId || item.threadId === prefs.splitWatchThreadId;
+    if (!stillActive) return false;
+    return emitPrewarmHint(item.threadId, { ...(item.opts || {}), noQueue: true });
+  }
+
+  function emitPrewarmHint(threadId, opts = {}) {
+    if ((isHeadlessBrowser && !window.__THEO_ALLOW_MOCK_WS) || isPinLocked()) {
+      return false;
+    }
+    const cleanTid = String(threadId || '')
+      .trim()
+      .replace(/^(?:antigravity|claude):/, '');
+    if (
+      !cleanTid ||
+      cleanTid === '__new__' ||
+      cleanTid === '__new_claude__' ||
+      cleanTid.startsWith('cmd-') ||
+      cleanTid.startsWith('draft-') ||
+      !/^[A-Za-z0-9._:-]{1,160}$/.test(cleanTid)
+    ) {
+      return false;
+    }
+    const now = Date.now();
+    if (!opts.force) {
+      const lastSent = Number(lastPrewarmHintById.get(cleanTid) || 0);
+      if (now - lastSent < PREWARM_HINT_MIN_INTERVAL_MS) {
+        return false;
+      }
+    }
+    const matchedRow = (appState?.rows || []).find((r) => r && r.id === cleanTid) || null;
+    const rowDeviceId = String(opts.targetDeviceId || matchedRow?.deviceId || '').trim();
+    const resolvedProv = String(opts.provider || matchedRow?.provider || '').trim();
+    const isRemotePeerRow = Boolean(
+      rowDeviceId && localWsDevice?.id && rowDeviceId !== localWsDevice.id
+    );
+    const frame = {
+      type: 'prewarm_hint',
+      threadId: cleanTid,
+      ...(resolvedProv ? { provider: resolvedProv } : {}),
+      ...(rowDeviceId ? { targetDeviceId: rowDeviceId } : {}),
+      source: String(opts.source || 'tap').trim().slice(0, 32),
+      ts: now
+    };
+    let transportSent = false;
+    if (!isRemotePeerRow && localWsAuthed && localWs && localWs.readyState === 1) {
+      try {
+        localWs.send(JSON.stringify(frame));
+        transportSent = 'local';
+      } catch {}
+    } else if (edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
+      try {
+        edgeWs.send(JSON.stringify({ ...frame, targetDeviceId: rowDeviceId || 'auto' }));
+        transportSent = 'edge';
+      } catch {}
+    } else if (localWsAuthed && localWs && localWs.readyState === 1) {
+      try {
+        localWs.send(JSON.stringify(frame));
+        transportSent = 'local-forward';
+      } catch {}
+    }
+    if (!transportSent) {
+      if (!opts.noQueue) {
+        pendingPrewarmHint = {
+          threadId: cleanTid,
+          opts: { ...opts, noQueue: true },
+          at: now
+        };
+      }
+      return false;
+    }
+    if (pendingPrewarmHint && pendingPrewarmHint.threadId === cleanTid) {
+      pendingPrewarmHint = null;
+    }
+    setBoundedMap(lastPrewarmHintById, cleanTid, now, 64);
+    wsDeltaStats.prewarmHintsSent += 1;
+    return transportSent;
+  }
 
   function getSocketBaselineMap(ws) {
     if (!ws || typeof ws !== 'object') return null;
@@ -4921,6 +5025,7 @@
               );
             }
             flushOutbox().catch(() => {});
+            flushPendingPrewarmHint();
             updateConnectionBanner();
           } else if (msg.type === 'pong') {
             const sentTs = Number(msg.echoTs || msg.ts || 0);
@@ -5111,6 +5216,7 @@
               }
             }, 22000);
             flushOutbox().catch(() => {});
+            flushPendingPrewarmHint();
             updateConnectionBanner();
             renderAll();
           } else if (msg.type === 'auth_err') {
@@ -10890,6 +10996,9 @@
     if (prefs.inspectorOpen && prefs.inspectorTab === 'agents' && sid && activeInspectorAgentId) {
       fetchBgTaskLiveLog(sid, activeInspectorAgentId, provKey).catch(() => {});
     }
+    if (prefs.inspectorOpen && sid && !isNewSessionMode()) {
+      emitPrewarmHint(sid, { provider: provKey, source: 'inspector' });
+    }
   }
 
   function formatInspectorDiffHtml(diffText) {
@@ -15310,6 +15419,7 @@
           ensureEditorTabOpen(targetId);
           recordFreqUsage('threads', targetId);
           saveJson(STORAGE_KEYS.PREFS, prefs);
+          emitPrewarmHint(targetId, { source: 'split-watch-swap' });
           renderChatView(true);
           renderIdeSidebar();
           fetchThreadDetail(targetId).catch(() => {});
@@ -16223,6 +16333,7 @@
         prefs.composerMode = 'reply';
         saveJson(STORAGE_KEYS.PREFS, prefs);
         markNotificationsCheckedForSession(prefs.selectedThreadId);
+        emitPrewarmHint(prefs.selectedThreadId, { source: 'open-chat' });
         switchTab('chat');
         renderIdeSidebar();
         fetchThreadDetail(prefs.selectedThreadId);
@@ -17125,6 +17236,7 @@
           prefs.splitWatchThreadId = nextId;
           recordFreqUsage('threads', nextId);
           saveJson(STORAGE_KEYS.PREFS, prefs);
+          emitPrewarmHint(nextId, { source: 'split-watch' });
           renderSplitWatchPane();
           fetchThreadDetail(nextId).catch(() => {});
         }
@@ -18539,7 +18651,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=74', { updateViaCache: 'none' })
+        .register('sw.js?v=75', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
@@ -18814,6 +18926,8 @@
     connectLocalWs,
     connectEdgeWs,
     noteRowOverride,
+    emitPrewarmHint,
+    resetPrewarmHintCooldowns: () => lastPrewarmHintById.clear(),
     getState: () => appState,
     getBaselineRows: (transport = 'local', devId = '') => {
       const sock = transport === 'edge' ? edgeWs : localWs;
