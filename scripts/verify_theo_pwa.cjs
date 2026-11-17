@@ -5965,6 +5965,140 @@ async function main() {
         assert.strictEqual(ideTabChildCheck.inActs && ideTabChildCheck.inSameRow, true, 'Real Tab key must step into .ide-tree-acts without dropping focus');
         assert.ok(ideTabChildCheck.actsWidth > 0 && ideTabChildCheck.opacity === '1', 'Tabbing into .ide-tree-acts must keep .ide-tree-acts expanded');
 
+        // 1c. Collapsible Pinned shelf stays visible when source group is collapsed, zero duplicates when expanded, toggle persists across reload & stays local-only, and hovering .ide-row-act.pin-act opens #ide-micro-tip
+        const ideShelfCheck = await evalJs(`(() => {
+          const pinShelf = document.querySelector('#ide-sidebar-tree [data-ide-group="pinned"]');
+          const pinCardInShelf = pinShelf?.querySelector('.ide-tree-row[data-ide-open-session="pin-grp-old-pinned"]');
+          const grpPillTxt = pinCardInShelf?.querySelector('.ide-row-pill.grp-pill')?.textContent?.trim() || '';
+          const alphaBtn = document.querySelector('#ide-sidebar-tree [data-group-act="toggle"][data-group-id="grp-alpha"]');
+          alphaBtn?.click();
+          const inShelfAfterAlphaCollapse = Boolean(document.querySelector('#ide-sidebar-tree [data-ide-group="pinned"] .ide-tree-row[data-ide-open-session="pin-grp-old-pinned"]'));
+          const unpinnedHiddenAfterAlphaCollapse = !document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-grp-new-unpinned"]');
+          document.querySelector('#ide-sidebar-tree [data-group-act="toggle"][data-group-id="grp-alpha"]')?.click();
+          const duplicateCount = document.querySelectorAll('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-grp-old-pinned"]').length;
+          window.__theoLastQuarantinedCmd = null;
+          document.querySelector('#ide-sidebar-tree [data-group-act="toggle"][data-group-id="pinned"]')?.click();
+          const shelfCollapsed = Boolean(document.querySelector('#ide-sidebar-tree [data-ide-group="pinned"]')?.classList.contains('collapsed'));
+          const shelfRowsWhenCollapsed = document.querySelectorAll('#ide-sidebar-tree [data-ide-group="pinned"] .ide-tree-row').length;
+          const storedPinnedCollapsed = Boolean(JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}').collapsedSessionGroups?.pinned);
+          const cmdDispatchedForPinnedToggle = window.__theoLastQuarantinedCmd;
+          return {
+            hasPinShelf: Boolean(pinShelf),
+            grpPillTxt,
+            inShelfAfterAlphaCollapse,
+            unpinnedHiddenAfterAlphaCollapse,
+            duplicateCount,
+            shelfCollapsed,
+            shelfRowsWhenCollapsed,
+            storedPinnedCollapsed,
+            cmdDispatchedForPinnedToggle
+          };
+        })()`);
+        assert.strictEqual(ideShelfCheck.hasPinShelf, true, 'Desktop IDE sidebar must render [data-ide-group="pinned"] top shelf');
+        assert.strictEqual(ideShelfCheck.grpPillTxt, 'Alpha', 'Pinned row lifted from custom group must display .grp-pill badge');
+        assert.strictEqual(ideShelfCheck.inShelfAfterAlphaCollapse && ideShelfCheck.unpinnedHiddenAfterAlphaCollapse, true, 'Pinned chat must remain visible at top when its group is collapsed');
+        assert.strictEqual(ideShelfCheck.duplicateCount, 1, 'Pinned chat must never duplicate between Pinned shelf and its source group');
+        assert.strictEqual(ideShelfCheck.shelfCollapsed && ideShelfCheck.shelfRowsWhenCollapsed === 0, true, 'Clicking Pinned shelf header must collapse shelf');
+        assert.strictEqual(ideShelfCheck.storedPinnedCollapsed, true, 'Toggling Pinned shelf must persist collapsedSessionGroups.pinned in localStorage');
+        assert.strictEqual(ideShelfCheck.cmdDispatchedForPinnedToggle, null, 'Toggling Pinned shelf must stay local without dispatching groupToggle');
+
+        // Verify Pinned shelf collapsed state persists across full page reload
+        await evalJs(`(() => { location.reload(); return true; })()`);
+        await new Promise((r) => setTimeout(r, 500));
+        await evalJs(`(() => {
+          window.__THEO_ALLOW_MOCK_WS = true;
+          window.__THEO_MOCK_BRIDGE_TOKEN = 'test-token-hex';
+          window.__theoLastQuarantinedCmd = null;
+          window.__theoTestWs.connectLocalWs('http://127.0.0.1:${pinPort}', { wsPath: '/ws' });
+          return true;
+        })()`);
+        await waitPinCond(
+          () => evalJs(`Boolean((window.__theoTestWs.getState()?.rows || []).some((r) => r.id === 'pin-grp-old-pinned'))`),
+          'Adversarial #23 reconnect after Pinned collapse reload check'
+        );
+        const shelfAfterReload = await evalJs(`(() => {
+          const collapsedAfterReload = Boolean(document.querySelector('#ide-sidebar-tree [data-ide-group="pinned"]')?.classList.contains('collapsed'));
+          document.querySelector('#ide-sidebar-tree [data-group-act="toggle"][data-group-id="pinned"]')?.click();
+          const expandedAfterRestore = !document.querySelector('#ide-sidebar-tree [data-ide-group="pinned"]')?.classList.contains('collapsed');
+          return { collapsedAfterReload, expandedAfterRestore };
+        })()`);
+        assert.strictEqual(shelfAfterReload.collapsedAfterReload, true, 'Pinned shelf collapsed state must survive page reload');
+        assert.strictEqual(shelfAfterReload.expandedAfterRestore, true);
+
+        // Hover row first to expand .ide-tree-acts, then hover .ide-row-act.pin-act -> #ide-micro-tip reveals and #ide-hover-card stays hidden, then test toggleIdeSidebar + Escape + scroll + pointerdown dismissal & .group-act-btn tip
+        const hoverRowTitlePt = await evalJs(`(() => {
+          const t = document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-grp-old-pinned"] .ide-tree-title');
+          const r = t?.getBoundingClientRect();
+          return r ? { cx: Math.round(r.left + Math.min(24, r.width / 2)), cy: Math.round(r.top + r.height / 2) } : null;
+        })()`);
+        assert.ok(hoverRowTitlePt);
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hoverRowTitlePt.cx, y: hoverRowTitlePt.cy }, sessionId);
+        await new Promise((r) => setTimeout(r, 30));
+        const pinActPt = await evalJs(`(() => {
+          const b = document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-grp-old-pinned"] .ide-row-act.pin-act');
+          const r = b?.getBoundingClientRect();
+          return r && r.width > 0 ? { cx: Math.round(r.left + r.width / 2), cy: Math.round(r.top + r.height / 2) } : null;
+        })()`);
+        assert.ok(pinActPt, 'Expanded .ide-row-act.pin-act must expose positive hover box');
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: pinActPt.cx, y: pinActPt.cy }, sessionId);
+        await new Promise((r) => setTimeout(r, 230));
+        const ideMicroTipCheck = await evalJs(`(() => {
+          const tip = document.getElementById('ide-micro-tip');
+          const hc = document.getElementById('ide-hover-card');
+          const r = tip?.getBoundingClientRect();
+          const tipVisibleBeforeToggle = tip ? !tip.hidden : false;
+          const tipText = tip?.textContent?.trim() || '';
+          const hcHidden = hc ? hc.hidden : true;
+          const clamped = Boolean(r && r.left >= 6 && r.right <= window.innerWidth - 6);
+          document.getElementById('btn-activity-brand')?.click();
+          const tipHiddenAfterSidebarToggle = tip ? tip.hidden : true;
+          document.getElementById('btn-activity-brand')?.click();
+          return { tipVisibleBeforeToggle, tipText, hcHidden, clamped, tipHiddenAfterSidebarToggle };
+        })()`);
+        assert.strictEqual(ideMicroTipCheck.tipVisibleBeforeToggle, true, 'Hovering .ide-row-act.pin-act must open #ide-micro-tip');
+        assert.strictEqual(ideMicroTipCheck.tipText, 'Unpin chat');
+        assert.strictEqual(ideMicroTipCheck.hcHidden, true, '#ide-hover-card must stay hidden while hovering .ide-row-act');
+        assert.strictEqual(ideMicroTipCheck.clamped, true, '#ide-micro-tip must clamp inside viewport');
+        assert.strictEqual(ideMicroTipCheck.tipHiddenAfterSidebarToggle, true, 'Collapsing IDE sidebar must dismiss #ide-micro-tip');
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 }, sessionId);
+        await new Promise((r) => setTimeout(r, 30));
+
+        // Verify Desktop Sessions .group-act-btn[data-micro-tip] opens #ide-micro-tip and Escape/scroll/pointerdown dismiss it
+        await evalJs(`(() => { document.querySelector('[data-tab="sessions"]')?.click(); return true; })()`);
+        await new Promise((r) => setTimeout(r, 50));
+        const grpActPt = await evalJs(`(() => {
+          const b = document.querySelector('#view-sessions [data-group-act="rename"][data-group-id="grp-alpha"]');
+          b?.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+          const r = b?.getBoundingClientRect();
+          return r && r.width > 0 ? { cx: Math.round(r.left + r.width / 2), cy: Math.round(r.top + r.height / 2) } : null;
+        })()`);
+        assert.ok(grpActPt, 'Must locate Desktop Sessions .group-act-btn[data-group-act="rename"]');
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: grpActPt.cx, y: grpActPt.cy }, sessionId);
+        await new Promise((r) => setTimeout(r, 100));
+        const grpTipOpen = await evalJs(`(() => {
+          const tip = document.getElementById('ide-micro-tip');
+          const shown = tip ? !tip.hidden : false;
+          const text = tip?.textContent?.trim() || '';
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          const hiddenOnEsc = tip ? tip.hidden : false;
+          return { shown, text, hiddenOnEsc };
+        })()`);
+        assert.strictEqual(grpTipOpen.shown && grpTipOpen.text === 'Rename group', true, 'Hovering .group-act-btn must open #ide-micro-tip');
+        assert.strictEqual(grpTipOpen.hiddenOnEsc, true, 'Escape must dismiss #ide-micro-tip');
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 }, sessionId);
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: grpActPt.cx, y: grpActPt.cy }, sessionId);
+        await new Promise((r) => setTimeout(r, 100));
+        const grpTipScrollCheck = await evalJs(`(() => {
+          const tip = document.getElementById('ide-micro-tip');
+          const shownBeforeScroll = tip ? !tip.hidden : false;
+          document.dispatchEvent(new Event('scroll', { bubbles: false }));
+          const hiddenAfterScroll = tip ? tip.hidden : false;
+          return { shownBeforeScroll, hiddenAfterScroll };
+        })()`);
+        assert.strictEqual(grpTipScrollCheck.shownBeforeScroll && grpTipScrollCheck.hiddenAfterScroll, true, 'scroll must hide #ide-micro-tip');
+        await evalJs(`(() => { document.querySelector('[data-tab="chat"]')?.click(); return true; })()`);
+        await new Promise((r) => setTimeout(r, 50));
+
         const titleClickPt = await evalJs(`(() => {
           const titleEl = document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-ug-new-unpinned"] .ide-tree-title');
           titleEl?.scrollIntoView?.({ block: 'center', inline: 'nearest' });
@@ -6061,29 +6195,42 @@ async function main() {
         assert.deepStrictEqual(cmdPalettePin.cmdSent?.ids, ['pin-grp-new-unpinned']);
         assert.strictEqual(cmdPalettePin.cmdSent?.value, true);
 
-        // 2b. Desktop #ide-sidebar-search flat results keep older/low-freq pinned chat above high-freq/newer unpinned match
+        // 2b. Desktop #ide-sidebar-search flat results keep older/low-freq pinned chat above high-freq/newer unpinned match & omit Pinned shelf while searching
         const ideSearchPinOrder = await evalJs(`(() => {
           const inp = document.getElementById('ide-sidebar-search');
           inp.value = 'group';
           inp.dispatchEvent(new Event('input', { bubbles: true }));
+          const hasPinnedShelf = Boolean(document.querySelector('#ide-sidebar-tree [data-ide-group="pinned"]'));
           const ids = [...document.querySelectorAll('#ide-sidebar-tree .ide-tree-row[data-ide-open-session]')].map((el) => el.dataset.ideOpenSession);
           inp.value = '';
           inp.dispatchEvent(new Event('input', { bubbles: true }));
-          return ids;
+          return { ids, hasPinnedShelf };
         })()`);
+        assert.strictEqual(ideSearchPinOrder.hasPinnedShelf, false, 'Desktop #ide-sidebar-search must hide [data-ide-group="pinned"] shelf during search');
         assert.ok(
-          ideSearchPinOrder.indexOf('pin-grp-old-pinned') >= 0 &&
-            ideSearchPinOrder.indexOf('pin-grp-old-pinned') < ideSearchPinOrder.indexOf('pin-grp-new-unpinned'),
-          `Desktop #ide-sidebar-search must keep pinned chat first above higher-frequency unpinned match: ${JSON.stringify(ideSearchPinOrder)}`
+          ideSearchPinOrder.ids.indexOf('pin-grp-old-pinned') >= 0 &&
+            ideSearchPinOrder.ids.indexOf('pin-grp-old-pinned') < ideSearchPinOrder.ids.indexOf('pin-grp-new-unpinned'),
+          `Desktop #ide-sidebar-search must keep pinned chat first above higher-frequency unpinned match: ${JSON.stringify(ideSearchPinOrder.ids)}`
         );
 
-        // 3. Mobile (390x844) Sessions cards, dark/light themes, 0px horizontal overflow, bulk archive & single archive auto-unpin
+        // 3. Mobile (390x844) Sessions cards, Pinned top shelf above collapsed groups, dark/light themes, 0px horizontal overflow, bulk archive & single archive auto-unpin
         await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true }, sessionId);
         for (const theme of ['dark', 'light']) {
           const mobPin = await evalJs(`(async () => {
             document.documentElement.setAttribute('data-theme', '${theme}');
             document.querySelector('[data-tab="sessions"]')?.click();
             await new Promise((r) => setTimeout(r, 60));
+            const pinShelf = document.querySelector('#view-sessions [data-session-group="pinned"]');
+            document.querySelector('#view-sessions [data-group-act="toggle"][data-group-id="grp-alpha"]')?.click();
+            const inShelfWhileAlphaCollapsed = Boolean(document.querySelector('#view-sessions [data-session-group="pinned"] .session-card[data-session-id="pin-grp-old-pinned"]'));
+            const dupInAlpha = Boolean(document.querySelector('#view-sessions [data-session-group="grp-alpha"] .session-card[data-session-id="pin-grp-old-pinned"]'));
+            document.querySelector('#view-sessions [data-group-act="toggle"][data-group-id="grp-alpha"]')?.click();
+            const totalOccurrences = document.querySelectorAll('#view-sessions .session-card[data-session-id="pin-grp-old-pinned"]').length;
+            window.__theoLastQuarantinedCmd = null;
+            document.querySelector('#view-sessions [data-group-act="toggle"][data-group-id="pinned"]')?.click();
+            const mobPinnedCollapsed = Boolean(document.querySelector('#view-sessions [data-session-group="pinned"]')?.classList.contains('collapsed'));
+            document.querySelector('#view-sessions [data-group-act="toggle"][data-group-id="pinned"]')?.click();
+            const mobPinnedCmd = window.__theoLastQuarantinedCmd;
             const cardIds = [...document.querySelectorAll('#view-sessions .session-card[data-session-id]')].map((c) => c.dataset.sessionId);
             const pCard = document.querySelector('#view-sessions .session-card[data-session-id="pin-ug-pinned-closed"]');
             const hasGlyph = Boolean(pCard?.querySelector('.sess-pin-glyph'));
@@ -6092,8 +6239,11 @@ async function main() {
             const activePinColor = activePinBtn ? getComputedStyle(activePinBtn).color : '';
             const overflowX = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
             const titles = document.querySelectorAll('[title]').length;
-            return { cardIds, hasGlyph, hasActiveBtn, activePinColor, overflowX, titles };
+            return { cardIds, hasPinShelf: Boolean(pinShelf), inShelfWhileAlphaCollapsed, dupInAlpha, totalOccurrences, mobPinnedCollapsed, mobPinnedCmd, hasGlyph, hasActiveBtn, activePinColor, overflowX, titles };
           })()`);
+          assert.strictEqual(mobPin.hasPinShelf, true, `Mobile ${theme} Sessions must render [data-session-group="pinned"] shelf`);
+          assert.strictEqual(mobPin.inShelfWhileAlphaCollapsed && !mobPin.dupInAlpha && mobPin.totalOccurrences === 1, true, `Mobile ${theme} Sessions must keep pinned card in Pinned shelf without duplicating in group`);
+          assert.strictEqual(mobPin.mobPinnedCollapsed && mobPin.mobPinnedCmd === null, true, `Mobile ${theme} toggling Pinned shelf must collapse locally without remote command`);
           assert.strictEqual(mobPin.hasGlyph, true, `Mobile ${theme} session card must show .sess-pin-glyph`);
           assert.strictEqual(mobPin.hasActiveBtn, true, `Mobile ${theme} session card must mark .sess-act-btn.pin-btn.active`);
           if (theme === 'light') {
@@ -6111,15 +6261,17 @@ async function main() {
           const sInp = document.getElementById('sess-search-input');
           sInp.value = 'ungrouped';
           sInp.dispatchEvent(new Event('input', { bubbles: true }));
+          const hasPinnedShelf = Boolean(document.querySelector('#view-sessions [data-session-group="pinned"]'));
           const ids = [...document.querySelectorAll('#view-sessions .session-card[data-session-id]')].map((c) => c.dataset.sessionId);
           sInp.value = '';
           sInp.dispatchEvent(new Event('input', { bubbles: true }));
-          return ids;
+          return { ids, hasPinnedShelf };
         })()`);
+        assert.strictEqual(mobSearchPinOrder.hasPinnedShelf, false, 'Mobile #sess-search-input must hide [data-session-group="pinned"] shelf during search');
         assert.ok(
-          mobSearchPinOrder.indexOf('pin-ug-pinned-closed') >= 0 &&
-            mobSearchPinOrder.indexOf('pin-ug-pinned-closed') < mobSearchPinOrder.indexOf('pin-ug-new-unpinned'),
-          `Mobile #sess-search-input must keep pinned chat ahead of newer unpinned match: ${JSON.stringify(mobSearchPinOrder)}`
+          mobSearchPinOrder.ids.indexOf('pin-ug-pinned-closed') >= 0 &&
+            mobSearchPinOrder.ids.indexOf('pin-ug-pinned-closed') < mobSearchPinOrder.ids.indexOf('pin-ug-new-unpinned'),
+          `Mobile #sess-search-input must keep pinned chat ahead of newer unpinned match: ${JSON.stringify(mobSearchPinOrder.ids)}`
         );
 
         const archivePinCheck = await evalJs(`(() => {
@@ -6160,9 +6312,18 @@ async function main() {
         // 4. Multi-Host LWW override vs stale snapshot, then newer WS rowPatch(seq:2) re-pin
         const lwwPrep = await evalJs(`(() => {
           document.querySelector('#view-sessions .session-card[data-session-id="pin-grp-old-pinned"] .sess-act-btn.pin-btn')?.click();
-          return Boolean((window.__theoTestWs.getState()?.rows || []).find((r) => r.id === 'pin-grp-old-pinned')?.pinned);
+          const rowPinned = Boolean((window.__theoTestWs.getState()?.rows || []).find((r) => r.id === 'pin-grp-old-pinned')?.pinned);
+          const hasMobPinnedShelf = Boolean(document.querySelector('#view-sessions [data-session-group="pinned"]'));
+          const restoredMobInAlpha = Boolean(document.querySelector('#view-sessions [data-session-group="grp-alpha"] .session-card[data-session-id="pin-grp-old-pinned"]'));
+          const hasIdePinnedShelf = Boolean(document.querySelector('#ide-sidebar-tree [data-ide-group="pinned"]'));
+          const restoredIdeInAlpha = Boolean(document.querySelector('#ide-sidebar-tree [data-ide-group="grp-alpha"] .ide-tree-row[data-ide-open-session="pin-grp-old-pinned"]'));
+          return { rowPinned, hasMobPinnedShelf, restoredMobInAlpha, hasIdePinnedShelf, restoredIdeInAlpha };
         })()`);
-        assert.strictEqual(lwwPrep, false);
+        assert.strictEqual(lwwPrep.rowPinned, false);
+        assert.strictEqual(lwwPrep.hasMobPinnedShelf, false, 'Unpinning last pinned chat must remove Mobile [data-session-group="pinned"]');
+        assert.strictEqual(lwwPrep.restoredMobInAlpha, true, 'Unpinning last pinned chat must restore card inside grp-alpha on Mobile');
+        assert.strictEqual(lwwPrep.hasIdePinnedShelf, false, 'Unpinning last pinned chat must remove Desktop [data-ide-group="pinned"]');
+        assert.strictEqual(lwwPrep.restoredIdeInAlpha, true, 'Unpinning last pinned chat must restore row inside grp-alpha on Desktop');
         for (const s of pinSockets) {
           sendPinWsJson(s, {
             type: 'state',
@@ -6230,6 +6391,68 @@ async function main() {
           pulsePinOrder.indexOf('pin-grp-old-pinned') >= 0 &&
             pulsePinOrder.indexOf('pin-grp-old-pinned') < pulsePinOrder.indexOf('pin-grp-new-unpinned'),
           `Pulse #pulse-recent-sessions must keep pinned chat first after stream_delta: ${JSON.stringify(pulsePinOrder)}`
+        );
+
+        // Zero-groups boundary: with groups:[], Pinned shelf still renders above 'Sessions' (Ungrouped fallback) on both Desktop and Mobile
+        for (const s of pinSockets) {
+          sendPinWsJson(s, {
+            type: 'state',
+            deviceId: 'pin-dev-local',
+            seq: 3,
+            generatedAt: futurePinTs + 5000,
+            state: {
+              generatedAt: futurePinTs + 5000,
+              device: { id: 'pin-dev-local', name: 'Pin Local PC' },
+              groups: [],
+              rows: [
+                {
+                  id: 'zg-pinned',
+                  key: 'zg-pinned',
+                  provider: 'antigravity',
+                  title: 'Zero Group Pinned',
+                  status: 'completed',
+                  at: now23 - 200000,
+                  pinned: true,
+                  pinnedAt: futurePinTs + 4000,
+                  pinUpdatedAt: futurePinTs + 4000,
+                  archived: false,
+                  group: null
+                },
+                {
+                  id: 'zg-unpinned',
+                  key: 'zg-unpinned',
+                  provider: 'claude',
+                  title: 'Zero Group Unpinned',
+                  status: 'completed',
+                  at: now23 - 1000,
+                  pinned: false,
+                  pinnedAt: 0,
+                  pinUpdatedAt: 0,
+                  archived: false,
+                  group: null
+                }
+              ]
+            }
+          });
+        }
+        await waitPinCond(
+          () => evalJs(`Boolean(document.querySelector('#ide-sidebar-tree [data-ide-group="pinned"]'))`),
+          'Zero-groups state must render Desktop [data-ide-group="pinned"]'
+        );
+        const zeroGrpCheck = await evalJs(`(async () => {
+          document.querySelector('[data-tab="sessions"]')?.click();
+          await new Promise((r) => setTimeout(r, 60));
+          return {
+            idePinned: Boolean(document.querySelector('#ide-sidebar-tree [data-ide-group="pinned"]')),
+            ideSessionsTitle: document.querySelector('#ide-sidebar-tree [data-ide-group="ungrouped"] .ide-tree-group-name')?.textContent?.trim(),
+            mobPinned: Boolean(document.querySelector('#view-sessions [data-session-group="pinned"]')),
+            mobSessionsTitle: document.querySelector('#view-sessions [data-session-group="ungrouped"] .group-title')?.textContent?.trim()
+          };
+        })()`);
+        assert.deepStrictEqual(
+          zeroGrpCheck,
+          { idePinned: true, ideSessionsTitle: 'Sessions', mobPinned: true, mobSessionsTitle: 'Sessions' },
+          `Zero-groups boundary must render Pinned shelf above 'Sessions' section on Desktop and Mobile: ${JSON.stringify(zeroGrpCheck)}`
         );
 
         console.log('[PASS] Adversarial #23: v77 Cross-Device Chat Pinning UI, flat search, 390x844 mobile 0px overflow, Ctrl+K, archive/unarchive auto-unpin & LWW rowPatch verified');

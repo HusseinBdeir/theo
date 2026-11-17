@@ -3585,12 +3585,79 @@
 
   // Theme, Studio Palettes & IDE Sidebar management
   let sidebarHoverTimer = null;
+  let ideMicroTipTimer = null;
+  let ideMicroTipAnchor = null;
+  let ideMicroTipPendingAnchor = null;
+
+  function hideIdeMicroTip() {
+    if (ideMicroTipTimer) {
+      clearTimeout(ideMicroTipTimer);
+      ideMicroTipTimer = null;
+    }
+    ideMicroTipAnchor = null;
+    ideMicroTipPendingAnchor = null;
+    const tipEl = $('ide-micro-tip');
+    if (tipEl) tipEl.hidden = true;
+  }
+
+  function isIdeMicroTipTargetHiddenOrDetached(el) {
+    if (!el || !el.isConnected) return true;
+    const rect = el.getBoundingClientRect?.();
+    return Boolean(rect && (rect.width <= 0 || rect.height <= 0));
+  }
+
+  function reconcileIdeMicroTip() {
+    if (
+      (ideMicroTipAnchor && isIdeMicroTipTargetHiddenOrDetached(ideMicroTipAnchor)) ||
+      (ideMicroTipPendingAnchor && isIdeMicroTipTargetHiddenOrDetached(ideMicroTipPendingAnchor))
+    ) {
+      hideIdeMicroTip();
+    }
+  }
+
+  function showIdeMicroTip(anchorEl) {
+    if (ideMicroTipTimer) {
+      clearTimeout(ideMicroTipTimer);
+      ideMicroTipTimer = null;
+    }
+    ideMicroTipPendingAnchor = null;
+    if (isPinLocked() || !anchorEl || !anchorEl.isConnected) return;
+    if (window.matchMedia && !window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+    const ctxMenu = $('ide-context-menu');
+    if (ctxMenu && !ctxMenu.hidden) return;
+    const tipEl = $('ide-micro-tip');
+    const label = String(anchorEl.dataset?.microTip || '').trim();
+    if (!tipEl || !label) return;
+    const rect = anchorEl.getBoundingClientRect?.();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return;
+    const hoverCard = $('ide-hover-card');
+    if (hoverCard) hoverCard.hidden = true;
+    if (sidebarHoverTimer) {
+      clearTimeout(sidebarHoverTimer);
+      sidebarHoverTimer = null;
+    }
+    ideMicroTipAnchor = anchorEl;
+    tipEl.textContent = label;
+    tipEl.style.left = '6px';
+    tipEl.style.top = '6px';
+    tipEl.hidden = false;
+    const vw = window.innerWidth || 1280;
+    const vh = window.innerHeight || 800;
+    const tipW = tipEl.offsetWidth || Math.min(240, Math.max(52, label.length * 6.5 + 16));
+    const tipH = tipEl.offsetHeight || 22;
+    const left = Math.round(Math.max(6, Math.min(rect.left + rect.width / 2 - tipW / 2, vw - tipW - 6)));
+    const above = rect.top - tipH - 5;
+    const top = above >= 6 ? above : Math.min(Math.max(6, vh - tipH - 6), rect.bottom + 5);
+    tipEl.style.left = `${left}px`;
+    tipEl.style.top = `${Math.round(top)}px`;
+  }
 
   function closeFloatingUiMenus() {
     if (sidebarHoverTimer) {
       clearTimeout(sidebarHoverTimer);
       sidebarHoverTimer = null;
     }
+    hideIdeMicroTip();
     const palPop = $('theme-palette-popover');
     if (palPop) palPop.hidden = true;
     $('btn-palette-picker')?.setAttribute('aria-expanded', 'false');
@@ -3671,6 +3738,7 @@
 
   function toggleIdeSidebar(forceCollapsed) {
     if (isPinLocked()) return;
+    closeFloatingUiMenus();
     const next =
       typeof forceCollapsed === 'boolean' ? forceCollapsed : !Boolean(prefs.sidebarCollapsed);
     prefs.sidebarCollapsed = next;
@@ -7336,6 +7404,7 @@
     if (isPinLocked() || !sessionId) return;
     const menuEl = $('ide-context-menu');
     if (!menuEl) return;
+    hideIdeMicroTip();
     const hoverCard = $('ide-hover-card');
     if (hoverCard) hoverCard.hidden = true;
     const r = (appState?.rows || []).find((x) => x && x.id === sessionId);
@@ -7830,13 +7899,17 @@
             Number(b.pinnedAt || 0) - Number(a.pinnedAt || 0)
         );
 
-    const renderTreeRow = (r) => {
+    const renderTreeRow = (r, opts = {}) => {
       const provKey = r.provider === 'claude' ? 'claude' : 'antigravity';
       const isSelected = r.id === curSelected;
       const isRunningNow = isSessionActivelyRunning(r.id);
       const isOpenTab = isSessionOpenTab(r);
       const isPinnedRow = isRowPinned(r);
       const qCnt = getSessionPendingQuestionCount(r);
+      const grpBadgeName =
+        opts.showGroupBadge && r.group && groupIds.has(r.group)
+          ? groups.find((g) => g.id === r.group)?.name || ''
+          : '';
       const dotCls = isRunningNow
         ? 'working'
         : r.status === 'waiting' || qCnt > 0
@@ -7856,23 +7929,24 @@
               : ''
           }
           <span class="ide-tree-title">${esc(r.title || 'Untitled Session')}</span>
+          ${grpBadgeName ? `<span class="ide-row-pill grp-pill">${esc(grpBadgeName)}</span>` : ''}
           ${qCnt > 0 ? `<span class="ide-row-pill q-pill tabular">?${qCnt}</span>` : ''}
           ${bgBadge ? `<span class="ide-row-pill bg-pill tabular">${esc(bgBadge)}</span>` : ''}
           <span class="ide-tree-age tabular">${esc(age)}</span>
           <span class="ide-tree-acts">
             ${
               dotCls === 'working'
-                ? `<button type="button" class="ide-row-act stop" data-sess-act="stop" data-id="${esc(r.id)}" aria-label="Stop session">■</button>`
+                ? `<button type="button" class="ide-row-act stop" data-sess-act="stop" data-id="${esc(r.id)}" data-micro-tip="Stop session" aria-label="Stop session">■</button>`
                 : ''
             }
             ${
               isOpenTab
-                ? `<button type="button" class="ide-row-act close-tab" data-close-editor-tab="${esc(r.id)}" aria-label="Close open tab">×</button>`
+                ? `<button type="button" class="ide-row-act close-tab" data-close-editor-tab="${esc(r.id)}" data-micro-tip="Close open tab" aria-label="Close open tab">×</button>`
                 : ''
             }
-            <button type="button" class="ide-row-act pin-act${isPinnedRow ? ' active' : ''}" data-sess-act="pin" data-id="${esc(r.id)}" data-val="${isPinnedRow ? 'false' : 'true'}" aria-pressed="${isPinnedRow}" aria-label="${isPinnedRow ? 'Unpin chat' : 'Pin chat'}">${isPinnedRow ? PIN_FILLED_SVG : PIN_OUTLINE_SVG}</button>
-            <button type="button" class="ide-row-act" data-sess-ctx-menu="${esc(r.id)}" aria-label="Session actions">⋯</button>
-            <button type="button" class="ide-row-act" data-sess-act="archive" data-id="${esc(r.id)}" data-val="true" aria-label="Archive session">✕</button>
+            <button type="button" class="ide-row-act pin-act${isPinnedRow ? ' active' : ''}" data-sess-act="pin" data-id="${esc(r.id)}" data-val="${isPinnedRow ? 'false' : 'true'}" data-micro-tip="${isPinnedRow ? 'Unpin chat' : 'Pin chat'}" aria-pressed="${isPinnedRow}" aria-label="${isPinnedRow ? 'Unpin chat' : 'Pin chat'}">${isPinnedRow ? PIN_FILLED_SVG : PIN_OUTLINE_SVG}</button>
+            <button type="button" class="ide-row-act" data-sess-ctx-menu="${esc(r.id)}" data-micro-tip="Session actions" aria-label="Session actions">⋯</button>
+            <button type="button" class="ide-row-act" data-sess-act="archive" data-id="${esc(r.id)}" data-val="true" data-micro-tip="Archive session" aria-label="Archive session">✕</button>
           </span>
         </div>
       `;
@@ -7880,20 +7954,41 @@
 
     if (filtered.length === 0) {
       treeEl.innerHTML = `<div class="ide-tree-empty">${allRows.length === 0 ? 'No sessions synced yet.' : 'No matching sessions.'}</div>`;
+      reconcileIdeMicroTip();
       return;
     }
 
-    if (!q && groups.length > 0) {
+    const pinnedItems = filtered.filter((r) => isRowPinned(r));
+    const unpinnedFiltered = filtered.filter((r) => !isRowPinned(r));
+
+    if (!q && (groups.length > 0 || pinnedItems.length > 0)) {
       let html = '';
+      if (pinnedItems.length > 0) {
+        const pinCollapsed =
+          prefs.sidebarFilter !== 'all' ? false : isSessionGroupCollapsed('pinned', false);
+        html += `
+          <div class="ide-tree-group pinned-shelf${pinCollapsed ? ' collapsed' : ''}" data-ide-group="pinned">
+            <div class="ide-tree-group-hdr">
+              <button type="button" class="ide-tree-group-btn" data-group-act="toggle" data-group-id="pinned" aria-expanded="${!pinCollapsed}">
+                <span class="ide-chevron-sm">${pinCollapsed ? CHEVRON_RIGHT_SVG : CHEVRON_DOWN_SVG}</span>
+                <span class="ide-pinned-shelf-ico" aria-hidden="true">${PIN_FILLED_SVG}</span>
+                <span class="ide-tree-group-name">Pinned</span>
+              </button>
+              <span class="ide-group-pill pinned-pill tabular">${pinnedItems.length}</span>
+            </div>
+            ${pinCollapsed ? '' : `<div class="ide-tree-group-items">${pinnedItems.map((r) => renderTreeRow(r, { showGroupBadge: true })).join('')}</div>`}
+          </div>
+        `;
+      }
       for (const g of groups) {
-        const gItems = filtered.filter((r) => r.group === g.id);
+        const gItems = unpinnedFiltered.filter((r) => r.group === g.id);
         if (prefs.sidebarFilter !== 'all' && gItems.length === 0) continue;
         const collapsed =
           prefs.sidebarFilter !== 'all'
             ? false
             : isSessionGroupCollapsed(g.id, gItems.length === 0 ? true : Boolean(g.collapsed));
         html += `
-          <div class="ide-tree-group${collapsed ? ' collapsed' : ''}">
+          <div class="ide-tree-group${collapsed ? ' collapsed' : ''}" data-ide-group="${esc(g.id)}">
             <div class="ide-tree-group-hdr">
               <button type="button" class="ide-tree-group-btn" data-group-act="toggle" data-group-id="${esc(g.id)}" aria-expanded="${!collapsed}">
                 <span class="ide-chevron-sm">${collapsed ? CHEVRON_RIGHT_SVG : CHEVRON_DOWN_SVG}</span>
@@ -7901,31 +7996,33 @@
               </button>
               <span class="ide-group-pill tabular">${gItems.length}</span>
             </div>
-            ${collapsed ? '' : `<div class="ide-tree-group-items">${gItems.map(renderTreeRow).join('')}</div>`}
+            ${collapsed ? '' : `<div class="ide-tree-group-items">${gItems.map((r) => renderTreeRow(r)).join('')}</div>`}
           </div>
         `;
       }
-      const ungrouped = filtered.filter((r) => !r.group || !groupIds.has(r.group));
+      const ungrouped = unpinnedFiltered.filter((r) => !r.group || !groupIds.has(r.group));
       if (ungrouped.length > 0) {
         const ugCollapsed = prefs.sidebarFilter !== 'all' ? false : isSessionGroupCollapsed('ungrouped', false);
         html += `
-          <div class="ide-tree-group${ugCollapsed ? ' collapsed' : ''}">
+          <div class="ide-tree-group${ugCollapsed ? ' collapsed' : ''}" data-ide-group="ungrouped">
             <div class="ide-tree-group-hdr">
               <button type="button" class="ide-tree-group-btn" data-group-act="toggle" data-group-id="ungrouped" aria-expanded="${!ugCollapsed}">
                 <span class="ide-chevron-sm">${ugCollapsed ? CHEVRON_RIGHT_SVG : CHEVRON_DOWN_SVG}</span>
-                <span class="ide-tree-group-name">Ungrouped</span>
+                <span class="ide-tree-group-name">${groups.length > 0 ? 'Ungrouped' : 'Sessions'}</span>
               </button>
               <span class="ide-group-pill tabular">${ungrouped.length}</span>
             </div>
-            ${ugCollapsed ? '' : `<div class="ide-tree-group-items">${ungrouped.map(renderTreeRow).join('')}</div>`}
+            ${ugCollapsed ? '' : `<div class="ide-tree-group-items">${ungrouped.map((r) => renderTreeRow(r)).join('')}</div>`}
           </div>
         `;
       }
       treeEl.innerHTML = html;
+      reconcileIdeMicroTip();
       return;
     }
 
-    treeEl.innerHTML = `<div class="ide-tree-group-items">${filtered.slice(0, 120).map(renderTreeRow).join('')}</div>`;
+    treeEl.innerHTML = `<div class="ide-tree-group-items">${filtered.slice(0, 120).map((r) => renderTreeRow(r)).join('')}</div>`;
+    reconcileIdeMicroTip();
   }
 
   function isNewSessionMode() {
@@ -10052,6 +10149,7 @@
     items = [],
     isCollapsed = false,
     isCustomGroup = false,
+    isPinnedShelf = false,
     archivableIds = []
   }) {
     const bodyHtml = items.length
@@ -10060,20 +10158,24 @@
 
     const actionsHtml = isCustomGroup
       ? `
-        <button type="button" class="group-act-btn" data-group-act="new-in-group" data-group-id="${esc(id)}" aria-label="Start new session">+ New</button>
-        <button type="button" class="group-act-btn" data-group-act="rename" data-group-id="${esc(id)}" data-group-name="${esc(name)}" aria-label="Rename group">✎</button>
-        <button type="button" class="group-act-btn" data-group-act="delete" data-group-id="${esc(id)}" data-group-name="${esc(name)}" aria-label="Delete group">✕</button>
+        <button type="button" class="group-act-btn" data-group-act="new-in-group" data-group-id="${esc(id)}" data-micro-tip="Start new session in group" aria-label="Start new session">+ New</button>
+        <button type="button" class="group-act-btn" data-group-act="rename" data-group-id="${esc(id)}" data-group-name="${esc(name)}" data-micro-tip="Rename group" aria-label="Rename group">✎</button>
+        <button type="button" class="group-act-btn" data-group-act="delete" data-group-id="${esc(id)}" data-group-name="${esc(name)}" data-micro-tip="Delete group" aria-label="Delete group">✕</button>
       `
       : archivableIds.length > 0
-        ? `<button type="button" class="group-act-btn" data-group-act="archive-closed" aria-label="Archive ${archivableIds.length} closed idle sessions">Archive closed (${archivableIds.length})</button>`
+        ? `<button type="button" class="group-act-btn" data-group-act="archive-closed" data-micro-tip="Archive ${archivableIds.length} closed idle sessions" aria-label="Archive ${archivableIds.length} closed idle sessions">Archive closed (${archivableIds.length})</button>`
         : '';
 
+    const leadGlyphHtml = isPinnedShelf
+      ? `<span class="group-pin-glyph" aria-hidden="true">${PIN_FILLED_SVG}</span>`
+      : `<span class="group-color-dot ${esc(color)}"></span>`;
+
     return `
-      <div class="session-group-block ${isCollapsed ? 'collapsed' : ''}" data-session-group="${esc(id)}">
+      <div class="session-group-block${isPinnedShelf ? ' pinned-shelf' : ''} ${isCollapsed ? 'collapsed' : ''}" data-session-group="${esc(id)}">
         <div class="session-group-header">
           <button type="button" class="session-group-toggle" data-group-act="toggle" data-group-id="${esc(id)}" aria-expanded="${!isCollapsed}">
             <svg class="group-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg>
-            <span class="group-color-dot ${esc(color)}"></span>
+            ${leadGlyphHtml}
             <span class="group-title">${esc(name)}</span>
             <span class="group-count-pill tabular">${items.length}</span>
           </button>
@@ -10234,6 +10336,7 @@
 
     if (rows.length === 0 && unpairedBannerHtml) {
       container.innerHTML = unpairedBannerHtml;
+      reconcileIdeMicroTip();
       return;
     }
 
@@ -10258,15 +10361,32 @@
           </div>
         </div>
       `;
+      reconcileIdeMicroTip();
       return;
     }
 
-    // Render collapsible Group sections at top when not searching and not in Archived-only mode
-    if (!q && groups.length > 0 && prefs.sessStatus !== 'archived') {
+    const pinnedItems = filtered.filter((r) => isRowPinned(r));
+    const unpinnedFiltered = filtered.filter((r) => !isRowPinned(r));
+
+    // Render collapsible Pinned + Group sections at top when not searching and not in Archived-only mode
+    if (!q && (groups.length > 0 || pinnedItems.length > 0) && prefs.sessStatus !== 'archived') {
       const groupPalette = ['blue', 'green', 'amber', 'purple', 'steel'];
       let sectionsHtml = unpairedBannerHtml;
+      if (pinnedItems.length > 0) {
+        const isPinnedCollapsed =
+          q || prefs.sessStatus !== 'all' ? false : isSessionGroupCollapsed('pinned', false);
+        sectionsHtml += renderSessionGroupSectionHtml({
+          id: 'pinned',
+          name: 'Pinned',
+          color: 'brass',
+          items: pinnedItems,
+          isCollapsed: isPinnedCollapsed,
+          isCustomGroup: false,
+          isPinnedShelf: true
+        });
+      }
       groups.forEach((g, idx) => {
-        const gItems = filtered.filter((r) => r.group === g.id);
+        const gItems = unpinnedFiltered.filter((r) => r.group === g.id);
         if ((q || prefs.sessStatus !== 'all') && gItems.length === 0) {
           return;
         }
@@ -10284,7 +10404,7 @@
         });
       });
 
-      const ungroupedItems = filtered.filter((r) => !r.group || !groupIds.has(r.group));
+      const ungroupedItems = unpinnedFiltered.filter((r) => !r.group || !groupIds.has(r.group));
       if (ungroupedItems.length > 0) {
         const archivableIds = ungroupedItems
           .filter(
@@ -10303,7 +10423,7 @@
             : isSessionGroupCollapsed('ungrouped', false);
         sectionsHtml += renderSessionGroupSectionHtml({
           id: 'ungrouped',
-          name: 'Ungrouped',
+          name: groups.length > 0 ? 'Ungrouped' : 'Sessions',
           color: 'brass',
           items: ungroupedItems,
           isCollapsed: isUngroupedCollapsed,
@@ -10313,11 +10433,13 @@
       }
 
       container.innerHTML = sectionsHtml;
+      reconcileIdeMicroTip();
       return;
     }
 
     container.innerHTML =
       unpairedBannerHtml + filtered.map((r) => renderSessionCardHtml(r)).join('');
+    reconcileIdeMicroTip();
   }
 
   function coalesceThreadMessages(rawMessages) {
@@ -16215,7 +16337,11 @@
             prefs.collapsedSessionGroups = {};
           }
           const grpObj = (appState?.groups || []).find((g) => g.id === gId);
-          const cur = isSessionGroupCollapsed(gId, Boolean(grpObj?.collapsed));
+          const attrExpanded = groupAct.getAttribute('aria-expanded');
+          const cur =
+            attrExpanded === 'false' || attrExpanded === 'true'
+              ? attrExpanded === 'false'
+              : isSessionGroupCollapsed(gId, Boolean(grpObj?.collapsed));
           const next = !cur;
           prefs.collapsedSessionGroups[gId] = next;
           if (grpObj) grpObj.collapsed = next;
@@ -16223,7 +16349,7 @@
           persistCache();
           renderSessionsView();
           renderIdeSidebar();
-          if (gId !== 'ungrouped') {
+          if (gId !== 'ungrouped' && gId !== 'pinned') {
             dispatchRemoteCommand({
               type: 'sessionAction',
               action: 'groupToggle',
@@ -17057,6 +17183,16 @@
       });
       sideTree.addEventListener('pointerover', (e) => {
         if (isPinLocked() || e.pointerType === 'touch') return;
+        const microTarget = e.target.closest?.('[data-micro-tip]');
+        if (microTarget) {
+          if (sidebarHoverTimer) {
+            clearTimeout(sidebarHoverTimer);
+            sidebarHoverTimer = 0;
+          }
+          const hc = $('ide-hover-card');
+          if (hc) hc.hidden = true;
+          return;
+        }
         const rowEl = e.target.closest?.('.ide-tree-row[data-ide-open-session]');
         if (!rowEl) return;
         if (sidebarHoverTimer) clearTimeout(sidebarHoverTimer);
@@ -17089,6 +17225,32 @@
         { passive: true }
       );
     }
+
+    document.addEventListener('pointerover', (e) => {
+      if (isPinLocked() || e.pointerType === 'touch') return;
+      const microEl = e.target.closest?.('[data-micro-tip]');
+      if (!microEl) return;
+      if (microEl === ideMicroTipAnchor || microEl === ideMicroTipPendingAnchor) return;
+      hideIdeMicroTip();
+      ideMicroTipPendingAnchor = microEl;
+      ideMicroTipTimer = setTimeout(() => showIdeMicroTip(microEl), 60);
+    });
+    document.addEventListener('pointerout', (e) => {
+      if (!ideMicroTipAnchor && !ideMicroTipPendingAnchor && !ideMicroTipTimer) return;
+      const rel = e.relatedTarget;
+      const active = ideMicroTipAnchor || ideMicroTipPendingAnchor || e.target?.closest?.('[data-micro-tip]');
+      if (active && rel && active.contains?.(rel)) return;
+      hideIdeMicroTip();
+    });
+    document.addEventListener('pointerdown', hideIdeMicroTip, true);
+    document.addEventListener('scroll', hideIdeMicroTip, true);
+    document.addEventListener('focusin', (e) => {
+      const microEl = e.target?.closest?.('[data-micro-tip]');
+      if (microEl && e.target.matches?.(':focus-visible')) {
+        showIdeMicroTip(microEl);
+      }
+    });
+    document.addEventListener('focusout', hideIdeMicroTip);
 
     // Theme, Sound, Sync buttons
     $('btn-theme-toggle')?.addEventListener('click', () =>
@@ -18503,7 +18665,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=78', { updateViaCache: 'none' })
+        .register('sw.js?v=79', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
