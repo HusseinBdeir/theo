@@ -5877,6 +5877,9 @@ async function main() {
           'Adversarial #23 initial pin state loaded'
         );
 
+        const appJsSrc23 = fs.readFileSync(path.join(REPO_ROOT, 'js', 'app.js'), 'utf8');
+        assert.ok(!appJsSrc23.includes('M9.8 2.4l3.8 3.8'), 'Legacy crooked pin polygon must stay replaced in js/app.js');
+
         // 1. Desktop IDE sidebar: pinned-first sort inside group & Ungrouped, pin indicator, hover click & contextmenu close
         const ideDesktopCheck = await evalJs(`(() => {
           const treeIds = [...document.querySelectorAll('#ide-sidebar-tree .ide-tree-row[data-ide-open-session]')].map((el) => el.dataset.ideOpenSession);
@@ -5897,6 +5900,95 @@ async function main() {
           ideDesktopCheck.treeIds.indexOf('pin-ug-pinned-closed') < ideDesktopCheck.treeIds.indexOf('pin-ug-new-unpinned'),
           `Pinned older ungrouped chat must sort before newer unpinned chat: ${JSON.stringify(ideDesktopCheck.treeIds)}`
         );
+
+        // 1b. Hovering .ide-pin-ind keeps it visible & avoids swapping archive/menu under cursor; keyboard :focus-within keeps .ide-tree-acts open
+        const pinHoverRect = await evalJs(`(() => {
+          const ind = document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-grp-old-pinned"] .ide-pin-ind');
+          if (!ind) return null;
+          ind.scrollIntoView({ block: 'center', inline: 'nearest' });
+          const rect = ind.getBoundingClientRect();
+          return { cx: Math.round(rect.left + rect.width / 2), cy: Math.round(rect.top + rect.height / 2) };
+        })()`);
+        assert.ok(pinHoverRect && pinHoverRect.cx > 0 && pinHoverRect.cy > 0, 'Must resolve bounding center of .ide-pin-ind');
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: pinHoverRect.cx, y: pinHoverRect.cy }, sessionId);
+        await new Promise((r) => setTimeout(r, 40));
+        const pinHoverCheck = await evalJs(`(() => {
+          const ind = document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-grp-old-pinned"] .ide-pin-ind');
+          const hit = document.elementFromPoint(${pinHoverRect.cx}, ${pinHoverRect.cy});
+          return {
+            indDisplay: ind ? getComputedStyle(ind).display : 'missing',
+            hitIsPinInd: Boolean(hit?.closest('.ide-pin-ind')),
+            hitDangerous: Boolean(hit?.closest('[data-sess-act="archive"], [data-sess-ctx-menu]')),
+            indRole: ind?.getAttribute('role') || null,
+            indTag: ind?.tagName || ''
+          };
+        })()`);
+        assert.notStrictEqual(pinHoverCheck.indDisplay, 'none', 'Passive .ide-pin-ind must stay visible on hover');
+        assert.strictEqual(pinHoverCheck.hitIsPinInd, true, 'Hovering .ide-pin-ind must keep .ide-pin-ind under cursor');
+        assert.strictEqual(pinHoverCheck.hitDangerous, false, 'Hovering .ide-pin-ind must never swap archive or context menu under cursor');
+        assert.strictEqual(pinHoverCheck.indTag, 'SPAN', '.ide-pin-ind must be a passive span');
+        assert.strictEqual(pinHoverCheck.indRole, null);
+
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 }, sessionId);
+        await new Promise((r) => setTimeout(r, 40));
+        await evalJs(`(() => {
+          const row = document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-ug-new-unpinned"]');
+          row?.focus?.();
+          return true;
+        })()`);
+        await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', modifiers: 8, windowsVirtualKeyCode: 9 }, sessionId);
+        await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', modifiers: 8, windowsVirtualKeyCode: 9 }, sessionId);
+        const rowFocusVisCheck = await evalJs(`(() => {
+          const row = document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-ug-new-unpinned"]');
+          const acts = row?.querySelector('.ide-tree-acts');
+          row?.focus?.();
+          return {
+            actsWidth: acts ? acts.getBoundingClientRect().width : 0,
+            opacity: acts ? getComputedStyle(acts).opacity : '0'
+          };
+        })()`);
+        assert.ok(rowFocusVisCheck.actsWidth > 0, 'Keyboard :focus-visible on .ide-tree-row must expand .ide-tree-acts');
+        assert.strictEqual(rowFocusVisCheck.opacity, '1', 'Keyboard :focus-visible on .ide-tree-row must reveal .ide-tree-acts opacity');
+
+        await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 }, sessionId);
+        await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 }, sessionId);
+        const ideTabChildCheck = await evalJs(`(() => {
+          const row = document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-ug-new-unpinned"]');
+          const acts = row?.querySelector('.ide-tree-acts');
+          return {
+            inActs: Boolean(document.activeElement?.closest('.ide-tree-acts')),
+            inSameRow: document.activeElement?.closest('.ide-tree-row') === row,
+            actsWidth: acts ? acts.getBoundingClientRect().width : 0,
+            opacity: acts ? getComputedStyle(acts).opacity : '0'
+          };
+        })()`);
+        assert.strictEqual(ideTabChildCheck.inActs && ideTabChildCheck.inSameRow, true, 'Real Tab key must step into .ide-tree-acts without dropping focus');
+        assert.ok(ideTabChildCheck.actsWidth > 0 && ideTabChildCheck.opacity === '1', 'Tabbing into .ide-tree-acts must keep .ide-tree-acts expanded');
+
+        const titleClickPt = await evalJs(`(() => {
+          const titleEl = document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-ug-new-unpinned"] .ide-tree-title');
+          titleEl?.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+          const r = titleEl?.getBoundingClientRect();
+          return r ? { cx: Math.round(r.left + Math.min(20, r.width / 2)), cy: Math.round(r.top + r.height / 2) } : null;
+        })()`);
+        assert.ok(titleClickPt && titleClickPt.cx > 0 && titleClickPt.cy > 0);
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: titleClickPt.cx, y: titleClickPt.cy, button: 'left', clickCount: 1 }, sessionId);
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: titleClickPt.cx, y: titleClickPt.cy, button: 'left', clickCount: 1 }, sessionId);
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 }, sessionId);
+        await new Promise((r) => setTimeout(r, 40));
+        const afterClickLeave = await evalJs(`(() => {
+          const acts = document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-ug-new-unpinned"] .ide-tree-acts');
+          return {
+            actsWidth: acts ? acts.getBoundingClientRect().width : -1,
+            opacity: acts ? getComputedStyle(acts).opacity : ''
+          };
+        })()`);
+        assert.strictEqual(afterClickLeave.actsWidth, 0, 'Mouse click on row + pointer leave must not latch .ide-tree-acts open');
+        assert.strictEqual(afterClickLeave.opacity, '0', 'Mouse click on row + pointer leave must keep .ide-tree-acts opacity 0');
+        await evalJs(`(() => {
+          document.querySelector('[data-close-editor-tab="pin-ug-new-unpinned"]')?.click();
+          return true;
+        })()`);
 
         const idePinToggle = await evalJs(`(() => {
           window.__theoLastQuarantinedCmd = null;
@@ -5995,13 +6087,18 @@ async function main() {
             const cardIds = [...document.querySelectorAll('#view-sessions .session-card[data-session-id]')].map((c) => c.dataset.sessionId);
             const pCard = document.querySelector('#view-sessions .session-card[data-session-id="pin-ug-pinned-closed"]');
             const hasGlyph = Boolean(pCard?.querySelector('.sess-pin-glyph'));
-            const hasActiveBtn = Boolean(pCard?.querySelector('.sess-act-btn.pin-btn.active'));
+            const activePinBtn = pCard?.querySelector('.sess-act-btn.pin-btn.active');
+            const hasActiveBtn = Boolean(activePinBtn);
+            const activePinColor = activePinBtn ? getComputedStyle(activePinBtn).color : '';
             const overflowX = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
             const titles = document.querySelectorAll('[title]').length;
-            return { cardIds, hasGlyph, hasActiveBtn, overflowX, titles };
+            return { cardIds, hasGlyph, hasActiveBtn, activePinColor, overflowX, titles };
           })()`);
           assert.strictEqual(mobPin.hasGlyph, true, `Mobile ${theme} session card must show .sess-pin-glyph`);
           assert.strictEqual(mobPin.hasActiveBtn, true, `Mobile ${theme} session card must mark .sess-act-btn.pin-btn.active`);
+          if (theme === 'light') {
+            assert.strictEqual(mobPin.activePinColor, 'rgb(138, 92, 24)', 'Light theme .sess-act-btn.pin-btn.active must use --brass-deep for WCAG AA contrast');
+          }
           assert.strictEqual(mobPin.overflowX, 0, `Mobile 390x844 ${theme} Sessions with pins must have 0px overflow`);
           assert.strictEqual(mobPin.titles, 0);
           assert.ok(

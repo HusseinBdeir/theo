@@ -1387,7 +1387,11 @@ html[data-theme="light"] .kpi-tile {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 13px;
+  height: 13px;
+  margin-right: -2px;
   color: var(--brass);
+  opacity: 0.88;
   flex-shrink: 0;
 }
 
@@ -1450,10 +1454,18 @@ html[data-theme="light"] .kpi-tile {
   color: var(--brass);
 }
 
+.sess-act-btn.pin-btn {
+  border: 1px solid transparent;
+}
+
 .sess-act-btn.pin-btn.active {
   color: var(--brass);
   background: rgba(201, 152, 70, 0.14);
   border: 1px solid rgba(201, 152, 70, 0.36);
+}
+
+html[data-theme="light"] .sess-act-btn.pin-btn.active {
+  color: var(--brass-deep);
 }
 
 .sess-act-btn.stop-btn {
@@ -6517,16 +6529,29 @@ details.ide-side-section:not([open]) .ide-chevron {
 }
 
 .ide-tree-acts {
-  display: none;
+  display: inline-flex;
   align-items: center;
   gap: 2px;
+  width: 0;
+  margin-left: -6px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
-.ide-tree-row:hover .ide-tree-acts {
-  display: inline-flex;
+.ide-tree-row:hover .ide-tree-acts,
+.ide-tree-row:focus-visible .ide-tree-acts,
+.ide-tree-row:has(.ide-tree-acts:focus-within) .ide-tree-acts {
+  width: auto;
+  margin-left: 0;
+  overflow: visible;
+  opacity: 1;
+  pointer-events: auto;
 }
 
-.ide-tree-row:hover .ide-tree-age {
+.ide-tree-row:hover .ide-tree-age,
+.ide-tree-row:focus-visible .ide-tree-age,
+.ide-tree-row:has(.ide-tree-acts:focus-within) .ide-tree-age {
   display: none;
 }
 
@@ -7676,6 +7701,7 @@ html[data-theme="dark"] .composer-send-btn.is-ready {
   border-radius: 4px;
   font-size: 10.5px;
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
   color: var(--text-muted);
@@ -7691,14 +7717,14 @@ html[data-theme="dark"] .composer-send-btn.is-ready {
 }
 
 .ide-pin-ind {
-  width: 16px;
-  height: 16px;
-  border-radius: 3px;
+  width: 13px;
+  height: 13px;
+  margin-right: -2px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   color: var(--brass);
-  opacity: 0.9;
+  opacity: 0.88;
   flex-shrink: 0;
 }
 
@@ -7708,12 +7734,9 @@ html[data-theme="dark"] .composer-send-btn.is-ready {
   height: 12px;
 }
 
-.ide-tree-row:hover .ide-pin-ind {
-  display: none;
-}
-
 .ide-row-act.pin-act.active {
   color: var(--brass);
+  background: rgba(201, 152, 70, 0.14);
 }
 
 /* Quiet Mixed-Case VS Code Trace Verbs (Analyzed / Edited / Created / Ran) */
