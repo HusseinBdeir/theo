@@ -189,17 +189,25 @@
     }
     const cleanModels = [];
     const byAlias = new Map();
+    const pendingEntries = [];
     for (const rawEntry of catObj.models) {
       if (!rawEntry || typeof rawEntry !== 'object') continue;
       const modelId = String(rawEntry.modelId || '').trim();
       const label = String(rawEntry.label || '').trim();
       const baseLabel = String(rawEntry.baseLabel || stripEffortSuffixForCatalog(label) || label).trim();
       if (!modelId && !label && !baseLabel) continue;
+      const isOwnOrchestrator =
+        /orchestrator|model_placeholder_m66[79]|model_placeholder_m681/i.test(`${modelId} ${label}`);
+      const filteredAliases = Array.isArray(rawEntry.aliases)
+        ? rawEntry.aliases
+            .map((a) => String(a || '').trim())
+            .filter((a) => a && (isOwnOrchestrator || !/^\s*orchestrator\s*\((?:carbon|argon)\)\s*$/i.test(a)))
+        : [];
       const entry = {
         modelId,
         label: label || baseLabel,
         baseLabel: baseLabel || label,
-        aliases: Array.isArray(rawEntry.aliases) ? rawEntry.aliases.map((a) => String(a || '').trim()).filter(Boolean) : [],
+        aliases: filteredAliases,
         isFirstPartyGemini: Boolean(rawEntry.isFirstPartyGemini),
         isClaudeLike: Boolean(rawEntry.isClaudeLike),
         supportsThinking: rawEntry.supportsThinking !== false,
@@ -209,15 +217,28 @@
         hardMaxTokens: Number(rawEntry.hardMaxTokens || 0)
       };
       cleanModels.push(entry);
-      const exactKeys = [modelId, label, baseLabel, ...entry.aliases];
-      for (const k of exactKeys) {
+      pendingEntries.push(entry);
+    }
+    // Pass 1: secondary aliases; Pass 2: primary baseLabel -> label -> modelId always win
+    for (const entry of pendingEntries) {
+      for (const k of entry.aliases) {
         const nk = normalizeCatalogLookupKey(k);
-        if (nk) byAlias.set(nk, entry);
-      }
-      for (const k of exactKeys) {
+        if (nk && !byAlias.has(nk)) byAlias.set(nk, entry);
         const sk = normalizeCatalogLookupKey(stripEffortSuffixForCatalog(k));
         if (sk && !byAlias.has(sk)) byAlias.set(sk, entry);
       }
+    }
+    for (const entry of pendingEntries) {
+      const bk = normalizeCatalogLookupKey(entry.baseLabel);
+      if (bk) byAlias.set(bk, entry);
+      const sbk = normalizeCatalogLookupKey(stripEffortSuffixForCatalog(entry.baseLabel));
+      if (sbk && !byAlias.has(sbk)) byAlias.set(sbk, entry);
+    }
+    for (const entry of pendingEntries) {
+      const lk = normalizeCatalogLookupKey(entry.label);
+      if (lk) byAlias.set(lk, entry);
+      const mk = normalizeCatalogLookupKey(entry.modelId);
+      if (mk) byAlias.set(mk, entry);
     }
     liveAntigravityCatalog = {
       updatedAt: nextAt || Date.now(),
@@ -388,7 +409,13 @@
     const effId = inferEffortIdFromRaw(s, effortHint) || 'high';
     const effCap = effId === 'low' ? 'Low' : effId === 'medium' ? 'Medium' : 'High';
     if (provKey === 'antigravity') {
-      if (low === 'model_placeholder_m667' || (low.includes('orchestrator') && low.includes('carbon'))) {
+      if (
+        low === 'model_placeholder_m667' ||
+        low === 'model_placeholder_m669' ||
+        low === 'gemini-pro-orchestrator' ||
+        low === 'gemini-flash-worker-agy' ||
+        (low.includes('orchestrator') && low.includes('carbon'))
+      ) {
         return 'Orchestrator (Carbon)';
       }
       if (low === 'model_placeholder_m681' || (low.includes('orchestrator') && low.includes('argon'))) {
@@ -517,21 +544,35 @@
       }
       return 1000000;
     }
-    if (!low) return 256000;
+    if (!low) return 512000;
     const isExplicit200k = /(?:^|[^a-z0-9])200k(?:[^a-z0-9]|$)/.test(low);
     const isClaudeLike = !isExplicit200k && /(?:^|[^a-z0-9])(model_placeholder_m40[0-5]|claude|opus|sonnet)(?:[^a-z0-9]|$)/.test(low);
     if (isExplicit200k) return 200000;
     const liveEntry = lookupPwaLiveCatalogModel(modelLabel);
-    const liveSoft = liveEntry ? Number(liveEntry.softCompactionTargetTokens || 0) : 0;
+    const liveSoft = liveEntry ? Number(liveEntry.softCompactionTargetTokens || liveEntry.maxContextTokens || 0) : 0;
     if (liveSoft > 0) {
-      const combined = `${low} ${String(liveEntry?.label || '')}`.toLowerCase();
+      const combined = `${low} ${String(liveEntry?.label || '')} ${String(liveEntry?.modelId || '')}`.toLowerCase();
+      const isExplicit200kEntry =
+        (isClaudeLike || liveEntry?.isClaudeLike) && /(?:^|[^a-z0-9])200k(?:[^a-z0-9]|$)/.test(combined);
       const isUnqualifiedHardware1M =
         !isClaudeLike &&
+        !liveEntry?.isClaudeLike &&
         Boolean(liveEntry?.isFirstPartyGemini) &&
         (liveSoft === 1000000 || liveSoft === 1048576) &&
         !/(?:^|[^a-z0-9])(1m|2m)(?:[^a-z0-9]|$)/.test(combined);
-      if (isClaudeLike) {
+      if (isExplicit200kEntry) {
+        return liveSoft <= 200000 ? liveSoft : 200000;
+      }
+      if (isClaudeLike || liveEntry?.isClaudeLike) {
         return isUnqualifiedHardware1M ? 840000 : Math.max(840000, liveSoft);
+      }
+      if (
+        !isUnqualifiedHardware1M &&
+        Boolean(liveEntry?.isFirstPartyGemini) &&
+        liveSoft === 256000 &&
+        !/(?:^|[^a-z0-9])(128k|200k|256k)(?:[^a-z0-9]|$)/.test(combined)
+      ) {
+        return 512000;
       }
       if (!isUnqualifiedHardware1M) {
         return liveSoft;
@@ -542,9 +583,10 @@
     if (/(?:^|[^a-z0-9])900k(?:[^a-z0-9]|$)/.test(low)) return 900000;
     if (/(?:^|[^a-z0-9])840k(?:[^a-z0-9]|$)/.test(low)) return 840000;
     if (/(?:^|[^a-z0-9])512k(?:[^a-z0-9]|$)/.test(low)) return 512000;
+    if (/(?:^|[^a-z0-9])256k(?:[^a-z0-9]|$)/.test(low)) return 256000;
     if (/(?:^|[^a-z0-9])128k(?:[^a-z0-9]|$)/.test(low) || /gpt[-_\s]*oss[-_\s]*120b|model_openai_gpt_oss_120b/.test(low)) return 128000;
     if (isClaudeLike) return 840000;
-    return 256000;
+    return 512000;
   }
 
   function resolveDisplayContextMetrics(provKey, modelLabel, rawUsed, rawLimit, isNewDraft = false, rawHardMax = 0) {
@@ -576,7 +618,7 @@
       limitTokens,
       Number(rawHardMax || 0) ||
         Number(liveEntry?.hardMaxTokens || liveEntry?.maxContextTokens || 0) ||
-        (isFirstPartyGemini && limitTokens <= 256000 ? 1000000 : limitTokens)
+        (isFirstPartyGemini && limitTokens <= 512000 ? 1000000 : limitTokens)
     );
     const parsedUsed = Number(rawUsed);
     const safeUsed = Number.isFinite(parsedUsed) ? parsedUsed : 0;
@@ -12917,7 +12959,7 @@
     }
     renderModelPickerPopover(provKey, modelCfg);
 
-    // Context Window Pill & Popover (256k / 840k on Antigravity, 1M / 200k on Claude Code)
+    // Context Window Pill & Popover (512k / 840k on Antigravity, 1M / 200k on Claude Code)
     const hasThreadModelOverride = Boolean(
       !isNewDraft &&
         prefs.threadModelConfig &&
@@ -18665,7 +18707,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=79', { updateViaCache: 'none' })
+        .register('sw.js?v=80', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

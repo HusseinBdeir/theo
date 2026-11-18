@@ -3782,19 +3782,19 @@ async function main() {
           model: 'MODEL_PLACEHOLDER_M667',
           folder: 'isabi-app',
           status: 'completed',
-          usedTokens: 268592,
-          limitTokens: 256000,
+          usedTokens: 524592,
+          limitTokens: 512000,
           at: now - 20000
         },
         {
           id: 'sess-ctx-zero',
-          title: 'Carbon Exact 256k',
+          title: 'Carbon Exact 512k',
           provider: 'antigravity',
           model: 'MODEL_PLACEHOLDER_M437',
           folder: 'theo',
           status: 'completed',
-          usedTokens: 256000,
-          limitTokens: 256000,
+          usedTokens: 512000,
+          limitTokens: 512000,
           at: now - 30000
         },
         {
@@ -3818,6 +3818,17 @@ async function main() {
           usedTokens: 64000,
           limitTokens: 256000,
           at: now - 50000
+        },
+        {
+          id: 'sess-ctx-worker-agy',
+          title: 'Worker Carbon Display',
+          provider: 'antigravity',
+          model: 'gemini-flash-worker-agy',
+          folder: 'theo-hub',
+          status: 'completed',
+          usedTokens: 442266,
+          limitTokens: 0,
+          at: now - 55000
         },
         {
           id: 'sess-ctx-sonnet1m',
@@ -3878,11 +3889,11 @@ async function main() {
         contextWindow: {
           provider: 'antigravity',
           modelLabel: 'MODEL_PLACEHOLDER_M667',
-          usedTokens: 268592,
-          limitTokens: 256000,
+          usedTokens: 524592,
+          limitTokens: 512000,
           remainingTokens: 0,
           pct: 100,
-          breakdown: [{ key: 'tools', label: 'Tool Outputs', tokens: 268592 }]
+          breakdown: [{ key: 'tools', label: 'Tool Outputs', tokens: 524592 }]
         },
         messages: [{ id: 'ctx-m2', role: 'user', text: 'Verify soft overrun.', createdAt: new Date(now - 20000).toISOString() }]
       };
@@ -3893,11 +3904,11 @@ async function main() {
         contextWindow: {
           provider: 'antigravity',
           modelLabel: 'MODEL_PLACEHOLDER_M437',
-          usedTokens: 256000,
-          limitTokens: 256000,
+          usedTokens: 512000,
+          limitTokens: 512000,
           remainingTokens: 0,
           pct: 100,
-          breakdown: [{ key: 'user', label: 'Prompts & Replies', tokens: 256000 }]
+          breakdown: [{ key: 'user', label: 'Prompts & Replies', tokens: 512000 }]
         },
         messages: [{ id: 'ctx-m3', role: 'user', text: 'Verify zero remaining.', createdAt: new Date(now - 30000).toISOString() }]
       };
@@ -3978,6 +3989,7 @@ async function main() {
         zero: readCard('sess-ctx-zero'),
         legacy840: readCard('sess-ctx-legacy840'),
         orchArgon: readCard('sess-ctx-orch-argon'),
+        workerAgy: readCard('sess-ctx-worker-agy'),
         sonnet1m: readCard('sess-ctx-sonnet1m'),
         nanGuard: readCard('sess-ctx-nan'),
         titleCount: document.querySelectorAll('[title]').length,
@@ -3987,11 +3999,12 @@ async function main() {
     assert.ok(ctxCardsProbe.claude.includes('Claude Opus 5.5 (High)'), `Expected Claude Opus 5.5 (High) card label, got: ${ctxCardsProbe.claude}`);
     assert.ok(ctxCardsProbe.claude.includes('412k / 840k · 49%'), `Expected 412k / 840k · 49% on card, got: ${ctxCardsProbe.claude}`);
     assert.ok(ctxCardsProbe.overrun.includes('Orchestrator (Carbon)'), `Expected Orchestrator (Carbon) card label, got: ${ctxCardsProbe.overrun}`);
-    assert.ok(ctxCardsProbe.overrun.includes('269k / 256k · 100%'), `Expected 269k / 256k · 100% on card, got: ${ctxCardsProbe.overrun}`);
+    assert.ok(ctxCardsProbe.overrun.includes('525k / 512k · 100%'), `Expected 525k / 512k · 100% on card, got: ${ctxCardsProbe.overrun}`);
     assert.ok(ctxCardsProbe.zero.includes('Gemini 4 Carbon (Medium)'), `Expected Gemini 4 Carbon (Medium) card label, got: ${ctxCardsProbe.zero}`);
-    assert.ok(ctxCardsProbe.zero.includes('256k / 256k · 100%'), `Expected 256k / 256k · 100% on card, got: ${ctxCardsProbe.zero}`);
+    assert.ok(ctxCardsProbe.zero.includes('512k / 512k · 100%'), `Expected 512k / 512k · 100% on card, got: ${ctxCardsProbe.zero}`);
     assert.ok(ctxCardsProbe.legacy840.includes('412k / 840k · 49%'), `Legacy 256k cache for M402 must auto-upgrade to 840k, got: ${ctxCardsProbe.legacy840}`);
     assert.ok(ctxCardsProbe.orchArgon.includes('Orchestrator (Argon)'), `Expected Orchestrator (Argon) card label, got: ${ctxCardsProbe.orchArgon}`);
+    assert.ok(ctxCardsProbe.workerAgy.includes('Orchestrator (Carbon)') && ctxCardsProbe.workerAgy.includes('442k / 512k · 86%'), `Expected Orchestrator (Carbon) at 442k / 512k · 86% for gemini-flash-worker-agy, got: ${ctxCardsProbe.workerAgy}`);
     assert.ok(ctxCardsProbe.sonnet1m.includes('300k / 1M · 30%'), `Expected Claude Sonnet 4.6 (1M) card at 300k / 1M, got: ${ctxCardsProbe.sonnet1m}`);
     assert.ok(ctxCardsProbe.nanGuard.includes('Claude Sonnet 5.5 (High)'), `Malformed usedTokens card should keep clean model label, got: ${ctxCardsProbe.nanGuard}`);
     assert.strictEqual(ctxCardsProbe.nanGuard.includes('NaN'), false, 'Card text must never render NaN');
@@ -4030,17 +4043,17 @@ async function main() {
 
     const chatOverrun = await probeChatContext('sess-ctx-overrun');
     assert.strictEqual(chatOverrun.modelPill, 'Orchestrator (Carbon)');
-    assert.strictEqual(chatOverrun.ctxPill, '269k / 256k · 100%');
-    assert.ok(chatOverrun.summary.includes('268,592 tokens used of 256,000 (100%)'), `Unexpected overrun summary: ${chatOverrun.summary}`);
+    assert.strictEqual(chatOverrun.ctxPill, '525k / 512k · 100%');
+    assert.ok(chatOverrun.summary.includes('524,592 tokens used of 512,000 (100%)'), `Unexpected overrun summary: ${chatOverrun.summary}`);
     assert.ok(chatOverrun.summary.includes('+12,592 over soft target (auto-compacts next turn)'), `Expected soft overrun copy, got: ${chatOverrun.summary}`);
     assert.strictEqual(chatOverrun.titleCount, 0);
     assert.strictEqual(chatOverrun.overflowX, 0);
 
     const chatZero = await probeChatContext('sess-ctx-zero');
     assert.strictEqual(chatZero.modelPill, 'Gemini 4 Carbon (Medium)');
-    assert.strictEqual(chatZero.ctxPill, '256k / 256k · 100%');
-    assert.ok(chatZero.summary.includes('0 remaining'), `Expected explicit 0 remaining on exact 256k boundary, got: ${chatZero.summary}`);
-    assert.strictEqual(chatZero.summary.includes('over soft target'), false, 'Exact 256k boundary must not claim soft overrun');
+    assert.strictEqual(chatZero.ctxPill, '512k / 512k · 100%');
+    assert.ok(chatZero.summary.includes('0 remaining'), `Expected explicit 0 remaining on exact 512k boundary, got: ${chatZero.summary}`);
+    assert.strictEqual(chatZero.summary.includes('over soft target'), false, 'Exact 512k boundary must not claim soft overrun');
     assert.strictEqual(chatZero.titleCount, 0);
     assert.strictEqual(chatZero.overflowX, 0);
 
@@ -4067,9 +4080,10 @@ async function main() {
     const pillAfterReload = await evalJs(`document.getElementById('chat-model-pill')?.textContent?.trim() || ''`);
     assert.strictEqual(pillAfterReload, 'Claude Opus 5.5 (Medium)', 'Non-catalog customModel effort override must survive reload');
 
-    // Orchestrator (Argon) must not alias to Gemini 4 Argon, and effort toggle must preserve Orchestrator (Argon)
+    // Orchestrator (Argon) must auto-upgrade stale 256k -> 512k, not alias to Gemini 4 Argon, and effort toggle must preserve Orchestrator (Argon)
     const chatOrchArgon = await probeChatContext('sess-ctx-orch-argon');
     assert.strictEqual(chatOrchArgon.modelPill, 'Orchestrator (Argon)');
+    assert.strictEqual(chatOrchArgon.ctxPill, '64k / 512k · 13%');
     const orchAfterEffort = await evalJs(`(() => {
       document.getElementById('chat-model-picker-btn')?.click();
       document.querySelector('#model-picker-body [data-select-ai-effort="medium"]')?.click();
@@ -4822,6 +4836,30 @@ async function main() {
             maxContextTokens: 1000000,
             softCompactionTargetTokens: 1000000,
             hardMaxTokens: 1000000
+          },
+          {
+            modelId: 'MODEL_PLACEHOLDER_M437',
+            label: 'Gemini 4 Carbon (Medium)',
+            baseLabel: 'Gemini 4 Carbon',
+            aliases: ['MODEL_PLACEHOLDER_M437', 'Gemini 4 Carbon (Medium)', 'Orchestrator (Carbon)'],
+            isFirstPartyGemini: true,
+            isClaudeLike: false,
+            supportsThinking: false,
+            maxContextTokens: 0,
+            softCompactionTargetTokens: 256000,
+            hardMaxTokens: 1000000
+          },
+          {
+            modelId: 'MODEL_PLACEHOLDER_M667',
+            label: 'Orchestrator (Carbon)',
+            baseLabel: 'Orchestrator (Carbon)',
+            aliases: ['MODEL_PLACEHOLDER_M667', 'Orchestrator (Carbon)'],
+            isFirstPartyGemini: true,
+            isClaudeLike: false,
+            supportsThinking: false,
+            maxContextTokens: 256000,
+            softCompactionTargetTokens: 256000,
+            hardMaxTokens: 1000000
           }
         ]
       };
@@ -4868,13 +4906,13 @@ async function main() {
         },
         {
           id: 'sess-ctx-pro3',
-          title: 'Gemini Pro3 256k Soft Overrun',
+          title: 'Gemini Pro3 512k Soft Overrun',
           provider: 'antigravity',
           model: 'Gemini Pro3',
           effort: 'high',
           folder: 'isabi-app',
           status: 'completed',
-          usedTokens: 268600,
+          usedTokens: 524600,
           limitTokens: 0,
           at: now - 6100
         },
@@ -4913,6 +4951,18 @@ async function main() {
           usedTokens: 900000,
           limitTokens: 0,
           at: now - 6400
+        },
+        {
+          id: 'sess-ctx-legacy-m667',
+          title: 'Legacy M667 256k Catalog & Row Upgrade',
+          provider: 'antigravity',
+          model: 'MODEL_PLACEHOLDER_M667',
+          effort: 'high',
+          folder: 'isabi-app',
+          status: 'completed',
+          usedTokens: 442266,
+          limitTokens: 256000,
+          at: now - 4500
         }
       );
       rawCache.snapshot = snap;
@@ -4969,10 +5019,10 @@ async function main() {
         contextWindow: {
           provider: 'antigravity',
           modelLabel: 'Gemini Pro3',
-          usedTokens: 268600,
+          usedTokens: 524600,
           limitTokens: 0
         },
-        messages: [{ id: 'ctx-mpro3', role: 'user', text: 'Verify Gemini Pro3 256k soft overrun.', createdAt: new Date(now - 6100).toISOString() }]
+        messages: [{ id: 'ctx-mpro3', role: 'user', text: 'Verify Gemini Pro3 512k soft overrun.', createdAt: new Date(now - 6100).toISOString() }]
       };
       rawCache.threads['sess-ctx-claude200'] = {
         id: 'sess-ctx-claude200',
@@ -5012,6 +5062,19 @@ async function main() {
           limitTokens: 0
         },
         messages: [{ id: 'ctx-mg1m', role: 'user', text: 'Verify underscore 1M Gemini.', createdAt: new Date(now - 6400).toISOString() }]
+      };
+      rawCache.threads['sess-ctx-legacy-m667'] = {
+        id: 'sess-ctx-legacy-m667',
+        provider: 'antigravity',
+        model: 'MODEL_PLACEHOLDER_M667',
+        effort: 'high',
+        contextWindow: {
+          provider: 'antigravity',
+          modelLabel: 'MODEL_PLACEHOLDER_M667',
+          usedTokens: 442266,
+          limitTokens: 256000
+        },
+        messages: [{ id: 'ctx-legm667', role: 'user', text: 'Verify legacy M667 256k -> 512k catalog and row upgrade.', createdAt: new Date(now - 4500).toISOString() }]
       };
       localStorage.setItem('theo_remote_cache_v3', JSON.stringify(rawCache));
       localStorage.removeItem('theo_remote_outbox_v1');
@@ -5157,14 +5220,14 @@ async function main() {
     assert.ok(v73Overrun.arcOffset < 56.5, `Expected non-empty overrun arc stroke, got offset ${v73Overrun.arcOffset}`);
     assert.strictEqual(v73Overrun.overrunPillHidden, false);
     assert.strictEqual(v73Overrun.overrunPillText, '+12.6k');
-    assert.strictEqual(v73Overrun.ctxPill, '269k / 256k · 100%');
+    assert.strictEqual(v73Overrun.ctxPill, '525k / 512k · 100%');
     assert.strictEqual(v73Overrun.bannerHidden, false);
-    assert.ok(v73Overrun.bannerText.includes('Soft compaction target 256k') && v73Overrun.bannerText.includes('Hard context ceiling 1M'), `Unexpected overrun banner: ${v73Overrun.bannerText}`);
+    assert.ok(v73Overrun.bannerText.includes('Soft compaction target 512k') && v73Overrun.bannerText.includes('Hard context ceiling 1M'), `Unexpected overrun banner: ${v73Overrun.bannerText}`);
     assert.strictEqual(v73Overrun.pinNodeCount, 0, 'Pinned constraints strip and composer pin button must not exist at >=85% context (removed in v76)');
     assert.strictEqual(v73Overrun.titleCount, 0);
     assert.strictEqual(v73Overrun.overflowX, 0);
 
-    // Non-overrun exact 256k boundary must hide dual-tone overrun arc/pill/banner
+    // Non-overrun exact 512k boundary must hide dual-tone overrun arc/pill/banner
     await probeChatContext('sess-ctx-zero');
     const v73ZeroCheck = await evalJs(`(() => ({
       isSoftOverrun: Boolean(document.getElementById('btn-ctx-window')?.classList?.contains('is-soft-overrun')),
@@ -5205,8 +5268,8 @@ async function main() {
       isSoftOverrun: Boolean(document.getElementById('btn-ctx-window')?.classList?.contains('is-soft-overrun')),
       arcHidden: Boolean(document.getElementById('ctx-ring-overrun-circle')?.hidden)
     }))()`);
-    assert.strictEqual(v74Pro3.ctxPill, '269k / 256k · 100%');
-    assert.strictEqual(v74Pro3.isSoftOverrun, true, 'Gemini Pro3 must keep 256k soft compaction target');
+    assert.strictEqual(v74Pro3.ctxPill, '525k / 512k · 100%');
+    assert.strictEqual(v74Pro3.isSoftOverrun, true, 'Gemini Pro3 must keep 512k soft compaction target');
     assert.strictEqual(v74Pro3.arcHidden, false);
 
     await probeChatContext('sess-ctx-claude200');
@@ -5232,6 +5295,40 @@ async function main() {
     }))()`);
     assert.strictEqual(v74Gem1M.ctxPill, '900k / 1M · 90%');
     assert.strictEqual(v74Gem1M.isSoftOverrun, false);
+
+    // Legacy M667 row + catalog 256k must auto-upgrade to 512k in both chat header and sessions list cards while keeping 128k / 840k cards intact
+    const chatLegacyM667 = await probeChatContext('sess-ctx-legacy-m667');
+    assert.strictEqual(chatLegacyM667.modelPill, 'Orchestrator (Carbon)');
+    assert.strictEqual(chatLegacyM667.ctxPill, '442k / 512k · 86%');
+    await evalJs(`(() => {
+      const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+      prefs.activeTab = 'sessions';
+      localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+      return true;
+    })()`);
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 600));
+    const legacyCardProbe = await evalJs(`(() => {
+      const readCard = (id) => {
+        const el = document.querySelector('#view-sessions .session-card[data-session-id="' + id + '"]');
+        return el ? el.textContent.replace(/\\s+/g, ' ').trim() : '';
+      };
+      return {
+        legacyM667: readCard('sess-ctx-legacy-m667'),
+        gpt128: readCard('sess-ctx-gpt128'),
+        claude840: readCard('sess-ctx-claude840'),
+        titleCount: document.querySelectorAll('[title]').length,
+        overflowX: Math.max(0, document.documentElement.scrollWidth - window.innerWidth)
+      };
+    })()`);
+    assert.ok(
+      legacyCardProbe.legacyM667.includes('Orchestrator (Carbon)') && legacyCardProbe.legacyM667.includes('442k / 512k · 86%'),
+      `Session card for legacy 256k M667 must auto-upgrade to 442k / 512k · 86%, got: ${legacyCardProbe.legacyM667}`
+    );
+    assert.ok(legacyCardProbe.gpt128.includes('140k / 128k · 100%'), `GPT-OSS 120B card must stay 140k / 128k · 100%, got: ${legacyCardProbe.gpt128}`);
+    assert.ok(legacyCardProbe.claude840.includes('412k / 840k · 49%'), `Claude Opus 5.5 card must stay 412k / 840k · 49%, got: ${legacyCardProbe.claude840}`);
+    assert.strictEqual(legacyCardProbe.titleCount, 0);
+    assert.strictEqual(legacyCardProbe.overflowX, 0);
 
     // 3. Pinned Constraints removed (v76). A cache written by v74 / v75 still carries pinnedConstraint on rows and
     // threads and a queued setPinnedConstraint in the outbox: none of it may render, throw or be re-sent as a pin.
