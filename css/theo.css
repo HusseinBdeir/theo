@@ -1731,32 +1731,6 @@ html[data-theme="dark"] .sess-act-btn.stop-btn {
   flex-shrink: 0;
 }
 
-.group-pin-glyph {
-  width: 13px;
-  height: 13px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--brass);
-  flex-shrink: 0;
-}
-
-.group-pin-glyph svg {
-  width: 12px;
-  height: 12px;
-}
-
-html[data-theme="light"] .group-pin-glyph,
-html[data-theme="light"] .session-group-block.pinned-shelf .group-count-pill {
-  color: var(--brass-deep);
-}
-
-.session-group-block.pinned-shelf .group-count-pill {
-  background: rgba(201, 152, 70, 0.14);
-  color: var(--brass);
-  border: 1px solid rgba(201, 152, 70, 0.34);
-}
-
 .group-color-dot.blue { background: var(--agy); }
 .group-color-dot.green { background: var(--emerald); }
 .group-color-dot.amber { background: var(--amber); }
@@ -7665,25 +7639,6 @@ html[data-theme="dark"] .composer-send-btn.is-ready {
   color: var(--text-primary);
 }
 
-.ide-pinned-shelf-ico {
-  width: 12px;
-  height: 12px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--brass);
-  flex-shrink: 0;
-}
-
-.ide-pinned-shelf-ico svg {
-  width: 11px;
-  height: 11px;
-}
-
-.ide-tree-group.pinned-shelf .ide-tree-group-name {
-  color: var(--text-primary);
-}
-
 .ide-group-pill {
   padding: 0 5px;
   border-radius: 999px;
@@ -7691,17 +7646,6 @@ html[data-theme="dark"] .composer-send-btn.is-ready {
   font-weight: 700;
   background: var(--agy-soft);
   color: var(--steel);
-}
-
-.ide-group-pill.pinned-pill {
-  background: rgba(201, 152, 70, 0.14);
-  color: var(--brass);
-  border: 1px solid rgba(201, 152, 70, 0.34);
-}
-
-html[data-theme="light"] .ide-pinned-shelf-ico,
-html[data-theme="light"] .ide-group-pill.pinned-pill {
-  color: var(--brass-deep);
 }
 
 .ide-tree-group-items {
@@ -8796,19 +8740,6 @@ html[data-theme="light"] .sb-q-btn.primary {
 .ide-row-pill.bg-pill {
   background: var(--emerald-soft);
   color: var(--emerald);
-}
-
-.ide-row-pill.grp-pill {
-  display: inline-block;
-  max-width: 72px;
-  line-height: 15px;
-  vertical-align: middle;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  background: rgba(148, 163, 184, 0.14);
-  color: var(--text-secondary);
-  border: 1px solid rgba(148, 163, 184, 0.22);
 }
 
 /* Docked Multi-Question Stepper Bar (#chat-question-dock) */

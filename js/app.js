@@ -7941,17 +7941,13 @@
             Number(b.pinnedAt || 0) - Number(a.pinnedAt || 0)
         );
 
-    const renderTreeRow = (r, opts = {}) => {
+    const renderTreeRow = (r) => {
       const provKey = r.provider === 'claude' ? 'claude' : 'antigravity';
       const isSelected = r.id === curSelected;
       const isRunningNow = isSessionActivelyRunning(r.id);
       const isOpenTab = isSessionOpenTab(r);
       const isPinnedRow = isRowPinned(r);
       const qCnt = getSessionPendingQuestionCount(r);
-      const grpBadgeName =
-        opts.showGroupBadge && r.group && groupIds.has(r.group)
-          ? groups.find((g) => g.id === r.group)?.name || ''
-          : '';
       const dotCls = isRunningNow
         ? 'working'
         : r.status === 'waiting' || qCnt > 0
@@ -7971,7 +7967,6 @@
               : ''
           }
           <span class="ide-tree-title">${esc(r.title || 'Untitled Session')}</span>
-          ${grpBadgeName ? `<span class="ide-row-pill grp-pill">${esc(grpBadgeName)}</span>` : ''}
           ${qCnt > 0 ? `<span class="ide-row-pill q-pill tabular">?${qCnt}</span>` : ''}
           ${bgBadge ? `<span class="ide-row-pill bg-pill tabular">${esc(bgBadge)}</span>` : ''}
           <span class="ide-tree-age tabular">${esc(age)}</span>
@@ -8000,30 +7995,10 @@
       return;
     }
 
-    const pinnedItems = filtered.filter((r) => isRowPinned(r));
-    const unpinnedFiltered = filtered.filter((r) => !isRowPinned(r));
-
-    if (!q && (groups.length > 0 || pinnedItems.length > 0)) {
+    if (!q && groups.length > 0) {
       let html = '';
-      if (pinnedItems.length > 0) {
-        const pinCollapsed =
-          prefs.sidebarFilter !== 'all' ? false : isSessionGroupCollapsed('pinned', false);
-        html += `
-          <div class="ide-tree-group pinned-shelf${pinCollapsed ? ' collapsed' : ''}" data-ide-group="pinned">
-            <div class="ide-tree-group-hdr">
-              <button type="button" class="ide-tree-group-btn" data-group-act="toggle" data-group-id="pinned" aria-expanded="${!pinCollapsed}">
-                <span class="ide-chevron-sm">${pinCollapsed ? CHEVRON_RIGHT_SVG : CHEVRON_DOWN_SVG}</span>
-                <span class="ide-pinned-shelf-ico" aria-hidden="true">${PIN_FILLED_SVG}</span>
-                <span class="ide-tree-group-name">Pinned</span>
-              </button>
-              <span class="ide-group-pill pinned-pill tabular">${pinnedItems.length}</span>
-            </div>
-            ${pinCollapsed ? '' : `<div class="ide-tree-group-items">${pinnedItems.map((r) => renderTreeRow(r, { showGroupBadge: true })).join('')}</div>`}
-          </div>
-        `;
-      }
       for (const g of groups) {
-        const gItems = unpinnedFiltered.filter((r) => r.group === g.id);
+        const gItems = filtered.filter((r) => r.group === g.id);
         if (prefs.sidebarFilter !== 'all' && gItems.length === 0) continue;
         const collapsed =
           prefs.sidebarFilter !== 'all'
@@ -8038,11 +8013,11 @@
               </button>
               <span class="ide-group-pill tabular">${gItems.length}</span>
             </div>
-            ${collapsed ? '' : `<div class="ide-tree-group-items">${gItems.map((r) => renderTreeRow(r)).join('')}</div>`}
+            ${collapsed ? '' : `<div class="ide-tree-group-items">${gItems.map(renderTreeRow).join('')}</div>`}
           </div>
         `;
       }
-      const ungrouped = unpinnedFiltered.filter((r) => !r.group || !groupIds.has(r.group));
+      const ungrouped = filtered.filter((r) => !r.group || !groupIds.has(r.group));
       if (ungrouped.length > 0) {
         const ugCollapsed = prefs.sidebarFilter !== 'all' ? false : isSessionGroupCollapsed('ungrouped', false);
         html += `
@@ -8050,11 +8025,11 @@
             <div class="ide-tree-group-hdr">
               <button type="button" class="ide-tree-group-btn" data-group-act="toggle" data-group-id="ungrouped" aria-expanded="${!ugCollapsed}">
                 <span class="ide-chevron-sm">${ugCollapsed ? CHEVRON_RIGHT_SVG : CHEVRON_DOWN_SVG}</span>
-                <span class="ide-tree-group-name">${groups.length > 0 ? 'Ungrouped' : 'Sessions'}</span>
+                <span class="ide-tree-group-name">Ungrouped</span>
               </button>
               <span class="ide-group-pill tabular">${ungrouped.length}</span>
             </div>
-            ${ugCollapsed ? '' : `<div class="ide-tree-group-items">${ungrouped.map((r) => renderTreeRow(r)).join('')}</div>`}
+            ${ugCollapsed ? '' : `<div class="ide-tree-group-items">${ungrouped.map(renderTreeRow).join('')}</div>`}
           </div>
         `;
       }
@@ -8063,7 +8038,7 @@
       return;
     }
 
-    treeEl.innerHTML = `<div class="ide-tree-group-items">${filtered.slice(0, 120).map((r) => renderTreeRow(r)).join('')}</div>`;
+    treeEl.innerHTML = `<div class="ide-tree-group-items">${filtered.slice(0, 120).map(renderTreeRow).join('')}</div>`;
     reconcileIdeMicroTip();
   }
 
@@ -10191,7 +10166,6 @@
     items = [],
     isCollapsed = false,
     isCustomGroup = false,
-    isPinnedShelf = false,
     archivableIds = []
   }) {
     const bodyHtml = items.length
@@ -10208,16 +10182,12 @@
         ? `<button type="button" class="group-act-btn" data-group-act="archive-closed" data-micro-tip="Archive ${archivableIds.length} closed idle sessions" aria-label="Archive ${archivableIds.length} closed idle sessions">Archive closed (${archivableIds.length})</button>`
         : '';
 
-    const leadGlyphHtml = isPinnedShelf
-      ? `<span class="group-pin-glyph" aria-hidden="true">${PIN_FILLED_SVG}</span>`
-      : `<span class="group-color-dot ${esc(color)}"></span>`;
-
     return `
-      <div class="session-group-block${isPinnedShelf ? ' pinned-shelf' : ''} ${isCollapsed ? 'collapsed' : ''}" data-session-group="${esc(id)}">
+      <div class="session-group-block ${isCollapsed ? 'collapsed' : ''}" data-session-group="${esc(id)}">
         <div class="session-group-header">
           <button type="button" class="session-group-toggle" data-group-act="toggle" data-group-id="${esc(id)}" aria-expanded="${!isCollapsed}">
             <svg class="group-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg>
-            ${leadGlyphHtml}
+            <span class="group-color-dot ${esc(color)}"></span>
             <span class="group-title">${esc(name)}</span>
             <span class="group-count-pill tabular">${items.length}</span>
           </button>
@@ -10407,28 +10377,12 @@
       return;
     }
 
-    const pinnedItems = filtered.filter((r) => isRowPinned(r));
-    const unpinnedFiltered = filtered.filter((r) => !isRowPinned(r));
-
-    // Render collapsible Pinned + Group sections at top when not searching and not in Archived-only mode
-    if (!q && (groups.length > 0 || pinnedItems.length > 0) && prefs.sessStatus !== 'archived') {
+    // Render collapsible Group sections at top when not searching and not in Archived-only mode
+    if (!q && groups.length > 0 && prefs.sessStatus !== 'archived') {
       const groupPalette = ['blue', 'green', 'amber', 'purple', 'steel'];
       let sectionsHtml = unpairedBannerHtml;
-      if (pinnedItems.length > 0) {
-        const isPinnedCollapsed =
-          q || prefs.sessStatus !== 'all' ? false : isSessionGroupCollapsed('pinned', false);
-        sectionsHtml += renderSessionGroupSectionHtml({
-          id: 'pinned',
-          name: 'Pinned',
-          color: 'brass',
-          items: pinnedItems,
-          isCollapsed: isPinnedCollapsed,
-          isCustomGroup: false,
-          isPinnedShelf: true
-        });
-      }
       groups.forEach((g, idx) => {
-        const gItems = unpinnedFiltered.filter((r) => r.group === g.id);
+        const gItems = filtered.filter((r) => r.group === g.id);
         if ((q || prefs.sessStatus !== 'all') && gItems.length === 0) {
           return;
         }
@@ -10446,7 +10400,7 @@
         });
       });
 
-      const ungroupedItems = unpinnedFiltered.filter((r) => !r.group || !groupIds.has(r.group));
+      const ungroupedItems = filtered.filter((r) => !r.group || !groupIds.has(r.group));
       if (ungroupedItems.length > 0) {
         const archivableIds = ungroupedItems
           .filter(
@@ -10465,7 +10419,7 @@
             : isSessionGroupCollapsed('ungrouped', false);
         sectionsHtml += renderSessionGroupSectionHtml({
           id: 'ungrouped',
-          name: groups.length > 0 ? 'Ungrouped' : 'Sessions',
+          name: 'Ungrouped',
           color: 'brass',
           items: ungroupedItems,
           isCollapsed: isUngroupedCollapsed,
@@ -16391,7 +16345,7 @@
           persistCache();
           renderSessionsView();
           renderIdeSidebar();
-          if (gId !== 'ungrouped' && gId !== 'pinned') {
+          if (gId !== 'ungrouped') {
             dispatchRemoteCommand({
               type: 'sessionAction',
               action: 'groupToggle',
@@ -18707,7 +18661,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=80', { updateViaCache: 'none' })
+        .register('sw.js?v=81', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
