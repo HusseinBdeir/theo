@@ -3546,7 +3546,10 @@ async function main() {
         { id: 'host-alpha', name: 'Alpha', online: true, sessionCount: 2,
           unsavedWork: withUw ? { checkedAt: now - 5 * 60000, staleHours: 24, unsavedCount: 55, staleCount: 42, unchecked: 0, items } : null }
       ];
-      if (snap.device) snap.device = { ...snap.device, unsavedWork: null };
+      if (snap.device) {
+        const { unsavedWork: _dropUw, ...restDev } = snap.device;
+        snap.device = restDev;
+      }
       if (rawCache.snapshot) rawCache.snapshot = snap;
       else rawCache.state = snap;
       localStorage.setItem('theo_remote_cache_v3', JSON.stringify(rawCache));
@@ -3740,6 +3743,112 @@ async function main() {
     assert.strictEqual(uwD.pcIds.includes('host-alpha'), false, '(e-D) Alpha\'s own entry clearing its report removes it, and an older copy cannot refill it');
     assert.strictEqual(uwE.pcIds.includes('host-alpha'), false, '(e-E) A future-dated report is ignored');
     assert.strictEqual(uwE.overflowX, 0);
+
+    // (c2) Overlapping stalledWt across two PCs with unsavedCount=0: panel stays visible, deduplicated, XSS-safe, host badges & chips show count
+    await evalJs(`(() => {
+      const now = Date.now();
+      const rawCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+      const snap = rawCache.snapshot || rawCache.state || {};
+      snap.devices = [
+        {
+          id: 'host-alpha',
+          name: 'Alpha',
+          online: true,
+          sessionCount: 2,
+          unsavedWork: {
+            checkedAt: now - 60000,
+            staleHours: 24,
+            unsavedCount: 0,
+            staleCount: 0,
+            unchecked: 0,
+            items: [],
+            stalledWt: {
+              checkedAt: now - 3 * 3600 * 1000,
+              cutoffHours: 24,
+              stalledCount: 2,
+              items: [
+                { repo: 'isabi-app', branch: 'wt/all-five-typo-hygiene-recs', sha: '6c9da1b104', ageHours: 55.5, ahead: 1, subject: 'Typo hygiene' },
+                { repo: 'isabi', branch: '<script>window.__stXss=1</script>', sha: 'ede4dd5443', ageHours: 30, ahead: 2, subject: '<b>Subject</b>' }
+              ]
+            }
+          }
+        },
+        {
+          id: 'host-beta',
+          name: 'Beta',
+          online: true,
+          sessionCount: 1,
+          unsavedWork: {
+            checkedAt: now - 30000,
+            staleHours: 24,
+            unsavedCount: 0,
+            staleCount: 0,
+            unchecked: 0,
+            items: [],
+            stalledWt: {
+              checkedAt: now - 30000,
+              cutoffHours: 24,
+              stalledCount: 2,
+              items: [
+                { repo: 'isabi-app', branch: 'wt/all-five-typo-hygiene-recs', sha: '6c9da1b104', ageHours: 56.0, ahead: 1, subject: 'Typo hygiene' },
+                { repo: 'isabi-app', branch: 'wt/kpi-order', sha: '86029be17b', ageHours: 186.4, ahead: 1, subject: 'KPI order' }
+              ]
+            }
+          }
+        }
+      ];
+      if (snap.device) {
+        const { unsavedWork: _dropUw, ...restDev } = snap.device;
+        snap.device = restDev;
+      }
+      if (rawCache.snapshot) rawCache.snapshot = snap;
+      else rawCache.state = snap;
+      localStorage.setItem('theo_remote_cache_v3', JSON.stringify(rawCache));
+      return true;
+    })()`);
+    await cdp.send('Page.navigate', { url: `${baseUrl}/?tab=workspaces&nosse=1` }, sessionId);
+    await new Promise((r) => setTimeout(r, 900));
+    const stProbe = await evalJs(`(async () => {
+      const panel = document.getElementById('unsaved-work-panel');
+      const sec = document.getElementById('uw-stalled-section');
+      const stItems = sec ? Array.from(sec.querySelectorAll('.uw-stalled-item')) : [];
+      const pulseBtn = document.querySelector('.mobile-bottom-dock [data-tab="pulse"]');
+      pulseBtn?.click();
+      await new Promise((r) => setTimeout(r, 80));
+      const pulsePills = Array.from(document.querySelectorAll('.fleet-chip-stalled')).map((el) => el.textContent.trim());
+      document.querySelector('.mobile-bottom-dock [data-tab="analytics"]')?.click();
+      await new Promise((r) => setTimeout(r, 80));
+      const analyticsPills = Array.from(document.querySelectorAll('.fleet-stalled-pill')).map((el) => el.textContent.trim());
+      document.getElementById('rail-conn-btn')?.click();
+      await new Promise((r) => setTimeout(r, 80));
+      const modalPills = Array.from(document.querySelectorAll('#conn-modal .fleet-stalled-pill')).map((el) => el.textContent.trim());
+      document.getElementById('conn-modal-close')?.click();
+      await new Promise((r) => setTimeout(r, 40));
+      document.querySelector('.mobile-bottom-dock [data-tab="workspaces"]')?.click();
+      await new Promise((r) => setTimeout(r, 80));
+      return {
+        hidden: panel ? panel.hidden : null,
+        hasSection: Boolean(sec),
+        rowCount: stItems.length,
+        branches: stItems.map((el) => el.querySelector('.uw-branch')?.textContent?.trim() || ''),
+        stalledAges: stItems.map((el) => el.textContent || ''),
+        xssFired: Boolean(window.__stXss),
+        titleCount: document.querySelectorAll('[title]').length,
+        overflowX: Math.max(0, document.documentElement.scrollWidth - window.innerWidth),
+        pulsePills,
+        settingsPills: analyticsPills.concat(modalPills)
+      };
+    })()`);
+    assert.strictEqual(stProbe.hidden, false, '#unsaved-work-panel stays visible when only stalledWt is present');
+    assert.strictEqual(stProbe.hasSection, true, '#uw-stalled-section renders inside #unsaved-work-panel');
+    assert.strictEqual(stProbe.rowCount, 3, `Overlapping stalledWt branches deduplicated across PCs (got ${stProbe.rowCount}: ${JSON.stringify(stProbe.branches)})`);
+    assert.strictEqual(stProbe.stalledAges.some((t) => /\b33\s*h\b/.test(t) && /<script>/.test(t)), true, `stalledWt ages from rawSt.checkedAt (+3h -> 33h), not frozen by outer checkedAt (got ${JSON.stringify(stProbe.stalledAges)})`);
+    assert.strictEqual(stProbe.xssFired, false, 'Stalled wt/* branch & subject are XSS-safe');
+    assert.strictEqual(stProbe.branches.some((b) => b.includes('<script>')), true, 'Escaped script tag rendered literally');
+    assert.strictEqual(stProbe.titleCount, 0, 'Zero [title] attributes with stalled wt/* section');
+    assert.strictEqual(stProbe.overflowX, 0, '0px horizontal overflow with stalled wt/* section at 390px');
+    assert.ok(stProbe.pulsePills.includes('⎇ 2 wt/*'), `Pulse fleet chip shows stalled pill (${JSON.stringify(stProbe.pulsePills)})`);
+    assert.ok(stProbe.settingsPills.includes('⎇ 2 wt/*'), `Host badge shows stalled pill (${JSON.stringify(stProbe.settingsPills)})`);
 
     // (d) No PC has a report (older builds, or none yet): the panel stays hidden.
     await evalJs(seedUnsaved(false));

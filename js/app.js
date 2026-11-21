@@ -4010,6 +4010,46 @@
     const count = (v, fallback) => Math.max(0, Math.min(999, Math.trunc(Number(v ?? fallback) || 0)));
     const unsavedCount = Math.max(items.length, count(raw.unsavedCount, items.length));
     const listedStale = items.filter((i) => i.stale).length;
+    let stalledWt = null;
+    const rawSt =
+      raw.stalledWt && typeof raw.stalledWt === 'object' && !Array.isArray(raw.stalledWt)
+        ? raw.stalledWt
+        : null;
+    if (rawSt) {
+      const stTsRaw =
+        typeof rawSt.checkedAt === 'number' && Number.isFinite(rawSt.checkedAt)
+          ? Math.max(0, Math.trunc(rawSt.checkedAt))
+          : rawSt.checkedAt
+            ? Math.max(0, Date.parse(String(rawSt.checkedAt)) || 0)
+            : 0;
+      const stCheckedAt = stTsRaw && stTsRaw - now <= 10 * 60 * 1000 ? stTsRaw : checkedAt;
+      const stAgeH = opts.age ? Math.max(0, now - stCheckedAt) / 3600000 : 0;
+      const stItems = [];
+      for (const sit of Array.isArray(rawSt.items) ? rawSt.items : []) {
+        if (!sit || typeof sit !== 'object') continue;
+        const ah = sit.ageHours == null ? NaN : Number(sit.ageHours);
+        const ageHours = Number.isFinite(ah) ? Math.max(0, ah) + stAgeH : null;
+        stItems.push({
+          repo: clip(sit.repo, 40) || '?',
+          branch: clip(sit.branch, 60) || '-',
+          sha: clip(sit.sha, 16),
+          ageHours,
+          ahead: Math.max(0, Math.min(999, Math.trunc(Number(sit.ahead) || 0))),
+          subject: clip(sit.subject, 80)
+        });
+        if (stItems.length >= UNSAVED_WORK_MAX_ITEMS) break;
+      }
+      const stCount = Math.max(stItems.length, count(rawSt.stalledCount, stItems.length));
+      if (stCount > 0 || stItems.length > 0) {
+        const cutRaw = Number(rawSt.cutoffHours ?? rawSt.hours);
+        stalledWt = {
+          checkedAt: stCheckedAt,
+          cutoffHours: Number.isFinite(cutRaw) && cutRaw >= 0 ? cutRaw : 24,
+          stalledCount: stCount,
+          items: stItems
+        };
+      }
+    }
     return {
       checkedAt,
       staleHours,
@@ -4017,7 +4057,8 @@
       // The PC's own count also covers folders past the 50 sent; aging can only add to it.
       staleCount: Math.min(unsavedCount, Math.max(listedStale, count(raw.staleCount, listedStale))),
       unchecked: count(raw.unchecked, 0),
-      items
+      items,
+      ...(stalledWt ? { stalledWt } : {})
     };
   }
 
@@ -4051,6 +4092,18 @@
       return ` <span class="fleet-setup-pill is-ready tabular" aria-label="${esc(hostLbl)} PC setup ready (${ps.okCount}/${ps.totalCount})">✓ ${ps.okCount}/${ps.totalCount}</span>`;
     }
     return ` <span class="fleet-setup-pill is-pending tabular" aria-label="${esc(hostLbl)}: ${ps.pendingCount} PC setup update(s) pending (${ps.okCount}/${ps.totalCount})">! ${ps.okCount}/${ps.totalCount}</span>`;
+  }
+
+  function getFleetStalledWtCount(d) {
+    const uw = d && d.unsavedWork ? sanitizeFleetUnsavedWork(d.unsavedWork) : null;
+    return uw && uw.stalledWt && uw.stalledWt.stalledCount > 0 ? uw.stalledWt.stalledCount : 0;
+  }
+
+  function renderFleetStalledWtPillHtml(d) {
+    const cnt = getFleetStalledWtCount(d);
+    if (!cnt) return '';
+    const hostLbl = String(d?.name || d?.id || 'Host').trim();
+    return ` <span class="fleet-stalled-pill tabular" aria-label="${esc(hostLbl)}: ${cnt} stalled wt/* branch(es)">⎇ ${cnt} wt/*</span>`;
   }
 
   // opts.authoritative: the list holds each PC's own entry (store device_states, or a host's own device), so a
@@ -6896,7 +6949,7 @@
           ${fleetList
             .map(
               (d) =>
-                `<span class="sess-device-badge ${d.online ? 'is-online' : ''}">${d.online ? '●' : '◐'} ${esc(d.name || d.id)}${d.sessionCount ? ` · ${d.sessionCount}` : ''}${renderFleetPcSetupPillHtml(d)}</span>`
+                `<span class="sess-device-badge ${d.online ? 'is-online' : ''}">${d.online ? '●' : '◐'} ${esc(d.name || d.id)}${d.sessionCount ? ` · ${d.sessionCount}` : ''}${renderFleetPcSetupPillHtml(d)}${renderFleetStalledWtPillHtml(d)}</span>`
             )
             .join('')}
         </div>`
@@ -9512,11 +9565,13 @@
             .map((d) => {
               const cnt = allRows.filter((r) => !r.archived && r.deviceId === d.id).length || Number(d.sessionCount || 0);
               const isAct = prefs.selectedDeviceFilter === d.id;
+              const stWtCnt = getFleetStalledWtCount(d);
               return `
                 <button type="button" class="fleet-chip ${isAct ? 'active' : ''}" data-fleet-filter="${esc(d.id)}" aria-label="${esc(d.hostname || d.name || d.id)} · ${d.online ? 'Live WebSocket / Bridge' : 'Synced via Cloud Relay'}">
                   <span class="fleet-chip-dot ${d.online ? 'online' : 'synced'}"></span>
                   <span>${esc(d.name || d.id)}</span>
                   ${d.pcSetup && d.pcSetup.pendingCount > 0 ? `<span class="fleet-chip-setup tabular">! ${d.pcSetup.okCount}/${d.pcSetup.totalCount}</span>` : ''}
+                  ${stWtCnt > 0 ? `<span class="fleet-chip-stalled tabular">⎇ ${stWtCnt} wt/*</span>` : ''}
                   <span class="fleet-chip-meta tabular">${cnt}</span>
                 </button>
               `;
@@ -13727,6 +13782,13 @@
     if (n < 48) return `idle ${Math.round(n)} h`;
     return `idle ${Math.round(n / 24)} d`;
   }
+  function fmtStalledAge(h) {
+    if (h == null || !Number.isFinite(Number(h))) return '? h old';
+    const n = Number(h);
+    if (n < 1) return '<1 h old';
+    if (n < 48) return `${Math.round(n)} h old`;
+    return `${Math.round(n / 24)} d old`;
+  }
   function buildUnsavedWorkPanelHtml(now = Date.now()) {
     const pcs = getUnifiedFleetDevices()
       .map((d) => ({ d, uw: d && d.unsavedWork ? sanitizeFleetUnsavedWork(d.unsavedWork, now, { age: true }) : null }))
@@ -13738,15 +13800,44 @@
         b.uw.unsavedCount - a.uw.unsavedCount ||
         String(a.d.name || a.d.id).localeCompare(String(b.d.name || b.d.id))
     );
+    // Collect and deduplicate unshipped remote origin/wt/* branches across all hosts (shared GitHub remote).
+    const stalledMap = new Map();
+    let maxCutoffHours = 24;
+    for (const { d, uw } of pcs) {
+      const sw = uw && uw.stalledWt;
+      if (!sw || !Array.isArray(sw.items)) continue;
+      if (Number.isFinite(sw.cutoffHours)) maxCutoffHours = Math.max(maxCutoffHours, sw.cutoffHours);
+      const checked = Number(sw.checkedAt || uw.checkedAt || 0);
+      const reporter = String(d.name || d.hostname || d.id || 'PC');
+      for (const it of sw.items) {
+        const key = `${it.repo}::${it.branch}`;
+        const prev = stalledMap.get(key);
+        if (!prev) {
+          stalledMap.set(key, { ...it, checkedAt: checked, reporters: [reporter] });
+        } else {
+          const reps = prev.reporters.includes(reporter) ? prev.reporters : prev.reporters.concat(reporter);
+          if (checked > prev.checkedAt || (checked === prev.checkedAt && Number(it.ageHours || 0) > Number(prev.ageHours || 0))) {
+            stalledMap.set(key, { ...it, checkedAt: checked, reporters: reps });
+          } else {
+            prev.reporters = reps;
+          }
+        }
+      }
+    }
+    const stalledItems = Array.from(stalledMap.values()).sort(
+      (a, b) => Number(b.ageHours || 0) - Number(a.ageHours || 0) || a.repo.localeCompare(b.repo) || a.branch.localeCompare(b.branch)
+    );
     const totalUnsaved = pcs.reduce((s, x) => s + x.uw.unsavedCount, 0);
     const totalStale = pcs.reduce((s, x) => s + x.uw.staleCount, 0);
     const pcsWithWork = pcs.filter((x) => x.uw.unsavedCount > 0).length;
     const thr = Math.round(pcs[0].uw.staleHours || 24);
+    const stalledHeadSuffix = stalledItems.length > 0 ? ` · ${stalledItems.length} stalled wt/*` : '';
     const headTxt =
       totalUnsaved === 0
-        ? `All saved on ${pcs.length} PC${pcs.length === 1 ? '' : 's'}`
+        ? `All saved on ${pcs.length} PC${pcs.length === 1 ? '' : 's'}${stalledHeadSuffix}`
         : `${totalUnsaved} folder${totalUnsaved === 1 ? '' : 's'} on ${pcsWithWork} PC${pcsWithWork === 1 ? '' : 's'}` +
-          (totalStale > 0 ? ` · ${totalStale} idle ${thr} h+` : '');
+          (totalStale > 0 ? ` · ${totalStale} idle ${thr} h+` : '') +
+          stalledHeadSuffix;
     const itemHtml = (it, hrs) => `
       <li class="uw-item${it.stale ? ' is-stale' : ''}">
         <div class="uw-line1">
@@ -13804,12 +13895,42 @@
           </div>`;
       })
       .join('');
+    const stalledItemHtml = (it) => `
+      <li class="uw-item is-stale uw-stalled-item">
+        <div class="uw-line1">
+          <span class="uw-repo">${esc(it.repo)}</span>
+          <span class="uw-branch mono">⎇ ${esc(it.branch)}</span>
+          ${it.ahead > 0 ? `<span class="uw-stale-pill tabular">+${it.ahead}</span>` : ''}
+          <span class="uw-idle tabular">${esc(fmtStalledAge(it.ageHours))}</span>
+        </div>
+        <div class="uw-line2">${it.sha ? `<span class="mono">${esc(it.sha)}</span> · ` : ''}${esc(it.subject || 'unshipped commits')}</div>
+      </li>`;
+    const stalledShown = stalledItems.slice(0, UW_VISIBLE_ROWS);
+    const stalledRest = stalledItems.slice(UW_VISIBLE_ROWS);
+    const stalledSectionHtml = stalledItems.length
+      ? `
+      <div class="uw-stalled" id="uw-stalled-section">
+        <div class="uw-stalled-head">
+          <span class="eyebrow">STALLED WT/* BRANCHES</span>
+          <span class="uw-pc-meta tabular">${stalledItems.length} unshipped · ${Math.round(maxCutoffHours)} h+</span>
+        </div>
+        <ul class="uw-list">${stalledShown.map(stalledItemHtml).join('')}</ul>
+        ${
+          stalledRest.length
+            ? `<details class="uw-more" data-uw-more="__stalled_wt__"${uwExpandedPcs.has('__stalled_wt__') ? ' open' : ''}>
+                <summary class="uw-more-sum">Show ${stalledRest.length} more</summary>
+                <ul class="uw-list">${stalledRest.map(stalledItemHtml).join('')}</ul>
+              </details>`
+            : ''
+        }
+      </div>`
+      : '';
     return `
       <div class="uw-head">
         <span class="eyebrow">UNSAVED WORK</span>
         <span class="uw-total tabular">${esc(headTxt)}</span>
       </div>
-      <div class="uw-pcs">${pcHtml}</div>`;
+      <div class="uw-pcs">${pcHtml}</div>${stalledSectionHtml}`;
   }
   function renderUnsavedWorkPanel() {
     const el = $('unsaved-work-panel');
@@ -14109,7 +14230,7 @@
                 ? fleetDevices
                     .map(
                       (d) =>
-                        `<span class="sess-device-badge ${d.online ? 'is-online' : ''}">${d.online ? '●' : '◐'} ${esc(d.name || d.id)}${d.sessionCount ? ` (${d.sessionCount})` : ''}${renderFleetPcSetupPillHtml(d)}</span>`
+                        `<span class="sess-device-badge ${d.online ? 'is-online' : ''}">${d.online ? '●' : '◐'} ${esc(d.name || d.id)}${d.sessionCount ? ` (${d.sessionCount})` : ''}${renderFleetPcSetupPillHtml(d)}${renderFleetStalledWtPillHtml(d)}</span>`
                     )
                     .join('')
                 : `<span class="meta-timestamp">${isPaired ? 'Probing connected hosts…' : 'Not paired yet — enter 6-digit code or paste Pair Link below'}</span>`
@@ -18673,7 +18794,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=82', { updateViaCache: 'none' })
+        .register('sw.js?v=83', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

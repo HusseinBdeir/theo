@@ -3113,6 +3113,24 @@ html[data-theme="dark"] .composer-send-btn.is-ready {
   color: var(--text-muted);
 }
 
+.uw-stalled {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border-subtle);
+}
+
+.uw-stalled-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.uw-stalled-head .eyebrow {
+  color: var(--amber);
+}
+
 /* Workspaces & Git Inspector */
 .workspaces-layout {
   display: grid;
@@ -10814,6 +10832,30 @@ html[data-theme="light"] .sb-q-btn.primary {
   border-radius: 999px;
   font-size: 10px;
   font-weight: 700;
+  background: rgba(229, 169, 60, 0.2);
+  color: var(--amber);
+}
+.fleet-stalled-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  margin-left: 4px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.35;
+  white-space: nowrap;
+  background: rgba(229, 169, 60, 0.18);
+  color: var(--amber);
+}
+.fleet-chip-stalled {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
   background: rgba(229, 169, 60, 0.2);
   color: var(--amber);
 }
