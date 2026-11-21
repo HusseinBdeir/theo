@@ -1744,9 +1744,37 @@ html[data-theme="dark"] .sess-act-btn.stop-btn {
   font-size: 13px;
   letter-spacing: 0.02em;
   color: var(--text-primary);
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.group-pin-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+  padding: 0 6.5px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  background: var(--brass-glow);
+  border: 1px solid rgba(200, 162, 90, 0.34);
+  color: var(--brass);
+  flex-shrink: 0;
+}
+
+.group-pin-badge svg {
+  width: 10.5px;
+  height: 10.5px;
+  flex-shrink: 0;
+}
+
+html[data-theme="light"] .group-pin-badge {
+  color: var(--brass-deep);
+  border-color: rgba(161, 110, 36, 0.36);
 }
 
 .group-count-pill {
@@ -6381,6 +6409,8 @@ details.ide-side-section:not([open]) .ide-chevron {
 }
 
 .ide-tree-group-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7646,6 +7676,34 @@ html[data-theme="dark"] .composer-send-btn.is-ready {
   font-weight: 700;
   background: var(--agy-soft);
   color: var(--steel);
+  flex-shrink: 0;
+}
+
+.ide-group-pin-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2.5px;
+  height: 15px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
+  background: var(--brass-glow);
+  border: 1px solid rgba(200, 162, 90, 0.32);
+  color: var(--brass);
+  flex-shrink: 0;
+}
+
+.ide-group-pin-badge svg {
+  width: 9.5px;
+  height: 9.5px;
+  flex-shrink: 0;
+}
+
+html[data-theme="light"] .ide-group-pin-badge {
+  color: var(--brass-deep);
+  border-color: rgba(161, 110, 36, 0.34);
 }
 
 .ide-tree-group-items {

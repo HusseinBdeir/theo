@@ -7540,6 +7540,14 @@
     card.style.top = `${top}px`;
   }
 
+  function renderCollapsedGroupPinBadgeHtml(items, isCollapsed, clsName) {
+    if (!isCollapsed || !Array.isArray(items) || items.length === 0) return '';
+    const cnt = items.filter((r) => r && r.id && isRowPinned(r)).length;
+    if (cnt <= 0) return '';
+    const tip = cnt === 1 ? '1 pinned chat' : `${cnt} pinned chats`;
+    return `<span class="${clsName} tabular" role="img" aria-label="${tip}" data-micro-tip="${tip}">${PIN_FILLED_SVG}<span>${cnt}</span></span>`;
+  }
+
   function renderIdeSidebar() {
     const accountsEl = $('ide-sidebar-accounts');
     const approvalsEl = $('ide-sidebar-approvals');
@@ -8004,14 +8012,15 @@
           prefs.sidebarFilter !== 'all'
             ? false
             : isSessionGroupCollapsed(g.id, gItems.length === 0 ? true : Boolean(g.collapsed));
+        const pinBadgeHtml = renderCollapsedGroupPinBadgeHtml(gItems, collapsed, 'ide-group-pin-badge');
         html += `
           <div class="ide-tree-group${collapsed ? ' collapsed' : ''}" data-ide-group="${esc(g.id)}">
             <div class="ide-tree-group-hdr">
               <button type="button" class="ide-tree-group-btn" data-group-act="toggle" data-group-id="${esc(g.id)}" aria-expanded="${!collapsed}">
                 <span class="ide-chevron-sm">${collapsed ? CHEVRON_RIGHT_SVG : CHEVRON_DOWN_SVG}</span>
                 <span class="ide-tree-group-name">${esc(g.name || 'Group')}</span>
+                ${pinBadgeHtml}<span class="ide-group-pill tabular">${gItems.length}</span>
               </button>
-              <span class="ide-group-pill tabular">${gItems.length}</span>
             </div>
             ${collapsed ? '' : `<div class="ide-tree-group-items">${gItems.map(renderTreeRow).join('')}</div>`}
           </div>
@@ -8020,14 +8029,15 @@
       const ungrouped = filtered.filter((r) => !r.group || !groupIds.has(r.group));
       if (ungrouped.length > 0) {
         const ugCollapsed = prefs.sidebarFilter !== 'all' ? false : isSessionGroupCollapsed('ungrouped', false);
+        const ugPinBadgeHtml = renderCollapsedGroupPinBadgeHtml(ungrouped, ugCollapsed, 'ide-group-pin-badge');
         html += `
           <div class="ide-tree-group${ugCollapsed ? ' collapsed' : ''}" data-ide-group="ungrouped">
             <div class="ide-tree-group-hdr">
               <button type="button" class="ide-tree-group-btn" data-group-act="toggle" data-group-id="ungrouped" aria-expanded="${!ugCollapsed}">
                 <span class="ide-chevron-sm">${ugCollapsed ? CHEVRON_RIGHT_SVG : CHEVRON_DOWN_SVG}</span>
                 <span class="ide-tree-group-name">Ungrouped</span>
+                ${ugPinBadgeHtml}<span class="ide-group-pill tabular">${ungrouped.length}</span>
               </button>
-              <span class="ide-group-pill tabular">${ungrouped.length}</span>
             </div>
             ${ugCollapsed ? '' : `<div class="ide-tree-group-items">${ungrouped.map(renderTreeRow).join('')}</div>`}
           </div>
@@ -10182,6 +10192,8 @@
         ? `<button type="button" class="group-act-btn" data-group-act="archive-closed" data-micro-tip="Archive ${archivableIds.length} closed idle sessions" aria-label="Archive ${archivableIds.length} closed idle sessions">Archive closed (${archivableIds.length})</button>`
         : '';
 
+    const pinBadgeHtml = renderCollapsedGroupPinBadgeHtml(items, isCollapsed, 'group-pin-badge');
+
     return `
       <div class="session-group-block ${isCollapsed ? 'collapsed' : ''}" data-session-group="${esc(id)}">
         <div class="session-group-header">
@@ -10189,7 +10201,7 @@
             <svg class="group-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg>
             <span class="group-color-dot ${esc(color)}"></span>
             <span class="group-title">${esc(name)}</span>
-            <span class="group-count-pill tabular">${items.length}</span>
+            ${pinBadgeHtml}<span class="group-count-pill tabular">${items.length}</span>
           </button>
           <div class="session-group-actions">
             ${actionsHtml}
@@ -18661,7 +18673,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=81', { updateViaCache: 'none' })
+        .register('sw.js?v=82', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

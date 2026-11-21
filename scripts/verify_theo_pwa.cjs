@@ -6097,10 +6097,11 @@ async function main() {
         assert.strictEqual(ideTabChildCheck.inActs && ideTabChildCheck.inSameRow, true, 'Real Tab key must step into .ide-tree-acts without dropping focus');
         assert.ok(ideTabChildCheck.actsWidth > 0 && ideTabChildCheck.opacity === '1', 'Tabbing into .ide-tree-acts must keep .ide-tree-acts expanded');
 
-        // 1c. Pinned chats stay inside their group or Ungrouped (no separate Pinned shelf, no .grp-pill); collapsing group hides its pinned chat & expands cleanly with zero duplicates; hovering .ide-row-act.pin-act opens #ide-micro-tip
+        // 1c. Pinned chats stay inside their group or Ungrouped (no separate Pinned shelf, no .grp-pill); collapsing group shows .ide-group-pin-badge & expands on badge click with #ide-micro-tip dismissal; hovering .ide-row-act.pin-act opens #ide-micro-tip
         const ideShelfCheck = await evalJs(`(() => {
           const pinShelf = document.querySelector('#ide-sidebar-tree [data-ide-group="pinned"]');
           const grpAlpha = document.querySelector('#ide-sidebar-tree [data-ide-group="grp-alpha"]');
+          const badgeWhileExpanded = grpAlpha?.querySelectorAll('.ide-group-pin-badge').length || 0;
           const grpAlphaRows = [...(grpAlpha?.querySelectorAll('.ide-tree-row[data-ide-open-session]') || [])].map((el) => el.dataset.ideOpenSession);
           const grpAlphaCount = grpAlpha?.querySelector('.ide-group-pill')?.textContent?.trim() || '';
           const ugGroup = document.querySelector('#ide-sidebar-tree [data-ide-group="ungrouped"]');
@@ -6108,24 +6109,33 @@ async function main() {
           const grpPillCount = document.querySelectorAll('#ide-sidebar-tree .ide-row-pill.grp-pill').length;
           const alphaBtn = document.querySelector('#ide-sidebar-tree [data-group-act="toggle"][data-group-id="grp-alpha"]');
           alphaBtn?.click();
+          const badgeEl = document.querySelector('#ide-sidebar-tree [data-ide-group="grp-alpha"] .ide-group-pin-badge');
+          const badgeBox = badgeEl?.getBoundingClientRect();
+          const collapsedCountPill = document.querySelector('#ide-sidebar-tree [data-ide-group="grp-alpha"] .ide-group-pill')?.textContent?.trim() || '';
           const inTreeWhileAlphaCollapsed = Boolean(document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-grp-old-pinned"]'));
           const unpinnedHiddenAfterAlphaCollapse = !document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-grp-new-unpinned"]');
           const ugPinVisibleWhileAlphaCollapsed = Boolean(document.querySelector('#ide-sidebar-tree [data-ide-group="ungrouped"] .ide-tree-row[data-ide-open-session="pin-ug-pinned-closed"]'));
-          document.querySelector('#ide-sidebar-tree [data-group-act="toggle"][data-group-id="grp-alpha"]')?.click();
-          const duplicateCount = document.querySelectorAll('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-grp-old-pinned"]').length;
           return {
             hasPinShelf: Boolean(pinShelf),
+            badgeWhileExpanded,
             grpAlphaRows,
             grpAlphaCount,
             ugRows,
             grpPillCount,
+            badgeText: badgeEl?.textContent?.trim() || '',
+            badgeTip: badgeEl?.dataset?.microTip || '',
+            badgeAria: badgeEl?.getAttribute('aria-label') || '',
+            badgeRole: badgeEl?.getAttribute('role') || '',
+            badgeHasSvg: Boolean(badgeEl?.querySelector('svg')),
+            badgePt: badgeBox && badgeBox.width > 0 ? { cx: Math.round(badgeBox.left + badgeBox.width / 2), cy: Math.round(badgeBox.top + badgeBox.height / 2) } : null,
+            collapsedCountPill,
             inTreeWhileAlphaCollapsed,
             unpinnedHiddenAfterAlphaCollapse,
-            ugPinVisibleWhileAlphaCollapsed,
-            duplicateCount
+            ugPinVisibleWhileAlphaCollapsed
           };
         })()`);
         assert.strictEqual(ideShelfCheck.hasPinShelf, false, 'Desktop IDE sidebar must NOT render a separate [data-ide-group="pinned"] section');
+        assert.strictEqual(ideShelfCheck.badgeWhileExpanded, 0, 'Expanded IDE group must render 0 .ide-group-pin-badge');
         assert.strictEqual(ideShelfCheck.grpPillCount, 0, 'Desktop IDE sidebar must NOT render .grp-pill badges');
         assert.strictEqual(ideShelfCheck.grpAlphaCount, '2', 'Group count pill must include pinned chats inside that group');
         assert.deepStrictEqual(ideShelfCheck.grpAlphaRows, ['pin-grp-old-pinned', 'pin-grp-new-unpinned'], 'Pinned chat inside grp-alpha must render first within grp-alpha');
@@ -6134,11 +6144,38 @@ async function main() {
             ideShelfCheck.ugRows.indexOf('pin-ug-new-unpinned') > 0,
           `Pinned ungrouped chat must render first within ungrouped ahead of newer unpinned chat: ${JSON.stringify(ideShelfCheck.ugRows.slice(0, 6))}`
         );
+        assert.strictEqual(ideShelfCheck.badgeText, '1', 'Collapsed IDE grp-alpha must show .ide-group-pin-badge with count 1');
+        assert.strictEqual(ideShelfCheck.badgeTip, '1 pinned chat');
+        assert.strictEqual(ideShelfCheck.badgeAria, '1 pinned chat');
+        assert.strictEqual(ideShelfCheck.badgeRole, 'img');
+        assert.strictEqual(ideShelfCheck.badgeHasSvg, true);
+        assert.strictEqual(ideShelfCheck.collapsedCountPill, '2', 'Collapsed group total count pill must remain 2');
+        assert.ok(ideShelfCheck.badgePt, 'Collapsed .ide-group-pin-badge must expose positive bounding rect');
         assert.strictEqual(ideShelfCheck.inTreeWhileAlphaCollapsed, false, 'Collapsing grp-alpha must hide pinned chat belonging to grp-alpha');
         assert.strictEqual(ideShelfCheck.unpinnedHiddenAfterAlphaCollapse && ideShelfCheck.ugPinVisibleWhileAlphaCollapsed, true, 'Collapsing grp-alpha hides its unpinned chat while leaving Ungrouped pins visible');
-        assert.strictEqual(ideShelfCheck.duplicateCount, 1, 'Pinned chat must appear exactly once inside its group');
 
-        // Collapse grp-alpha and verify collapsed state + zero Pinned shelf survive full page reload (also resets in-memory hostSnapshotsByDevice)
+        // Hovering .ide-group-pin-badge opens #ide-micro-tip; clicking the badge directly expands grp-alpha, removes badge, and hides #ide-micro-tip
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: ideShelfCheck.badgePt.cx, y: ideShelfCheck.badgePt.cy }, sessionId);
+        await new Promise((r) => setTimeout(r, 110));
+        const ideBadgeHoverExpand = await evalJs(`(() => {
+          const tip = document.getElementById('ide-micro-tip');
+          const tipVisibleBeforeExpand = tip ? !tip.hidden : false;
+          const tipText = tip?.textContent?.trim() || '';
+          const badge = document.querySelector('#ide-sidebar-tree [data-ide-group="grp-alpha"] .ide-group-pin-badge');
+          badge?.click();
+          const tipHiddenAfterExpand = tip ? tip.hidden : true;
+          const badgeAfterExpand = document.querySelectorAll('#ide-sidebar-tree [data-ide-group="grp-alpha"] .ide-group-pin-badge').length;
+          const duplicateCount = document.querySelectorAll('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-grp-old-pinned"]').length;
+          return { tipVisibleBeforeExpand, tipText, tipHiddenAfterExpand, badgeAfterExpand, duplicateCount };
+        })()`);
+        assert.strictEqual(ideBadgeHoverExpand.tipVisibleBeforeExpand, true, 'Hovering .ide-group-pin-badge must reveal #ide-micro-tip');
+        assert.strictEqual(ideBadgeHoverExpand.tipText, '1 pinned chat');
+        assert.strictEqual(ideBadgeHoverExpand.badgeAfterExpand, 0, 'Clicking .ide-group-pin-badge must expand grp-alpha and remove badge');
+        assert.strictEqual(ideBadgeHoverExpand.tipHiddenAfterExpand, true, 'Expanding via .ide-group-pin-badge click must dismiss #ide-micro-tip');
+        assert.strictEqual(ideBadgeHoverExpand.duplicateCount, 1, 'Pinned chat must appear exactly once inside its group');
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 }, sessionId);
+
+        // Collapse grp-alpha and verify collapsed state + .ide-group-pin-badge + zero Pinned shelf survive full page reload (also resets in-memory hostSnapshotsByDevice)
         await evalJs(`(() => {
           document.querySelector('#ide-sidebar-tree [data-group-act="toggle"][data-group-id="grp-alpha"]')?.click();
           window.__theoPreReload = 1;
@@ -6164,15 +6201,18 @@ async function main() {
         const grpAfterReload = await evalJs(`(() => {
           const hasPinShelf = Boolean(document.querySelector('#ide-sidebar-tree [data-ide-group="pinned"]'));
           const collapsedAfterReload = Boolean(document.querySelector('#ide-sidebar-tree [data-ide-group="grp-alpha"]')?.classList.contains('collapsed'));
+          const reloadBadgeText = document.querySelector('#ide-sidebar-tree [data-ide-group="grp-alpha"] .ide-group-pin-badge')?.textContent?.trim() || '';
           document.querySelector('#ide-sidebar-tree [data-group-act="toggle"][data-group-id="grp-alpha"]')?.click();
           const expandedAfterRestore = !document.querySelector('#ide-sidebar-tree [data-ide-group="grp-alpha"]')?.classList.contains('collapsed');
-          return { hasPinShelf, collapsedAfterReload, expandedAfterRestore };
+          const badgeAfterRestore = document.querySelectorAll('#ide-sidebar-tree [data-ide-group="grp-alpha"] .ide-group-pin-badge').length;
+          return { hasPinShelf, collapsedAfterReload, reloadBadgeText, expandedAfterRestore, badgeAfterRestore };
         })()`);
         assert.strictEqual(grpAfterReload.hasPinShelf, false, 'Reload must not render a separate Pinned shelf');
         assert.strictEqual(grpAfterReload.collapsedAfterReload, true, 'Group collapsed state must survive page reload');
-        assert.strictEqual(grpAfterReload.expandedAfterRestore, true);
+        assert.strictEqual(grpAfterReload.reloadBadgeText, '1', '.ide-group-pin-badge must survive page reload on collapsed group');
+        assert.strictEqual(grpAfterReload.expandedAfterRestore && grpAfterReload.badgeAfterRestore === 0, true);
 
-        // v80 -> v81 upgrade continuity: pre-existing localStorage with collapsedSessionGroups.pinned=true & ungrouped=true keeps pinned chats visible inside expanded groups
+        // v81 -> v82 upgrade continuity: pre-existing localStorage with collapsedSessionGroups.pinned=true & ungrouped=true keeps pinned chats visible inside expanded groups and shows .ide-group-pin-badge on collapsed ungrouped
         await evalJs(`(() => {
           window.__theoPreReload = 1;
           localStorage.setItem('theo_remote_cache_v3', '{}');
@@ -6182,7 +6222,7 @@ async function main() {
         })()`);
         await waitPinCond(
           () => evalJs(`Boolean(!window.__theoPreReload && document.readyState === 'complete' && window.__theoTestWs)`),
-          'Adversarial #23 v80->v81 reload committed'
+          'Adversarial #23 v81->v82 reload committed'
         );
         await evalJs(`(() => {
           window.__THEO_ALLOW_MOCK_WS = true;
@@ -6194,30 +6234,36 @@ async function main() {
         })()`);
         await waitPinCond(
           () => evalJs(`Boolean(document.querySelector('#ide-sidebar-tree [data-ide-group="grp-alpha"] .ide-tree-row[data-ide-open-session="pin-grp-old-pinned"]'))`),
-          'Adversarial #23 reconnect after v80->v81 localStorage upgrade seed'
+          'Adversarial #23 reconnect after v81->v82 localStorage upgrade seed'
         );
-        const v80UpgradeGrouped = await evalJs(`(() => {
+        const v81UpgradeGrouped = await evalJs(`(() => {
           const idePinShelf = document.querySelector('#ide-sidebar-tree [data-ide-group="pinned"]');
           const mobPinShelf = document.querySelector('#view-sessions [data-session-group="pinned"]');
           const ideGrpPinned = document.querySelector('#ide-sidebar-tree [data-ide-group="grp-alpha"] .ide-tree-row[data-ide-open-session="pin-grp-old-pinned"]');
-          const ugCollapsedBeforeClick = Boolean(document.querySelector('#ide-sidebar-tree [data-ide-group="ungrouped"]')?.classList.contains('collapsed'));
+          const ugEl = document.querySelector('#ide-sidebar-tree [data-ide-group="ungrouped"]');
+          const ugCollapsedBeforeClick = Boolean(ugEl?.classList.contains('collapsed'));
+          const ugCollapsedPinBadge = ugEl?.querySelector('.ide-group-pin-badge')?.textContent?.trim() || '';
           document.querySelector('#ide-sidebar-tree [data-group-act="toggle"][data-group-id="ungrouped"]')?.click();
           const ugExpandedAfterClick = !document.querySelector('#ide-sidebar-tree [data-ide-group="ungrouped"]')?.classList.contains('collapsed');
+          const ugBadgeAfterExpand = document.querySelectorAll('#ide-sidebar-tree [data-ide-group="ungrouped"] .ide-group-pin-badge').length;
           const hasUgUnpinnedAfterExpand = Boolean(document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="pin-ug-new-unpinned"]'));
           return {
             hasIdePinShelf: Boolean(idePinShelf),
             hasMobPinShelf: Boolean(mobPinShelf),
             hasIdeGrpPinned: Boolean(ideGrpPinned),
             ugCollapsedBeforeClick,
+            ugCollapsedPinBadge,
             ugExpandedAfterClick,
+            ugBadgeAfterExpand,
             hasUgUnpinnedAfterExpand
           };
         })()`);
-        assert.strictEqual(v80UpgradeGrouped.hasIdePinShelf, false, 'Upgraded v80 client must not render [data-ide-group="pinned"]');
-        assert.strictEqual(v80UpgradeGrouped.hasMobPinShelf, false, 'Upgraded v80 client must not render [data-session-group="pinned"]');
-        assert.strictEqual(v80UpgradeGrouped.hasIdeGrpPinned, true, 'Upgraded v80 client must render pinned chat inside expanded grp-alpha');
-        assert.strictEqual(v80UpgradeGrouped.ugCollapsedBeforeClick, true, 'Legacy collapsedSessionGroups.ungrouped must stay collapsed until expanded');
-        assert.strictEqual(v80UpgradeGrouped.ugExpandedAfterClick && v80UpgradeGrouped.hasUgUnpinnedAfterExpand, true, 'Expanding ungrouped must reveal pin-ug-new-unpinned');
+        assert.strictEqual(v81UpgradeGrouped.hasIdePinShelf, false, 'Upgraded v81 client must not render [data-ide-group="pinned"]');
+        assert.strictEqual(v81UpgradeGrouped.hasMobPinShelf, false, 'Upgraded v81 client must not render [data-session-group="pinned"]');
+        assert.strictEqual(v81UpgradeGrouped.hasIdeGrpPinned, true, 'Upgraded v81 client must render pinned chat inside expanded grp-alpha');
+        assert.strictEqual(v81UpgradeGrouped.ugCollapsedBeforeClick, true, 'Legacy collapsedSessionGroups.ungrouped must stay collapsed until expanded');
+        assert.strictEqual(v81UpgradeGrouped.ugCollapsedPinBadge, '1', 'Collapsed ungrouped section holding pinned chat must show .ide-group-pin-badge');
+        assert.strictEqual(v81UpgradeGrouped.ugExpandedAfterClick && v81UpgradeGrouped.ugBadgeAfterExpand === 0 && v81UpgradeGrouped.hasUgUnpinnedAfterExpand, true, 'Expanding ungrouped must remove badge and reveal pin-ug-new-unpinned');
 
         // Hover row first to expand .ide-tree-acts, then hover .ide-row-act.pin-act -> #ide-micro-tip reveals and #ide-hover-card stays hidden, then test toggleIdeSidebar + Escape + scroll + pointerdown dismissal & .group-act-btn tip
         const hoverRowTitlePt = await evalJs(`(() => {
@@ -6416,6 +6462,7 @@ async function main() {
             await new Promise((r) => setTimeout(r, 60));
             const pinShelf = document.querySelector('#view-sessions [data-session-group="pinned"]');
             const alphaGrp = document.querySelector('#view-sessions [data-session-group="grp-alpha"]');
+            const alphaPinBadgeExpanded = alphaGrp?.querySelectorAll('.group-pin-badge').length || 0;
             const alphaCardIds = [...(alphaGrp?.querySelectorAll('.session-card[data-session-id]') || [])].map((c) => c.dataset.sessionId);
             const alphaCount = alphaGrp?.querySelector('.group-count-pill')?.textContent?.trim() || '';
             const ugGrp = document.querySelector('#view-sessions [data-session-group="ungrouped"]');
@@ -6423,7 +6470,15 @@ async function main() {
             const ugCount = ugGrp?.querySelector('.group-count-pill')?.textContent?.trim() || '';
             document.querySelector('#view-sessions [data-group-act="toggle"][data-group-id="grp-alpha"]')?.click();
             const alphaCollapsed = Boolean(document.querySelector('#view-sessions [data-session-group="grp-alpha"]')?.classList.contains('collapsed'));
-            document.querySelector('#view-sessions [data-group-act="toggle"][data-group-id="grp-alpha"]')?.click();
+            const alphaBadgeEl = document.querySelector('#view-sessions [data-session-group="grp-alpha"] .group-pin-badge');
+            const alphaBadgeText = alphaBadgeEl?.textContent?.trim() || '';
+            const alphaBadgeColor = alphaBadgeEl ? getComputedStyle(alphaBadgeEl).color : '';
+            const alphaBadgeRole = alphaBadgeEl?.getAttribute('role') || '';
+            const alphaBadgeAria = alphaBadgeEl?.getAttribute('aria-label') || '';
+            const overflowXCollapsed = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+            alphaBadgeEl?.click();
+            const alphaReexpandedByBadge = !document.querySelector('#view-sessions [data-session-group="grp-alpha"]')?.classList.contains('collapsed');
+            const alphaPinBadgeAfterExpand = document.querySelectorAll('#view-sessions [data-session-group="grp-alpha"] .group-pin-badge').length;
             const totalOccurrences = document.querySelectorAll('#view-sessions .session-card[data-session-id="pin-grp-old-pinned"]').length;
             const cardIds = [...document.querySelectorAll('#view-sessions .session-card[data-session-id]')].map((c) => c.dataset.sessionId);
             const pCard = document.querySelector('#view-sessions .session-card[data-session-id="pin-ug-pinned-closed"]');
@@ -6433,9 +6488,10 @@ async function main() {
             const activePinColor = activePinBtn ? getComputedStyle(activePinBtn).color : '';
             const overflowX = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
             const titles = document.querySelectorAll('[title]').length;
-            return { cardIds, hasPinShelf: Boolean(pinShelf), alphaCardIds, alphaCount, ugCardIds, ugCount, alphaCollapsed, totalOccurrences, hasGlyph, hasActiveBtn, activePinColor, overflowX, titles };
+            return { cardIds, hasPinShelf: Boolean(pinShelf), alphaPinBadgeExpanded, alphaCardIds, alphaCount, ugCardIds, ugCount, alphaCollapsed, alphaBadgeText, alphaBadgeColor, alphaBadgeRole, alphaBadgeAria, overflowXCollapsed, alphaReexpandedByBadge, alphaPinBadgeAfterExpand, totalOccurrences, hasGlyph, hasActiveBtn, activePinColor, overflowX, titles };
           })()`);
           assert.strictEqual(mobPin.hasPinShelf, false, `Mobile ${theme} Sessions must NOT render [data-session-group="pinned"] shelf`);
+          assert.strictEqual(mobPin.alphaPinBadgeExpanded, 0, `Mobile ${theme} expanded group must render 0 .group-pin-badge`);
           assert.strictEqual(mobPin.alphaCount, '2', `Mobile ${theme} grp-alpha count must include pinned card`);
           assert.deepStrictEqual(mobPin.alphaCardIds, ['pin-grp-old-pinned', 'pin-grp-new-unpinned'], `Mobile ${theme} Sessions must keep pinned card first inside grp-alpha`);
           assert.strictEqual(mobPin.ugCount, String(mobPin.ugCardIds.length), `Mobile ${theme} Ungrouped count must match all ungrouped cards including pinned`);
@@ -6445,10 +6501,16 @@ async function main() {
             `Mobile ${theme} Sessions must keep pinned card first inside Ungrouped: ${JSON.stringify(mobPin.ugCardIds.slice(0, 6))}`
           );
           assert.strictEqual(mobPin.alphaCollapsed && mobPin.totalOccurrences === 1, true, `Mobile ${theme} Sessions must toggle grp-alpha cleanly with 1 occurrence`);
+          assert.strictEqual(mobPin.alphaBadgeText, '1', `Mobile ${theme} collapsed grp-alpha must show .group-pin-badge "1"`);
+          assert.strictEqual(mobPin.alphaBadgeRole, 'img');
+          assert.strictEqual(mobPin.alphaBadgeAria, '1 pinned chat');
+          assert.strictEqual(mobPin.overflowXCollapsed, 0, `Mobile 390x844 ${theme} collapsed group with pin badge must have 0px overflow`);
+          assert.strictEqual(mobPin.alphaReexpandedByBadge && mobPin.alphaPinBadgeAfterExpand === 0, true, `Mobile ${theme} clicking .group-pin-badge must expand grp-alpha and remove badge`);
           assert.strictEqual(mobPin.hasGlyph, true, `Mobile ${theme} session card must show .sess-pin-glyph`);
           assert.strictEqual(mobPin.hasActiveBtn, true, `Mobile ${theme} session card must mark .sess-act-btn.pin-btn.active`);
           if (theme === 'light') {
             assert.strictEqual(mobPin.activePinColor, 'rgb(138, 92, 24)', 'Light theme .sess-act-btn.pin-btn.active must use --brass-deep for WCAG AA contrast');
+            assert.strictEqual(mobPin.alphaBadgeColor, 'rgb(138, 92, 24)', 'Light theme .group-pin-badge must use --brass-deep for WCAG AA contrast');
           }
           assert.strictEqual(mobPin.overflowX, 0, `Mobile 390x844 ${theme} Sessions with pins must have 0px overflow`);
           assert.strictEqual(mobPin.titles, 0);
@@ -6518,13 +6580,19 @@ async function main() {
           const mobAlphaOrder = [...document.querySelectorAll('#view-sessions [data-session-group="grp-alpha"] .session-card[data-session-id]')].map((c) => c.dataset.sessionId);
           const hasIdePinnedShelf = Boolean(document.querySelector('#ide-sidebar-tree [data-ide-group="pinned"]'));
           const ideAlphaOrder = [...document.querySelectorAll('#ide-sidebar-tree [data-ide-group="grp-alpha"] .ide-tree-row[data-ide-open-session]')].map((r) => r.dataset.ideOpenSession);
-          return { rowPinned, hasMobPinnedShelf, mobAlphaOrder, hasIdePinnedShelf, ideAlphaOrder };
+          // Collapsing a group with 0 pinned chats must render 0 badges on both Mobile and Desktop
+          document.querySelector('#view-sessions [data-group-act="toggle"][data-group-id="grp-alpha"]')?.click();
+          const zeroMobPinBadges = document.querySelectorAll('#view-sessions [data-session-group="grp-alpha"] .group-pin-badge').length;
+          const zeroIdePinBadges = document.querySelectorAll('#ide-sidebar-tree [data-ide-group="grp-alpha"] .ide-group-pin-badge').length;
+          document.querySelector('#view-sessions [data-group-act="toggle"][data-group-id="grp-alpha"]')?.click();
+          return { rowPinned, hasMobPinnedShelf, mobAlphaOrder, hasIdePinnedShelf, ideAlphaOrder, zeroMobPinBadges, zeroIdePinBadges };
         })()`);
         assert.strictEqual(lwwPrep.rowPinned, false);
         assert.strictEqual(lwwPrep.hasMobPinnedShelf, false);
         assert.deepStrictEqual(lwwPrep.mobAlphaOrder, ['pin-grp-new-unpinned', 'pin-grp-old-pinned'], 'Unpinning chat inside grp-alpha must keep it in grp-alpha sorted below newer unpinned chat on Mobile');
         assert.strictEqual(lwwPrep.hasIdePinnedShelf, false);
         assert.deepStrictEqual(lwwPrep.ideAlphaOrder, ['pin-grp-new-unpinned', 'pin-grp-old-pinned'], 'Unpinning chat inside grp-alpha must keep it in grp-alpha sorted below newer unpinned chat on Desktop');
+        assert.strictEqual(lwwPrep.zeroMobPinBadges === 0 && lwwPrep.zeroIdePinBadges === 0, true, 'Collapsed grp-alpha with 0 pinned chats after unpinning must show 0 pin badges');
         for (const s of pinSockets) {
           sendPinWsJson(s, {
             type: 'state',
@@ -6572,6 +6640,113 @@ async function main() {
         );
         const ugAfterStaleSnap = await evalJs(`Boolean((window.__theoTestWs.getState()?.rows || []).find((r) => r.id === 'pin-ug-pinned-closed')?.pinned)`);
         assert.strictEqual(ugAfterStaleSnap, false, 'Stale WS state must not resurrect pin on unarchived session');
+
+        // While grp-alpha is collapsed: rowPatch pins second chat -> plural "2 pinned chats", light-theme .ide-group-pin-badge contrast, and long group name ellipsis truncation with 0px overflow
+        await evalJs(`document.querySelector('#view-sessions [data-group-act="toggle"][data-group-id="grp-alpha"]')?.click()`);
+        for (const s of pinSockets) {
+          sendPinWsJson(s, {
+            type: 'state',
+            deviceId: 'pin-dev-local',
+            seq: 3,
+            state: {
+              generatedAt: futurePinTs + 1000,
+              device: { id: 'pin-dev-local', name: 'Pin Local PC' },
+              groups: [{ id: 'grp-alpha', name: 'Very Long Project Group Name That Must Truncate Cleanly Beside Pin Badge', color: 'blue', collapsed: true }],
+              rows: basePinRows.map((r) => ({ ...r }))
+            }
+          });
+        }
+        await waitPinCond(
+          () => evalJs(`document.querySelector('#view-sessions [data-session-group="grp-alpha"] .group-title')?.textContent?.includes('Very Long Project Group Name')`),
+          'Collapsed long-name grp-alpha rendered before plural rowPatch'
+        );
+        const pluralPinTs = futurePinTs + 5000;
+        for (const s of pinSockets) {
+          sendPinWsJson(s, {
+            type: 'rowPatch',
+            deviceId: 'pin-dev-local',
+            seq: 4,
+            generatedAt: pluralPinTs,
+            upserts: [
+              {
+                ...basePinRows[1],
+                pinned: true,
+                pinnedAt: pluralPinTs,
+                pinUpdatedAt: pluralPinTs
+              }
+            ],
+            removedIds: [],
+            removedKeys: []
+          });
+        }
+        await waitPinCond(
+          () => evalJs(`document.querySelector('#view-sessions [data-session-group="grp-alpha"] .group-pin-badge')?.textContent?.trim() === '2'`),
+          'Collapsed grp-alpha plural rowPatch updated badge to 2'
+        );
+        const mobPluralCheck = await evalJs(`(() => {
+          document.documentElement.setAttribute('data-theme', 'light');
+          const mobBadge = document.querySelector('#view-sessions [data-session-group="grp-alpha"] .group-pin-badge');
+          const mobTitle = document.querySelector('#view-sessions [data-session-group="grp-alpha"] .group-title');
+          const mobBadgeW = mobBadge ? mobBadge.getBoundingClientRect().width : 0;
+          const res = {
+            mobText: mobBadge?.textContent?.trim() || '',
+            mobTip: mobBadge?.dataset?.microTip || '',
+            mobAria: mobBadge?.getAttribute('aria-label') || '',
+            mobBadgeColor: mobBadge ? getComputedStyle(mobBadge).color : '',
+            mobBadgeW,
+            mobTitleTruncates: Boolean(mobTitle && mobTitle.scrollWidth > mobTitle.clientWidth),
+            overflowX: Math.max(0, document.documentElement.scrollWidth - window.innerWidth)
+          };
+          document.documentElement.setAttribute('data-theme', 'dark');
+          return res;
+        })()`);
+        assert.strictEqual(mobPluralCheck.mobText, '2', 'Plural collapsed Mobile group must render badge "2"');
+        assert.strictEqual(mobPluralCheck.mobTip, '2 pinned chats');
+        assert.strictEqual(mobPluralCheck.mobAria, '2 pinned chats');
+        assert.strictEqual(mobPluralCheck.mobBadgeColor, 'rgb(138, 92, 24)');
+        assert.ok(mobPluralCheck.mobBadgeW > 0 && mobPluralCheck.mobTitleTruncates, 'Long group title must truncate cleanly beside Mobile badge');
+        assert.strictEqual(mobPluralCheck.overflowX, 0, 'Long collapsed group title + plural pin badge must preserve 0px overflow at 390x844');
+
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 2, mobile: false }, sessionId);
+        const idePluralCheck = await evalJs(`(() => {
+          document.documentElement.setAttribute('data-theme', 'light');
+          document.querySelector('[data-tab="chat"]')?.click();
+          const ideBadge = document.querySelector('#ide-sidebar-tree [data-ide-group="grp-alpha"] .ide-group-pin-badge');
+          const ideTitle = document.querySelector('#ide-sidebar-tree [data-ide-group="grp-alpha"] .ide-tree-group-name');
+          const res = {
+            ideText: ideBadge?.textContent?.trim() || '',
+            ideTip: ideBadge?.dataset?.microTip || '',
+            ideAria: ideBadge?.getAttribute('aria-label') || '',
+            ideBadgeColor: ideBadge ? getComputedStyle(ideBadge).color : '',
+            ideBadgeW: ideBadge ? ideBadge.getBoundingClientRect().width : 0,
+            ideTitleTruncates: Boolean(ideTitle && ideTitle.scrollWidth > ideTitle.clientWidth)
+          };
+          document.documentElement.setAttribute('data-theme', 'dark');
+          return res;
+        })()`);
+        assert.strictEqual(idePluralCheck.ideText, '2', 'Plural collapsed IDE group must render badge "2"');
+        assert.strictEqual(idePluralCheck.ideTip, '2 pinned chats');
+        assert.strictEqual(idePluralCheck.ideAria, '2 pinned chats');
+        assert.strictEqual(idePluralCheck.ideBadgeColor, 'rgb(138, 92, 24)', 'Light theme .ide-group-pin-badge must use --brass-deep');
+        assert.ok(idePluralCheck.ideBadgeW > 0 && idePluralCheck.ideTitleTruncates, 'Long group title must truncate cleanly beside IDE sidebar badge');
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true }, sessionId);
+
+        // Restore expanded grp-alpha baseline with original name before stream_delta test
+        await evalJs(`document.querySelector('#ide-sidebar-tree [data-group-act="toggle"][data-group-id="grp-alpha"]')?.click()`);
+        for (const s of pinSockets) {
+          sendPinWsJson(s, {
+            type: 'state',
+            deviceId: 'pin-dev-local',
+            seq: 5,
+            state: {
+              generatedAt: pluralPinTs + 1000,
+              device: { id: 'pin-dev-local', name: 'Pin Local PC' },
+              groups: [{ id: 'grp-alpha', name: 'Alpha', color: 'blue', collapsed: false }],
+              rows: basePinRows.map((r) => ({ ...r }))
+            }
+          });
+        }
+        await new Promise((r) => setTimeout(r, 80));
 
         // Live stream_delta on newer unpinned row must NOT demote pinned chat in Pulse Recent Sessions
         for (const s of pinSockets) {
