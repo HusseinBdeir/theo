@@ -7117,37 +7117,68 @@
       subAction: 'applyPcSetup',
       targetDeviceId: cleanId
     }).catch(() => null);
-    // Only a reply from the PC itself (direct or through the relay) says what happened there. Anything else
-    // means the request is still on its way, and is said as that.
-    const mode = String(res?.mode || '');
-    const answered = mode === 'local_ws' || mode === 'edge_ws' || mode === 'local' || mode === 'quarantined';
-    const out = res && res.out && typeof res.out === 'object' ? res.out : {};
-    const reply = out.result && typeof out.result === 'object' ? out.result : out;
-    let toast;
-    let inProgress = false;
-    if (!res) {
-      toast = `Could not send the setup request to ${name}.`;
-    } else if (!answered) {
-      toast =
-        mode === 'cloud'
-          ? `${name} did not answer directly. The request is queued and starts if the PC picks it up within 15 minutes.`
-          : `The phone is offline. The request goes out when it reconnects, and is dropped after 15 minutes.`;
-    } else if (reply.reason === 'sessions_running') {
-      toast = `${name} has sessions running. Apply the setup when they finish.`;
-    } else if (reply.busy) {
-      toast = `${name} is already applying its setup.`;
-      inProgress = true;
-    } else if (reply.skipped === 'stale_request') {
-      toast = `${name} dropped the request: it was more than 15 minutes old. Tap Apply again.`;
-    } else if (reply.started === false || reply.refused) {
-      toast = `${name} could not start its setup. Use Apply Setup on that PC.`;
-    } else {
-      toast = `Setup started on ${name}. Its pill updates when it finishes.`;
-      inProgress = true;
-    }
+    const { toast, inProgress } = describePcSetupReply(name, res);
     if (!inProgress) pcSetupApplyStartedAt.delete(cleanId);
     showToast(toast);
     renderPulseView();
+  }
+
+  // The reply of a command sent to one PC: the PC's own answer, or {} when the command is still on its way.
+  // A reply that came through another PC and was queued there (`queued`) is not the PC's own answer.
+  function readDirectPcReply(res) {
+    const mode = String(res?.mode || '');
+    const out = res && res.out && typeof res.out === 'object' ? res.out : {};
+    const reply = out.result && typeof out.result === 'object' ? out.result : out;
+    const direct = mode === 'local_ws' || mode === 'edge_ws' || mode === 'local';
+    return { mode, reply, answered: direct && !reply.queued, queuedOnAnotherPc: direct && Boolean(reply.queued) };
+  }
+
+  // What to tell the user about an Apply PC setup tap. "Started" is said only when that PC answered that it
+  // started; a request still on its way, refused, or unconfirmed is said as that.
+  function describePcSetupReply(name, res) {
+    if (!res) return { toast: `Could not send the setup request to ${name}.`, inProgress: false };
+    const { mode, reply, answered, queuedOnAnotherPc } = readDirectPcReply(res);
+    if (mode === 'quarantined') {
+      return { toast: `Setup started on ${name}. Its pill updates when it finishes.`, inProgress: true };
+    }
+    if (mode === 'cloud' || queuedOnAnotherPc) {
+      return {
+        toast: `${name} did not answer directly. The request is queued and starts if the PC picks it up within 15 minutes.`,
+        inProgress: false
+      };
+    }
+    if (!answered) {
+      return {
+        toast: 'The phone is offline. The request goes out when it reconnects, and is dropped after 15 minutes.',
+        inProgress: false
+      };
+    }
+    if (reply.reason === 'sessions_running') {
+      return { toast: `${name} has sessions running. Apply the setup when they finish.`, inProgress: false };
+    }
+    if (reply.busy) return { toast: `${name} is already applying its setup.`, inProgress: true };
+    if (reply.skipped === 'stale_request') {
+      return {
+        toast: `${name} dropped the request: it was more than 15 minutes old. Tap Apply again.`,
+        inProgress: false
+      };
+    }
+    if (reply.started === true) {
+      return { toast: `Setup started on ${name}. Its pill updates when it finishes.`, inProgress: true };
+    }
+    if (reply.started === false || reply.refused) {
+      return { toast: `${name} could not start its setup. Use Apply Setup on that PC.`, inProgress: false };
+    }
+    return {
+      toast: `${name} did not confirm that the setup started. Watch its setup pill, or use Apply Setup on that PC.`,
+      inProgress: false
+    };
+  }
+  // The automated browser check reads the wording for each kind of reply without a PC behind it.
+  if (isHeadlessBrowser) {
+    try {
+      window.__theoDescribePcSetupReply = describePcSetupReply;
+    } catch {}
   }
 
   // Phone-only readiness: can THEO be driven from here alone, with VS Code closed on every PC?
@@ -16548,10 +16579,12 @@
           ...(acctSignInHost ? { targetDeviceId: acctSignInHost.id } : {})
         }).catch(() => null);
         const acctProvName = provider === 'claude' ? 'Claude Code' : 'Antigravity';
-        const acctMode = String(acctRes?.mode || '');
-        // "Opened" is said only when the PC itself answered; a request still on its way is said as that.
+        // "Opened" is said only when that PC itself answered with VS Code running: a request still on its way,
+        // queued on another PC, or answered by the background service (`standalone`: no VS Code) is not that.
+        const acctReplyInfo = readDirectPcReply(acctRes);
         const acctAnswered =
-          acctMode === 'local_ws' || acctMode === 'edge_ws' || acctMode === 'local' || acctMode === 'quarantined';
+          acctReplyInfo.mode === 'quarantined' ||
+          (acctReplyInfo.answered && !acctReplyInfo.reply.standalone && acctReplyInfo.reply.ok !== false);
         if (!acctSignInHost) {
           showToast(
             `🔐 Sign-in launched on desktop for ${acctProvName} — existing accounts remain logged in`

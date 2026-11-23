@@ -3553,6 +3553,32 @@ async function main() {
       applyButtons: document.querySelectorAll('[data-apply-pc-setup]').length,
       setupText: document.getElementById('pulse-pc-setup-card')?.textContent || ''
     }))()`);
+    // "Setup started" is said only when that PC answered that it started.
+    const replyWording = await evalJs(`(() => {
+      const d = window.__theoDescribePcSetupReply;
+      const say = (res) => { const r = d('Beta', res); return [/^Setup started/.test(r.toast), r.inProgress, r.toast]; };
+      return {
+        started: say({ ok: true, mode: 'edge_ws', out: { ok: true, started: true } }),
+        startedWrapped: say({ ok: true, mode: 'local_ws', out: { ok: true, result: { ok: true, started: true } } }),
+        queuedOnOtherPc: say({ ok: true, mode: 'local', out: { ok: true, queued: true } }),
+        unconfirmed: say({ ok: true, mode: 'local_ws', out: { ok: true } }),
+        storeQueue: say({ ok: true, mode: 'cloud', id: 'cmd-1' }),
+        outbox: say({ ok: true, mode: 'queued', id: 'cmd-1' }),
+        sessions: say({ ok: true, mode: 'edge_ws', out: { ok: true, busy: true, started: false, reason: 'sessions_running' } }),
+        busy: say({ ok: true, mode: 'edge_ws', out: { ok: true, busy: true, started: false } }),
+        stale: say({ ok: true, mode: 'edge_ws', out: { ok: true, started: false, skipped: 'stale_request' } }),
+        refused: say({ ok: true, mode: 'edge_ws', out: { ok: true, started: false, refused: 'unavailable' } }),
+        none: say(null)
+      };
+    })()`);
+    assert.deepStrictEqual(replyWording.started.slice(0, 2), [true, true]);
+    assert.deepStrictEqual(replyWording.startedWrapped.slice(0, 2), [true, true]);
+    for (const k of ['queuedOnOtherPc', 'unconfirmed', 'storeQueue', 'outbox', 'sessions', 'stale', 'refused', 'none']) {
+      assert.deepStrictEqual(replyWording[k].slice(0, 2), [false, false], `"${k}" must not read as a started setup: ${replyWording[k][2]}`);
+    }
+    assert.deepStrictEqual(replyWording.busy.slice(0, 2), [false, true], 'a PC already applying keeps the button locked');
+    assert.ok(/queued/.test(replyWording.queuedOnOtherPc[2]) && /queued/.test(replyWording.storeQueue[2]));
+    assert.ok(/offline/.test(replyWording.outbox[2]));
     assert.strictEqual(readyD.hasCard, false, 'no card while no PC reports phone-only readiness');
     assert.strictEqual(readyD.applyButtons, 0, 'a PC on an older build gets no Apply button');
     assert.ok(readyD.setupText.includes('Apply Setup'), 'and keeps the instruction for that PC');
