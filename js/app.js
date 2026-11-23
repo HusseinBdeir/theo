@@ -7080,9 +7080,21 @@
   const pcSetupApplyStartedAt = new Map();
   const PC_SETUP_APPLY_SHOW_MS = 4 * 60 * 1000;
 
+  // True while a setup run started from this phone is taken to be in progress on that PC: until the PC reports a
+  // check made after the tap (its pill then shows the outcome), or four minutes at most.
+  function isPcSetupApplyShown(d) {
+    const startedAt = pcSetupApplyStartedAt.get(d && d.id) || 0;
+    if (!startedAt) return false;
+    const reportedAfter = Number(d?.pcSetup?.checkedAt || 0) > startedAt;
+    if (reportedAfter || Date.now() - startedAt >= PC_SETUP_APPLY_SHOW_MS) {
+      pcSetupApplyStartedAt.delete(d.id);
+      return false;
+    }
+    return true;
+  }
+
   function renderApplyPcSetupButtonHtml(d, cls) {
-    const startedAt = pcSetupApplyStartedAt.get(d.id) || 0;
-    const busy = startedAt && Date.now() - startedAt < PC_SETUP_APPLY_SHOW_MS;
+    const busy = isPcSetupApplyShown(d);
     const name = String(d.name || d.id || 'PC').slice(0, 24);
     return `<button type="button" class="${cls}" data-apply-pc-setup="${esc(d.id)}" ${busy ? 'disabled' : ''}>${busy ? `Applying on ${esc(name)}…` : `Apply on ${esc(name)}`}</button>`;
   }
@@ -7092,8 +7104,7 @@
     const dev = cleanId ? fleetDevicesMap.get(cleanId) : null;
     if (!dev) return;
     const name = String(dev.name || dev.id || 'that PC');
-    const startedAt = pcSetupApplyStartedAt.get(cleanId) || 0;
-    if (startedAt && Date.now() - startedAt < PC_SETUP_APPLY_SHOW_MS) return;
+    if (isPcSetupApplyShown(dev)) return;
     if (!dev.online) {
       showToast(`${name} is offline. Switch it on, then apply the setup.`);
       return;
@@ -7106,17 +7117,36 @@
       subAction: 'applyPcSetup',
       targetDeviceId: cleanId
     }).catch(() => null);
+    // Only a reply from the PC itself (direct or through the relay) says what happened there. Anything else
+    // means the request is still on its way, and is said as that.
+    const mode = String(res?.mode || '');
+    const answered = mode === 'local_ws' || mode === 'edge_ws' || mode === 'local' || mode === 'quarantined';
     const out = res && res.out && typeof res.out === 'object' ? res.out : {};
-    if (!res || res.ok === false) {
-      pcSetupApplyStartedAt.delete(cleanId);
-      showToast(`Could not reach ${name} to apply the setup.`);
-    } else if (out.busy) {
-      showToast(`${name} is already applying its setup.`);
-    } else if (res.mode === 'cloud' || res.mode === 'cloud_queue') {
-      showToast(`Setup request queued for ${name}. It starts when the PC picks it up.`);
+    const reply = out.result && typeof out.result === 'object' ? out.result : out;
+    let toast;
+    let inProgress = false;
+    if (!res) {
+      toast = `Could not send the setup request to ${name}.`;
+    } else if (!answered) {
+      toast =
+        mode === 'cloud'
+          ? `${name} did not answer directly. The request is queued and starts if the PC picks it up within 15 minutes.`
+          : `The phone is offline. The request goes out when it reconnects, and is dropped after 15 minutes.`;
+    } else if (reply.reason === 'sessions_running') {
+      toast = `${name} has sessions running. Apply the setup when they finish.`;
+    } else if (reply.busy) {
+      toast = `${name} is already applying its setup.`;
+      inProgress = true;
+    } else if (reply.skipped === 'stale_request') {
+      toast = `${name} dropped the request: it was more than 15 minutes old. Tap Apply again.`;
+    } else if (reply.started === false || reply.refused) {
+      toast = `${name} could not start its setup. Use Apply Setup on that PC.`;
     } else {
-      showToast(`Setup started on ${name}. Its pill updates when it finishes.`);
+      toast = `Setup started on ${name}. Its pill updates when it finishes.`;
+      inProgress = true;
     }
+    if (!inProgress) pcSetupApplyStartedAt.delete(cleanId);
+    showToast(toast);
     renderPulseView();
   }
 
@@ -16508,7 +16538,7 @@
         const [rawProv, ...rest] = rawChoice.trim().split(':');
         const provider = rawProv.trim().toLowerCase().startsWith('c') ? 'claude' : 'antigravity';
         const label = rest.join(':').trim();
-        await dispatchRemoteCommand({
+        const acctRes = await dispatchRemoteCommand({
           type: 'sessionAction',
           action: 'accountAdd',
           subAction: 'accountAdd',
@@ -16516,12 +16546,25 @@
           label,
           switchOnComplete: true,
           ...(acctSignInHost ? { targetDeviceId: acctSignInHost.id } : {})
-        });
-        showToast(
-          acctSignInHost
-            ? `🔐 Sign-in opened on ${acctSignInHost.name || 'the PC'} for ${provider === 'claude' ? 'Claude Code' : 'Antigravity'}. Finish it in the browser there; existing accounts stay signed in`
-            : `🔐 Sign-in launched on desktop for ${provider === 'claude' ? 'Claude Code' : 'Antigravity'} — existing accounts remain logged in`
-        );
+        }).catch(() => null);
+        const acctProvName = provider === 'claude' ? 'Claude Code' : 'Antigravity';
+        const acctMode = String(acctRes?.mode || '');
+        // "Opened" is said only when the PC itself answered; a request still on its way is said as that.
+        const acctAnswered =
+          acctMode === 'local_ws' || acctMode === 'edge_ws' || acctMode === 'local' || acctMode === 'quarantined';
+        if (!acctSignInHost) {
+          showToast(
+            `🔐 Sign-in launched on desktop for ${acctProvName} — existing accounts remain logged in`
+          );
+        } else if (acctAnswered) {
+          showToast(
+            `🔐 Sign-in opened on ${acctSignInHost.name || 'the PC'} for ${acctProvName}. Finish it in the browser there; existing accounts stay signed in`
+          );
+        } else {
+          showToast(
+            `${acctSignInHost.name || 'The PC'} did not answer directly. The ${acctProvName} sign-in opens there only if VS Code is still open when the request arrives.`
+          );
+        }
         return;
       }
 
