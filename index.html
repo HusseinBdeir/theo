@@ -9,14 +9,14 @@
   <meta name="apple-mobile-web-app-title" content="THEO">
   <meta name="description" content="THEO — AI Coding &amp; Session Workbench for Google Antigravity and Claude Code.">
   <title>THEO — AI Session Workbench</title>
-  <link rel="manifest" href="manifest.json?v=84">
-  <link rel="icon" type="image/svg+xml" href="icon.svg?v=84">
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=84">
-  <link rel="apple-touch-icon" href="icon-180.png?v=84">
+  <link rel="manifest" href="manifest.json?v=85">
+  <link rel="icon" type="image/svg+xml" href="icon.svg?v=85">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=85">
+  <link rel="apple-touch-icon" href="icon-180.png?v=85">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/theo.css?v=84">
+  <link rel="stylesheet" href="css/theo.css?v=85">
   <script id="pre">
     (() => {
       try {
@@ -55,7 +55,7 @@
   <div id="pin-overlay" class="pin-overlay" hidden>
     <div class="pin-card">
       <div class="pin-brand">
-        <img src="icon.svg?v=84" alt="THEO" class="pin-logo">
+        <img src="icon.svg?v=85" alt="THEO" class="pin-logo">
         <div class="pin-title">THEO REMOTE</div>
         <div class="brass-double-rule"></div>
       </div>
@@ -85,7 +85,7 @@
     <aside class="ink-rail" id="ink-rail" aria-label="Primary Navigation">
       <div class="ide-activity-bar">
         <button type="button" class="activity-brand-btn" id="btn-activity-brand" data-sidebar-collapse="1" data-tip="THEO Workbench (⌘B)" aria-label="Toggle THEO Explorer Sidebar">
-          <img src="icon.svg?v=84" alt="THEO" class="brand-badge">
+          <img src="icon.svg?v=85" alt="THEO" class="brand-badge">
         </button>
 
         <nav class="rail-nav" id="rail-nav">
@@ -256,7 +256,7 @@
       <!-- Mobile & Compact Top Header -->
       <header class="mobile-topbar">
         <div class="mobile-brand">
-          <img src="icon.svg?v=84" alt="THEO" class="mobile-badge">
+          <img src="icon.svg?v=85" alt="THEO" class="mobile-badge">
           <div class="mobile-brand-copy">
             <div class="mobile-title-row">
               <div class="mobile-wordmark-stack">
@@ -506,7 +506,7 @@
                 <span class="insp-pill-lbl">Inspector</span>
                 <span class="insp-pill-badge" id="inspector-pill-count" hidden>0</span>
               </button>
-              <button type="button" class="btn-ghost-sm" id="btn-chat-open-vscode" aria-label="Reveal this session tab in VS Code on laptop">
+              <button type="button" class="btn-ghost-sm" id="btn-chat-open-vscode" aria-label="Open this session in a VS Code tab on the PC (optional)">
                 Open in IDE
               </button>
             </div>
@@ -768,11 +768,24 @@
     <div class="cmd-dialog conn-dialog">
       <div class="cmd-input-row">
         <span class="conn-dot" id="conn-modal-dot"></span>
-        <strong id="conn-modal-title" style="flex:1;font-size:14.5px">VS Code Bridge Status</strong>
+        <strong id="conn-modal-title" style="flex:1;font-size:14.5px">PC Link Status</strong>
         <button type="button" class="cmd-esc" id="conn-modal-close">ESC</button>
       </div>
       <div class="brass-rule-single" style="margin:0 16px"></div>
       <div class="conn-modal-body" id="conn-modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Add an account from THEO: the PC's background service runs the sign-in, no VS Code window needed -->
+  <div class="cmd-modal" id="acct-signin-modal" hidden>
+    <div class="cmd-dialog conn-dialog">
+      <div class="cmd-input-row">
+        <span class="conn-dot" id="acct-signin-dot"></span>
+        <strong id="acct-signin-title" style="flex:1;font-size:14.5px">Add an account</strong>
+        <button type="button" class="cmd-esc" id="acct-signin-close">ESC</button>
+      </div>
+      <div class="brass-rule-single" style="margin:0 16px"></div>
+      <div class="conn-modal-body" id="acct-signin-body"></div>
     </div>
   </div>
 
@@ -852,7 +865,7 @@
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=84"></script>
-  <script src="js/app.js?v=84"></script>
+  <script src="js/endpoints.js?v=85"></script>
+  <script src="js/app.js?v=85"></script>
 </body>
 </html>

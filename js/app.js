@@ -2583,7 +2583,7 @@
           title: isQ
             ? `❓ Question · ${a.title || 'Session'}`
             : `⚡ Approval Needed · ${a.title || 'Session'}`,
-          body: String(a.detail || a.toolName || 'Waiting for confirmation in VS Code'),
+          body: String(a.detail || a.toolName || 'Waiting for confirmation'),
           tab: a.sessionId ? 'chat' : 'pulse',
           threadId: String(a.sessionId || ''),
           provider: String(a.provider || 'antigravity'),
@@ -2937,7 +2937,8 @@
               ? `${approvals.length} approval${approvals.length === 1 ? '' : 's'} waiting · `
               : '';
           const title = `THEO AI Workbench Morning Brief ⚡`;
-          const body = `${waitTxt}${rows.length} active AI sessions (${openTabs.length} open in VS Code across Antigravity & Claude Code).`;
+          const tabTxt = openTabs.length > 0 ? ` (${openTabs.length} open in VS Code)` : '';
+          const body = `${waitTxt}${rows.length} active AI sessions across Antigravity & Claude Code${tabTxt}.`;
           const exp = Math.floor(dtAm.getTime() / 1000) + 57600;
           const [vapid, bodyB64] = await Promise.all([
             signVapid(subJson.endpoint, exp),
@@ -4002,6 +4003,8 @@
       okCount,
       totalCount: required.length,
       vscodeOpen: Boolean(raw.vscodeOpen),
+      // The PC's build runs an account sign-in itself and reports its progress (the sign-in sheet needs that).
+      signIn: raw.signIn === true,
       checks
     };
   }
@@ -6283,8 +6286,9 @@
       } catch {}
     }
 
-    // 3. Direct Local HTTP Bridge
-    if (connMode === 'local' && localBridgeBase) {
+    // 3. Direct Local HTTP Bridge (not for a live-only command meant for another PC: the bridge PC would have
+    // to pass it on, and it must never end up in a queue)
+    if (connMode === 'local' && localBridgeBase && !(cmdObj?.liveOnly && targetsAnotherHost)) {
       try {
         const endpoint =
           cmd.type === 'send'
@@ -6310,6 +6314,12 @@
           }
         }
       } catch {}
+    }
+
+    // A command marked `liveOnly` (an account sign-in step, which may carry a one-time code) reaches a PC over
+    // a live link or not at all: it is never written to the cloud queue or kept in this device's outbox.
+    if (cmdObj?.liveOnly) {
+      return { ok: false, mode: 'no_live_link', id: cmd.id };
     }
 
     // 4. Cloud Relay Command Queue (serialized + fast get_control)
@@ -7133,6 +7143,23 @@
     return { mode, reply, answered: direct && !reply.queued, queuedOnAnotherPc: direct && Boolean(reply.queued) };
   }
 
+  // What to say after asking a PC to show a session in a VS Code tab. VS Code is optional: a PC with no window
+  // open answers `opened: false`, and the session is already usable here.
+  function describeVsCodeOpenReply(res, openedText) {
+    const { mode, reply, answered } = readDirectPcReply(res);
+    if (mode === 'quarantined') return openedText;
+    if (answered && (reply.opened === false || reply.standalone)) {
+      return 'VS Code is not open on that PC. The session is fully usable here in THEO.';
+    }
+    if (answered) return openedText;
+    return 'Sent to the PC. A tab opens there only if VS Code is running.';
+  }
+  if (isHeadlessBrowser) {
+    try {
+      window.__theoDescribeVsCodeOpenReply = describeVsCodeOpenReply;
+    } catch {}
+  }
+
   // What to tell the user about an Apply PC setup tap. "Started" is said only when that PC answered that it
   // started; a request still on its way, refused, or unconfirmed is said as that.
   function describePcSetupReply(name, res) {
@@ -7178,6 +7205,365 @@
   if (isHeadlessBrowser) {
     try {
       window.__theoDescribePcSetupReply = describePcSetupReply;
+    } catch {}
+  }
+
+  // ---- Add an account from THEO, with no VS Code window on the PC ----
+  // The PC's background service runs the sign-in; this sheet shows its link and takes its code. Every step
+  // goes over a live link only (`liveOnly`): a sign-in link or code is never queued in the cloud store.
+  //   Claude:       open the link on any device, sign in, type the code the page shows.
+  //   Antigravity:  Google returns to the PC itself to finish, so the link is opened in a browser on that PC.
+  let acctSignIn = null;
+
+  function isSafeHttpsLink(url) {
+    return /^https:\/\/[^\s"'<>]+$/i.test(String(url || ''));
+  }
+
+  function accountSignInProviderName(provider) {
+    return provider === 'claude' ? 'Claude Code' : 'Antigravity';
+  }
+
+  async function sendAccountSignInStep(subAction, extra = {}) {
+    if (!acctSignIn) return null;
+    const res = await dispatchRemoteCommand({
+      type: 'sessionAction',
+      action: subAction,
+      subAction,
+      targetDeviceId: acctSignIn.hostId,
+      liveOnly: true,
+      ...extra
+    }).catch(() => null);
+    const info = readDirectPcReply(res);
+    if (info.mode === 'quarantined') return { quarantined: true };
+    return info.answered ? info.reply : null;
+  }
+
+  function applyAccountSignInReply(reply) {
+    if (!acctSignIn) return;
+    if (!reply) {
+      acctSignIn.linkLost = true;
+      return;
+    }
+    acctSignIn.linkLost = false;
+    if (reply.progress && typeof reply.progress === 'object') {
+      acctSignIn.progress = reply.progress;
+    }
+  }
+
+  async function startAccountSignIn(provider, label, host) {
+    stopAccountSignInPolling();
+    acctSignIn = {
+      provider: provider === 'claude' ? 'claude' : 'antigravity',
+      label: String(label || ''),
+      hostId: host.id,
+      hostName: host.name || 'the PC',
+      phase: 'starting',
+      progress: null,
+      error: '',
+      note: '',
+      linkLost: false,
+      pollTimer: null
+    };
+    const modal = $('acct-signin-modal');
+    if (modal) {
+      const wasHidden = modal.hidden;
+      modal.hidden = false;
+      if (wasHidden) pushUiHistoryState('acct-signin-modal');
+    }
+    renderAccountSignInModal();
+    const session = acctSignIn;
+    const reply = await sendAccountSignInStep('accountAdd', {
+      provider: session.provider,
+      label: session.label,
+      switchOnComplete: true
+    });
+    if (acctSignIn !== session) return;
+    if (!reply) {
+      session.phase = 'failed';
+      session.error = `THEO is not linked live to ${session.hostName} right now. A sign-in is only started over a live link.`;
+      renderAccountSignInModal();
+      return;
+    }
+    if (reply.quarantined) {
+      session.phase = 'pending';
+      renderAccountSignInModal();
+      return;
+    }
+    if (reply.started === false) {
+      session.phase = 'failed';
+      session.error = String(reply.error || `${session.hostName} could not start the sign-in.`);
+      renderAccountSignInModal();
+      return;
+    }
+    // `started` is absent when a VS Code window on that PC took the request: the sign-in runs in its terminal
+    // there (which keeps the link to itself), and the status below still reports how it ends.
+    if (reply.started !== true) {
+      session.viaVsCode = true;
+      session.note = `VS Code is open on ${session.hostName}: the sign-in is running in its terminal there.`;
+    }
+    session.phase = 'pending';
+    applyAccountSignInReply(reply);
+    renderAccountSignInModal();
+    session.pollTimer = setInterval(() => pollAccountSignIn(session), 2000);
+    pollAccountSignIn(session);
+  }
+
+  function stopAccountSignInPolling() {
+    if (acctSignIn?.pollTimer) {
+      clearInterval(acctSignIn.pollTimer);
+      acctSignIn.pollTimer = null;
+    }
+  }
+
+  async function pollAccountSignIn(session) {
+    if (acctSignIn !== session || session.phase !== 'pending' || session.polling) return;
+    session.polling = true;
+    try {
+      const reply = await sendAccountSignInStep('accountSignInStatus');
+      if (acctSignIn !== session) return;
+      applyAccountSignInReply(reply);
+      const progress = session.progress || {};
+      if (reply && !reply.quarantined && !progress.pending) {
+        stopAccountSignInPolling();
+        if (progress.lastSuccess && progress.lastSuccess.provider === session.provider) {
+          session.phase = 'done';
+          showToast(
+            `Signed in to ${accountSignInProviderName(session.provider)} on ${session.hostName} as ${progress.lastSuccess.email || 'the new account'}`
+          );
+          closeAccountSignInModal();
+          setTimeout(() => syncData(), 400);
+          return;
+        }
+        session.phase = 'failed';
+        session.error = String(progress.lastFailure?.message || 'The sign-in ended before it finished.');
+      }
+      // Do not redraw under the user's fingers while the code is being typed.
+      const codeInput = $('acct-signin-code');
+      if (!(codeInput && document.activeElement === codeInput && session.phase === 'pending')) {
+        renderAccountSignInModal();
+      } else {
+        const status = $('acct-signin-status');
+        if (status) status.textContent = accountSignInStatusLine(session);
+      }
+    } finally {
+      session.polling = false;
+    }
+  }
+
+  function accountSignInStatusLine(session) {
+    if (session.linkLost) return `Lost the live link to ${session.hostName}. Trying again…`;
+    return String(session.progress?.pending?.message || session.note || '');
+  }
+
+  function closeAccountSignInModal() {
+    const modal = $('acct-signin-modal');
+    if (modal) modal.hidden = true;
+    const session = acctSignIn;
+    stopAccountSignInPolling();
+    acctSignIn = null;
+    // Closing the sheet while a sign-in still runs stops it on the PC: nothing is left waiting unseen.
+    if (session && session.phase === 'pending') {
+      dispatchRemoteCommand({
+        type: 'sessionAction',
+        action: 'accountSignInCancel',
+        subAction: 'accountSignInCancel',
+        targetDeviceId: session.hostId,
+        liveOnly: true
+      }).catch(() => {});
+    }
+  }
+
+  function renderAccountSignInModal() {
+    const body = $('acct-signin-body');
+    const title = $('acct-signin-title');
+    const dot = $('acct-signin-dot');
+    if (!body) return;
+    const s = acctSignIn;
+    if (!s) {
+      body.innerHTML = '';
+      return;
+    }
+    const provName = accountSignInProviderName(s.provider);
+    const host = esc(s.hostName);
+    if (title) title.textContent = `Add a ${provName} account on ${s.hostName}`;
+    if (dot) {
+      dot.className = `conn-dot ${s.phase === 'failed' ? 'offline' : s.phase === 'pending' ? 'online' : ''}`.trim();
+    }
+    if (s.phase === 'starting') {
+      body.innerHTML = `<div class="acct-signin-wait">Starting the sign-in on ${host}…</div>`;
+      return;
+    }
+    if (s.phase === 'failed') {
+      body.innerHTML = `
+        <div class="acct-signin-error">${esc(s.error || 'The sign-in did not finish.')}</div>
+        <div class="acct-signin-actions">
+          <button type="button" class="btn-brass-sm" data-acct-signin-act="retry">Start again</button>
+          <button type="button" class="btn-ghost-sm" data-acct-signin-act="close">Close</button>
+        </div>
+      `;
+      return;
+    }
+    const pending = s.progress?.pending || {};
+    const authUrl = isSafeHttpsLink(pending.authUrl) ? pending.authUrl : '';
+    const verifyUrl = isSafeHttpsLink(pending.verificationUrl) ? pending.verificationUrl : '';
+    const onThatPc = Boolean(localWsDevice?.id && localWsDevice.id === s.hostId);
+    const statusLine = `<div class="acct-signin-status" id="acct-signin-status">${esc(accountSignInStatusLine(s))}</div>`;
+    const cancelRow = `
+      <div class="acct-signin-actions acct-signin-foot">
+        <button type="button" class="btn-ghost-sm" data-acct-signin-act="cancel">Cancel sign-in</button>
+      </div>`;
+    if (!authUrl && !verifyUrl) {
+      body.innerHTML = s.viaVsCode
+        ? `<div class="acct-signin-wait">The sign-in opened in the VS Code window on ${host}. Finish it in the browser there; this sheet closes when the account is added. To sign in from here instead, close VS Code on ${host} and start again.</div>${statusLine}${cancelRow}`
+        : `<div class="acct-signin-wait">Preparing the sign-in link on ${host}…</div>${statusLine}${cancelRow}`;
+      return;
+    }
+    if (s.provider === 'claude') {
+      const keptCode = String($('acct-signin-code')?.value || '');
+      body.innerHTML = `
+        <div class="acct-signin-step">
+          <span class="acct-signin-n">1</span>
+          <div class="acct-signin-copy">
+            <div>Open the Anthropic sign-in page and sign in. Any device works.</div>
+            <div class="acct-signin-actions">
+              <a class="btn-brass-sm" href="${esc(authUrl)}" target="_blank" rel="noopener noreferrer">Open sign-in page</a>
+              <button type="button" class="btn-ghost-sm" data-acct-signin-act="open-on-pc">Open on ${host}</button>
+            </div>
+          </div>
+        </div>
+        <div class="acct-signin-step">
+          <span class="acct-signin-n">2</span>
+          <div class="acct-signin-copy">
+            <div>Enter the code the page shows when you finish. If it was opened on ${host} and shows no code, it finishes by itself.</div>
+            <div class="acct-signin-code-row">
+              <input type="text" id="acct-signin-code" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Paste the code" ${pending.codeSubmitted ? 'disabled' : ''}>
+              <button type="button" class="btn-brass-sm" data-acct-signin-act="submit-code" ${pending.codeSubmitted ? 'disabled' : ''}>${pending.codeSubmitted ? 'Checking…' : 'Finish'}</button>
+            </div>
+          </div>
+        </div>
+        ${statusLine}${cancelRow}
+      `;
+      const codeInput = $('acct-signin-code');
+      if (codeInput && keptCode && !pending.codeSubmitted) codeInput.value = keptCode;
+      return;
+    }
+    if (pending.awaitingVerification && verifyUrl) {
+      body.innerHTML = `
+        <div class="acct-signin-step">
+          <span class="acct-signin-n">!</span>
+          <div class="acct-signin-copy">
+            <div>Google asked for a one-time check on this account. Complete it, then continue.</div>
+            <div class="acct-signin-actions">
+              <a class="btn-brass-sm" href="${esc(verifyUrl)}" target="_blank" rel="noopener noreferrer">Open verification page</a>
+              <button type="button" class="btn-ghost-sm" data-acct-signin-act="verified">Verified, continue</button>
+            </div>
+          </div>
+        </div>
+        ${statusLine}${cancelRow}
+      `;
+      return;
+    }
+    body.innerHTML = `
+      <div class="acct-signin-step">
+        <span class="acct-signin-n">1</span>
+        <div class="acct-signin-copy">
+          <div>Open the Google sign-in page in a browser on ${host} and choose the account. Google finishes this sign-in on the PC itself, so the page has to be opened there.</div>
+          <div class="acct-signin-actions">
+            ${
+              onThatPc
+                ? `<a class="btn-brass-sm" href="${esc(authUrl)}" target="_blank" rel="noopener noreferrer">Open sign-in page</a>`
+                : `<button type="button" class="btn-brass-sm" data-acct-signin-act="open-on-pc">Open on ${host}</button>`
+            }
+            <button type="button" class="btn-ghost-sm" data-acct-signin-act="copy-link">Copy link</button>
+          </div>
+        </div>
+      </div>
+      <div class="acct-signin-step">
+        <span class="acct-signin-n">2</span>
+        <div class="acct-signin-copy">This sheet closes by itself when the account is added.</div>
+      </div>
+      ${statusLine}${cancelRow}
+    `;
+  }
+
+  async function handleAccountSignInAct(act) {
+    const s = acctSignIn;
+    if (!s) return;
+    if (act === 'close') {
+      closeAccountSignInModal();
+      return;
+    }
+    if (act === 'retry') {
+      startAccountSignIn(s.provider, s.label, { id: s.hostId, name: s.hostName });
+      return;
+    }
+    if (act === 'cancel') {
+      closeAccountSignInModal();
+      showToast('Sign-in cancelled');
+      return;
+    }
+    if (act === 'copy-link') {
+      const link = s.progress?.pending?.authUrl;
+      if (!isSafeHttpsLink(link)) return;
+      try {
+        await navigator.clipboard.writeText(link);
+        showToast('Sign-in link copied');
+      } catch {
+        showToast('Could not copy the link on this device');
+      }
+      return;
+    }
+    if (act === 'open-on-pc') {
+      const reply = await sendAccountSignInStep('accountSignInOpenOnPc');
+      if (acctSignIn !== s) return;
+      showToast(
+        reply && reply.accepted
+          ? `Sign-in page opened in the browser on ${s.hostName}`
+          : String(reply?.error || `${s.hostName} did not answer. Try again.`)
+      );
+      return;
+    }
+    if (act === 'verified') {
+      const reply = await sendAccountSignInStep('accountVerifyContinue');
+      if (acctSignIn !== s) return;
+      applyAccountSignInReply(reply);
+      if (reply && !reply.accepted) showToast(String(reply.error || 'That did not go through.'));
+      renderAccountSignInModal();
+      return;
+    }
+    if (act === 'submit-code') {
+      const input = $('acct-signin-code');
+      const code = String(input?.value || '').trim();
+      if (!code) {
+        showToast('Paste the code from the sign-in page first');
+        return;
+      }
+      const reply = await sendAccountSignInStep('accountSignInCode', { code });
+      if (acctSignIn !== s) return;
+      if (!reply) {
+        showToast(`Lost the live link to ${s.hostName}. The code was not sent.`);
+        return;
+      }
+      applyAccountSignInReply(reply);
+      if (reply.accepted) {
+        if (input) input.value = '';
+      } else {
+        showToast(String(reply.error || 'That code was not accepted.'));
+      }
+      renderAccountSignInModal();
+    }
+  }
+  if (isHeadlessBrowser) {
+    try {
+      window.__theoAccountSignIn = {
+        start: startAccountSignIn,
+        render: renderAccountSignInModal,
+        get: () => acctSignIn,
+        set: (v) => {
+          acctSignIn = v;
+        },
+        close: closeAccountSignInModal
+      };
     } catch {}
   }
 
@@ -7333,7 +7719,7 @@
       ? 'On iPhone, open THEO from your Home Screen icon to enable Web Push notifications.'
       : perm === 'denied'
         ? 'Notifications are blocked for this app. Open your phone Settings -> THEO -> Notifications and allow notifications.'
-        : 'Works even when THEO is closed or your phone is locked. Encrypted RFC 8291 (aes128gcm) + VAPID ES256 alerts dispatch directly from VS Code & the THEO Edge Relay to Apple Push / FCM.';
+        : 'Works even when THEO is closed or your phone is locked. Encrypted RFC 8291 (aes128gcm) + VAPID ES256 alerts dispatch directly from your PC & the THEO Edge Relay to Apple Push / FCM.';
 
     return `
       <div class="push-settings-card">
@@ -7379,7 +7765,7 @@
               <input type="checkbox" data-nf="morning" ${nf.morning !== false ? 'checked' : ''}>
               <div class="push-pref-text">
                 <strong>Morning AI Workbench Brief</strong>
-                <span>Daily morning summary of pending VS Code approvals and active Antigravity &amp; Claude sessions</span>
+                <span>Daily morning summary of pending approvals and active Antigravity &amp; Claude sessions</span>
               </div>
             </label>
             <select class="push-hour-select tabular" data-nf="morningHour" aria-label="Morning briefing time">
@@ -7732,6 +8118,9 @@
     const provKey = r.provider === 'claude' ? 'claude' : 'antigravity';
     const isRunning = isSessionActivelyRunning(r.id);
     const isPinnedBg = prefs.pinnedBgSessionId === r.id;
+    // "Reveal in VS Code" is offered only where a VS Code window is open (or the PC's build does not say).
+    const rowHost = getUnifiedFleetDevices().find((d) => d && d.id === r.deviceId);
+    const canRevealInVsCode = !rowHost?.pwaReady || Boolean(rowHost.pwaReady.vscodeOpen);
     menuEl.innerHTML = `
       <button type="button" class="ctx-menu-item" data-ctx-menu-act="open" data-id="${esc(r.id)}" data-prov="${provKey}">
         <span>Open in Workbench</span><span class="meta-timestamp">↵</span>
@@ -7742,9 +8131,13 @@
       <button type="button" class="ctx-menu-item" data-ctx-menu-act="pin-bg" data-id="${esc(r.id)}">
         <span>${isPinnedBg ? 'Unpin Side Agents' : 'Pin Side Agents in Sidebar'}</span>
       </button>
-      <button type="button" class="ctx-menu-item" data-ctx-menu-act="open-vscode" data-id="${esc(r.id)}" data-prov="${provKey}">
+      ${
+        canRevealInVsCode
+          ? `<button type="button" class="ctx-menu-item" data-ctx-menu-act="open-vscode" data-id="${esc(r.id)}" data-prov="${provKey}">
         <span>Reveal in Desktop VS Code</span>
-      </button>
+      </button>`
+          : ''
+      }
       <button type="button" class="ctx-menu-item" data-sess-act="pin" data-id="${esc(r.id)}" data-val="${isRowPinned(r) ? 'false' : 'true'}">
         <span>${isRowPinned(r) ? 'Unpin Chat' : 'Pin Chat'}</span>
       </button>
@@ -10651,7 +11044,7 @@
           <div class="meta-timestamp">
             ${
               rows.length === 0
-                ? 'Syncing live sessions from VS Code…'
+                ? 'Syncing live sessions from your PC…'
                 : 'No sessions match the current filter.'
             }
           </div>
@@ -10661,7 +11054,7 @@
                 ? `<button type="button" class="btn-ghost-sm" id="btn-reset-sess-filters">Reset Filters (Show All ${rows.filter((r) => !r.archived).length} Sessions)</button>`
                 : ''
             }
-            <button type="button" class="btn-brass-sm" id="btn-empty-sync-now">↻ Sync VS Code</button>
+            <button type="button" class="btn-brass-sm" id="btn-empty-sync-now">↻ Sync now</button>
           </div>
         </div>
       `;
@@ -13412,8 +13805,8 @@
           <div class="turn-text">
             ${
               isSyncingThread
-                ? `Requesting live transcript for <strong>${esc(activeRow?.title || 'Session')}</strong> from VS Code…`
-                : `Select any session above to view the live transcript from <strong>${esc(activeRow?.title || 'VS Code')}</strong>.`
+                ? `Requesting live transcript for <strong>${esc(activeRow?.title || 'Session')}</strong> from the PC…`
+                : `Select any session above to view the live transcript from <strong>${esc(activeRow?.title || 'your PC')}</strong>.`
             }
           </div>
         </div>
@@ -15087,7 +15480,7 @@
           act: `claude-mode-${m.id === 'bypassPermissions' ? 'bypass' : m.id}`
         }));
       })(),
-      { title: 'Sync with VS Code & Cloud Relay Now', sub: 'Connectivity', act: 'sync' },
+      { title: 'Sync with the PC & Cloud Relay Now', sub: 'Connectivity', act: 'sync' },
       { title: `${isThirdPartyQuotaHidden() ? 'Show' : 'Hide'} Antigravity Claude & GPT Quota Pool`, sub: 'Quota Display', act: 'toggle-3p-quota' },
       { title: 'Toggle Split Inspector (Code, Diff, Side Agents & Outline)', sub: 'Workbench · ⌘I', act: 'inspector' },
       { title: 'Switch Studio Color Palette (Graphite · Velvet · Espresso · Daylight)', sub: 'Appearance', act: 'palette' },
@@ -16038,14 +16431,14 @@
           renderIdeSidebar();
           showToast(prefs.pinnedBgSessionId ? '📌 Pinned session Side Agents in sidebar' : 'Unpinned Side Agents');
         } else if (cAct === 'open-vscode') {
-          await dispatchRemoteCommand({
+          const revealRes = await dispatchRemoteCommand({
             type: 'sessionAction',
             action: 'open',
             subAction: 'open',
             id: sid,
             provider: prov
           });
-          showToast('Opened session tab in desktop VS Code');
+          showToast(describeVsCodeOpenReply(revealRes, 'Opened session tab in desktop VS Code'));
         }
         return;
       }
@@ -16539,20 +16932,22 @@
         e.preventDefault();
         e.stopPropagation();
         const hintProv = addAcctRemoteBtn.dataset.accountAddRemote;
-        // Adding an account opens a sign-in page in a browser on the PC, started by VS Code there. Say so
-        // up front when no PC has VS Code open, rather than reporting a sign-in that never opened.
-        const acctHosts = getUnifiedFleetDevices().filter((d) => d && d.pwaReady);
-        const acctOpenHosts = acctHosts.filter((d) => d.online && d.pwaReady.vscodeOpen);
+        // An account is added on one PC (sign-ins are never copied between PCs). No VS Code is needed there:
+        // the PC's background service runs the sign-in and this app shows its link and takes its code.
+        // Only a PC whose build reports that ability gets the sign-in sheet; an older one gets the request as before.
+        const acctHosts = getUnifiedFleetDevices().filter((d) => d && d.online && d.pwaReady && d.pwaReady.signIn);
         const acctFilterDev =
           prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
             ? String(prefs.selectedDeviceFilter).trim()
             : '';
         const acctSignInHost =
-          acctOpenHosts.find((d) => d.id === acctFilterDev) || acctOpenHosts[0] || null;
-        if (acctHosts.length > 0 && !acctSignInHost) {
-          showToast(
-            'Adding an account needs VS Code open on a PC: the sign-in page opens there. Open VS Code on that PC, then tap Sign in again.'
-          );
+          acctHosts.find((d) => d.id === acctFilterDev) ||
+          acctHosts.find((d) => localWsDevice?.id && d.id === localWsDevice.id) ||
+          acctHosts[0] ||
+          null;
+        // A sign-in is never queued for later: with no PC online there is nothing to start it on.
+        if (!acctSignInHost && !getUnifiedFleetDevices().some((d) => d && d.online)) {
+          showToast('A PC has to be online to add an account. Nothing was sent.');
           return;
         }
         const defaultPromptVal =
@@ -16562,42 +16957,50 @@
               ? 'antigravity'
               : 'antigravity:Friend';
         const rawChoice = prompt(
-          'Add another account on your desktop workstation (existing accounts stay signed in).\nEnter "antigravity" or "claude" (optionally add a label after a colon, e.g. "antigravity:Friend" or "claude:Work"):',
+          `Add another account on ${acctSignInHost?.name || 'your PC'} (existing accounts stay signed in).\nEnter "antigravity" or "claude" (optionally add a label after a colon, e.g. "antigravity:Friend" or "claude:Work"):`,
           defaultPromptVal
         );
         if (!rawChoice || !rawChoice.trim()) return;
         const [rawProv, ...rest] = rawChoice.trim().split(':');
         const provider = rawProv.trim().toLowerCase().startsWith('c') ? 'claude' : 'antigravity';
         const label = rest.join(':').trim();
+        if (acctSignInHost) {
+          startAccountSignIn(provider, label, acctSignInHost);
+          return;
+        }
+        // No PC reports itself ready for this flow (an older THEO build there): send the request as before.
         const acctRes = await dispatchRemoteCommand({
           type: 'sessionAction',
           action: 'accountAdd',
           subAction: 'accountAdd',
           provider,
           label,
-          switchOnComplete: true,
-          ...(acctSignInHost ? { targetDeviceId: acctSignInHost.id } : {})
+          switchOnComplete: true
         }).catch(() => null);
         const acctProvName = provider === 'claude' ? 'Claude Code' : 'Antigravity';
-        // "Opened" is said only when that PC itself answered with VS Code running: a request still on its way,
-        // queued on another PC, or answered by the background service (`standalone`: no VS Code) is not that.
         const acctReplyInfo = readDirectPcReply(acctRes);
-        const acctAnswered =
-          acctReplyInfo.mode === 'quarantined' ||
-          (acctReplyInfo.answered && !acctReplyInfo.reply.standalone && acctReplyInfo.reply.ok !== false);
-        if (!acctSignInHost) {
-          showToast(
-            `🔐 Sign-in launched on desktop for ${acctProvName} — existing accounts remain logged in`
-          );
-        } else if (acctAnswered) {
-          showToast(
-            `🔐 Sign-in opened on ${acctSignInHost.name || 'the PC'} for ${acctProvName}. Finish it in the browser there; existing accounts stay signed in`
-          );
-        } else {
-          showToast(
-            `${acctSignInHost.name || 'The PC'} did not answer directly. The ${acctProvName} sign-in opens there only if VS Code is still open when the request arrives.`
-          );
-        }
+        const acctReply = acctReplyInfo.reply || {};
+        showToast(
+          acctReplyInfo.mode === 'quarantined'
+            ? `🔐 ${acctProvName} sign-in requested on the PC. Existing accounts stay signed in.`
+            : acctReplyInfo.answered && acctReply.started === false
+              ? String(acctReply.error || `The PC could not start the ${acctProvName} sign-in.`)
+              : acctReplyInfo.answered
+                ? `🔐 ${acctProvName} sign-in requested on the PC. Existing accounts stay signed in.`
+                : `The PC did not answer directly. The ${acctProvName} sign-in opens there only if VS Code is running when the request arrives.`
+        );
+        return;
+      }
+
+      const acctSignInBtn = e.target.closest('[data-acct-signin-act]');
+      if (acctSignInBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleAccountSignInAct(acctSignInBtn.dataset.acctSigninAct);
+        return;
+      }
+      if (e.target.closest('#acct-signin-close') || e.target === $('acct-signin-modal')) {
+        closeAccountSignInModal();
         return;
       }
 
@@ -17066,7 +17469,7 @@
           persistCache();
           renderAll();
         }
-        await dispatchRemoteCommand({
+        const approveRes = await dispatchRemoteCommand({
           type: 'approve',
           decision,
           approvalId: appId,
@@ -17075,7 +17478,15 @@
           selector: approveBtn.dataset.sel,
           label: approveBtn.dataset.lbl
         });
-        showToast(decision === 'approve' ? '✓ Approved remote step' : '✕ Denied remote step');
+        // The PC says when an answer did not take effect (the request was already answered, or is gone):
+        // say that, and reload the list, instead of reporting an approval that did nothing.
+        const approveReply = readDirectPcReply(approveRes);
+        if (approveReply.answered && approveReply.reply.resolved === false) {
+          showToast(String(approveReply.reply.error || 'That request was no longer waiting for an answer.'));
+          setTimeout(() => syncData(), 300);
+        } else {
+          showToast(decision === 'approve' ? '✓ Approved remote step' : '✕ Denied remote step');
+        }
         return;
       }
 
@@ -17838,7 +18249,7 @@
     $('btn-chat-open-vscode')?.addEventListener('click', async () => {
       if (isNewSessionMode()) {
         const prov = prefs.composerMode === 'new-claude' ? 'claude' : 'antigravity';
-        await dispatchRemoteCommand({
+        const newTabRes = await dispatchRemoteCommand({
           type: 'sessionAction',
           action: 'openNew',
           subAction: 'openNew',
@@ -17848,19 +18259,22 @@
           group: prefs.newSessionGroupId || ''
         });
         showToast(
-          `Opened new blank ${prov === 'claude' ? 'Claude Code' : 'Antigravity'} tab in VS Code`
+          describeVsCodeOpenReply(
+            newTabRes,
+            `Opened new blank ${prov === 'claude' ? 'Claude Code' : 'Antigravity'} tab in VS Code`
+          )
         );
         return;
       }
       const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId);
-      await dispatchRemoteCommand({
+      const openTabRes = await dispatchRemoteCommand({
         type: 'sessionAction',
         action: 'open',
         subAction: 'open',
         id: prefs.selectedThreadId,
         provider: activeRow?.provider || 'antigravity'
       });
-      showToast('Opened session tab in VS Code');
+      showToast(describeVsCodeOpenReply(openTabRes, 'Opened session tab in VS Code'));
     });
 
     $('btn-chat-stop')?.addEventListener('click', async (e) => {
@@ -18115,7 +18529,8 @@
         const anyModalOpen = Boolean(
           ($('cmd-modal') && !$('cmd-modal').hidden) ||
             ($('conn-modal') && !$('conn-modal').hidden) ||
-            ($('notif-modal') && !$('notif-modal').hidden)
+            ($('notif-modal') && !$('notif-modal').hidden) ||
+            ($('acct-signin-modal') && !$('acct-signin-modal').hidden)
         );
         const dock = $('chat-question-dock');
         if (!inField && !anyModalOpen && dock && !dock.hidden && getComputedStyle(dock).display !== 'none') {
@@ -18144,6 +18559,9 @@
         closeCommandPalette();
         closeConnModal();
         closeNotifModal();
+        if ($('acct-signin-modal') && !$('acct-signin-modal').hidden) {
+          closeAccountSignInModal();
+        }
         if (
           prefs.inspectorOpen &&
           (window.innerWidth <= 1024 || document.activeElement?.closest?.('#ide-inspector-pane'))
@@ -18182,6 +18600,11 @@
       const connModal = $('conn-modal');
       if (connModal && !connModal.hidden) {
         closeConnModal();
+        return;
+      }
+      const acctModal = $('acct-signin-modal');
+      if (acctModal && !acctModal.hidden) {
+        closeAccountSignInModal();
         return;
       }
       const notifModal = $('notif-modal');
@@ -19070,7 +19493,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=84', { updateViaCache: 'none' })
+        .register('sw.js?v=85', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

@@ -11018,3 +11018,93 @@ html[data-theme="light"] .sb-q-btn.primary {
   gap: 8px;
   margin-top: 8px;
 }
+
+/* Add an account from THEO (v85): sign-in sheet, no VS Code window needed on the PC */
+.acct-signin-wait,
+.acct-signin-error,
+.acct-signin-status {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.acct-signin-error {
+  color: var(--crimson);
+  background: var(--crimson-soft);
+  border-radius: 9px;
+  padding: 10px 12px;
+}
+.acct-signin-status {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-top: 10px;
+  min-height: 18px;
+}
+.acct-signin-step {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-hairline);
+}
+.acct-signin-n {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--brass);
+  background: var(--brass-glow);
+  border: 1px solid var(--border-strong);
+  margin-top: 1px;
+}
+.acct-signin-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+.acct-signin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 9px;
+}
+.acct-signin-actions a.btn-brass-sm {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+.acct-signin-foot {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+.acct-signin-code-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 9px;
+}
+.acct-signin-code-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--chip-border);
+  background: var(--chip-bg);
+  color: var(--text-primary);
+  font-size: 16px;
+  font-family: inherit;
+}
+.acct-signin-code-row input:focus {
+  outline: none;
+  border-color: var(--border-strong);
+}
+.acct-signin-code-row input:disabled,
+.acct-signin-code-row button:disabled {
+  opacity: 0.6;
+}

@@ -973,9 +973,9 @@ async function main() {
       assert.ok(uLayout.sessionsScrollW <= uLayout.vw + 1, `Unpaired Sessions overflow on ${uVp.label}`);
       assert.ok(uLayout.connScrollW <= uLayout.vw + 1, `Unpaired #conn-modal overflow on ${uVp.label}`);
       assert.strictEqual(
-        uLayout.sessText.includes('Syncing live sessions from VS Code'),
+        uLayout.sessText.includes('Syncing live sessions from your PC'),
         false,
-        'Unpaired Sessions view must NEVER show misleading "Syncing live sessions from VS Code…" empty state'
+        'Unpaired Sessions view must NEVER show misleading "Syncing live sessions from your PC…" empty state'
       );
       assert.strictEqual(uLayout.mobConnTxt, 'Pair Device', 'Unpaired mobile pill must read "Pair Device"');
       assert.strictEqual(uLayout.railConnTxt, 'Pair This Device', 'Unpaired rail card must read "Pair This Device"');
@@ -3376,10 +3376,10 @@ async function main() {
     };
     const readyChecks = (over = {}) =>
       [
-        { id: 'keepalive', ok: true, level: 'required', title: 'Background service', detail: 'Running. THEO stays reachable when VS Code is closed.' },
+        { id: 'keepalive', ok: true, level: 'required', title: 'Background service', detail: 'Running. THEO works with VS Code closed.' },
         { id: 'claude-cli', ok: true, level: 'required', title: 'Claude engine', detail: 'Found. Claude sessions run without VS Code.' },
         { id: 'claude-prompts', ok: true, level: 'required', title: 'Claude approvals and questions', detail: 'Sent to the phone from sessions running without VS Code.' },
-        { id: 'agy-approvals', ok: false, level: 'info', title: 'Antigravity Run and Accept prompts', detail: 'Cannot be answered while VS Code is closed on this PC. Antigravity questions can.' }
+        { id: 'agy-approvals', ok: false, level: 'info', title: 'Antigravity Run and Accept prompts', detail: 'Need the live Antigravity engine, which is not running right now.' }
       ].map((c) => (over[c.id] ? { ...c, ...over[c.id] } : c));
     const pendingSetup = {
       ok: false, checkedAt: Date.now(), totalCount: 11, okCount: 10, pendingCount: 1,
@@ -3395,7 +3395,7 @@ async function main() {
         sessionCount: 1,
         pcSetup: pendingSetup,
         pwaReady: {
-          ready: true, okCount: 99, totalCount: 99, vscodeOpen: false,
+          ready: true, okCount: 99, totalCount: 99, vscodeOpen: false, signIn: true,
           checks: readyChecks({
             keepalive: { ok: false, title: 'Background service <b>x</b>', detail: 'Not running <script>window.__pwaXss=2</script>' }
           }).concat([{ id: 'bad id!', ok: true, level: 'required', title: 'dropped' }])
@@ -3437,19 +3437,33 @@ async function main() {
       after?.click();
       await new Promise((r) => setTimeout(r, 40));
       out.secondCmd = window.__theoLastQuarantinedCmd ? 1 : 0;
-      // Account sign-in: no PC has VS Code open, so nothing is dispatched and no prompt opens.
+      // Account sign-in with VS Code closed on the PC: the sign-in is started on that PC and its sheet opens.
       let promptCalls = 0;
       const origPrompt = window.prompt;
       window.prompt = () => { promptCalls += 1; return 'claude'; };
+      window.__theoLastQuarantinedCmd = null;
       const probe = document.createElement('button');
       probe.dataset.accountAddRemote = 'claude';
       document.body.appendChild(probe);
       probe.click();
-      await new Promise((r) => setTimeout(r, 40));
+      await new Promise((r) => setTimeout(r, 60));
       probe.remove();
       window.prompt = origPrompt;
       out.promptCalls = promptCalls;
-      out.accountCmd = window.__theoLastQuarantinedCmd ? window.__theoLastQuarantinedCmd.subAction : '';
+      const acctCmd = window.__theoLastQuarantinedCmd || {};
+      out.accountCmd = { subAction: acctCmd.subAction, targetDeviceId: acctCmd.targetDeviceId, provider: acctCmd.provider, liveOnly: acctCmd.liveOnly };
+      const sheet = document.getElementById('acct-signin-modal');
+      out.sheetOpen = Boolean(sheet && !sheet.hidden);
+      out.sheetTitle = document.getElementById('acct-signin-title')?.textContent || '';
+      out.sheetInjected = sheet ? sheet.querySelectorAll('img, script, b').length : -1;
+      out.sheetText = document.getElementById('acct-signin-body')?.textContent || '';
+      // Closing the sheet while the sign-in runs stops it on the PC.
+      window.__theoLastQuarantinedCmd = null;
+      document.getElementById('acct-signin-close')?.click();
+      await new Promise((r) => setTimeout(r, 40));
+      out.sheetClosed = Boolean(sheet && sheet.hidden);
+      const cancelCmd = window.__theoLastQuarantinedCmd || {};
+      out.cancelCmd = { subAction: cancelCmd.subAction, targetDeviceId: cancelCmd.targetDeviceId, liveOnly: cancelCmd.liveOnly };
       out.toastText = document.querySelector('.toast, #toast, .theo-toast')?.textContent || '';
       out.titleCount = document.querySelectorAll('[title]').length;
       out.overflowX = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
@@ -3474,14 +3488,28 @@ async function main() {
     assert.strictEqual(readyA.afterDisabled, true, 'the button locks while the PC applies its setup');
     assert.ok(readyA.afterLabel.startsWith('Applying on Gamma'));
     assert.strictEqual(readyA.secondCmd, 0, 'a second tap does not send a second request');
-    assert.strictEqual(readyA.promptCalls, 0, 'no sign-in prompt when no PC has VS Code open');
-    assert.strictEqual(readyA.accountCmd, '', 'and no sign-in command is sent');
+    assert.strictEqual(readyA.promptCalls, 1, 'adding an account no longer needs VS Code open on the PC');
+    assert.deepStrictEqual(
+      readyA.accountCmd,
+      { subAction: 'accountAdd', targetDeviceId: 'host-gamma', provider: 'claude', liveOnly: true },
+      'the sign-in is started on that PC, over a live link only'
+    );
+    assert.strictEqual(readyA.sheetOpen, true, 'the sign-in sheet opens');
+    assert.ok(readyA.sheetTitle.startsWith('Add a Claude Code account on Gamma'), readyA.sheetTitle);
+    assert.strictEqual(readyA.sheetInjected, 0, 'a PC name with markup is escaped in the sign-in sheet');
+    assert.ok(/sign-in/i.test(readyA.sheetText));
+    assert.strictEqual(readyA.sheetClosed, true);
+    assert.deepStrictEqual(
+      readyA.cancelCmd,
+      { subAction: 'accountSignInCancel', targetDeviceId: 'host-gamma', liveOnly: true },
+      'closing the sheet stops the sign-in on the PC'
+    );
     assert.strictEqual(readyA.titleCount, 0, 'Zero [title] attributes allowed on the readiness card');
     assert.strictEqual(readyA.overflowX, 0, '0px horizontal overflow with the readiness card open');
 
     // (b) every online PC ready: one collapsed line, opens and closes on tap, the choice survives a re-render
     await setFleetDevices([
-      { id: 'host-gamma', name: 'Gamma', online: true, sessionCount: 1, pwaReady: { vscodeOpen: true, checks: readyChecks({ 'agy-approvals': { ok: true } }) } },
+      { id: 'host-gamma', name: 'Gamma', online: true, sessionCount: 1, pwaReady: { vscodeOpen: true, signIn: true, checks: readyChecks({ 'agy-approvals': { ok: true } }) } },
       { id: 'host-delta', name: 'Delta', online: false, sessionCount: 0, pwaReady: { vscodeOpen: false, checks: readyChecks({ keepalive: { ok: false } }) } }
     ]);
     const readyB = await evalJs(`(async () => {
@@ -3520,9 +3548,92 @@ async function main() {
       window.prompt = origPrompt;
       const cmd = window.__theoLastQuarantinedCmd || {};
       out.accountCmd = { subAction: cmd.subAction, targetDeviceId: cmd.targetDeviceId, provider: cmd.provider, label: cmd.label };
+
+      // The sign-in sheet in each state, drawn from what a PC would answer.
+      const api = window.__theoAccountSignIn;
+      const body = () => document.getElementById('acct-signin-body');
+      const draw = (over) => {
+        api.set({
+          provider: 'claude', label: '', hostId: 'host-gamma', hostName: 'Gamma <img src=x onerror="window.__acctXss=1">',
+          phase: 'pending', progress: null, error: '', note: '', linkLost: false, pollTimer: null, ...over
+        });
+        api.render();
+      };
+      draw({ progress: { pending: { provider: 'claude', needsCode: true, authUrl: 'https://claude.ai/oauth/authorize?abc', message: 'Open the link <b>now</b>' } } });
+      out.claude = {
+        link: body().querySelector('a.btn-brass-sm')?.getAttribute('href') || '',
+        linkRel: body().querySelector('a.btn-brass-sm')?.getAttribute('rel') || '',
+        hasCode: Boolean(body().querySelector('#acct-signin-code')),
+        codeFont: parseFloat(getComputedStyle(body().querySelector('#acct-signin-code')).fontSize),
+        openOnPc: body().querySelectorAll('[data-acct-signin-act="open-on-pc"]').length,
+        injected: body().querySelectorAll('img, b, script').length
+      };
+      // A link that is not https is never drawn as a link.
+      draw({ progress: { pending: { provider: 'claude', needsCode: true, authUrl: 'javascript:alert(1)' } } });
+      out.badLink = { links: body().querySelectorAll('a').length, text: body().textContent };
+      // The code goes out as a live-only command; an empty field sends nothing.
+      draw({ progress: { pending: { provider: 'claude', needsCode: true, authUrl: 'https://claude.ai/oauth/authorize?abc' } } });
+      window.__theoLastQuarantinedCmd = null;
+      body().querySelector('[data-acct-signin-act="submit-code"]').click();
+      await new Promise((r) => setTimeout(r, 30));
+      out.emptyCodeCmd = window.__theoLastQuarantinedCmd ? 1 : 0;
+      body().querySelector('#acct-signin-code').value = 'abc123#state';
+      body().querySelector('[data-acct-signin-act="submit-code"]').click();
+      await new Promise((r) => setTimeout(r, 30));
+      const codeCmd = window.__theoLastQuarantinedCmd || {};
+      out.codeCmd = { subAction: codeCmd.subAction, code: codeCmd.code, liveOnly: codeCmd.liveOnly, targetDeviceId: codeCmd.targetDeviceId };
+      // Antigravity: the page is opened on the PC, not on this device.
+      draw({ provider: 'antigravity', progress: { pending: { provider: 'antigravity', authUrl: 'https://accounts.google.com/o/oauth2/auth?x=1' } } });
+      out.agy = {
+        links: body().querySelectorAll('a').length,
+        openOnPc: body().querySelectorAll('[data-acct-signin-act="open-on-pc"]').length,
+        copy: body().querySelectorAll('[data-acct-signin-act="copy-link"]').length,
+        code: body().querySelectorAll('#acct-signin-code').length
+      };
+      draw({ provider: 'antigravity', progress: { pending: { provider: 'antigravity', awaitingVerification: true, verificationUrl: 'https://accounts.google.com/verify', authUrl: '' } } });
+      out.verify = {
+        link: body().querySelector('a')?.getAttribute('href') || '',
+        continueBtn: body().querySelectorAll('[data-acct-signin-act="verified"]').length
+      };
+      draw({ phase: 'failed', error: "Couldn't log in: <i>that code</i> wasn't accepted." });
+      out.failed = {
+        text: body().querySelector('.acct-signin-error')?.textContent || '',
+        retry: body().querySelectorAll('[data-acct-signin-act="retry"]').length,
+        injected: body().querySelectorAll('i, img').length
+      };
+      out.acctXss = window.__acctXss || 0;
+      const sheetEl = document.getElementById('acct-signin-modal');
+      sheetEl.hidden = false;
+      out.sheetOverflow = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+      out.sheetTitles = sheetEl.querySelectorAll('[title]').length;
+      api.set(null);
+      sheetEl.hidden = true;
       out.titleCount = document.querySelectorAll('[title]').length;
       return out;
     })()`);
+    assert.deepStrictEqual(
+      [readyB.claude.link, readyB.claude.linkRel, readyB.claude.hasCode, readyB.claude.openOnPc, readyB.claude.injected],
+      ['https://claude.ai/oauth/authorize?abc', 'noopener noreferrer', true, 1, 0],
+      'Claude sign-in: a link, a code field, and nothing injected by the PC'
+    );
+    assert.ok(readyB.claude.codeFont >= 16, 'the code field does not trigger the iOS zoom');
+    assert.strictEqual(readyB.badLink.links, 0, 'a link that is not https is never offered');
+    assert.strictEqual(readyB.emptyCodeCmd, 0, 'an empty code sends nothing');
+    assert.deepStrictEqual(
+      readyB.codeCmd,
+      { subAction: 'accountSignInCode', code: 'abc123#state', liveOnly: true, targetDeviceId: 'host-gamma' },
+      'the code is sent to that PC, over a live link only'
+    );
+    assert.deepStrictEqual(
+      [readyB.agy.links, readyB.agy.openOnPc, readyB.agy.copy, readyB.agy.code],
+      [0, 1, 1, 0],
+      'Antigravity sign-in: opened on the PC, no code field'
+    );
+    assert.deepStrictEqual([readyB.verify.link, readyB.verify.continueBtn], ['https://accounts.google.com/verify', 1]);
+    assert.ok(readyB.failed.text.includes("wasn't accepted") && readyB.failed.retry === 1 && readyB.failed.injected === 0);
+    assert.strictEqual(readyB.acctXss, 0, 'no script from a PC name or a sign-in message runs');
+    assert.strictEqual(readyB.sheetOverflow, 0, '0px horizontal overflow with the sign-in sheet open');
+    assert.strictEqual(readyB.sheetTitles, 0);
     assert.ok(readyB.classes.includes('is-ready') && !readyB.classes.includes('is-open'), `all online PCs ready collapses the card, got "${readyB.classes}"`);
     assert.strictEqual(readyB.title, 'Gamma is ready for phone-only use', 'an offline PC does not hold the fleet back');
     assert.strictEqual(readyB.hiddenAtFirst, true);
@@ -3548,11 +3659,30 @@ async function main() {
     assert.ok(readyC.classes.includes('is-off'));
     assert.strictEqual(readyC.title, 'No PC is online');
     await setFleetDevices([{ id: 'host-beta', name: 'Beta', online: true, sessionCount: 3, pcSetup: { ok: false, checkedAt: Date.now(), totalCount: 11, okCount: 9, pendingCount: 2, pendingIds: ['claude-automode', 'pc-setup-shortcut'], pendingTitles: ['Claude AutoMode Rules', 'PC Setup Shortcut'] } }]);
-    const readyD = await evalJs(`(() => ({
-      hasCard: Boolean(document.getElementById('pulse-pwa-ready-card')),
-      applyButtons: document.querySelectorAll('[data-apply-pc-setup]').length,
-      setupText: document.getElementById('pulse-pc-setup-card')?.textContent || ''
-    }))()`);
+    const readyD = await evalJs(`(async () => {
+      const out = {
+        hasCard: Boolean(document.getElementById('pulse-pwa-ready-card')),
+        applyButtons: document.querySelectorAll('[data-apply-pc-setup]').length,
+        setupText: document.getElementById('pulse-pc-setup-card')?.textContent || ''
+      };
+      // A PC on an older build cannot report a sign-in's progress: no sheet, the request goes out as before.
+      const origPrompt = window.prompt;
+      window.prompt = () => 'claude';
+      window.__theoLastQuarantinedCmd = null;
+      const probe = document.createElement('button');
+      probe.dataset.accountAddRemote = 'claude';
+      document.body.appendChild(probe);
+      probe.click();
+      await new Promise((r) => setTimeout(r, 60));
+      probe.remove();
+      window.prompt = origPrompt;
+      const cmd = window.__theoLastQuarantinedCmd || {};
+      out.legacyCmd = { subAction: cmd.subAction, liveOnly: cmd.liveOnly === true, targetDeviceId: cmd.targetDeviceId || '' };
+      out.sheetOpen = !document.getElementById('acct-signin-modal').hidden;
+      return out;
+    })()`);
+    assert.deepStrictEqual(readyD.legacyCmd, { subAction: 'accountAdd', liveOnly: false, targetDeviceId: '' });
+    assert.strictEqual(readyD.sheetOpen, false, 'no sign-in sheet for a PC whose build cannot report the sign-in');
     // "Setup started" is said only when that PC answered that it started.
     const replyWording = await evalJs(`(() => {
       const d = window.__theoDescribePcSetupReply;
