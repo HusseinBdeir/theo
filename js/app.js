@@ -3954,20 +3954,55 @@
           .filter((x) => /^[a-z0-9._-]{1,64}$/i.test(x))
           .slice(0, 16)
       : [];
-    const pendingTitles = Array.isArray(raw.pendingTitles)
+    // A host sends its pending steps as `pending: [{ id, name }]`; older snapshots used `pendingTitles`.
+    const rawTitles = Array.isArray(raw.pendingTitles)
       ? raw.pendingTitles
-          .map((x) => String(x || '').replace(/[\\/]+/g, ' ').trim().slice(0, 80))
-          .filter(Boolean)
-          .slice(0, 16)
-      : [];
+      : Array.isArray(raw.pending)
+        ? raw.pending.map((p) => (p && typeof p === 'object' ? p.name || p.title || p.id : ''))
+        : [];
+    const pendingTitles = rawTitles
+      .map((x) => String(x || '').replace(/[\\/]+/g, ' ').trim().slice(0, 80))
+      .filter(Boolean)
+      .slice(0, 16);
     return {
-      ok: Boolean(raw.ok && pendingCount === 0),
+      ok: Boolean((raw.ok || raw.ready) && pendingCount === 0),
       checkedAt: Number(raw.checkedAt || 0),
       totalCount,
       okCount,
       pendingCount,
       pendingIds,
       pendingTitles
+    };
+  }
+
+  // Whether a PC can be driven from the phone alone, with no VS Code window open (theo-hub pc-setup.js
+  // buildPwaReadySummary), carried on each fleet device entry like pcSetup. null = that PC's build does not
+  // report it. Counts are recomputed from the checks, never taken from the wire.
+  function sanitizeFleetPwaReady(raw) {
+    if (!raw || typeof raw !== 'object' || !Array.isArray(raw.checks)) return null;
+    const checks = [];
+    for (const c of raw.checks) {
+      if (!c || typeof c !== 'object') continue;
+      const id = String(c.id || '').trim();
+      if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id) || checks.some((x) => x.id === id)) continue;
+      checks.push({
+        id,
+        ok: Boolean(c.ok),
+        level: c.level === 'required' ? 'required' : 'info',
+        title: String(c.title || id).replace(/\s+/g, ' ').trim().slice(0, 60),
+        detail: String(c.detail || '').replace(/\s+/g, ' ').trim().slice(0, 200)
+      });
+      if (checks.length >= 16) break;
+    }
+    const required = checks.filter((c) => c.level === 'required');
+    if (!required.length) return null;
+    const okCount = required.filter((c) => c.ok).length;
+    return {
+      ready: okCount === required.length,
+      okCount,
+      totalCount: required.length,
+      vscodeOpen: Boolean(raw.vscodeOpen),
+      checks
     };
   }
 
@@ -4124,6 +4159,9 @@
         d.unsavedWork,
         Boolean(opts.authoritative)
       );
+      // A list that does not carry it (edge presence frames, another host's copy) keeps the last report.
+      const nextPwaReady =
+        (d.pwaReady !== undefined ? sanitizeFleetPwaReady(d.pwaReady) : null) || prev.pwaReady || null;
       fleetDevicesMap.set(d.id, {
         ...prev,
         ...d,
@@ -4135,6 +4173,7 @@
           d.sessionCount !== undefined ? d.sessionCount : prev.sessionCount || 0
         ),
         pcSetup: nextPcSetup,
+        pwaReady: nextPwaReady,
         unsavedWork: nextUnsavedWork
       });
     }
@@ -6980,12 +7019,12 @@
       <div class="meta-timestamp" style="line-height:1.45">
         ${
           connMode === 'local'
-            ? `Streaming real-time SSE directly from VS Code on <code>${esc(localBridgeBase)}</code>.`
-            : `Synced worldwide via the <strong>THEO Edge Relay</strong> (Cloudflare store). Prompts, approvals, and session actions dispatch directly to VS Code.`
+            ? `Streaming real-time SSE directly from this PC on <code>${esc(localBridgeBase)}</code>.`
+            : `Synced worldwide via the <strong>THEO Edge Relay</strong> (Cloudflare store). Prompts, approvals, and session actions go straight to your PC, with or without VS Code open.`
         }
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
-        <button type="button" class="btn-brass-sm" id="conn-modal-sync-btn" style="flex:1">↻ Sync Now with VS Code</button>
+        <button type="button" class="btn-brass-sm" id="conn-modal-sync-btn" style="flex:1">↻ Sync Now with PC</button>
         <button type="button" class="btn-ghost-sm" data-download-pc-setup="1">⬇ Download PC Setup</button>
         ${
           pushActive
@@ -7016,16 +7055,141 @@
         return `${esc(d.name || d.id)} (${ps.okCount}/${ps.totalCount}${esc(stepHint)})`;
       })
       .join(' · ');
+    // A PC that is online and reports phone-only readiness runs a build that takes the setup request itself.
+    const applyButtons = pendingHosts
+      .filter((d) => d.online && d.pwaReady)
+      .slice(0, 4)
+      .map((d) => renderApplyPcSetupButtonHtml(d, 'btn-brass-sm'))
+      .join('');
     return `
       <div class="pc-setup-pulse-card" id="pulse-pc-setup-card">
         <div class="pc-setup-pulse-main">
           <div class="eyebrow">FLEET PC SETUP UPDATE</div>
           <div class="pc-setup-pulse-title">${pendingHosts.length === 1 ? '1 PC has pending setup updates' : `${pendingHosts.length} PCs have pending setup updates`}</div>
-          <div class="meta-timestamp">${summaryText} — click <strong>Apply Setup</strong> in the THEO sidebar on that PC, or open <strong>Set Up This PC</strong>.</div>
+          <div class="meta-timestamp">${summaryText}. ${applyButtons ? 'Tap <strong>Apply</strong> to run the setup on that PC from here.' : 'Click <strong>Apply Setup</strong> in the THEO sidebar on that PC, or open <strong>Set Up This PC</strong>.'}</div>
         </div>
         <div class="pc-setup-pulse-actions">
+          ${applyButtons}
           <button type="button" class="btn-ghost-sm" data-download-pc-setup="1">⬇ Download PC Setup</button>
         </div>
+      </div>
+    `;
+  }
+
+  // PCs whose setup run was started from this phone, so the button reads "Applying" until the PC reports back.
+  const pcSetupApplyStartedAt = new Map();
+  const PC_SETUP_APPLY_SHOW_MS = 4 * 60 * 1000;
+
+  function renderApplyPcSetupButtonHtml(d, cls) {
+    const startedAt = pcSetupApplyStartedAt.get(d.id) || 0;
+    const busy = startedAt && Date.now() - startedAt < PC_SETUP_APPLY_SHOW_MS;
+    const name = String(d.name || d.id || 'PC').slice(0, 24);
+    return `<button type="button" class="${cls}" data-apply-pc-setup="${esc(d.id)}" ${busy ? 'disabled' : ''}>${busy ? `Applying on ${esc(name)}…` : `Apply on ${esc(name)}`}</button>`;
+  }
+
+  async function applyPcSetupOnDevice(devId) {
+    const cleanId = String(devId || '').trim();
+    const dev = cleanId ? fleetDevicesMap.get(cleanId) : null;
+    if (!dev) return;
+    const name = String(dev.name || dev.id || 'that PC');
+    const startedAt = pcSetupApplyStartedAt.get(cleanId) || 0;
+    if (startedAt && Date.now() - startedAt < PC_SETUP_APPLY_SHOW_MS) return;
+    if (!dev.online) {
+      showToast(`${name} is offline. Switch it on, then apply the setup.`);
+      return;
+    }
+    pcSetupApplyStartedAt.set(cleanId, Date.now());
+    renderPulseView();
+    const res = await dispatchRemoteCommand({
+      type: 'sessionAction',
+      action: 'applyPcSetup',
+      subAction: 'applyPcSetup',
+      targetDeviceId: cleanId
+    }).catch(() => null);
+    const out = res && res.out && typeof res.out === 'object' ? res.out : {};
+    if (!res || res.ok === false) {
+      pcSetupApplyStartedAt.delete(cleanId);
+      showToast(`Could not reach ${name} to apply the setup.`);
+    } else if (out.busy) {
+      showToast(`${name} is already applying its setup.`);
+    } else if (res.mode === 'cloud' || res.mode === 'cloud_queue') {
+      showToast(`Setup request queued for ${name}. It starts when the PC picks it up.`);
+    } else {
+      showToast(`Setup started on ${name}. Its pill updates when it finishes.`);
+    }
+    renderPulseView();
+  }
+
+  // Phone-only readiness: can THEO be driven from here alone, with VS Code closed on every PC?
+  // null = follow the state (open while something needs attention); true/false = the user's own choice.
+  let pwaReadyCardOpen = null;
+
+  function renderPwaReadyPulseCardHtml() {
+    const hosts = getUnifiedFleetDevices().filter((d) => d && d.pwaReady);
+    if (hosts.length === 0) return '';
+    const online = hosts.filter((d) => d.online);
+    const readyOnline = online.filter((d) => d.pwaReady.ready);
+    let tone = 'is-pending';
+    let title = 'Not ready for phone-only use yet';
+    let sub = 'Fix the items marked below, then VS Code can stay closed.';
+    if (online.length === 0) {
+      tone = 'is-off';
+      title = 'No PC is online';
+      sub = 'THEO needs one PC switched on and awake to run sessions.';
+    } else if (readyOnline.length === online.length) {
+      tone = 'is-ready';
+      title =
+        online.length === 1
+          ? `${online[0].name || online[0].id} is ready for phone-only use`
+          : `${online.length} PCs are ready for phone-only use`;
+      sub = 'VS Code can stay closed. Keep one PC switched on and awake.';
+    } else if (readyOnline.length > 0) {
+      tone = 'is-partial';
+      title = `${readyOnline.length} of ${online.length} online PCs are ready for phone-only use`;
+      sub = 'Sessions on a ready PC work with VS Code closed. The others need the items below.';
+    }
+    const hasNotes = hosts.some((d) =>
+      d.pwaReady.checks.some((c) => !c.ok && (c.level === 'info' ? d.online : true))
+    );
+    const open = pwaReadyCardOpen === null ? tone !== 'is-ready' : pwaReadyCardOpen;
+    const hostsHtml = hosts
+      .map((d) => {
+        const pr = d.pwaReady;
+        // Every required item, and a note only when it is not met.
+        const shown = pr.checks.filter((c) => c.level === 'required' || !c.ok);
+        const needsSetup = pr.checks.some(
+          (c) => !c.ok && (c.id === 'keepalive' || c.id === 'autostart')
+        );
+        const rows = shown
+          .map((c) => {
+            const kind = c.ok ? 'is-ok' : c.level === 'required' ? 'is-fail' : 'is-note';
+            const mark = c.ok ? '✓' : c.level === 'required' ? '✕' : 'i';
+            return `<li class="pwa-ready-row ${kind}"><span class="pwa-ready-mark" aria-hidden="true">${mark}</span><span class="pwa-ready-text"><strong>${esc(c.title)}</strong> <span class="pwa-ready-detail">${esc(c.detail)}</span></span></li>`;
+          })
+          .join('');
+        return `
+          <div class="pwa-ready-host">
+            <div class="pwa-ready-host-head">
+              <span class="sess-device-badge ${d.online ? 'is-online' : ''}">${d.online ? '●' : '◐'} ${esc(d.name || d.id)}</span>
+              <span class="fleet-setup-pill ${pr.ready ? 'is-ready' : 'is-pending'} tabular">${pr.ready ? '✓' : '!'} ${pr.okCount}/${pr.totalCount}</span>
+              <span class="meta-timestamp">${d.online ? (pr.vscodeOpen ? 'VS Code open' : 'VS Code closed') : 'offline, last report'}</span>
+            </div>
+            <ul class="pwa-ready-list">${rows}</ul>
+            ${needsSetup && d.online ? `<div class="pwa-ready-host-actions">${renderApplyPcSetupButtonHtml(d, 'btn-ghost-sm')}</div>` : ''}
+          </div>`;
+      })
+      .join('');
+    return `
+      <div class="pwa-ready-card ${tone} ${open ? 'is-open' : ''}" id="pulse-pwa-ready-card">
+        <button type="button" class="pwa-ready-head" data-pwa-ready-toggle="1" aria-expanded="${open ? 'true' : 'false'}" aria-controls="pulse-pwa-ready-body">
+          <span class="pwa-ready-head-main">
+            <span class="eyebrow">PHONE-ONLY READINESS</span>
+            <span class="pwa-ready-title">${esc(title)}</span>
+            <span class="meta-timestamp">${esc(sub)}${tone === 'is-ready' && hasNotes ? ' One note inside.' : ''}</span>
+          </span>
+          <span class="pwa-ready-chevron" aria-hidden="true">${open ? '▾' : '▸'}</span>
+        </button>
+        <div class="pwa-ready-body" id="pulse-pwa-ready-body" ${open ? '' : 'hidden'}>${hostsHtml}</div>
       </div>
     `;
   }
@@ -7039,7 +7203,7 @@
     ) {
       return renderQuickPairOnboardingCardHtml('pulse');
     }
-    const pcSetupNotice = renderFleetPcSetupPulseBannerHtml();
+    const pcSetupNotice = `${renderPwaReadyPulseCardHtml()}${renderFleetPcSetupPulseBannerHtml()}`;
     const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
     const perm = notifPerm();
     const active = Boolean(nf.enabled && pushSub && perm === 'granted');
@@ -7054,7 +7218,7 @@
           <span class="pill-count amber">AI WORKBENCH</span>
         </div>
         <div class="meta-timestamp" style="color:var(--text-secondary);font-size:12.5px">
-          Get native lock-screen alerts for 1-tap VS Code tool approvals, Antigravity &amp; Claude Code session turn completions, and quota threshold warnings.
+          Get native lock-screen alerts for 1-tap tool approvals, Antigravity &amp; Claude Code session turn completions, and quota threshold warnings.
         </div>
         <div class="push-banner-actions">
           <button type="button" class="btn-brass-sm" data-push-act="enable">
@@ -16314,6 +16478,22 @@
         e.preventDefault();
         e.stopPropagation();
         const hintProv = addAcctRemoteBtn.dataset.accountAddRemote;
+        // Adding an account opens a sign-in page in a browser on the PC, started by VS Code there. Say so
+        // up front when no PC has VS Code open, rather than reporting a sign-in that never opened.
+        const acctHosts = getUnifiedFleetDevices().filter((d) => d && d.pwaReady);
+        const acctOpenHosts = acctHosts.filter((d) => d.online && d.pwaReady.vscodeOpen);
+        const acctFilterDev =
+          prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
+            ? String(prefs.selectedDeviceFilter).trim()
+            : '';
+        const acctSignInHost =
+          acctOpenHosts.find((d) => d.id === acctFilterDev) || acctOpenHosts[0] || null;
+        if (acctHosts.length > 0 && !acctSignInHost) {
+          showToast(
+            'Adding an account needs VS Code open on a PC: the sign-in page opens there. Open VS Code on that PC, then tap Sign in again.'
+          );
+          return;
+        }
         const defaultPromptVal =
           hintProv === 'claude'
             ? 'claude'
@@ -16334,10 +16514,13 @@
           subAction: 'accountAdd',
           provider,
           label,
-          switchOnComplete: true
+          switchOnComplete: true,
+          ...(acctSignInHost ? { targetDeviceId: acctSignInHost.id } : {})
         });
         showToast(
-          `🔐 Sign-in launched on desktop for ${provider === 'claude' ? 'Claude Code' : 'Antigravity'} — existing accounts remain logged in`
+          acctSignInHost
+            ? `🔐 Sign-in opened on ${acctSignInHost.name || 'the PC'} for ${provider === 'claude' ? 'Claude Code' : 'Antigravity'}. Finish it in the browser there; existing accounts stay signed in`
+            : `🔐 Sign-in launched on desktop for ${provider === 'claude' ? 'Claude Code' : 'Antigravity'} — existing accounts remain logged in`
         );
         return;
       }
@@ -16970,6 +17153,23 @@
 
       if (e.target.closest('[data-download-pc-setup]')) {
         await downloadPcSetupLauncher();
+        return;
+      }
+
+      const applyPcSetupBtn = e.target.closest('[data-apply-pc-setup]');
+      if (applyPcSetupBtn) {
+        e.preventDefault();
+        if (!applyPcSetupBtn.disabled) {
+          await applyPcSetupOnDevice(applyPcSetupBtn.dataset.applyPcSetup);
+        }
+        return;
+      }
+
+      const pwaReadyToggle = e.target.closest('[data-pwa-ready-toggle]');
+      if (pwaReadyToggle) {
+        e.preventDefault();
+        pwaReadyCardOpen = pwaReadyToggle.getAttribute('aria-expanded') !== 'true';
+        renderPulseView();
         return;
       }
 
@@ -18794,7 +18994,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=83', { updateViaCache: 'none' })
+        .register('sw.js?v=84', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

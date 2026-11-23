@@ -10889,3 +10889,132 @@ html[data-theme="light"] .sb-q-btn.primary {
   gap: 8px;
   flex-wrap: wrap;
 }
+
+/* Phone-only readiness card (Pulse): one line when every online PC is ready, opens to the per-PC checklist. */
+.pwa-ready-card {
+  margin-bottom: 12px;
+  border-radius: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--amber);
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.pwa-ready-card.is-ready {
+  border-left-color: var(--emerald);
+}
+.pwa-ready-card.is-off {
+  border-left-color: var(--crimson);
+}
+.pwa-ready-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 14px;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.pwa-ready-head:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: -2px;
+}
+.pwa-ready-head-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.pwa-ready-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.pwa-ready-chevron {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.pwa-ready-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px 14px 12px;
+}
+.pwa-ready-body[hidden] {
+  display: none !important;
+}
+.pwa-ready-host {
+  min-width: 0;
+  padding-top: 9px;
+  border-top: 1px solid var(--border-strong);
+}
+.pwa-ready-host-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+.pwa-ready-host-head .fleet-setup-pill {
+  margin-left: 0;
+}
+.pwa-ready-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pwa-ready-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+.pwa-ready-mark {
+  flex: 0 0 16px;
+  width: 16px;
+  text-align: center;
+  font-weight: 700;
+  color: var(--emerald);
+}
+.pwa-ready-row.is-fail .pwa-ready-mark {
+  color: var(--crimson);
+}
+.pwa-ready-row.is-note .pwa-ready-mark {
+  color: var(--amber);
+  font-style: italic;
+}
+.pwa-ready-text {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
+.pwa-ready-text strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.pwa-ready-row.is-ok .pwa-ready-detail {
+  color: var(--text-muted);
+}
+.pwa-ready-host-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}

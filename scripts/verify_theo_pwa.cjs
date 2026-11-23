@@ -3357,6 +3357,207 @@ async function main() {
     assert.strictEqual(pcSetupVerify.overflowX, 0, '0px horizontal overflow after PC setup UI render');
     console.log('[PASS] Adversarial #16: Zero-Terminal PC Setup Launcher (6-digit single-use code, zero permanent secret) & Fleet Readiness Pills verified');
 
+    // Adversarial #16b: Phone-only readiness card on Pulse, Apply PC setup from the phone, honest account sign-in
+    const setFleetDevices = async (devices) => {
+      await evalJs(`(() => {
+        const rawCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+        const snap = rawCache.snapshot || rawCache.state || {};
+        snap.devices = ${JSON.stringify(devices)};
+        if (rawCache.snapshot) rawCache.snapshot = snap;
+        else rawCache.state = snap;
+        localStorage.setItem('theo_remote_cache_v3', JSON.stringify(rawCache));
+        const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+        prefs.activeTab = 'pulse';
+        localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+        location.reload();
+        return true;
+      })()`);
+      await new Promise((r) => setTimeout(r, 650));
+    };
+    const readyChecks = (over = {}) =>
+      [
+        { id: 'keepalive', ok: true, level: 'required', title: 'Background service', detail: 'Running. THEO stays reachable when VS Code is closed.' },
+        { id: 'claude-cli', ok: true, level: 'required', title: 'Claude engine', detail: 'Found. Claude sessions run without VS Code.' },
+        { id: 'claude-prompts', ok: true, level: 'required', title: 'Claude approvals and questions', detail: 'Sent to the phone from sessions running without VS Code.' },
+        { id: 'agy-approvals', ok: false, level: 'info', title: 'Antigravity Run and Accept prompts', detail: 'Cannot be answered while VS Code is closed on this PC. Antigravity questions can.' }
+      ].map((c) => (over[c.id] ? { ...c, ...over[c.id] } : c));
+    const pendingSetup = {
+      ok: false, checkedAt: Date.now(), totalCount: 11, okCount: 10, pendingCount: 1,
+      pending: [{ id: 'theo-hub', name: 'THEO extension' }]
+    };
+
+    // (a) one online PC with a failing required item, forged counts and markup in every text field
+    await setFleetDevices([
+      {
+        id: 'host-gamma',
+        name: 'Gamma <img src=x onerror="window.__pwaXss=1">',
+        online: true,
+        sessionCount: 1,
+        pcSetup: pendingSetup,
+        pwaReady: {
+          ready: true, okCount: 99, totalCount: 99, vscodeOpen: false,
+          checks: readyChecks({
+            keepalive: { ok: false, title: 'Background service <b>x</b>', detail: 'Not running <script>window.__pwaXss=2</script>' }
+          }).concat([{ id: 'bad id!', ok: true, level: 'required', title: 'dropped' }])
+        }
+      },
+      { id: 'host-old', name: 'OldBuild', online: true, sessionCount: 0 }
+    ]);
+    const readyA = await evalJs(`(async () => {
+      const card = document.getElementById('pulse-pwa-ready-card');
+      const out = {
+        hasCard: Boolean(card),
+        classes: card ? card.className : '',
+        title: card?.querySelector('.pwa-ready-title')?.textContent?.trim() || '',
+        bodyHidden: card?.querySelector('.pwa-ready-body')?.hasAttribute('hidden'),
+        expanded: card?.querySelector('[data-pwa-ready-toggle]')?.getAttribute('aria-expanded'),
+        hostCount: card ? card.querySelectorAll('.pwa-ready-host').length : 0,
+        pill: card?.querySelector('.fleet-setup-pill')?.textContent?.trim() || '',
+        failRows: card ? card.querySelectorAll('.pwa-ready-row.is-fail').length : 0,
+        okRows: card ? card.querySelectorAll('.pwa-ready-row.is-ok').length : 0,
+        noteRows: card ? card.querySelectorAll('.pwa-ready-row.is-note').length : 0,
+        injected: card ? card.querySelectorAll('img, script, b').length : -1,
+        xssFlag: window.__pwaXss || 0,
+        cardText: card?.textContent || '',
+        setupCardText: document.getElementById('pulse-pc-setup-card')?.textContent || '',
+        applyInSetup: document.querySelectorAll('#pulse-pc-setup-card [data-apply-pc-setup]').length,
+        applyInReady: card ? card.querySelectorAll('[data-apply-pc-setup]').length : 0
+      };
+      const applyBtn = document.querySelector('#pulse-pc-setup-card [data-apply-pc-setup]');
+      out.applyLabel = applyBtn?.textContent?.trim() || '';
+      window.__theoLastQuarantinedCmd = null;
+      applyBtn?.click();
+      await new Promise((r) => setTimeout(r, 60));
+      const cmd = window.__theoLastQuarantinedCmd || {};
+      out.cmd = { type: cmd.type, subAction: cmd.subAction, targetDeviceId: cmd.targetDeviceId, threadId: cmd.threadId || '' };
+      const after = document.querySelector('#pulse-pc-setup-card [data-apply-pc-setup]');
+      out.afterDisabled = Boolean(after?.disabled);
+      out.afterLabel = after?.textContent?.trim() || '';
+      window.__theoLastQuarantinedCmd = null;
+      after?.click();
+      await new Promise((r) => setTimeout(r, 40));
+      out.secondCmd = window.__theoLastQuarantinedCmd ? 1 : 0;
+      // Account sign-in: no PC has VS Code open, so nothing is dispatched and no prompt opens.
+      let promptCalls = 0;
+      const origPrompt = window.prompt;
+      window.prompt = () => { promptCalls += 1; return 'claude'; };
+      const probe = document.createElement('button');
+      probe.dataset.accountAddRemote = 'claude';
+      document.body.appendChild(probe);
+      probe.click();
+      await new Promise((r) => setTimeout(r, 40));
+      probe.remove();
+      window.prompt = origPrompt;
+      out.promptCalls = promptCalls;
+      out.accountCmd = window.__theoLastQuarantinedCmd ? window.__theoLastQuarantinedCmd.subAction : '';
+      out.toastText = document.querySelector('.toast, #toast, .theo-toast')?.textContent || '';
+      out.titleCount = document.querySelectorAll('[title]').length;
+      out.overflowX = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+      return out;
+    })()`);
+    assert.strictEqual(readyA.hasCard, true, 'Pulse must show #pulse-pwa-ready-card when a PC reports phone-only readiness');
+    assert.ok(readyA.classes.includes('is-pending') && readyA.classes.includes('is-open'), `a failing required item opens the card as pending, got "${readyA.classes}"`);
+    assert.strictEqual(readyA.title, 'Not ready for phone-only use yet');
+    assert.strictEqual(readyA.bodyHidden, false);
+    assert.strictEqual(readyA.expanded, 'true');
+    assert.strictEqual(readyA.hostCount, 1, 'a PC whose build reports nothing is not listed');
+    assert.strictEqual(readyA.pill, '! 2/3', 'counts are rebuilt from the checks, never taken from the wire');
+    assert.deepStrictEqual([readyA.failRows, readyA.okRows, readyA.noteRows], [1, 2, 1]);
+    assert.strictEqual(readyA.injected, 0, 'host-supplied text is escaped');
+    assert.strictEqual(readyA.xssFlag, 0, 'no script from a host name or a check text runs');
+    assert.ok(readyA.cardText.includes('VS Code closed') && !readyA.cardText.includes('dropped'));
+    assert.ok(readyA.setupCardText.includes('THEO extension'), 'pending step names from pending[] are shown');
+    assert.strictEqual(readyA.applyInSetup, 1, 'one Apply button per online PC that takes the request');
+    assert.strictEqual(readyA.applyInReady, 1, 'a PC with the background service down offers the setup in the card');
+    assert.ok(readyA.applyLabel.startsWith('Apply on Gamma'));
+    assert.deepStrictEqual(readyA.cmd, { type: 'sessionAction', subAction: 'applyPcSetup', targetDeviceId: 'host-gamma', threadId: '' });
+    assert.strictEqual(readyA.afterDisabled, true, 'the button locks while the PC applies its setup');
+    assert.ok(readyA.afterLabel.startsWith('Applying on Gamma'));
+    assert.strictEqual(readyA.secondCmd, 0, 'a second tap does not send a second request');
+    assert.strictEqual(readyA.promptCalls, 0, 'no sign-in prompt when no PC has VS Code open');
+    assert.strictEqual(readyA.accountCmd, '', 'and no sign-in command is sent');
+    assert.strictEqual(readyA.titleCount, 0, 'Zero [title] attributes allowed on the readiness card');
+    assert.strictEqual(readyA.overflowX, 0, '0px horizontal overflow with the readiness card open');
+
+    // (b) every online PC ready: one collapsed line, opens and closes on tap, the choice survives a re-render
+    await setFleetDevices([
+      { id: 'host-gamma', name: 'Gamma', online: true, sessionCount: 1, pwaReady: { vscodeOpen: true, checks: readyChecks({ 'agy-approvals': { ok: true } }) } },
+      { id: 'host-delta', name: 'Delta', online: false, sessionCount: 0, pwaReady: { vscodeOpen: false, checks: readyChecks({ keepalive: { ok: false } }) } }
+    ]);
+    const readyB = await evalJs(`(async () => {
+      const q = () => document.getElementById('pulse-pwa-ready-card');
+      const out = {
+        classes: q()?.className || '',
+        title: q()?.querySelector('.pwa-ready-title')?.textContent?.trim() || '',
+        hiddenAtFirst: q()?.querySelector('.pwa-ready-body')?.hasAttribute('hidden'),
+        setupCard: Boolean(document.getElementById('pulse-pc-setup-card'))
+      };
+      q()?.querySelector('[data-pwa-ready-toggle]')?.click();
+      await new Promise((r) => setTimeout(r, 40));
+      out.hiddenAfterTap = q()?.querySelector('.pwa-ready-body')?.hasAttribute('hidden');
+      out.hostCount = q()?.querySelectorAll('.pwa-ready-host').length;
+      out.offlineText = q()?.textContent.includes('offline, last report');
+      out.openHostText = q()?.textContent.includes('VS Code open');
+      out.overflowOpen = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+      document.querySelector('[data-tab="sessions"]')?.click();
+      await new Promise((r) => setTimeout(r, 30));
+      document.querySelector('[data-tab="pulse"]')?.click();
+      await new Promise((r) => setTimeout(r, 40));
+      out.stillOpen = !q()?.querySelector('.pwa-ready-body')?.hasAttribute('hidden');
+      q()?.querySelector('[data-pwa-ready-toggle]')?.click();
+      await new Promise((r) => setTimeout(r, 40));
+      out.hiddenAgain = q()?.querySelector('.pwa-ready-body')?.hasAttribute('hidden');
+      // With VS Code open on a PC, the sign-in is sent to that PC by id.
+      const origPrompt = window.prompt;
+      window.prompt = () => 'claude:Work';
+      window.__theoLastQuarantinedCmd = null;
+      const probe = document.createElement('button');
+      probe.dataset.accountAddRemote = 'claude';
+      document.body.appendChild(probe);
+      probe.click();
+      await new Promise((r) => setTimeout(r, 40));
+      probe.remove();
+      window.prompt = origPrompt;
+      const cmd = window.__theoLastQuarantinedCmd || {};
+      out.accountCmd = { subAction: cmd.subAction, targetDeviceId: cmd.targetDeviceId, provider: cmd.provider, label: cmd.label };
+      out.titleCount = document.querySelectorAll('[title]').length;
+      return out;
+    })()`);
+    assert.ok(readyB.classes.includes('is-ready') && !readyB.classes.includes('is-open'), `all online PCs ready collapses the card, got "${readyB.classes}"`);
+    assert.strictEqual(readyB.title, 'Gamma is ready for phone-only use', 'an offline PC does not hold the fleet back');
+    assert.strictEqual(readyB.hiddenAtFirst, true);
+    assert.strictEqual(readyB.setupCard, false);
+    assert.strictEqual(readyB.hiddenAfterTap, false, 'a tap opens the checklist');
+    assert.strictEqual(readyB.hostCount, 2);
+    assert.strictEqual(readyB.offlineText, true);
+    assert.strictEqual(readyB.openHostText, true);
+    assert.strictEqual(readyB.overflowOpen, 0);
+    assert.strictEqual(readyB.stillOpen, true, 'the open state survives a re-render');
+    assert.strictEqual(readyB.hiddenAgain, true);
+    assert.deepStrictEqual(readyB.accountCmd, { subAction: 'accountAdd', targetDeviceId: 'host-gamma', provider: 'claude', label: 'Work' });
+    assert.strictEqual(readyB.titleCount, 0);
+
+    // (c) no PC online, and (d) no PC reporting: the card says so, or is absent
+    await setFleetDevices([
+      { id: 'host-gamma', name: 'Gamma', online: false, sessionCount: 0, pwaReady: { vscodeOpen: false, checks: readyChecks() } }
+    ]);
+    const readyC = await evalJs(`(() => {
+      const card = document.getElementById('pulse-pwa-ready-card');
+      return { classes: card?.className || '', title: card?.querySelector('.pwa-ready-title')?.textContent?.trim() || '' };
+    })()`);
+    assert.ok(readyC.classes.includes('is-off'));
+    assert.strictEqual(readyC.title, 'No PC is online');
+    await setFleetDevices([{ id: 'host-beta', name: 'Beta', online: true, sessionCount: 3, pcSetup: { ok: false, checkedAt: Date.now(), totalCount: 11, okCount: 9, pendingCount: 2, pendingIds: ['claude-automode', 'pc-setup-shortcut'], pendingTitles: ['Claude AutoMode Rules', 'PC Setup Shortcut'] } }]);
+    const readyD = await evalJs(`(() => ({
+      hasCard: Boolean(document.getElementById('pulse-pwa-ready-card')),
+      applyButtons: document.querySelectorAll('[data-apply-pc-setup]').length,
+      setupText: document.getElementById('pulse-pc-setup-card')?.textContent || ''
+    }))()`);
+    assert.strictEqual(readyD.hasCard, false, 'no card while no PC reports phone-only readiness');
+    assert.strictEqual(readyD.applyButtons, 0, 'a PC on an older build gets no Apply button');
+    assert.ok(readyD.setupText.includes('Apply Setup'), 'and keeps the instruction for that PC');
+    console.log('[PASS] Adversarial #16b: Phone-only readiness card, Apply PC setup from the phone & honest account sign-in verified');
+
     // Adversarial #17: Full multi-pool quota bars (Gemini + Claude & GPT on Antigravity, plus usedPercent-only Fable on Claude) across Pulse and Desktop IDE Sidebar
     const quotaPoolVerify = await evalJs(`(async () => {
       document.querySelector('[data-tab="pulse"]')?.click();
