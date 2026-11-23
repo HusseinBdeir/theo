@@ -7294,6 +7294,99 @@ async function main() {
       }
     }
 
+    // Zero-secret Memory Vault shortcut check (#rail-vault-btn, #mobile-vault-btn, Command Palette, PIN-lock guard & short desktop rail reachability)
+    {
+      const vaultCheck = await evalJs(`(async () => {
+        const rail = document.getElementById('rail-vault-btn');
+        const mob = document.getElementById('mobile-vault-btn');
+        document.getElementById('open-cmd-palette')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+        const cmdInput = document.getElementById('cmd-input');
+        if (cmdInput) {
+          cmdInput.value = 'Memory Vault';
+          cmdInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        await new Promise((r) => setTimeout(r, 40));
+        const cmdHasVault = Boolean(document.querySelector('#cmd-results [data-cmd-act="open-memory-vault"]'));
+        document.getElementById('cmd-modal')?.setAttribute('hidden', '');
+
+        return {
+          railHref: rail?.getAttribute('href') || '',
+          railTarget: rail?.getAttribute('target') || '',
+          railRel: rail?.getAttribute('rel') || '',
+          railTitle: rail?.getAttribute('title'),
+          mobHref: mob?.getAttribute('href') || '',
+          mobTarget: mob?.getAttribute('target') || '',
+          mobRel: mob?.getAttribute('rel') || '',
+          mobTitle: mob?.getAttribute('title'),
+          cmdHasVault
+        };
+      })()`);
+      assert.strictEqual(vaultCheck.railHref, 'https://memory.husseinbdeir.workers.dev/', 'Desktop #rail-vault-btn must link plainly to Vault with zero secrets');
+      assert.strictEqual(vaultCheck.mobHref, 'https://memory.husseinbdeir.workers.dev/', 'Mobile #mobile-vault-btn must link plainly to Vault with zero secrets');
+      assert.strictEqual(vaultCheck.railTarget, '_blank');
+      assert.strictEqual(vaultCheck.mobTarget, '_blank');
+      assert.ok(vaultCheck.railRel.includes('noopener') && vaultCheck.mobRel.includes('noopener') && vaultCheck.mobRel.includes('external'));
+      assert.strictEqual(vaultCheck.railTitle, null, '#rail-vault-btn must have zero [title]');
+      assert.strictEqual(vaultCheck.mobTitle, null, '#mobile-vault-btn must have zero [title]');
+      assert.strictEqual(vaultCheck.cmdHasVault, true, 'Command Palette must list open-memory-vault');
+
+      // Short desktop viewport (1280x500): .ide-activity-bar scrolls cleanly so bottom footer controls (#btn-sync-now) are reachable
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 500, deviceScaleFactor: 2, mobile: false }, sessionId);
+      await new Promise((r) => setTimeout(r, 80));
+      const shortRail = await evalJs(`(() => {
+        const bar = document.querySelector('.ide-activity-bar');
+        const syncBtn = document.getElementById('btn-sync-now');
+        if (!bar || !syncBtn) return { ok: false };
+        const cs = getComputedStyle(bar);
+        syncBtn.scrollIntoView({ block: 'end' });
+        const rect = syncBtn.getBoundingClientRect();
+        return {
+          ok: true,
+          overflowY: cs.overflowY,
+          bottomAfterScroll: Math.round(rect.bottom),
+          vh: window.innerHeight
+        };
+      })()`);
+      assert.strictEqual(shortRail.ok, true);
+      assert.strictEqual(shortRail.overflowY, 'auto', 'Short desktop rail must allow vertical scroll');
+      assert.ok(shortRail.bottomAfterScroll <= shortRail.vh + 2, `Bottom footer button must scroll into view at 1280x500 (${shortRail.bottomAfterScroll} <= ${shortRail.vh})`);
+
+      // Live PIN-locked Vault click & Ctrl+K negative guard
+      await evalJs(`localStorage.removeItem('theo_remote_pin_hash_v1'); localStorage.setItem('theo_remote_pin_v1', '2468');`);
+      await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+      await new Promise((r) => setTimeout(r, 450));
+      const lockedVault = await evalJs(`(async () => {
+        const origOpen = window.open;
+        let openCalls = 0;
+        window.open = () => { openCalls++; return null; };
+        try {
+          const railEvt = new MouseEvent('click', { bubbles: true, cancelable: true });
+          const mobEvt = new MouseEvent('click', { bubbles: true, cancelable: true });
+          document.getElementById('rail-vault-btn')?.dispatchEvent(railEvt);
+          document.getElementById('mobile-vault-btn')?.dispatchEvent(mobEvt);
+          window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+          return {
+            railPrevented: railEvt.defaultPrevented,
+            mobPrevented: mobEvt.defaultPrevented,
+            cmdHidden: document.getElementById('cmd-modal')?.hidden !== false,
+            openCalls,
+          };
+        } finally {
+          window.open = origOpen;
+        }
+      })()`);
+      assert.strictEqual(lockedVault.railPrevented, true, 'Locked PIN must preventDefault on #rail-vault-btn click');
+      assert.strictEqual(lockedVault.mobPrevented, true, 'Locked PIN must preventDefault on #mobile-vault-btn click');
+      assert.strictEqual(lockedVault.cmdHidden, true, 'Locked PIN must block Ctrl+K Command Palette');
+      assert.strictEqual(lockedVault.openCalls, 0, 'Locked PIN must not open Vault window');
+      await evalJs(`localStorage.removeItem('theo_remote_pin_hash_v1'); localStorage.removeItem('theo_remote_pin_v1');`);
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 2, mobile: false }, sessionId);
+      await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+      await new Promise((r) => setTimeout(r, 350));
+      console.log('[PASS] Zero-secret Memory Vault shortcut + PIN-lock guard + 1280x500 rail reachability verified');
+    }
+
     // Final error & network quarantine assertions (#21)
     assert.strictEqual(pageExceptions.length, 0, `Uncaught page exceptions: ${JSON.stringify(pageExceptions)}`);
     assert.strictEqual(consoleErrors.length, 0, `Console errors: ${JSON.stringify(consoleErrors)}`);

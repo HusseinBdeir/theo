@@ -5775,8 +5775,28 @@ html[data-theme="light"] .code-diff-stat .diff-add {
   flex-direction: column;
   align-items: center;
   justify-content: space-between;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
   padding: calc(env(safe-area-inset-top, 0px) + 8px) 0 calc(env(safe-area-inset-bottom, 0px) + 8px);
   z-index: 30;
+}
+
+.ide-activity-bar::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-height: 600px) {
+  .ide-activity-bar .nav-item {
+    height: 36px;
+  }
+  .ide-activity-bar .rail-footer {
+    gap: 2px;
+    padding-top: 4px;
+  }
+  .ide-activity-bar .rail-footer .icon-btn {
+    height: 28px;
+  }
 }
 
 .activity-brand-btn {

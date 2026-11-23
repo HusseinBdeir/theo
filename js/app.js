@@ -15481,6 +15481,7 @@
         }));
       })(),
       { title: 'Sync with the PC & Cloud Relay Now', sub: 'Connectivity', act: 'sync' },
+      { title: 'Open THEO Memory Vault (Reports, Notes & Docs)', sub: 'Cloudflare Vault · memory.husseinbdeir.workers.dev', act: 'open-memory-vault' },
       { title: `${isThirdPartyQuotaHidden() ? 'Show' : 'Hide'} Antigravity Claude & GPT Quota Pool`, sub: 'Quota Display', act: 'toggle-3p-quota' },
       { title: 'Toggle Split Inspector (Code, Diff, Side Agents & Outline)', sub: 'Workbench · ⌘I', act: 'inspector' },
       { title: 'Switch Studio Color Palette (Graphite · Velvet · Espresso · Daylight)', sub: 'Appearance', act: 'palette' },
@@ -17939,6 +17940,8 @@
           openRepoFilePicker();
         } else if (act === 'open-command-pwa' || act === 'open-discipline' || act === 'new-payment-hold') {
           window.open('https://husseinbdeir.github.io/planner/', '_blank', 'noopener');
+        } else if (act === 'open-memory-vault') {
+          window.open('https://memory.husseinbdeir.workers.dev/', '_blank', 'noopener');
         } else if (act === 'new-agy') {
           enterNewSessionMode('antigravity');
         } else if (act === 'new-claude') {
@@ -18497,6 +18500,12 @@
     // Command Palette & IDE Sidebar shortcuts
     $('open-cmd-palette')?.addEventListener('click', openCommandPalette);
     $('mobile-cmd-btn')?.addEventListener('click', openCommandPalette);
+    $('rail-vault-btn')?.addEventListener('click', (e) => {
+      if (isPinLocked()) e.preventDefault();
+    });
+    $('mobile-vault-btn')?.addEventListener('click', (e) => {
+      if (isPinLocked()) e.preventDefault();
+    });
     $('cmd-close')?.addEventListener('click', closeCommandPalette);
     $('cmd-input')?.addEventListener('input', (e) => renderCommandPaletteResults(e.target.value));
     window.addEventListener('keydown', (e) => {
@@ -19493,7 +19502,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=85', { updateViaCache: 'none' })
+        .register('sw.js?v=86', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
