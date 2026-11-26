@@ -408,7 +408,11 @@ if ($PSScriptRoot) {
 if (-not $localZip) {
     $tmpZip = Join-Path $env:TEMP "theo-hub-bundle.zip"
     Write-Host "Downloading THEO bundle ..." -ForegroundColor Yellow
-    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/HusseinBdeir/theo/main/theo-hub-bundle.zip" -OutFile $tmpZip -UseBasicParsing
+    try {
+        Invoke-WebRequest -Uri "https://theo.husseinbdeir.workers.dev/theo-hub-bundle.zip" -OutFile $tmpZip -UseBasicParsing
+    } catch {
+        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/HusseinBdeir/theo/main/theo-hub-bundle.zip" -OutFile $tmpZip -UseBasicParsing
+    }
     $localZip = $tmpZip
 }
 

@@ -1077,7 +1077,214 @@
     }
   }
 
+  const THEO_CF_MIGRATE_URL = 'https://theo.husseinbdeir.workers.dev/';
+  const THEO_MIGRATE_META_KEY = 'theo_remote_migrated_from_v1';
+  const THEO_MIGRATE_ALLOWLIST = new Set([
+    STORAGE_KEYS.PREFS,
+    STORAGE_KEYS.PIN,
+    STORAGE_KEYS.PIN_HASH,
+    STORAGE_KEYS.NOTIFS,
+    STORAGE_KEYS.CHECKED_NOTIFS,
+    STORAGE_KEYS.ANSWERED_QUESTIONS,
+    STORAGE_KEYS.SEEN_QUOTA_ALERTS,
+    STORAGE_KEYS.PERSONAL,
+    STORAGE_KEYS.COMMAND
+  ]);
+  let pendingPinMigratePayload = null;
+  let bootTheoMigrateErrorReason = '';
+  let theoPushRegistryLock = Promise.resolve();
+
+  function isTheoOldGithubOrigin() {
+    try {
+      return typeof location !== 'undefined' && location.hostname === 'husseinbdeir.github.io';
+    } catch {
+      return false;
+    }
+  }
+
+  function getTheoMigrationMeta() {
+    const v = loadJson(THEO_MIGRATE_META_KEY, null);
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+  }
+
+  function saveTheoMigrationMeta(meta) {
+    saveJson(THEO_MIGRATE_META_KEY, meta || null);
+  }
+
+  function stripProtoDeep(val, depth = 0) {
+    if (depth > 8 || val === null || typeof val !== 'object') return val;
+    if (Array.isArray(val)) return val.map((item) => stripProtoDeep(item, depth + 1));
+    const clean = {};
+    for (const [k, v] of Object.entries(val)) {
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+      clean[k] = stripProtoDeep(v, depth + 1);
+    }
+    return clean;
+  }
+
+  function sanitizeMigratedPrefs(rawPrefs) {
+    if (!rawPrefs || typeof rawPrefs !== 'object' || Array.isArray(rawPrefs)) return null;
+    const out = {};
+    for (const [pk, pv] of Object.entries(rawPrefs)) {
+      if (pk === '__proto__' || pk === 'constructor' || pk === 'prototype') continue;
+      if (pv === undefined) continue;
+      if (pk === 'cloudUrl') {
+        if (typeof pv === 'string' && isSafeCloudEndpointUrl(pv)) out.cloudUrl = pv.trim();
+        continue;
+      }
+      if (pk === 'edgeRelayUrl' || pk === 'customBridgeUrl') {
+        if (typeof pv === 'string' && isSafeEdgeEndpointUrl(pv)) out[pk] = pv.trim();
+        continue;
+      }
+      if (pk === 'pin' || pk === 'pinHash') continue;
+      if (pk === 'notif' && (!pv || typeof pv !== 'object' || Array.isArray(pv))) continue;
+      if ((pk === 'freqUsage' || pk === 'selectedModelByProvider' || pk === 'selectedThinkingEffort' || pk === 'threadModelConfig') && (!pv || typeof pv !== 'object' || Array.isArray(pv))) continue;
+      if (pk === 'openEditorTabs' && !Array.isArray(pv)) continue;
+      out[pk] = stripProtoDeep(pv);
+    }
+    return out;
+  }
+
+  function parseTheoHashMigrationSync() {
+    try {
+      if (!location.hash || !location.hash.startsWith('#migrate=')) return null;
+      const rawToken = location.hash.slice(9);
+      try {
+        history.replaceState(history.state || null, '', location.pathname + (location.search || ''));
+      } catch {}
+      if (isTheoOldGithubOrigin()) return null;
+      if (!rawToken || rawToken.length > 262144) return { ok: false, reason: 'size' };
+      const b64 = rawToken.replace(/-/g, '+').replace(/_/g, '/');
+      const pad = b64.length % 4 === 0 ? '' : '===='.slice(b64.length % 4);
+      const bin = atob(b64 + pad);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const parsed = JSON.parse(new TextDecoder().decode(bytes));
+      if (
+        !parsed ||
+        typeof parsed !== 'object' ||
+        Array.isArray(parsed) ||
+        parsed.v !== 1 ||
+        parsed.app !== 'theo' ||
+        !parsed.kv ||
+        typeof parsed.kv !== 'object' ||
+        Array.isArray(parsed.kv)
+      ) {
+        return { ok: false, reason: 'schema' };
+      }
+      return { ok: true, payload: parsed };
+    } catch {
+      return { ok: false, reason: 'parse' };
+    }
+  }
+
+  function applyTheoMigrationPayload(migRes) {
+    if (!migRes || !migRes.ok || !migRes.payload) {
+      return { ok: false, reason: migRes?.reason || 'invalid' };
+    }
+    const kv = migRes.payload.kv;
+    const incomingPrefsRaw = kv[STORAGE_KEYS.PREFS];
+    const incomingPrefs = incomingPrefsRaw ? sanitizeMigratedPrefs(incomingPrefsRaw) : null;
+    if (incomingPrefsRaw && !incomingPrefs) return { ok: false, reason: 'schema' };
+
+    // Never clobber an already-paired device with a different edge/cloud key
+    const existingEdgeKey = String(prefs.edgeAccessKey || '').trim();
+    const existingCloudKey = String(prefs.cloudKey || '').trim();
+    const incEdgeKey = String(incomingPrefs?.edgeAccessKey || '').trim();
+    const incCloudKey = String(incomingPrefs?.cloudKey || '').trim();
+    if (existingEdgeKey || existingCloudKey) {
+      const edgeMatches = !existingEdgeKey || (incEdgeKey && incEdgeKey === existingEdgeKey);
+      const cloudMatches = !existingCloudKey || (incCloudKey && incCloudKey === existingCloudKey);
+      if (!edgeMatches || !cloudMatches) {
+        return { ok: false, reason: 'key-mismatch' };
+      }
+    }
+
+    const existingPinHash = localStorage.getItem(STORAGE_KEYS.PIN_HASH) || '';
+    const existingPin = localStorage.getItem(STORAGE_KEYS.PIN) || '';
+    const importedKeys = [];
+
+    for (const [k, v] of Object.entries(kv)) {
+      if (
+        typeof k !== 'string' ||
+        k === '__proto__' ||
+        k === 'constructor' ||
+        k === 'prototype' ||
+        !THEO_MIGRATE_ALLOWLIST.has(k)
+      ) {
+        continue;
+      }
+      if (v === undefined || v === null) continue;
+
+      if (k === STORAGE_KEYS.PREFS) {
+        if (incomingPrefs) {
+          Object.assign(prefs, incomingPrefs);
+          saveJson(STORAGE_KEYS.PREFS, prefs);
+          refreshCloudConfig();
+          importedKeys.push(k);
+        }
+      } else if (k === STORAGE_KEYS.PIN_HASH) {
+        if (!existingPinHash && !existingPin && typeof v === 'string' && /^[a-f0-9]{64}$/i.test(v)) {
+          localStorage.setItem(STORAGE_KEYS.PIN_HASH, v.toLowerCase());
+          importedKeys.push(k);
+        }
+      } else if (k === STORAGE_KEYS.PIN) {
+        if (!existingPinHash && !existingPin && typeof v === 'string' && /^\d{4}$/.test(v)) {
+          localStorage.setItem(STORAGE_KEYS.PIN, v);
+          importedKeys.push(k);
+        }
+      } else if (k === STORAGE_KEYS.NOTIFS) {
+        if (Array.isArray(v)) {
+          const safe = v.filter((x) => x && typeof x === 'object' && !Array.isArray(x)).slice(0, 60);
+          if (!loadJson(k, []).length) {
+            saveJson(k, safe);
+            importedKeys.push(k);
+          }
+        }
+      } else if (k === STORAGE_KEYS.CHECKED_NOTIFS || k === STORAGE_KEYS.SEEN_QUOTA_ALERTS) {
+        if (Array.isArray(v)) {
+          const cur = loadJson(k, []);
+          const merged = Array.from(
+            new Set([...(Array.isArray(cur) ? cur : []), ...v.filter((x) => typeof x === 'string' && x.length <= 160)])
+          ).slice(-200);
+          saveJson(k, merged);
+          importedKeys.push(k);
+        }
+      } else if (
+        k === STORAGE_KEYS.ANSWERED_QUESTIONS ||
+        k === STORAGE_KEYS.PERSONAL ||
+        k === STORAGE_KEYS.COMMAND
+      ) {
+        if (v && typeof v === 'object' && !Array.isArray(v) && localStorage.getItem(k) === null) {
+          saveJson(k, v);
+          importedKeys.push(k);
+        }
+      }
+    }
+
+    const oldPushDeviceId =
+      typeof migRes.payload.oldPushDeviceId === 'string'
+        ? migRes.payload.oldPushDeviceId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80)
+        : '';
+    const curDevId = loadJson(STORAGE_KEYS.DEVID, '');
+    if (oldPushDeviceId && curDevId === oldPushDeviceId) {
+      saveJson(
+        STORAGE_KEYS.DEVID,
+        `theo_dev_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`
+      );
+    }
+    saveTheoMigrationMeta({
+      oldPushDeviceId,
+      pushRetired: !oldPushDeviceId,
+      needsPushPrompt: true,
+      importedCount: importedKeys.length,
+      migratedAt: Date.now()
+    });
+    return { ok: true, oldPushDeviceId, importedKeys };
+  }
+
   ingestLocationPairHash(false);
+  const bootMigRes = parseTheoHashMigrationSync();
 
   // v64: the cloud store lives on the Edge relay Worker (<edge base>/store) and its key is derived from the
   // edge access key, so a device paired before the move keeps working with no re-pairing and no stored store secret.
@@ -2155,7 +2362,7 @@
     } catch {}
   }
 
-  // Personal Ledger & Reminders are owned by Planner PWA (https://husseinbdeir.github.io/planner/)
+  // Personal Ledger & Reminders are owned by Planner PWA (https://planner.husseinbdeir.workers.dev/)
   function loadPersonalLedgerFromLocal() {}
   function mergePersonalLedger() {}
   async function pushPersonalLedgerToCloud() {}
@@ -2883,7 +3090,7 @@
   }
 
   async function scheduleExactReminderPush() {
-    // All Prayer, Task, Reminder, Wait Timer, Delegation & 100% Score notifications are now owned by Planner (https://husseinbdeir.github.io/planner/)
+    // All Prayer, Task, Reminder, Wait Timer, Delegation & 100% Score notifications are now owned by Planner (https://planner.husseinbdeir.workers.dev/)
     return;
   }
 
@@ -3048,39 +3255,51 @@
     // 2. Register with the Edge relay store (its hourly slot dispatcher replaced Personal - THEO Remote Daily Push)
     // Note: Do NOT arm duplicate theo_brief_d* push_delay timers — Personal - THEO Remote Daily Push already dispatches entry.slots hourly!
     if (cloudCfg.url && cloudCfg.key) {
-      try {
-        const curRes = await callCloudPush({ op: 'get' });
-        const curDocs = (curRes && curRes.docs) || curRes || {};
-        const existing = Array.isArray(curDocs?.push_registry?.items)
-          ? curDocs.push_registry.items
-          : [];
-        const others = existing.filter((x) => {
-          if (!x || !x.id) return false;
-          if (x.id === devId || x.endpoint === pushSub.endpoint) return false;
-          const xApp = String(x.app || '').toLowerCase();
-          const isTheoItem = !xApp || xApp === 'theo';
-          if (isTheoItem && curPlat && getTheoPlatformClass(x.ua) === curPlat) {
-            return false;
+      theoPushRegistryLock = theoPushRegistryLock.then(async () => {
+        try {
+          const curRes = await callCloudPush({ op: 'get' });
+          const curDocs = (curRes && curRes.docs) || curRes || {};
+          const existing = Array.isArray(curDocs?.push_registry?.items)
+            ? curDocs.push_registry.items
+            : [];
+          const mf = getTheoMigrationMeta();
+          const oldDevToRetire = mf && !mf.pushRetired && mf.oldPushDeviceId ? mf.oldPushDeviceId : '';
+          const others = existing.filter((x) => {
+            if (!x || !x.id) return false;
+            if (oldDevToRetire && x.id === oldDevToRetire) return false;
+            if (x.id === devId || x.endpoint === pushSub.endpoint) return false;
+            const xApp = String(x.app || '').toLowerCase();
+            const isTheoItem = !xApp || xApp === 'theo';
+            if (isTheoItem && curPlat && getTheoPlatformClass(x.ua) === curPlat) {
+              return false;
+            }
+            return true;
+          });
+          const nextItems = nf.enabled ? others.concat([entry]) : others;
+          const patchObj = {
+            push_registry: {
+              items: nextItems,
+              updatedAt: new Date().toISOString()
+            }
+          };
+          for (const k of Object.keys(curDocs)) {
+            if (k.startsWith('theo_brief_') && curDocs[k]?.id !== 'cancelled') {
+              patchObj[k] = { id: 'cancelled', updatedAt: new Date().toISOString() };
+            }
           }
-          return true;
-        });
-        const nextItems = nf.enabled ? others.concat([entry]) : others;
-        const patchObj = {
-          push_registry: {
-            items: nextItems,
-            updatedAt: new Date().toISOString()
+          const patchRes = await callCloudPush({
+            op: 'patch',
+            patch: patchObj
+          });
+          if (patchRes && patchRes.ok !== false && oldDevToRetire) {
+            const latestMf = getTheoMigrationMeta();
+            if (latestMf) {
+              saveTheoMigrationMeta({ ...latestMf, pushRetired: true });
+            }
           }
-        };
-        for (const k of Object.keys(curDocs)) {
-          if (k.startsWith('theo_brief_') && curDocs[k]?.id !== 'cancelled') {
-            patchObj[k] = { id: 'cancelled', updatedAt: new Date().toISOString() };
-          }
-        }
-        await callCloudPush({
-          op: 'patch',
-          patch: patchObj
-        });
-      } catch {}
+        } catch {}
+      });
+      await theoPushRegistryLock;
     }
   }
 
@@ -3128,6 +3347,10 @@
       prefs.notif = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {}, { enabled: true });
       saveJson(STORAGE_KEYS.PREFS, prefs);
       saveJson(STORAGE_KEYS.PUSH_HINT, 1);
+      const curMf = getTheoMigrationMeta();
+      if (curMf && curMf.needsPushPrompt) {
+        saveTheoMigrationMeta({ ...curMf, needsPushPrompt: false });
+      }
       localStorage.removeItem('theo_armed_briefs_v1');
       await syncPushSchedule();
       showToast('Push notifications paired! Sending confirmation banner…');
@@ -3865,11 +4088,12 @@
     const candidates = [];
     const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
     const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(ua);
-    const isGithubHosted = location.hostname.endsWith('.github.io');
+    const isPublicHosted =
+      location.hostname.endsWith('.github.io') || location.hostname.endsWith('.workers.dev');
 
     if (
       location.port === String(cloudCfg.port) ||
-      (location.protocol === 'http:' && !isGithubHosted)
+      (location.protocol === 'http:' && !isPublicHosted)
     ) {
       candidates.push(location.origin.replace(/\/+$/, ''));
     }
@@ -5723,6 +5947,113 @@
       .catch(() => {});
   }
 
+  async function retireOldTheoPushDevice() {
+    refreshCloudConfig();
+    const mf = getTheoMigrationMeta();
+    if (!cloudCfg.url || !cloudCfg.key || !mf || mf.pushRetired || !mf.oldPushDeviceId) {
+      return false;
+    }
+    let retired = false;
+    theoPushRegistryLock = theoPushRegistryLock.then(async () => {
+      try {
+        const curRes = await callCloudPush({ op: 'get' });
+        if (!curRes || curRes.ok === false) return;
+        const curDocs = (curRes && curRes.docs) || curRes || {};
+        const existing = Array.isArray(curDocs?.push_registry?.items)
+          ? curDocs.push_registry.items
+          : [];
+        const filtered = existing.filter((x) => x && x.id !== mf.oldPushDeviceId);
+        if (filtered.length !== existing.length) {
+          const patchRes = await callCloudPush({
+            op: 'patch',
+            patch: {
+              push_registry: {
+                items: filtered,
+                updatedAt: new Date().toISOString()
+              }
+            }
+          });
+          if (!patchRes || patchRes.ok === false) return;
+        }
+        const latestMf = getTheoMigrationMeta();
+        if (latestMf) {
+          saveTheoMigrationMeta({ ...latestMf, pushRetired: true });
+        }
+        retired = true;
+      } catch {}
+    });
+    await theoPushRegistryLock;
+    return retired;
+  }
+
+  function buildTheoMigrationUrl() {
+    refreshCloudConfig();
+    const kv = {};
+    for (const k of THEO_MIGRATE_ALLOWLIST) {
+      try {
+        const raw = localStorage.getItem(k);
+        if (raw === null) continue;
+        if (k === STORAGE_KEYS.PIN_HASH || k === STORAGE_KEYS.PIN) {
+          kv[k] = raw;
+          continue;
+        }
+        kv[k] = JSON.parse(raw);
+      } catch {}
+    }
+    const oldPushDeviceId = loadJson(STORAGE_KEYS.DEVID, '') || '';
+    const encodePayload = (obj) => {
+      const json = JSON.stringify(obj);
+      const bytes = new TextEncoder().encode(json);
+      return bytesToB64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    };
+    const payload = { v: 1, app: 'theo', oldPushDeviceId, ts: Date.now(), kv };
+    let encoded = encodePayload(payload);
+    for (const dropKey of [STORAGE_KEYS.PERSONAL, STORAGE_KEYS.COMMAND, STORAGE_KEYS.NOTIFS, STORAGE_KEYS.ANSWERED_QUESTIONS]) {
+      if (encoded.length <= 240000) break;
+      delete kv[dropKey];
+      encoded = encodePayload(payload);
+    }
+    return `${THEO_CF_MIGRATE_URL}#migrate=${encoded}`;
+  }
+
+  function renderTheoMigrationBannerHtml() {
+    if (isTheoOldGithubOrigin()) {
+      return `
+        <div class="push-banner-card">
+          <div class="push-banner-top">
+            <span class="eyebrow">NEW CLOUDFLARE ADDRESS</span>
+            <span class="pill-count amber">MOVE APP</span>
+          </div>
+          <div class="meta-timestamp" style="color:var(--text-secondary);font-size:12.5px">
+            THEO Remote moved off GitHub Pages to <strong>theo.husseinbdeir.workers.dev</strong>. Move your pairing and PIN in one tap.
+          </div>
+          <div class="push-banner-actions">
+            <button type="button" class="btn-brass-sm" data-push-act="cf-migrate-now">Move to Cloudflare App →</button>
+          </div>
+        </div>
+      `;
+    }
+    const mf = getTheoMigrationMeta();
+    if (!mf || !mf.needsPushPrompt) return '';
+    const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
+    const pushActive = Boolean(nf.enabled && pushSub && notifPerm() === 'granted');
+    return `
+      <div class="push-banner-card">
+        <div class="push-banner-top">
+          <span class="eyebrow">MOVED TO CLOUDFLARE</span>
+          <span class="pill-count emerald">READY</span>
+        </div>
+        <div class="meta-timestamp" style="color:var(--text-secondary);font-size:12.5px">
+          ${pushActive ? 'Your data moved and your old GitHub push slot is retired.' : 'Your pairing moved here safely. Re-enable Push Notifications on this device so alerts work.'}
+        </div>
+        <div class="push-banner-actions">
+          ${!pushActive ? `<button type="button" class="btn-brass-sm" data-push-act="enable">${pushBusy ? 'Enabling…' : '🔔 Enable Push'}</button>` : ''}
+          <button type="button" class="btn-ghost-sm" data-push-act="cf-migrate-dismiss">Dismiss</button>
+        </div>
+      </div>
+    `;
+  }
+
   async function syncData(options = {}) {
     if (isHeadlessBrowser && !window.__THEO_ALLOW_PROBE_MOCK_FETCH) return false;
     refreshCloudConfig();
@@ -5734,6 +6065,7 @@
     }
     syncInFlight = true;
     try {
+      retireOldTheoPushDevice().catch(() => {});
       if (options.toast || connMode === 'probing' || !appState) {
         updateConnectionBanner('syncing');
       }
@@ -6812,7 +7144,7 @@
       "$ErrorActionPreference='Stop'",
       'try {',
       "  $ps1=Join-Path $HOME 'bhfirms\\memory\\Admin\\Setup-THEO-PC.ps1'",
-      "  if(Test-Path -LiteralPath $ps1){& $ps1 -Gui}else{[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;$tmp=Join-Path $env:TEMP ('theo-install-'+$PID+'.ps1');Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/HusseinBdeir/theo/main/install.ps1' -OutFile $tmp -UseBasicParsing;try{& $tmp -Gui}finally{Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue}}",
+      "  if(Test-Path -LiteralPath $ps1){& $ps1 -Gui}else{[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;$tmp=Join-Path $env:TEMP ('theo-install-'+$PID+'.ps1');Invoke-WebRequest -Uri 'https://theo.husseinbdeir.workers.dev/install.ps1' -OutFile $tmp -UseBasicParsing;try{& $tmp -Gui}finally{Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue}}",
       "} catch { try { Add-Type -AssemblyName System.Windows.Forms; [void][System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'THEO PC Setup', 'OK', 'Error') } catch {}; exit 1 }"
     ].join(';');
     return [
@@ -7642,15 +7974,16 @@
   }
 
   function renderPulseNotifBannerHtml() {
+    const migHtml = renderTheoMigrationBannerHtml();
     if (
       !hasAnyPairingCredentials() &&
       connMode !== 'local' &&
       connMode !== 'edge' &&
       connMode !== 'cloud'
     ) {
-      return renderQuickPairOnboardingCardHtml('pulse');
+      return `${migHtml}${renderQuickPairOnboardingCardHtml('pulse')}`;
     }
-    const pcSetupNotice = `${renderPwaReadyPulseCardHtml()}${renderFleetPcSetupPulseBannerHtml()}`;
+    const pcSetupNotice = `${migHtml}${renderPwaReadyPulseCardHtml()}${renderFleetPcSetupPulseBannerHtml()}`;
     const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
     const perm = notifPerm();
     const active = Boolean(nf.enabled && pushSub && perm === 'granted');
@@ -7807,7 +8140,7 @@
   // Navigation switching
   function switchTab(tabName) {
     if (tabName === 'discipline') {
-      window.open('https://husseinbdeir.github.io/planner/', '_blank', 'noopener');
+      window.open('https://planner.husseinbdeir.workers.dev/', '_blank', 'noopener');
       return;
     }
     closeFloatingUiMenus();
@@ -14809,7 +15142,7 @@
       }
       const conn = appState?.connection || {};
       const lanUrl = conn.lanUrl || `http://127.0.0.1:${cloudCfg.port}/`;
-      const pwaUrl = conn.pwaUrl || 'https://husseinbdeir.github.io/theo/';
+      const pwaUrl = conn.pwaUrl || 'https://theo.husseinbdeir.workers.dev/';
       const hasPin = Boolean(
         localStorage.getItem(STORAGE_KEYS.PIN_HASH) || localStorage.getItem(STORAGE_KEYS.PIN)
       );
@@ -15589,6 +15922,23 @@
         pendingPinPairPayload = null;
         finalizeInteractivePairSuccess(deferred).catch(() => {});
       }
+      if (pendingPinMigratePayload) {
+        const defMig = pendingPinMigratePayload;
+        pendingPinMigratePayload = null;
+        const applied = applyTheoMigrationPayload(defMig);
+        if (applied.ok) {
+          applyTheme(prefs.theme);
+          loadPersonalLedgerFromLocal();
+          renderAll();
+          syncData({ force: true }).catch(() => {});
+        } else {
+          showToast(
+            applied.reason === 'key-mismatch'
+              ? 'Migration skipped: this device is already paired with another key.'
+              : `Migration skipped (${applied.reason}).`
+          );
+        }
+      }
       return;
     }
     overlay.hidden = false;
@@ -15622,6 +15972,23 @@
             const deferred = pendingPinPairPayload;
             pendingPinPairPayload = null;
             await finalizeInteractivePairSuccess(deferred);
+          }
+          if (pendingPinMigratePayload) {
+            const defMig = pendingPinMigratePayload;
+            pendingPinMigratePayload = null;
+            const applied = applyTheoMigrationPayload(defMig);
+            if (applied.ok) {
+              applyTheme(prefs.theme);
+              loadPersonalLedgerFromLocal();
+              renderAll();
+              syncData({ force: true }).catch(() => {});
+            } else {
+              showToast(
+                applied.reason === 'key-mismatch'
+                  ? 'Migration skipped: this device is already paired with another key.'
+                  : `Migration skipped (${applied.reason}).`
+              );
+            }
           }
         } else {
           entered = '';
@@ -16591,6 +16958,18 @@
           showToast('Notification schedule synced to cloud!');
         } else if (act === 'dismiss-hint') {
           saveJson(STORAGE_KEYS.PUSH_HINT, 1);
+          renderAll();
+        } else if (act === 'cf-migrate-now') {
+          if (pushBtn.disabled) return;
+          pushBtn.disabled = true;
+          try {
+            window.location.href = buildTheoMigrationUrl();
+          } finally {
+            pushBtn.disabled = false;
+          }
+        } else if (act === 'cf-migrate-dismiss') {
+          const curMf = getTheoMigrationMeta();
+          if (curMf) saveTheoMigrationMeta({ ...curMf, needsPushPrompt: false });
           renderAll();
         }
         return;
@@ -17767,7 +18146,7 @@
             edgeRelayUrl: prefs.edgeRelayUrl || discoveredEdgeUrl,
             port: cloudCfg.port
           });
-          if (tok) pairUrl = `https://husseinbdeir.github.io/theo/#pair=${tok}`;
+          if (tok) pairUrl = `https://theo.husseinbdeir.workers.dev/#pair=${tok}`;
         }
         if (!pairUrl) {
           showToast('Open Settings on your paired PC (http://127.0.0.1:4318) first to copy the Pair URL');
@@ -17795,8 +18174,8 @@
             port: cloudCfg.port
           });
           cmd = tok
-            ? `$env:THEO_PAIR_TOKEN='${tok}'; irm https://raw.githubusercontent.com/HusseinBdeir/theo/main/install.ps1 | iex`
-            : `irm https://raw.githubusercontent.com/HusseinBdeir/theo/main/install.ps1 | iex`;
+            ? `$env:THEO_PAIR_TOKEN='${tok}'; irm https://theo.husseinbdeir.workers.dev/install.ps1 | iex`
+            : `irm https://theo.husseinbdeir.workers.dev/install.ps1 | iex`;
         }
         try {
           await navigator.clipboard.writeText(cmd);
@@ -17939,7 +18318,7 @@
           switchTab('chat');
           openRepoFilePicker();
         } else if (act === 'open-command-pwa' || act === 'open-discipline' || act === 'new-payment-hold') {
-          window.open('https://husseinbdeir.github.io/planner/', '_blank', 'noopener');
+          window.open('https://planner.husseinbdeir.workers.dev/', '_blank', 'noopener');
         } else if (act === 'open-memory-vault') {
           window.open('https://memory.husseinbdeir.workers.dev/', '_blank', 'noopener');
         } else if (act === 'new-agy') {
@@ -19378,7 +19757,7 @@
       renderAll();
       fetchThreadDetail(threadId, nav.provider || pinnedNavProvider || '').catch(() => {});
     } else if (reminderId || tab === 'discipline') {
-      window.location.href = `https://husseinbdeir.github.io/planner/${reminderId ? `?tab=tasks&taskId=${encodeURIComponent(reminderId)}` : ''}`;
+      window.location.href = `https://planner.husseinbdeir.workers.dev/${reminderId ? `?tab=tasks&taskId=${encodeURIComponent(reminderId)}` : ''}`;
       return true;
     } else if (tab) {
       if (String(notifTag || '').startsWith('theo-quota-') && nav.provider) {
@@ -19502,7 +19881,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=86', { updateViaCache: 'none' })
+        .register('sw.js?v=87', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
@@ -19602,6 +19981,18 @@
     if (isStandalone()) {
       document.documentElement.classList.add('ios-standalone');
     }
+    if (bootMigRes) {
+      if (!bootMigRes.ok) {
+        bootTheoMigrateErrorReason = bootMigRes.reason || 'invalid';
+      } else if (isSessionCurrentlyPinLocked()) {
+        pendingPinMigratePayload = bootMigRes;
+      } else {
+        const applied = applyTheoMigrationPayload(bootMigRes);
+        if (!applied.ok) {
+          bootTheoMigrateErrorReason = applied.reason || 'invalid';
+        }
+      }
+    }
     try {
       localStorage.removeItem('theo_remote_cache_v1');
       localStorage.removeItem('theo_remote_cache_v2');
@@ -19611,6 +20002,14 @@
     initPinLock();
     loadPersonalLedgerFromLocal();
     bindEvents();
+    if (bootTheoMigrateErrorReason) {
+      showToast(
+        bootTheoMigrateErrorReason === 'key-mismatch'
+          ? 'Migration skipped: this device is already paired with another key.'
+          : `Migration link could not be imported (${bootTheoMigrateErrorReason}). Open THEO on GitHub Pages and tap Move again.`
+      );
+      bootTheoMigrateErrorReason = '';
+    }
 
 
     window.addEventListener('focus', () => {
@@ -19678,7 +20077,7 @@
       });
     } else if (remParam || tabParam === 'discipline') {
       window.location.replace(
-        `https://husseinbdeir.github.io/planner/${remParam ? `?tab=tasks&taskId=${encodeURIComponent(remParam)}` : ''}`
+        `https://planner.husseinbdeir.workers.dev/${remParam ? `?tab=tasks&taskId=${encodeURIComponent(remParam)}` : ''}`
       );
       return;
     } else if (newParam === 'antigravity' || newParam === 'claude') {
@@ -19774,6 +20173,9 @@
   }
 
   window.__theoTestWs = {
+    ...((isHeadlessBrowser || (typeof window !== 'undefined' && window.__THEO_ALLOW_PROBE_MOCK_FETCH))
+      ? { buildMigrationUrl: () => buildTheoMigrationUrl() }
+      : {}),
     connectLocalWs,
     connectEdgeWs,
     noteRowOverride,

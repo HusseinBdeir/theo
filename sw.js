@@ -1,7 +1,7 @@
-/* THEO Studio & Remote PWA Service Worker, v86 (2026-11-23).
+/* THEO Studio & Remote PWA Service Worker, v87 (2026-11-26).
    App shell: network-first (cache: no-cache) for HTML/JS/CSS, cache-first for static assets.
    Web Push: RFC 8291 aes128gcm push listener + synchronous in-memory & serialized push deduplication + W3C Badging API (navigator.setAppBadge) + durable Cache Storage & postMessage notificationclick handoff. */
-const CACHE_NAME = 'theo-remote-v86';
+const CACHE_NAME = 'theo-remote-v87';
 const NAV_CACHE = 'theo-nav-handoff-v1';
 const PENDING_NAV_URL = './__theo_pending_nav.json';
 const LAST_PUSH_NAV_URL = './__theo_last_push_nav.json';
@@ -50,17 +50,17 @@ function checkAndMarkInMemoryNotif(tag, title) {
 const CORE_SHELL = [
   './',
   './index.html',
-  './css/theo.css?v=86',
-  './js/endpoints.js?v=86',
-  './js/app.js?v=86',
-  './manifest.json?v=86'
+  './css/theo.css?v=87',
+  './js/endpoints.js?v=87',
+  './js/app.js?v=87',
+  './manifest.json?v=87'
 ];
 
 const OPTIONAL_SHELL = [
-  './icon.svg?v=86',
-  './icon-180.png?v=86',
-  './icon-192.png?v=86',
-  './icon-512.png?v=86',
+  './icon.svg?v=87',
+  './icon-180.png?v=87',
+  './icon-192.png?v=87',
+  './icon-512.png?v=87',
   './brand/theo-wordmark-dark.svg',
   './brand/theo-wordmark-light.svg',
   './brand/theo-mark-on-dark.svg'
@@ -567,22 +567,25 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
 
   const url = new URL(req.url);
-  // Never cache live API calls, SSE streams, Edge Relay, or Cloud Relay requests
+  const lowPath = url.pathname.toLowerCase();
+  // Never cache live API calls, SSE streams, binary installers/shortcuts, or cross-origin Worker APIs
   if (
     url.pathname.startsWith('/api/') ||
     url.hostname.includes('powerplatform.com') ||
     url.hostname.includes('logic.azure.com') ||
-    url.hostname.includes('workers.dev')
+    (url.origin !== self.location.origin && url.hostname.includes('workers.dev')) ||
+    lowPath.endsWith('.zip') ||
+    lowPath.endsWith('.ps1') ||
+    lowPath.endsWith('.shortcut')
   ) {
     return;
   }
 
-  const lowPath = url.pathname.toLowerCase();
   if (
     url.origin === self.location.origin &&
     (lowPath.endsWith('/command') || lowPath.endsWith('/command/'))
   ) {
-    const plannerRedirect = new URL('../planner/', self.location.href).href;
+    const plannerRedirect = 'https://planner.husseinbdeir.workers.dev/';
     event.respondWith(Response.redirect(plannerRedirect, 302));
     return;
   }

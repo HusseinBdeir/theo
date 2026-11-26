@@ -1,6 +1,10 @@
 exports/
 scripts/*
 !scripts/verify_theo_pwa.cjs
+!scripts/deploy_cf.mjs
+!scripts/verify_theo_migration.cjs
 node_modules/
+.cf-dist/
+.wrangler/
 .DS_Store
 Thumbs.db
