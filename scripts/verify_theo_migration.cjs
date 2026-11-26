@@ -109,7 +109,12 @@ async function main() {
   const plnHtml = fs.readFileSync(path.join(ROOT, 'planner', 'index.html'), 'utf8');
 
   assert.equal(manifest.id, './', 'manifest.id must be ./');
-  assert.ok(sw.includes("CACHE_NAME = 'theo-remote-v87'"), 'sw.js must be v87');
+  const swVerMatch = sw.match(/CACHE_NAME = 'theo-remote-v(\d+)'/);
+  assert.ok(swVerMatch && Number(swVerMatch[1]) >= 88, 'sw.js must be >= v88');
+  const swVer = swVerMatch[1];
+  assert.ok(html.includes(`css/theo.css?v=${swVer}`) && html.includes(`js/app.js?v=${swVer}`), 'index.html must match sw.js version');
+  assert.ok(manifest.icons.every((ic) => String(ic.src || '').includes(`?v=${swVer}`)), 'manifest.json icons must match sw.js version');
+  assert.ok(appJs.includes(`register('sw.js?v=${swVer}'`), 'js/app.js SW registration must match sw.js version');
   assert.ok(sw.includes('url.origin !== self.location.origin && url.hostname.includes(\'workers.dev\')'), 'SW must cache same-origin theo.husseinbdeir.workers.dev assets');
   assert.ok(sw.includes("plannerRedirect = 'https://planner.husseinbdeir.workers.dev/'"), 'SW command redirect must point to Cloudflare Planner');
   assert.ok(!appJs.includes('https://husseinbdeir.github.io/'), 'no github.io URLs left in js/app.js (hostname check only)');

@@ -4921,6 +4921,7 @@
           provider: prov,
           folder: delta.folder || delta.workspaceName || '',
           model: delta.model || '',
+          group: pendingRowOverrides.get(realId)?.group || '',
           deviceId: delta.deviceId || '',
           deviceName: delta.deviceName || '',
           status: 'working',
@@ -9064,6 +9065,41 @@
     );
   }
 
+  function resolveCurrentActiveSessionGroupId() {
+    const hasGroups = Array.isArray(appState?.groups);
+    const validGroupIds = hasGroups
+      ? new Set(appState.groups.map((g) => g?.id).filter(Boolean))
+      : null;
+    const validateGroup = (gid) => {
+      const clean = String(gid || '').trim();
+      if (!clean || clean === 'ungrouped') return '';
+      return validGroupIds ? (validGroupIds.has(clean) ? clean : '') : clean;
+    };
+    if (isNewSessionMode()) {
+      return validateGroup(prefs.newSessionGroupId);
+    }
+    const curTid = String(prefs.selectedThreadId || '').trim();
+    if (!curTid || curTid === '__new__') return '';
+    if (
+      pendingNewSessionBind &&
+      pendingNewSessionBind.draftThreadId === curTid &&
+      pendingNewSessionBind.groupId
+    ) {
+      return validateGroup(pendingNewSessionBind.groupId);
+    }
+    if (pendingRowOverrides.has(curTid)) {
+      const ov = pendingRowOverrides.get(curTid);
+      if (ov && Date.now() - Number(ov.at || 0) <= PENDING_OVERRIDE_TTL_MS && ov.group !== undefined) {
+        return validateGroup(ov.group);
+      }
+    }
+    const curRow = (appState?.rows || []).find((r) => r && r.id === curTid);
+    if (curRow && !curRow.archived) {
+      return validateGroup(curRow.group);
+    }
+    return '';
+  }
+
   function enterNewSessionMode(provider = 'antigravity', opts = {}) {
     clearPinnedNav();
     recentResumeUntil = 0;
@@ -9074,6 +9110,19 @@
         .catch(() => {});
     }
     const prov = provider === 'claude' ? 'claude' : 'antigravity';
+    const hasGroups = Array.isArray(appState?.groups);
+    const validGroupIds = hasGroups
+      ? new Set(appState.groups.map((g) => g?.id).filter(Boolean))
+      : null;
+    const validateExplicitGroup = (gid) => {
+      const clean = String(gid || '').trim();
+      if (!clean || clean === 'ungrouped') return '';
+      return validGroupIds ? (validGroupIds.has(clean) ? clean : '') : clean;
+    };
+    const nextGroupId =
+      opts.groupId !== undefined
+        ? validateExplicitGroup(opts.groupId)
+        : resolveCurrentActiveSessionGroupId();
     if (
       prefs.selectedThreadId &&
       prefs.selectedThreadId !== '__new__' &&
@@ -9083,7 +9132,13 @@
     }
     prefs.composerMode = prov === 'claude' ? 'new-claude' : 'new-antigravity';
     prefs.selectedThreadId = '__new__';
-    prefs.newSessionGroupId = opts.groupId || '';
+    prefs.newSessionGroupId = nextGroupId;
+    if (nextGroupId) {
+      if (!prefs.collapsedSessionGroups || typeof prefs.collapsedSessionGroups !== 'object') {
+        prefs.collapsedSessionGroups = {};
+      }
+      prefs.collapsedSessionGroups[nextGroupId] = false;
+    }
     if (opts.repoPrefix !== undefined) {
       prefs.composerRepoPrefix = opts.repoPrefix;
     }
@@ -9091,6 +9146,7 @@
     switchTab('chat');
     updateComposerModePills();
     renderChatView(true);
+    if (nextGroupId) renderIdeSidebar();
     setTimeout(() => $('composer-input')?.focus(), 30);
   }
 
@@ -9226,6 +9282,25 @@
         title: draftThread?.title || '',
         durationMs: 60000
       });
+    }
+    const boundGroupId = String(
+      (pendingNewSessionBind && (!draftId || pendingNewSessionBind.draftThreadId === draftId)
+        ? pendingNewSessionBind.groupId
+        : '') ||
+        (draftId && pendingRowOverrides.has(draftId) ? pendingRowOverrides.get(draftId)?.group : '') ||
+        ''
+    ).trim();
+    if (boundGroupId) {
+      noteRowOverride(cleanReal, { group: boundGroupId });
+      const existingRealRow = (appState?.rows || []).find((r) => r && r.id === cleanReal);
+      if (existingRealRow) {
+        existingRealRow.group = boundGroupId;
+      }
+      if (!prefs.collapsedSessionGroups || typeof prefs.collapsedSessionGroups !== 'object') {
+        prefs.collapsedSessionGroups = {};
+      }
+      prefs.collapsedSessionGroups[boundGroupId] = false;
+      saveJson(STORAGE_KEYS.PREFS, prefs);
     }
     if (pendingNewSessionBind && (!draftId || pendingNewSessionBind.draftThreadId === draftId)) {
       pendingNewSessionBind = null;
@@ -13742,7 +13817,11 @@
           <div class="lp-title-wrap">
             <span class="prov-glyph lp-glyph">${PROVIDER_ICONS[cleanProv]}</span>
             <div>
-              <div class="lp-title">${esc(provDisplay)} Workbench${grpObj ? ` · ${esc(grpObj.name)}` : ''}</div>
+              <div class="lp-title"><span>${esc(provDisplay)} Workbench${grpObj ? ` · ${esc(grpObj.name)}` : ''}</span>${
+                grpObj
+                  ? `<button type="button" class="lp-group-clear-btn" data-clear-new-session-group="1" data-micro-tip="Open in Ungrouped instead" aria-label="Open in Ungrouped instead of ${esc(grpObj.name)}">× Ungrouped</button>`
+                  : ''
+              }</div>
               <div class="lp-sub tabular">Clean ${esc(fmtCompact(lpLimit))} context window · Smart IDE &amp; CLI hybrid routing</div>
             </div>
           </div>
@@ -17390,6 +17469,14 @@
         return;
       }
 
+      if (e.target.closest('[data-clear-new-session-group]')) {
+        prefs.newSessionGroupId = '';
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        renderChatView();
+        renderIdeSidebar();
+        return;
+      }
+
       const launchRepo = e.target.closest('[data-launch-repo]');
       if (launchRepo) {
         const repoName = launchRepo.dataset.launchName;
@@ -17415,6 +17502,7 @@
         prefs.selectedThreadId = targetSid;
         prefs.lastReplyThreadId = targetSid;
         prefs.composerMode = 'reply';
+        prefs.newSessionGroupId = '';
         saveJson(STORAGE_KEYS.PREFS, prefs);
         if (focusTask) {
           openBgTaskDetails.add(`${targetSid}:${focusTask}`);
@@ -17580,6 +17668,18 @@
           const victimName =
             gName || (appState?.groups || []).find((g) => g.id === gId)?.name || '';
           noteGroupOverride(gId, { op: 'delete', name: victimName });
+          if (prefs.newSessionGroupId === gId) {
+            prefs.newSessionGroupId = '';
+            saveJson(STORAGE_KEYS.PREFS, prefs);
+          }
+          if (pendingNewSessionBind && pendingNewSessionBind.groupId === gId) {
+            pendingNewSessionBind.groupId = '';
+          }
+          for (const [, ov] of pendingRowOverrides.entries()) {
+            if (ov && ov.group === gId) {
+              ov.group = '';
+            }
+          }
           if (prefs.collapsedSessionGroups && typeof prefs.collapsedSessionGroups === 'object') {
             delete prefs.collapsedSessionGroups[gId];
             saveJson(STORAGE_KEYS.PREFS, prefs);
@@ -17595,6 +17695,7 @@
             persistCache();
             renderSessionsView();
             renderIdeSidebar();
+            if (isNewSessionMode()) renderChatView();
           }
           await dispatchRemoteCommand({
             type: 'sessionAction',
@@ -17825,6 +17926,7 @@
         prefs.selectedThreadId = sessCard.dataset.sessionId;
         prefs.lastReplyThreadId = sessCard.dataset.sessionId;
         prefs.composerMode = 'reply';
+        prefs.newSessionGroupId = '';
         saveJson(STORAGE_KEYS.PREFS, prefs);
         markNotificationsCheckedForSession(prefs.selectedThreadId);
         switchTab('chat');
@@ -18307,6 +18409,7 @@
           prefs.selectedThreadId = tid;
           prefs.lastReplyThreadId = tid;
           prefs.composerMode = 'reply';
+          prefs.newSessionGroupId = '';
           saveJson(STORAGE_KEYS.PREFS, prefs);
           switchTab('chat');
           renderIdeSidebar();
@@ -18677,6 +18780,7 @@
     // Session select change in Chat
     $('chat-session-select')?.addEventListener('change', (e) => {
       const val = e.target.value;
+      if (!val) return;
       if (val === '__new_antigravity__' || val === '__new__') {
         enterNewSessionMode('antigravity');
         return;
@@ -19481,7 +19585,14 @@
         ? 'antigravity'
         : activeRow?.provider || threadsCache[prefs.selectedThreadId]?.provider || 'antigravity';
     const targetId = isNew ? '' : prefs.selectedThreadId;
-    const targetGroupId = isNew ? prefs.newSessionGroupId || '' : '';
+    const targetGroupObj =
+      isNew && prefs.newSessionGroupId
+        ? Array.isArray(appState?.groups)
+          ? appState.groups.find((g) => g && g.id === prefs.newSessionGroupId) || null
+          : { id: prefs.newSessionGroupId, name: '' }
+        : null;
+    const targetGroupId = targetGroupObj ? targetGroupObj.id : '';
+    const targetGroupName = targetGroupObj?.name || '';
     const modelCfg = getEffectiveSessionModelConfig(activeRow, provider, isNew);
 
     let draftId = '';
@@ -19540,6 +19651,13 @@
         knownIds,
         createdAt: Date.now()
       };
+      if (targetGroupId) {
+        noteRowOverride(draftId, { group: targetGroupId });
+        if (!prefs.collapsedSessionGroups || typeof prefs.collapsedSessionGroups !== 'object') {
+          prefs.collapsedSessionGroups = {};
+        }
+        prefs.collapsedSessionGroups[targetGroupId] = false;
+      }
       ensureEditorTabOpen(draftId);
       prefs.selectedThreadId = draftId;
       prefs.composerMode = 'reply';
@@ -19628,6 +19746,7 @@
       displayModel: modelCfg.displayLabel,
       prompt: text,
       group: targetGroupId || undefined,
+      groupName: targetGroupName || undefined,
       attachments: fileRefs.map((f) => ({
         name: f.name,
         mime: f.mime,
@@ -19676,6 +19795,7 @@
               displayModel: modelCfg.displayLabel,
               prompt: text,
               group: targetGroupId || undefined,
+              groupName: targetGroupName || undefined,
               attachments: fileRefs.map((f) => ({
                 name: f.name,
                 mime: f.mime,
@@ -19881,7 +20001,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=87', { updateViaCache: 'none' })
+        .register('sw.js?v=88', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

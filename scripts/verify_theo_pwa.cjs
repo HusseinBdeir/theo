@@ -7294,6 +7294,318 @@ async function main() {
       }
     }
 
+    // Adversarial #24: v88 New Session active-group inheritance, Launchpad × Ungrouped chip, 0px overflow & stream-delta bind
+    {
+      const nodeCrypto24 = require('crypto');
+      const now24 = Date.now();
+      const grpSockets = new Set();
+      const receivedSendCmds = [];
+      const encodeGrpWsFrame = (obj) => {
+        const payload = Buffer.from(JSON.stringify(obj), 'utf8');
+        const len = payload.length;
+        let header;
+        if (len < 126) {
+          header = Buffer.allocUnsafe(2);
+          header[0] = 0x81;
+          header[1] = len;
+        } else if (len < 65536) {
+          header = Buffer.allocUnsafe(4);
+          header[0] = 0x81;
+          header[1] = 126;
+          header.writeUInt16BE(len, 2);
+        } else {
+          header = Buffer.allocUnsafe(10);
+          header[0] = 0x81;
+          header[1] = 127;
+          header.writeBigUInt64BE(BigInt(len), 2);
+        }
+        return Buffer.concat([header, payload]);
+      };
+      const sendGrpWsJson = (sock, obj) => {
+        if (!sock || sock.destroyed || !sock.writable) return false;
+        sock.write(encodeGrpWsFrame(obj));
+        return true;
+      };
+      const grpWsServer = http.createServer((_req, res) => {
+        res.writeHead(404);
+        res.end();
+      });
+      grpWsServer.on('upgrade', (req, socket) => {
+        const key = req.headers['sec-websocket-key'];
+        if (!key) {
+          socket.destroy();
+          return;
+        }
+        const accept = nodeCrypto24
+          .createHash('sha1')
+          .update(String(key).trim() + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
+          .digest('base64');
+        socket.write(
+          ['HTTP/1.1 101 Switching Protocols', 'Upgrade: websocket', 'Connection: Upgrade', `Sec-WebSocket-Accept: ${accept}`, '', ''].join('\r\n')
+        );
+        grpSockets.add(socket);
+        let buf = Buffer.alloc(0);
+        socket.on('data', (chunk) => {
+          buf = Buffer.concat([buf, chunk]);
+          while (buf.length >= 2) {
+            const opcode = buf[0] & 0x0f;
+            const masked = (buf[1] & 0x80) !== 0;
+            let len = buf[1] & 0x7f;
+            let offset = 2;
+            if (len === 126) {
+              if (buf.length < 4) return;
+              len = buf.readUInt16BE(2);
+              offset = 4;
+            } else if (len === 127) {
+              if (buf.length < 10) return;
+              len = Number(buf.readBigUInt64BE(2));
+              offset = 10;
+            }
+            const totalNeeded = offset + (masked ? 4 : 0) + len;
+            if (buf.length < totalNeeded) return;
+            const maskKey = masked ? buf.subarray(offset, offset + 4) : null;
+            const rawPayload = Buffer.from(buf.subarray(offset + (masked ? 4 : 0), totalNeeded));
+            buf = buf.subarray(totalNeeded);
+            if (masked && maskKey) for (let i = 0; i < rawPayload.length; i += 1) rawPayload[i] ^= maskKey[i % 4];
+            if (opcode === 0x8) { try { socket.end(); } catch {} return; }
+            if (opcode === 0x9) {
+              if (!socket.destroyed && socket.writable) {
+                socket.write(Buffer.concat([Buffer.from([0x8a, Math.min(125, rawPayload.length)]), rawPayload.subarray(0, 125)]));
+              }
+              continue;
+            }
+            if (opcode !== 0x1) continue;
+            let m;
+            try { m = JSON.parse(rawPayload.toString('utf8')); } catch { continue; }
+            if (m && (m.type === 'auth' || m.type === 'auth_client')) {
+              sendGrpWsJson(socket, {
+                type: 'auth_ok',
+                role: 'client',
+                supportsRowPatch: true,
+                seq: 1,
+                device: { id: 'grp-dev-local', name: 'Grp Local PC', role: 'host' },
+                devices: [{ id: 'grp-dev-local', name: 'Grp Local PC', online: true, local: true }],
+                state: {
+                  generatedAt: now24,
+                  device: { id: 'grp-dev-local', name: 'Grp Local PC' },
+                  providers: {
+                    antigravity: { available: true, account: { available: true, email: 'agy@example.com' } },
+                    claude: { available: true, account: { available: true, email: 'claude@example.com' } }
+                  },
+                  groups: [{ id: 'grp-alpha', name: 'Alpha Operations Group', color: 'blue', collapsed: false }],
+                  rows: [
+                    {
+                      id: 'grp-sess-1',
+                      key: 'grp-sess-1',
+                      provider: 'antigravity',
+                      title: 'Grouped Session One',
+                      status: 'completed',
+                      at: now24 - 1000,
+                      pinned: false,
+                      archived: false,
+                      group: 'grp-alpha'
+                    },
+                    {
+                      id: 'ug-sess-1',
+                      key: 'ug-sess-1',
+                      provider: 'claude',
+                      title: 'Ungrouped Session One',
+                      status: 'completed',
+                      at: now24 - 2000,
+                      pinned: false,
+                      archived: false,
+                      group: null
+                    }
+                  ]
+                }
+              });
+            } else if (m && m.type === 'ping') {
+              sendGrpWsJson(socket, { type: 'pong', echoTs: m.ts });
+            }
+          }
+        });
+        socket.on('close', () => grpSockets.delete(socket));
+        socket.on('error', () => grpSockets.delete(socket));
+      });
+
+      await new Promise((resolve, reject) => {
+        grpWsServer.listen(0, '127.0.0.1', resolve);
+        grpWsServer.on('error', reject);
+      });
+      const grpPort = grpWsServer.address().port;
+
+      try {
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 2, mobile: false }, sessionId);
+        await evalJs(`(() => {
+          localStorage.removeItem('theo_remote_prefs_v1');
+          window.__THEO_ALLOW_MOCK_WS = true;
+          window.__THEO_MOCK_BRIDGE_TOKEN = 'test-token-hex';
+          window.__theoTestWs.connectLocalWs('http://127.0.0.1:${grpPort}', { wsPath: '/ws' });
+          document.querySelector('[data-tab="chat"]')?.click();
+          return true;
+        })()`);
+
+        // Wait for grp-sess-1
+        for (let i = 0; i < 60; i += 1) {
+          const ready = await evalJs(`Boolean((window.__theoTestWs.getState()?.rows || []).some((r) => r.id === 'grp-sess-1'))`);
+          if (ready) break;
+          await new Promise((r) => setTimeout(r, 40));
+        }
+
+        const grpInheritCheck = await evalJs(`(async () => {
+          // Collapse grp-alpha first, then open grp-sess-1
+          const p0 = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+          p0.collapsedSessionGroups = { 'grp-alpha': true };
+          localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(p0));
+          document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="grp-sess-1"]')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+
+          // 1. Click #rail-new-agy -> inherits grp-alpha and uncollapses it
+          document.getElementById('rail-new-agy')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          const prefsAfterRail = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+          const lpTitleText1 = document.querySelector('.new-session-launchpad .lp-title')?.textContent || '';
+          const clearBtnTitleAttr = document.querySelector('.lp-group-clear-btn')?.getAttribute('title');
+          const grpExpanded = !document.querySelector('#ide-sidebar-tree [data-ide-group="grp-alpha"]')?.classList.contains('collapsed');
+
+          // 2. Switch provider on launchpad to Claude -> preserves grp-alpha
+          document.querySelector('.new-session-launchpad [data-comp-mode="new-claude"]')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          const prefsAfterSwitch = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+
+          // 3. Click .ide-tab-add-btn -> preserves grp-alpha
+          document.querySelector('.ide-tab-add-btn')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          const prefsAfterTabAdd = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+
+          // 4. Open grp-sess-1, test #chat-session-select -> __new_antigravity__
+          document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="grp-sess-1"]')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          const sel = document.getElementById('chat-session-select');
+          if (sel) {
+            sel.value = '__new_antigravity__';
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+          await new Promise((r) => setTimeout(r, 30));
+          const prefsAfterSelect = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+
+          // 5. Open grp-sess-1, test Ctrl+K new-agy
+          document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="grp-sess-1"]')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          document.getElementById('open-cmd-palette')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          document.querySelector('#cmd-results [data-cmd-act="new-agy"]')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          const prefsAfterCmd = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+
+          // 6. Click #btn-sess-new-agy from grp-sess-1
+          document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="grp-sess-1"]')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          document.getElementById('btn-sess-new-agy')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          const prefsAfterSessBtn = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+
+          // 7. Click × Ungrouped chip -> clears group
+          document.querySelector('.lp-group-clear-btn')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          const prefsAfterClearBtn = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+
+          // 8. Select Ungrouped session, click #rail-new-agy -> stays Ungrouped
+          document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="ug-sess-1"]')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          document.getElementById('rail-new-agy')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          const prefsAfterUg = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+
+          // 9. Re-open grp-sess-1 -> #rail-new-agy -> send prompt -> capture quarantined command
+          document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="grp-sess-1"]')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          document.getElementById('rail-new-agy')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          window.__theoLastQuarantinedCmd = null;
+          const inp = document.getElementById('composer-input');
+          if (inp) {
+            inp.value = 'Check group bind';
+            inp.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          document.getElementById('composer-send-btn')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          return {
+            afterRail: prefsAfterRail.newSessionGroupId,
+            lpTitleText1,
+            clearBtnTitleAttr,
+            grpExpanded,
+            afterSwitch: prefsAfterSwitch.newSessionGroupId,
+            afterTabAdd: prefsAfterTabAdd.newSessionGroupId,
+            afterSelect: prefsAfterSelect.newSessionGroupId,
+            afterCmd: prefsAfterCmd.newSessionGroupId,
+            afterSessBtn: prefsAfterSessBtn.newSessionGroupId,
+            afterClearBtn: prefsAfterClearBtn.newSessionGroupId,
+            afterUg: prefsAfterUg.newSessionGroupId,
+            sentCmd: window.__theoLastQuarantinedCmd || null,
+            overflow1280: document.documentElement.scrollWidth - window.innerWidth
+          };
+        })()`);
+
+        assert.strictEqual(grpInheritCheck.afterRail, 'grp-alpha', '#rail-new-agy must inherit grp-alpha');
+        assert.ok(grpInheritCheck.lpTitleText1.includes('Alpha Operations Group'), 'Launchpad title must display inherited group name');
+        assert.strictEqual(grpInheritCheck.clearBtnTitleAttr, null, '.lp-group-clear-btn must have zero [title]');
+        assert.strictEqual(grpInheritCheck.grpExpanded, true, 'Inherited collapsed group must expand in sidebar');
+        assert.strictEqual(grpInheritCheck.afterSwitch, 'grp-alpha', 'Switching provider on Launchpad must preserve inherited group');
+        assert.strictEqual(grpInheritCheck.afterTabAdd, 'grp-alpha', '.ide-tab-add-btn on Launchpad must preserve inherited group');
+        assert.strictEqual(grpInheritCheck.afterSelect, 'grp-alpha', '#chat-session-select new session must inherit active group');
+        assert.strictEqual(grpInheritCheck.afterCmd, 'grp-alpha', 'Command palette new session must inherit active group');
+        assert.strictEqual(grpInheritCheck.afterSessBtn, 'grp-alpha', '#btn-sess-new-agy must inherit active group');
+        assert.strictEqual(grpInheritCheck.afterClearBtn, '', 'Clicking × Ungrouped chip must clear inherited group');
+        assert.strictEqual(grpInheritCheck.afterUg, '', 'New session from Ungrouped session must stay Ungrouped');
+        assert.ok(grpInheritCheck.sentCmd && grpInheritCheck.sentCmd.type === 'send' && grpInheritCheck.sentCmd.newSession === true, 'Send command must be staged for new session');
+        assert.strictEqual(grpInheritCheck.sentCmd.group, 'grp-alpha', 'Send command must include group=grp-alpha');
+        assert.strictEqual(grpInheritCheck.sentCmd.groupName, 'Alpha Operations Group', 'Send command must include groupName');
+        assert.ok(grpInheritCheck.overflow1280 <= 0, `1280px launchpad overflow <= 0 (got ${grpInheritCheck.overflow1280})`);
+
+        for (const s of grpSockets) {
+          sendGrpWsJson(s, {
+            type: 'stream_delta',
+            delta: {
+              provider: 'antigravity',
+              draftThreadId: grpInheritCheck.sentCmd.draftThreadId || '',
+              realThreadId: 'stream-new-grp-1',
+              status: 'working',
+              prompt: grpInheritCheck.sentCmd.prompt || 'Check group bind',
+              text: 'Working in group...',
+              deviceId: 'grp-dev-local',
+              deviceName: 'Grp Local PC'
+            }
+          });
+        }
+        await new Promise((r) => setTimeout(r, 120));
+        const boundRowGroup = await evalJs(`(window.__theoTestWs.getState()?.rows || []).find((r) => r.id === 'stream-new-grp-1')?.group || ''`);
+        assert.strictEqual(boundRowGroup, 'grp-alpha', 'stream_delta realThreadId must bind directly into inherited group');
+
+        // Mobile & landscape Launchpad overflow checks (390x844 and 740x360) with long group name chip
+        for (const vp of [{ width: 390, height: 844, mobile: true }, { width: 740, height: 360, mobile: true }]) {
+          await cdp.send('Emulation.setDeviceMetricsOverride', { ...vp, deviceScaleFactor: 2 }, sessionId);
+          await new Promise((r) => setTimeout(r, 60));
+          const vpCheck = await evalJs(`(() => {
+            document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="grp-sess-1"]')?.click();
+            document.getElementById('rail-new-agy')?.click();
+            return {
+              hasChip: Boolean(document.querySelector('.lp-group-clear-btn')),
+              overflow: document.documentElement.scrollWidth - window.innerWidth
+            };
+          })()`);
+          assert.strictEqual(vpCheck.hasChip, true, `Launchpad chip visible at ${vp.width}x${vp.height}`);
+          assert.ok(vpCheck.overflow <= 0, `Launchpad 0px horizontal overflow at ${vp.width}x${vp.height} (got ${vpCheck.overflow})`);
+        }
+        console.log('[PASS] Adversarial #24: v88 New Session active-group inheritance, Launchpad × Ungrouped chip, 0px overflow & stream-delta bind verified');
+      } finally {
+        try { await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 2, mobile: false }, sessionId); } catch {}
+        try { await evalJs('window.__theoTestWs?.disconnectAll?.()'); } catch {}
+        for (const s of grpSockets) { try { s.destroy(); } catch {} }
+        await new Promise((r) => grpWsServer.close(r));
+      }
+    }
+
     // Zero-secret Memory Vault shortcut check (#rail-vault-btn, #mobile-vault-btn, Command Palette, PIN-lock guard & short desktop rail reachability)
     {
       const vaultCheck = await evalJs(`(async () => {
