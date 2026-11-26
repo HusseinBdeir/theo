@@ -1095,6 +1095,7 @@
     threadModelConfig: {},
     claudePermissionMode: null,
     hideThirdPartyQuota: false,
+    hideClaudeDesktop: false,
     notif: { ...DEFAULT_NOTIF }
   };
   const cachedStore = loadJson(STORAGE_KEYS.CACHE, {
@@ -2494,6 +2495,87 @@
       hide: next,
       value: next
     }).catch(() => {});
+  }
+
+  let pendingHideClaudeDesktop = null;
+
+  function isClaudeDesktopRow(r) {
+    if (!r || typeof r !== 'object') return false;
+    return Boolean(
+      r.claudeDesktop ||
+        r.origin === 'claude_desktop' ||
+        r.source === 'claude_desktop' ||
+        String(r.id || '').startsWith('claude-desktop:')
+    );
+  }
+
+  function isClaudeDesktopHidden() {
+    if (pendingHideClaudeDesktop) {
+      if (Date.now() < pendingHideClaudeDesktop.expiresAt) {
+        return pendingHideClaudeDesktop.value;
+      }
+      pendingHideClaudeDesktop = null;
+    }
+    if (typeof prefs.hideClaudeDesktop === 'boolean') {
+      return prefs.hideClaudeDesktop;
+    }
+    if (typeof appState?.hideClaudeDesktop === 'boolean') {
+      return appState.hideClaudeDesktop;
+    }
+    return false;
+  }
+
+  async function setHideClaudeDesktopRemote(hide) {
+    const next = Boolean(hide);
+    const nowMs = Date.now();
+    prefs.hideClaudeDesktop = next;
+    prefs.hideClaudeDesktopUpdatedAt = nowMs;
+    saveJson(STORAGE_KEYS.PREFS, prefs);
+    pendingHideClaudeDesktop = { value: next, startedAt: nowMs, expiresAt: nowMs + 10000 };
+    if (appState && typeof appState === 'object') {
+      appState.hideClaudeDesktop = next;
+      appState.hideClaudeDesktopUpdatedAt = nowMs;
+      persistCache();
+    }
+    renderIdeSidebar();
+    renderSessionsView();
+    showToast(next ? 'Claude Desktop sessions hidden' : 'Claude Desktop sessions shown');
+    dispatchRemoteCommand({
+      type: 'sessionAction',
+      action: 'setHideClaudeDesktop',
+      subAction: 'setHideClaudeDesktop',
+      hide: next,
+      value: next
+    }).catch(() => {});
+  }
+
+  function formatQuotaResetLine(l, nowMs = Date.now()) {
+    if (!l || typeof l !== 'object') return '';
+    const resetMs = Number(l.reset || 0);
+    if (l.expired || (resetMs > 0 && resetMs <= nowMs)) {
+      return 'Window idle';
+    }
+    if (resetMs > nowMs) {
+      const diffSec = Math.max(0, Math.round((resetMs - nowMs) / 1000));
+      if (diffSec >= 86400) {
+        const d = Math.floor(diffSec / 86400);
+        const h = Math.floor((diffSec % 86400) / 3600);
+        return h > 0 ? `Resets in ${d}d ${h}h` : `Resets in ${d}d`;
+      }
+      if (diffSec >= 3600) {
+        const h = Math.floor(diffSec / 3600);
+        const m = Math.floor((diffSec % 3600) / 60);
+        return m > 0 ? `Resets in ${h}h ${m}m` : `Resets in ${h}h`;
+      }
+      const m = Math.max(1, Math.round(diffSec / 60));
+      return `Resets in ${m}m`;
+    }
+    const rawTxt = String(l.resetText || '').trim();
+    if (!rawTxt) return '';
+    if (/^(window\s+idle|allowance\s+unavailable)$/i.test(rawTxt)) return rawTxt;
+    if (/^resets\s+in\s+/i.test(rawTxt)) return rawTxt.replace(/^resets/i, 'Resets');
+    if (/^in\s+\d/i.test(rawTxt)) return `Resets ${rawTxt}`;
+    return rawTxt;
   }
 
   function collectHighUsageQuotaAlerts(stateObj, nowMs = Date.now()) {
@@ -4345,6 +4427,10 @@
       ctxMenu.hidden = true;
       ctxMenu.innerHTML = '';
     }
+    if (typeof ideMenuPinFreeze !== 'undefined' && ideMenuPinFreeze) {
+      ideMenuPinFreeze = false;
+      if (typeof flushDeferredIdeTreeOrder === 'function') flushDeferredIdeTreeOrder();
+    }
   }
 
   function syncPalettePickerUi() {
@@ -4750,6 +4836,48 @@
     return inc.checkedAt >= Number(prev.checkedAt || 0) ? inc : prev;
   }
 
+  function sanitizeFleetHostHealth(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const clip = (v, max) =>
+      String(v == null ? '' : v)
+        .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+        .trim()
+        .slice(0, max);
+    const out = {};
+    if (raw.hotSwapHold && typeof raw.hotSwapHold === 'object') {
+      const h = raw.hotSwapHold;
+      out.hotSwapHold = {
+        held: Boolean(h.held),
+        stage: clip(h.stage || h.version, 40),
+        file: clip(h.file, 80),
+        error: clip(h.error || h.reason, 220),
+        since: Number(h.since || h.heldAt || h.updatedAt || 0)
+      };
+    }
+    if (raw.autoReload && typeof raw.autoReload === 'object') {
+      const ar = raw.autoReload;
+      const failAt = Number(ar.failure?.firstAt || ar.canaryFailure?.at || 0);
+      out.autoReload = {
+        pending: Boolean(ar.pending ?? ar.pendingReload),
+        state: clip(ar.state, 32),
+        reasons: Array.isArray(ar.reasons) ? ar.reasons.map((x) => clip(x, 80)).filter(Boolean).slice(0, 4) : [],
+        blockers: Array.isArray(ar.blockers)
+          ? ar.blockers.map((b) => ({ code: clip(b?.code, 40), label: clip(b?.label || b?.code, 120) })).slice(0, 5)
+          : [],
+        since: Number(ar.since || 0),
+        failure: failAt > 0 || ar.canaryFailure ? { firstAt: failAt || 1 } : null
+      };
+    }
+    const skipMsg = clip(raw.skipMessage || raw.bridge?.skipMessage || raw.bridge?.patchSkipNotice, 360);
+    if (skipMsg) out.skipMessage = skipMsg;
+    if (raw.attachFailed || raw.bridge?.attachFailed) {
+      out.attachFailed = true;
+      out.bridgeMessage = clip(raw.bridgeMessage || raw.bridge?.message, 280);
+    }
+    if (raw.hasVsCodeUi) out.hasVsCodeUi = true;
+    return Object.keys(out).length ? out : null;
+  }
+
   function renderFleetPcSetupPillHtml(d) {
     const ps = d && d.pcSetup ? sanitizeFleetPcSetup(d.pcSetup) : null;
     if (!ps) return '';
@@ -4793,6 +4921,10 @@
       // A list that does not carry it (edge presence frames, another host's copy) keeps the last report.
       const nextPwaReady =
         (d.pwaReady !== undefined ? sanitizeFleetPwaReady(d.pwaReady) : null) || prev.pwaReady || null;
+      const nextHostHealth =
+        d.hostHealth !== undefined
+          ? sanitizeFleetHostHealth(d.hostHealth)
+          : prev.hostHealth || null;
       fleetDevicesMap.set(d.id, {
         ...prev,
         ...d,
@@ -4805,7 +4937,8 @@
         ),
         pcSetup: nextPcSetup,
         pwaReady: nextPwaReady,
-        unsavedWork: nextUnsavedWork
+        unsavedWork: nextUnsavedWork,
+        hostHealth: nextHostHealth
       });
     }
   }
@@ -4943,13 +5076,31 @@
             updatedAt: Number(primarySnap.hideThirdPartyQuotaUpdatedAt || 0)
           }
         : null;
+    let bestHideDesktop =
+      typeof primarySnap?.hideClaudeDesktop === 'boolean'
+        ? {
+            value: primarySnap.hideClaudeDesktop,
+            updatedAt: Number(primarySnap.hideClaudeDesktopUpdatedAt || 0)
+          }
+        : null;
 
+    let activePendingLogin =
+      primarySnap?.pendingAccountLogin?.active ? primarySnap.pendingAccountLogin : null;
     for (const [devId, snap] of entries) {
       maxGeneratedAt = Math.max(maxGeneratedAt, Number(snap?.generatedAt || 0));
+      if (!activePendingLogin && snap?.pendingAccountLogin?.active) {
+        activePendingLogin = { ...snap.pendingAccountLogin, hostId: snap.pendingAccountLogin.hostId || devId };
+      }
       if (typeof snap?.hideThirdPartyQuota === 'boolean') {
         const candAt = Number(snap.hideThirdPartyQuotaUpdatedAt || 0);
         if (!bestHide3p || candAt > bestHide3p.updatedAt) {
           bestHide3p = { value: snap.hideThirdPartyQuota, updatedAt: candAt };
+        }
+      }
+      if (typeof snap?.hideClaudeDesktop === 'boolean') {
+        const candAt = Number(snap.hideClaudeDesktopUpdatedAt || 0);
+        if (!bestHideDesktop || candAt > bestHideDesktop.updatedAt) {
+          bestHideDesktop = { value: snap.hideClaudeDesktop, updatedAt: candAt };
         }
       }
       const candMode = extractClaudeModeFields(
@@ -5098,10 +5249,17 @@
       antigravityModelCatalog: bestModelCatalog || appState?.antigravityModelCatalog || null,
       claudeModelCatalog: bestClaudeCatalog || appState?.claudeModelCatalog || null,
       claudePermissionMode: { ...claudeModeState },
+      pendingAccountLogin: activePendingLogin || null,
       ...(bestHide3p
         ? {
             hideThirdPartyQuota: bestHide3p.value,
             hideThirdPartyQuotaUpdatedAt: bestHide3p.updatedAt
+          }
+        : {}),
+      ...(bestHideDesktop
+        ? {
+            hideClaudeDesktop: bestHideDesktop.value,
+            hideClaudeDesktopUpdatedAt: bestHideDesktop.updatedAt
           }
         : {})
     };
@@ -5160,6 +5318,43 @@
       } else if (typeof prefs.hideThirdPartyQuota === 'boolean') {
         nextState.hideThirdPartyQuota = prefs.hideThirdPartyQuota;
         nextState.hideThirdPartyQuotaUpdatedAt = localUpdatedAt;
+      }
+    }
+
+    if (pendingHideClaudeDesktop) {
+      if (nowMs >= pendingHideClaudeDesktop.expiresAt) {
+        pendingHideClaudeDesktop = null;
+      } else if (
+        typeof st.hideClaudeDesktop === 'boolean' &&
+        st.hideClaudeDesktop === pendingHideClaudeDesktop.value &&
+        Number(st.hideClaudeDesktopUpdatedAt || 0) >= pendingHideClaudeDesktop.startedAt
+      ) {
+        pendingHideClaudeDesktop = null;
+      } else {
+        nextState.hideClaudeDesktop = pendingHideClaudeDesktop.value;
+        nextState.hideClaudeDesktopUpdatedAt = pendingHideClaudeDesktop.startedAt;
+      }
+    }
+    if (!pendingHideClaudeDesktop) {
+      const snapDeskAt = Number(nextState.hideClaudeDesktopUpdatedAt || 0);
+      const localDeskAt = Number(prefs.hideClaudeDesktopUpdatedAt || 0);
+      if (
+        typeof nextState.hideClaudeDesktop === 'boolean' &&
+        (typeof prefs.hideClaudeDesktop !== 'boolean' ||
+          snapDeskAt > localDeskAt ||
+          (localDeskAt === 0 && typeof st.hideClaudeDesktop === 'boolean'))
+      ) {
+        if (
+          prefs.hideClaudeDesktop !== nextState.hideClaudeDesktop ||
+          (snapDeskAt > 0 && localDeskAt !== snapDeskAt)
+        ) {
+          prefs.hideClaudeDesktop = nextState.hideClaudeDesktop;
+          if (snapDeskAt > 0) prefs.hideClaudeDesktopUpdatedAt = snapDeskAt;
+          saveJson(STORAGE_KEYS.PREFS, prefs);
+        }
+      } else if (typeof prefs.hideClaudeDesktop === 'boolean') {
+        nextState.hideClaudeDesktop = prefs.hideClaudeDesktop;
+        nextState.hideClaudeDesktopUpdatedAt = localDeskAt;
       }
     }
 
@@ -8864,6 +9059,631 @@
     return runningCount > 1 ? `${runningCount} Tasks` : 'Task';
   }
 
+  // Phase 2 State: Inline Account Edit, Add Account Tray, Details Modal, Host Health & Tree Reconciler
+  let activeInlineAcctEdit = null; // { accountId, provider, surface: 'sidebar'|'pulse', value }
+  let addAccountTrayState = null; // { provider: 'antigravity'|'claude', label: '', surface: 'tray'|'modal' }
+  let activeIdeRename = null; // { kind: 'session'|'group', id, origText, el }
+  let idePointerInsideTree = false;
+  let ideMenuPinFreeze = false;
+  let ideDeferredTreeOrderChanged = false;
+  const ideFrozenOrderByGroup = new Map();
+
+  function flushDeferredIdeTreeOrder() {
+    if (!idePointerInsideTree && !ideMenuPinFreeze && !activeIdeRename && ideDeferredTreeOrderChanged) {
+      ideDeferredTreeOrderChanged = false;
+      ideFrozenOrderByGroup.clear();
+      renderIdeSidebar();
+    } else if (!idePointerInsideTree && !ideMenuPinFreeze && !activeIdeRename) {
+      ideFrozenOrderByGroup.clear();
+    }
+  }
+
+  function closeIdeContextMenu(skipFlush = false) {
+    const ctxMenuEl = $('ide-context-menu');
+    if (ctxMenuEl) {
+      ctxMenuEl.hidden = true;
+      ctxMenuEl.innerHTML = '';
+    }
+    if (ideMenuPinFreeze) {
+      ideMenuPinFreeze = false;
+      if (!skipFlush) flushDeferredIdeTreeOrder();
+    }
+  }
+
+  function resolveLiveAccountHostForAdd() {
+    const allDevs = getUnifiedFleetDevices();
+    const acctHosts = allDevs.filter((d) => d && d.online && d.pwaReady && d.pwaReady.signIn);
+    const acctFilterDev =
+      prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
+        ? String(prefs.selectedDeviceFilter).trim()
+        : '';
+    return (
+      acctHosts.find((d) => d.id === acctFilterDev) ||
+      acctHosts.find((d) => localWsDevice?.id && d.id === localWsDevice.id) ||
+      acctHosts[0] ||
+      allDevs.find((d) => d && d.online && d.id === acctFilterDev) ||
+      allDevs.find((d) => d && d.online) ||
+      null
+    );
+  }
+
+  function renderAddAccountTrayHtml(targetMode = 'tray') {
+    const st = addAccountTrayState || { provider: 'antigravity', label: '', surface: targetMode };
+    const host = resolveLiveAccountHostForAdd();
+    const hostTxt = host ? `on ${host.name || host.id}` : 'No PC online';
+    return `
+      <form class="ide-add-account-form" data-add-acct-form="1">
+        <div class="ide-add-tray-prov">
+          <button type="button" class="ide-add-tray-tab${st.provider === 'antigravity' ? ' active' : ''}" data-add-tray-prov="antigravity">Antigravity</button>
+          <button type="button" class="ide-add-tray-tab claude${st.provider === 'claude' ? ' active' : ''}" data-add-tray-prov="claude">Claude Code</button>
+        </div>
+        <input type="text" class="ide-add-tray-input" id="${targetMode === 'modal' ? 'acct-modal-add-label' : 'ide-add-tray-label'}" placeholder="Optional label (e.g. Work, Personal)" value="${esc(st.label || '')}" maxlength="32" autocomplete="off">
+        <div class="ide-add-tray-actions">
+          <span class="meta-timestamp" style="margin-right:auto;font-size:10px">${esc(hostTxt)}</span>
+          <button type="button" class="btn-ghost-sm" data-add-tray-cancel="1">Cancel</button>
+          <button type="submit" class="btn-brass-sm" ${host ? '' : 'disabled'}>Sign In</button>
+        </div>
+      </form>
+    `;
+  }
+
+  function openAddAccountTray(defaultProv = '', opts = {}) {
+    const host = resolveLiveAccountHostForAdd();
+    if (!host) {
+      showToast('A PC has to be online to add an account. Nothing was sent.');
+      return;
+    }
+    const prov =
+      defaultProv === 'claude'
+        ? 'claude'
+        : defaultProv === 'antigravity'
+          ? 'antigravity'
+          : addAccountTrayState?.provider || 'antigravity';
+    const trayEl = $('ide-add-account-tray');
+    const sidebarHost = trayEl?.closest('#ide-explorer-sidebar');
+    const sidebarVisible = Boolean(
+      trayEl &&
+        sidebarHost &&
+        getComputedStyle(sidebarHost).display !== 'none' &&
+        !prefs.sidebarCollapsed &&
+        !opts.preferModal
+    );
+    if (sidebarVisible) {
+      const sec = $('ide-sec-accounts');
+      if (sec) sec.open = true;
+      addAccountTrayState = { provider: prov, label: '', surface: 'tray' };
+      trayEl.innerHTML = renderAddAccountTrayHtml('tray');
+      trayEl.hidden = false;
+      setTimeout(() => $('ide-add-tray-label')?.focus(), 20);
+      return;
+    }
+    addAccountTrayState = { provider: prov, label: '', surface: 'modal' };
+    const modal = $('acct-signin-modal');
+    const titleEl = $('acct-signin-title');
+    const bodyEl = $('acct-signin-body');
+    const dotEl = $('acct-signin-dot');
+    if (modal && bodyEl) {
+      if (titleEl) titleEl.textContent = 'Add an account';
+      if (dotEl) dotEl.className = 'conn-dot is-live';
+      bodyEl.innerHTML = renderAddAccountTrayHtml('modal');
+      const wasHidden = modal.hidden;
+      modal.hidden = false;
+      if (wasHidden) pushUiHistoryState('acct-signin-modal');
+      setTimeout(() => $('acct-modal-add-label')?.focus(), 20);
+    }
+  }
+
+  function closeAddAccountTray() {
+    const wasModal = addAccountTrayState?.surface === 'modal';
+    addAccountTrayState = null;
+    const trayEl = $('ide-add-account-tray');
+    if (trayEl) {
+      trayEl.hidden = true;
+      trayEl.innerHTML = '';
+    }
+    if (wasModal && !acctSignIn) {
+      const modal = $('acct-signin-modal');
+      if (modal) modal.hidden = true;
+    }
+  }
+
+  async function submitAddAccountTray() {
+    if (!addAccountTrayState) return;
+    const labelEl =
+      addAccountTrayState.surface === 'modal'
+        ? $('acct-modal-add-label')
+        : $('ide-add-tray-label');
+    const provider = addAccountTrayState.provider === 'claude' ? 'claude' : 'antigravity';
+    const label = String(labelEl?.value ?? addAccountTrayState.label ?? '').trim();
+    const acctHosts = getUnifiedFleetDevices().filter((d) => d && d.online && d.pwaReady && d.pwaReady.signIn);
+    const acctFilterDev =
+      prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
+        ? String(prefs.selectedDeviceFilter).trim()
+        : '';
+    const acctSignInHost =
+      acctHosts.find((d) => d.id === acctFilterDev) ||
+      acctHosts.find((d) => localWsDevice?.id && d.id === localWsDevice.id) ||
+      acctHosts[0] ||
+      null;
+    const anyOnlineHost = getUnifiedFleetDevices().find((d) => d && d.online) || null;
+    if (!acctSignInHost && !anyOnlineHost) {
+      showToast('A PC has to be online to add an account. Nothing was sent.');
+      return;
+    }
+    closeAddAccountTray();
+    if (acctSignInHost) {
+      startAccountSignIn(provider, label, acctSignInHost);
+      return;
+    }
+    const acctRes = await dispatchRemoteCommand({
+      type: 'sessionAction',
+      action: 'accountAdd',
+      subAction: 'accountAdd',
+      provider,
+      label,
+      switchOnComplete: true
+    }).catch(() => null);
+    const acctProvName = provider === 'claude' ? 'Claude Code' : 'Antigravity';
+    const acctReplyInfo = readDirectPcReply(acctRes);
+    const acctReply = acctReplyInfo.reply || {};
+    showToast(
+      acctReplyInfo.mode === 'quarantined'
+        ? `🔐 ${acctProvName} sign-in requested on the PC. Existing accounts stay signed in.`
+        : acctReplyInfo.answered && acctReply.started === false
+          ? String(acctReply.error || `The PC could not start the ${acctProvName} sign-in.`)
+          : acctReplyInfo.answered
+            ? `🔐 ${acctProvName} sign-in requested on the PC. Existing accounts stay signed in.`
+            : `The PC did not answer directly. The ${acctProvName} sign-in opens there only if VS Code is running when the request arrives.`
+    );
+  }
+
+  function renderIdePendingLoginBanner() {
+    const slot = $('ide-pending-login-slot');
+    if (!slot) return;
+    const pl = appState?.pendingAccountLogin;
+    const hasPending = Boolean(pl && pl.active);
+    if (!hasPending) {
+      slot.hidden = true;
+      slot.innerHTML = '';
+      return;
+    }
+    const provLabel = pl.provider === 'claude' ? 'Claude Code' : 'Antigravity';
+    const labelBadge = pl.label ? ` (${esc(pl.label)})` : '';
+    const msg =
+      String(pl.error || pl.message || '').trim() ||
+      (pl.awaitingCode
+        ? 'Waiting for sign-in confirmation code.'
+        : pl.awaitingVerification
+          ? 'Waiting for browser verification.'
+          : 'Sign-in in progress on PC.');
+    slot.hidden = false;
+    slot.innerHTML = `
+      <div class="ide-pending-login-banner">
+        <div class="ide-pending-login-head">
+          <span>Signing in: ${esc(provLabel)}${labelBadge}</span>
+        </div>
+        <div class="ide-pending-login-copy">${esc(msg)}</div>
+        <div class="ide-pending-login-acts">
+          <button type="button" class="btn-brass-sm" data-pending-login-act="resume">Open Sign-In</button>
+          <button type="button" class="btn-ghost-sm" data-pending-login-act="cancel">Cancel</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function openAccountDetailsModal() {
+    const modal = $('acct-details-modal');
+    if (!modal) return;
+    renderAccountDetailsModal();
+    const wasHidden = modal.hidden;
+    modal.hidden = false;
+    if (wasHidden) pushUiHistoryState('acct-details-modal');
+  }
+
+  function closeAccountDetailsModal() {
+    const modal = $('acct-details-modal');
+    if (modal) modal.hidden = true;
+  }
+
+  function renderAccountDetailsModal() {
+    const bodyEl = $('acct-details-body');
+    if (!bodyEl) return;
+    const { ordered } = getOrderedPulseQuotaCards();
+    const signedInRows = ordered.filter(({ acct }) => isSignedInQuotaCard(acct));
+    const fleetHosts = getUnifiedFleetDevices();
+    const hostListHtml = fleetHosts.length
+      ? fleetHosts
+          .map((d) => {
+            const ps = d.pcSetup;
+            const setupTxt = ps
+              ? ps.ok || ps.pendingCount === 0
+                ? `PC Setup ready (${ps.okCount}/${ps.totalCount})`
+                : `${ps.pendingCount} setup update(s) pending`
+              : 'Setup state pending';
+            return `<div class="acct-details-meta">${d.online ? '●' : '○'} <strong>${esc(d.name || d.id)}</strong> · ${esc(setupTxt)}</div>`;
+          })
+          .join('')
+      : '<div class="acct-details-meta">No paired host connected yet.</div>';
+
+    const acctsHtml = signedInRows.length
+      ? signedInRows
+          .map(({ acct, provKey }) => {
+            const label = provKey === 'claude' ? 'Claude Code' : 'Antigravity';
+            const nick = String(acct?.nickname || acct?.account?.nickname || '').trim();
+            const email = String(acct?.account?.email || acct?.email || '').trim();
+            const plan = String(acct?.account?.plan || acct?.plan || (provKey === 'claude' ? 'Max' : 'Pro')).trim();
+            const isActive = acct?.active !== false;
+            const limits = acct?.usage?.limits?.length ? acct.usage.limits : acct?.usage?.allLimits || [];
+            const limSummary = limits.length
+              ? limits
+                  .slice(0, 3)
+                  .map((l) => `${String(l.label || '').trim()}: ${l.known === false ? '—' : `${Math.round(Number(l.pct ?? l.usedPercent ?? 0))}%`}`)
+                  .join(' · ')
+              : acct?.usageMessage || 'Window idle';
+            return `
+              <div class="acct-details-item">
+                <div class="acct-details-top">
+                  <span>${esc(label)}${nick ? ` · ${esc(nick)}` : ''}</span>
+                  <span class="${isActive ? 'ide-acct-live-pill' : 'ide-plan-tag'}">${isActive ? '● Active' : 'Standby'}</span>
+                </div>
+                <div class="acct-details-meta">${email ? `${esc(email)} · ` : ''}${esc(plan)}</div>
+                <div class="acct-details-meta">${esc(limSummary)}</div>
+              </div>
+            `;
+          })
+          .join('')
+      : '<div class="acct-details-meta">No signed-in accounts synced yet.</div>';
+
+    bodyEl.innerHTML = `
+      <div class="acct-details-section">
+        <div class="eyebrow">CONNECTED ACCOUNTS (${signedInRows.length})</div>
+        ${acctsHtml}
+      </div>
+      <div class="acct-details-section">
+        <div class="eyebrow">HOST STORAGE &amp; SETUP</div>
+        <div class="acct-details-item">
+          <div class="acct-details-meta">Tokens stay encrypted in host local vault storage; OAuth URLs and home paths are excluded from remote snapshots.</div>
+          ${hostListHtml}
+        </div>
+      </div>
+      <div class="acct-details-foot">
+        <button type="button" class="btn-ghost-sm" data-acct-details-act="refresh">↻ Refresh Quotas</button>
+        <button type="button" class="btn-brass-sm" data-acct-details-act="add">+ Add Account</button>
+      </div>
+    `;
+  }
+
+  function renderIdeHostHealthCards() {
+    const stackEl = $('ide-host-health-stack');
+    if (!stackEl) return;
+    const devFilter =
+      prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
+        ? prefs.selectedDeviceFilter
+        : '';
+    const fleet = getUnifiedFleetDevices();
+    const targetHosts = devFilter
+      ? fleet.filter((d) => d && d.id === devFilter)
+      : fleet.filter((d) => d && (d.online || d.local));
+    const primaryHost = targetHosts[0] || fleet[0] || null;
+    const primaryId = primaryHost?.id || '';
+    const cards = [];
+
+    // 1. This PC setup updates (scan every matching host so healthy peer never hides sibling alerts)
+    const multiHostLabel = (d) =>
+      targetHosts.length > 1 && (d?.name || d?.id) ? `${d.name || d.id} · ` : '';
+    const setupHosts = targetHosts.filter(
+      (d) => d.pcSetup && !d.pcSetup.ok && Number(d.pcSetup.pendingCount || 0) > 0
+    );
+    if (
+      setupHosts.length === 0 &&
+      !devFilter &&
+      appState?.pcSetup &&
+      !appState.pcSetup.ok &&
+      Number(appState.pcSetup.pendingCount || 0) > 0
+    ) {
+      setupHosts.push({
+        id: primaryId,
+        name: primaryHost?.name || 'This PC',
+        pcSetup: appState.pcSetup,
+        online: true,
+        pwaReady: primaryHost?.pwaReady
+      });
+    }
+    for (const setupHost of setupHosts) {
+      const ps = setupHost.pcSetup;
+      const hint =
+        Array.isArray(ps.pendingTitles) && ps.pendingTitles.length
+          ? ps.pendingTitles.slice(0, 2).join(', ')
+          : `${ps.pendingCount} item(s) pending`;
+      const canApply = Boolean(setupHost.online && setupHost.pwaReady);
+      cards.push(`
+        <div class="ide-health-card is-warn" data-health-kind="pc-setup">
+          <div class="ide-health-head">
+            <span>${esc(multiHostLabel(setupHost))}This PC · Setup Updates (${ps.okCount}/${ps.totalCount})</span>
+          </div>
+          <div class="ide-health-sub">${esc(hint)}</div>
+          <div class="ide-health-acts">
+            ${canApply ? renderApplyPcSetupButtonHtml(setupHost, 'ide-link-pill') : ''}
+            <button type="button" class="ide-link-pill" data-host-act="checkPcSetup" data-device-id="${esc(setupHost.id || primaryId)}">Recheck</button>
+          </div>
+        </div>
+      `);
+    }
+
+    // Read hot-swap hold, auto-reload, and bridge notices across ALL matching target hosts
+    const healthSources = [];
+    const seenHealthIds = new Set();
+    for (const d of targetHosts) {
+      if (d?.hostHealth) {
+        seenHealthIds.add(d.id);
+        healthSources.push({
+          devId: d.id,
+          prefix: multiHostLabel(d),
+          hh: d.hostHealth
+        });
+      }
+    }
+    if (!devFilter && (appState?.hotSwapHold || appState?.autoReload || appState?.bridge)) {
+      const topHh = {
+        ...(appState.hotSwapHold ? { hotSwapHold: appState.hotSwapHold } : {}),
+        ...(appState.autoReload ? { autoReload: appState.autoReload } : {}),
+        ...(appState.bridge?.skipMessage || appState.bridge?.patchSkipNotice
+          ? { skipMessage: appState.bridge.skipMessage || appState.bridge.patchSkipNotice }
+          : {}),
+        ...(appState.bridge?.attachFailed
+          ? { attachFailed: true, bridgeMessage: appState.bridge.message || '' }
+          : {})
+      };
+      if (!healthSources.length || (!seenHealthIds.has(primaryId) && (topHh.hotSwapHold?.held || topHh.autoReload || topHh.skipMessage || topHh.attachFailed))) {
+        healthSources.push({ devId: primaryId, prefix: '', hh: topHh });
+      }
+    }
+
+    for (const { devId: hhDevId, prefix, hh } of healthSources) {
+      const hold = hh.hotSwapHold?.held ? hh.hotSwapHold : null;
+      if (hold) {
+        const holdLabel = hold.file || hold.stage || hold.version || '';
+        cards.push(`
+          <div class="ide-health-card is-crit" data-health-kind="hot-swap-hold">
+            <div class="ide-health-head">
+              <span>${esc(prefix)}THEO updates held${holdLabel ? ` (${esc(holdLabel)})` : ''}</span>
+            </div>
+            <div class="ide-health-sub">${esc(hold.error || hold.reason || 'A recent extension hot-swap failed verification.')}</div>
+          </div>
+        `);
+      }
+
+      const arRaw =
+        hh.autoReload &&
+        (hh.autoReload.pending || hh.autoReload.failure || hh.autoReload.pendingReload || hh.autoReload.canaryFailure)
+          ? hh.autoReload
+          : null;
+      if (arRaw) {
+        const isCanaryFail = Boolean(arRaw.failure || arRaw.canaryFailure || arRaw.state === 'failed');
+        const arPending = Boolean(arRaw.pending ?? arRaw.pendingReload);
+        const arReasons = Array.isArray(arRaw.reasons) && arRaw.reasons.length ? arRaw.reasons.join(' · ') : '';
+        const arBlockers = Array.isArray(arRaw.blockers) && arRaw.blockers.length
+          ? arRaw.blockers.map((b) => b.label || b.code).filter(Boolean).join(', ')
+          : '';
+        const arTitle = arPending
+          ? `${prefix}THEO update ready`
+          : isCanaryFail
+            ? `${prefix}THEO auto-reload check failed`
+            : `${prefix}THEO update status`;
+        const arSub =
+          arRaw.canaryFailure?.reason ||
+          arRaw.reason ||
+          arReasons ||
+          (arBlockers ? `Waiting on: ${arBlockers}` : isCanaryFail ? 'Previous canary reload failed.' : 'Reload the VS Code window to finish applying the bundle.');
+        cards.push(`
+          <div class="ide-health-card ${isCanaryFail ? 'is-crit' : 'is-info'}" data-health-kind="auto-reload">
+            <div class="ide-health-head">
+              <span>${esc(arTitle)}</span>
+            </div>
+            <div class="ide-health-sub">${esc(arSub)}</div>
+            <div class="ide-health-acts">
+              <button type="button" class="ide-link-pill" data-host-act="reload" data-device-id="${esc(hhDevId)}">Reload Window</button>
+              ${
+                isCanaryFail
+                  ? `<button type="button" class="ide-link-pill" data-host-act="dismissAutoReloadFailure" data-device-id="${esc(hhDevId)}">Dismiss</button>`
+                  : ''
+              }
+            </div>
+          </div>
+        `);
+      }
+
+      const skipNotice =
+        hh.skipMessage ||
+        (hh.attachFailed ? hh.bridgeMessage || 'Bridge attach failed.' : '');
+      if (skipNotice) {
+        cards.push(`
+          <div class="ide-health-card is-info" data-health-kind="patch-skip">
+            <div class="ide-health-head">
+              <span>${esc(prefix)}Bridge Notice</span>
+            </div>
+            <div class="ide-health-sub">${esc(skipNotice)}</div>
+          </div>
+        `);
+      }
+    }
+
+    if (cards.length === 0) {
+      stackEl.hidden = true;
+      stackEl.innerHTML = '';
+    } else {
+      stackEl.hidden = false;
+      stackEl.innerHTML = cards.join('');
+    }
+  }
+
+  function finishIdeInlineRename(commit = true) {
+    const st = activeIdeRename;
+    if (!st) return;
+    activeIdeRename = null;
+    const { kind, id, origText, el } = st;
+    if (el) {
+      el.contentEditable = 'false';
+      el.removeAttribute('spellcheck');
+    }
+    const rawNext = String(el?.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!commit || !rawNext || rawNext === origText) {
+      if (el) el.textContent = origText;
+      flushDeferredIdeTreeOrder();
+      return;
+    }
+    if (el) el.textContent = rawNext;
+    if (kind === 'session') {
+      const row = (appState?.rows || []).find((r) => r && r.id === id);
+      if (row) {
+        row.title = rawNext;
+        noteRowOverride(id, { title: rawNext });
+        persistCache();
+      }
+      renderSessionsView();
+      if (prefs.selectedThreadId === id) renderChatView();
+      dispatchRemoteCommand({
+        type: 'sessionAction',
+        action: 'rename',
+        subAction: 'rename',
+        id,
+        name: rawNext,
+        provider: row?.provider || 'antigravity',
+        targetDeviceId: row?.deviceId || ''
+      }).catch(() => {});
+      showToast(`✎ Renamed to "${rawNext}"`);
+    } else if (kind === 'group') {
+      noteGroupOverride(id, { op: 'rename', name: rawNext });
+      const grpObj = (appState?.groups || []).find((g) => g && g.id === id);
+      if (grpObj) {
+        grpObj.name = rawNext;
+        persistCache();
+      }
+      renderSessionsView();
+      if (isNewSessionMode()) renderChatView();
+      dispatchRemoteCommand({
+        type: 'sessionAction',
+        action: 'groupRename',
+        subAction: 'groupRename',
+        group: id,
+        name: rawNext
+      }).catch(() => {});
+      showToast(`✎ Renamed group to "${rawNext}"`);
+    }
+    flushDeferredIdeTreeOrder();
+  }
+
+  function beginIdeInlineRename(kind, id) {
+    if (!id) return false;
+    if (activeIdeRename) finishIdeInlineRename(false);
+    const treeEl = $('ide-sidebar-tree');
+    if (!treeEl) return false;
+    let targetEl = null;
+    if (kind === 'session') {
+      const rowEl = Array.from(treeEl.querySelectorAll('.ide-tree-row[data-ide-open-session]')).find(
+        (n) => n.dataset.ideOpenSession === id
+      );
+      targetEl = rowEl?.querySelector('.ide-tree-title') || null;
+    } else if (kind === 'group') {
+      const grpEl = Array.from(treeEl.querySelectorAll('.ide-tree-group[data-ide-group]')).find(
+        (n) => n.dataset.ideGroup === id
+      );
+      targetEl = grpEl?.querySelector('.ide-tree-group-name') || null;
+    }
+    if (!targetEl) return false;
+    const origText = String(targetEl.textContent || '').trim();
+    activeIdeRename = { kind, id, origText, el: targetEl };
+    targetEl.contentEditable = 'true';
+    targetEl.setAttribute('spellcheck', 'false');
+    targetEl.focus();
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(targetEl);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    } catch {}
+    return true;
+  }
+
+  function openAccountContextMenu(accountId, provKey, clientX, clientY) {
+    if (isPinLocked() || !accountId) return;
+    const menuEl = $('ide-context-menu');
+    if (!menuEl) return;
+    hideIdeMicroTip();
+    const { ordered } = getOrderedPulseQuotaCards();
+    const idx = ordered.findIndex((x) => x.id === accountId);
+    const entry = idx >= 0 ? ordered[idx] : null;
+    if (!entry) return;
+    const { acct } = entry;
+    const prov = provKey === 'claude' ? 'claude' : 'antigravity';
+    const isActive = acct?.active !== false;
+    const email = String(acct?.account?.email || acct?.email || '').trim();
+    const nick = String(acct?.nickname || acct?.account?.nickname || '').trim();
+    const signedInCount = ordered.filter((x) => x.provKey === prov && isSignedInQuotaCard(x.acct)).length;
+    const canUp = ordered.length > 1 && idx > 0;
+    const canDown = ordered.length > 1 && idx < ordered.length - 1;
+    menuEl.innerHTML = `
+      ${
+        !isActive
+          ? `<button type="button" class="ctx-menu-item" data-acct-menu-act="switch" data-account-id="${esc(accountId)}" data-account-prov="${prov}"><span>⇄ Set Active Account</span></button>`
+          : ''
+      }
+      <button type="button" class="ctx-menu-item" data-acct-menu-act="new-session" data-account-id="${esc(accountId)}" data-account-prov="${prov}">
+        <span>+ New Session with Account</span>
+      </button>
+      <button type="button" class="ctx-menu-item" data-acct-menu-act="label" data-account-id="${esc(accountId)}" data-account-prov="${prov}" data-account-nick="${esc(nick)}">
+        <span>✎ Edit Label…</span>
+      </button>
+      ${canUp ? `<button type="button" class="ctx-menu-item" data-account-move="up" data-account-id="${esc(accountId)}" data-account-prov="${prov}"><span>↑ Move Up</span></button>` : ''}
+      ${canDown ? `<button type="button" class="ctx-menu-item" data-account-move="down" data-account-id="${esc(accountId)}" data-account-prov="${prov}"><span>↓ Move Down</span></button>` : ''}
+      <button type="button" class="ctx-menu-item" data-acct-menu-act="refresh" data-account-id="${esc(accountId)}" data-account-prov="${prov}">
+        <span>↻ Refresh Quotas</span>
+      </button>
+      <button type="button" class="ctx-menu-item" data-acct-menu-act="details" data-account-id="${esc(accountId)}" data-account-prov="${prov}">
+        <span>Details &amp; Storage…</span>
+      </button>
+      <button type="button" class="ctx-menu-item danger" data-account-remove="${esc(accountId)}" data-account-prov="${prov}" data-account-email="${esc(email)}">
+        <span>${signedInCount <= 1 ? 'Sign Out Account' : 'Disconnect Account'}</span>
+      </button>
+    `;
+    menuEl.hidden = false;
+    const vw = window.innerWidth || 1280;
+    const vh = window.innerHeight || 800;
+    const rect = menuEl.getBoundingClientRect();
+    menuEl.style.left = `${Math.max(8, Math.min(clientX, vw - (rect.width || 210) - 8))}px`;
+    menuEl.style.top = `${Math.max(8, Math.min(clientY, vh - (rect.height || 240) - 8))}px`;
+  }
+
+  function openGroupContextMenu(groupId, clientX, clientY) {
+    if (isPinLocked() || !groupId) return;
+    const grp = (appState?.groups || []).find((g) => g && g.id === groupId);
+    if (!grp) return;
+    const menuEl = $('ide-context-menu');
+    if (!menuEl) return;
+    hideIdeMicroTip();
+    const hoverCard = $('ide-hover-card');
+    if (hoverCard) hoverCard.hidden = true;
+    ideMenuPinFreeze = true;
+    menuEl.innerHTML = `
+      <button type="button" class="ctx-menu-item" data-group-act="new-in-group" data-group-id="${esc(grp.id)}">
+        <span>+ New Session in Group</span>
+      </button>
+      <button type="button" class="ctx-menu-item" data-group-act="rename" data-group-id="${esc(grp.id)}" data-group-name="${esc(grp.name || '')}">
+        <span>✎ Rename Group</span><span class="meta-timestamp">F2</span>
+      </button>
+      <button type="button" class="ctx-menu-item danger" data-group-act="delete" data-group-id="${esc(grp.id)}" data-group-name="${esc(grp.name || '')}">
+        <span>✕ Delete Group</span>
+      </button>
+    `;
+    menuEl.hidden = false;
+    const vw = window.innerWidth || 1280;
+    const vh = window.innerHeight || 800;
+    const rect = menuEl.getBoundingClientRect();
+    menuEl.style.left = `${Math.max(8, Math.min(clientX, vw - (rect.width || 210) - 8))}px`;
+    menuEl.style.top = `${Math.max(8, Math.min(clientY, vh - (rect.height || 180) - 8))}px`;
+  }
+
   function openSessionContextMenu(sessionId, clientX, clientY) {
     if (isPinLocked() || !sessionId) return;
     const menuEl = $('ide-context-menu');
@@ -8873,15 +9693,22 @@
     if (hoverCard) hoverCard.hidden = true;
     const r = (appState?.rows || []).find((x) => x && x.id === sessionId);
     if (!r) return;
+    ideMenuPinFreeze = true;
     const provKey = r.provider === 'claude' ? 'claude' : 'antigravity';
     const isRunning = isSessionActivelyRunning(r.id);
     const isPinnedBg = prefs.pinnedBgSessionId === r.id;
+    const hasCustomGroup = Boolean(
+      r.group && (appState?.groups || []).some((g) => g && g.id === r.group)
+    );
     // "Reveal in VS Code" is offered only where a VS Code window is open (or the PC's build does not say).
     const rowHost = getUnifiedFleetDevices().find((d) => d && d.id === r.deviceId);
     const canRevealInVsCode = !rowHost?.pwaReady || Boolean(rowHost.pwaReady.vscodeOpen);
     menuEl.innerHTML = `
       <button type="button" class="ctx-menu-item" data-ctx-menu-act="open" data-id="${esc(r.id)}" data-prov="${provKey}">
         <span>Open in Workbench</span><span class="meta-timestamp">↵</span>
+      </button>
+      <button type="button" class="ctx-menu-item" data-ctx-menu-act="rename" data-id="${esc(r.id)}" data-prov="${provKey}">
+        <span>✎ Rename Session</span><span class="meta-timestamp">F2</span>
       </button>
       <button type="button" class="ctx-menu-item" data-ctx-menu-act="inspect-outline" data-id="${esc(r.id)}" data-prov="${provKey}">
         <span>Inspect Outline &amp; Files</span><span class="meta-timestamp">⌘I</span>
@@ -8902,6 +9729,11 @@
       <button type="button" class="ctx-menu-item" data-sess-act="group" data-id="${esc(r.id)}">
         <span>Move to Group…</span>
       </button>
+      ${
+        hasCustomGroup && !r.archived
+          ? `<button type="button" class="ctx-menu-item" data-sess-act="group-remove" data-id="${esc(r.id)}"><span>Remove from Group</span></button>`
+          : ''
+      }
       <button type="button" class="ctx-menu-item" data-sess-act="unread" data-id="${esc(r.id)}" data-val="${r.unread ? 'false' : 'true'}">
         <span>${r.unread ? 'Mark as Read' : 'Mark as Unread'}</span>
       </button>
@@ -8910,8 +9742,8 @@
           ? `<button type="button" class="ctx-menu-item danger" data-sess-act="stop" data-id="${esc(r.id)}"><span>■ Stop Running Session</span></button>`
           : ''
       }
-      <button type="button" class="ctx-menu-item danger" data-sess-act="archive" data-id="${esc(r.id)}" data-val="true">
-        <span>Archive Session</span>
+      <button type="button" class="ctx-menu-item${r.archived ? '' : ' danger'}" data-sess-act="archive" data-id="${esc(r.id)}" data-val="${r.archived ? 'false' : 'true'}">
+        <span>${r.archived ? 'Restore Session' : 'Archive Session'}</span>
       </button>
     `;
     menuEl.hidden = false;
@@ -8977,8 +9809,289 @@
     return `<span class="${clsName} tabular" role="img" aria-label="${tip}" data-micro-tip="${tip}">${PIN_FILLED_SVG}<span>${cnt}</span></span>`;
   }
 
+  function applyFrozenIdeOrder(secKey, rows, qActive) {
+    const freezeOn = Boolean((idePointerInsideTree || ideMenuPinFreeze || activeIdeRename) && !qActive);
+    if (!freezeOn) {
+      ideFrozenOrderByGroup.set(secKey, rows.map((r) => r.id));
+      return rows;
+    }
+    const frozenIds = ideFrozenOrderByGroup.get(secKey);
+    if (!frozenIds || frozenIds.length === 0) {
+      ideFrozenOrderByGroup.set(secKey, rows.map((r) => r.id));
+      return rows;
+    }
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const ordered = [];
+    const seen = new Set();
+    for (const id of frozenIds) {
+      if (byId.has(id) && !seen.has(id)) {
+        ordered.push(byId.get(id));
+        seen.add(id);
+      }
+    }
+    for (const r of rows) {
+      if (!seen.has(r.id)) {
+        ordered.push(r);
+        seen.add(r.id);
+      }
+    }
+    const liveIds = rows.map((r) => r.id);
+    const frozenOutIds = ordered.map((r) => r.id);
+    if (
+      liveIds.length !== frozenOutIds.length ||
+      liveIds.some((id, idx) => id !== frozenOutIds[idx])
+    ) {
+      ideDeferredTreeOrderChanged = true;
+    }
+    return ordered;
+  }
+
+  function buildIdeTreeRowInnerHtml(r, provKey, dotCls, isPinnedRow, qCnt, bgBadge, age, isOpenTab) {
+    const isArc = Boolean(r.archived);
+    const isDesktop = isClaudeDesktopRow(r);
+    return `
+      <span class="ide-dot ${dotCls}"></span>
+      <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
+      ${
+        isPinnedRow
+          ? `<span class="ide-pin-ind" aria-label="Pinned chat">${PIN_FILLED_SVG}</span>`
+          : ''
+      }
+      <span class="ide-tree-title">${esc(r.title || 'Untitled Session')}</span>
+      ${
+        isDesktop
+          ? `<span class="session-origin-pill" aria-label="Claude Desktop session">Desktop</span>`
+          : ''
+      }
+      ${
+        !isArc && provKey === 'antigravity' && (r.neonWarning || /neon/i.test(String(r.model || '')))
+          ? `<button type="button" class="session-neon-pill" data-switch-neon-carbon="${esc(r.id)}" data-micro-tip="Switch session from Neon to Carbon" aria-label="Neon model active — switch to Carbon">Neon</button>`
+          : ''
+      }
+      ${qCnt > 0 ? `<span class="ide-row-pill q-pill tabular">?${qCnt}</span>` : ''}
+      ${bgBadge ? `<span class="ide-row-pill bg-pill tabular">${esc(bgBadge)}</span>` : ''}
+      <span class="ide-tree-age tabular">${esc(age)}</span>
+      <span class="ide-tree-acts">
+        ${
+          dotCls === 'working'
+            ? `<button type="button" class="ide-row-act stop" data-sess-act="stop" data-id="${esc(r.id)}" data-micro-tip="Stop session" aria-label="Stop session">■</button>`
+            : ''
+        }
+        ${
+          isOpenTab
+            ? `<button type="button" class="ide-row-act close-tab" data-close-editor-tab="${esc(r.id)}" data-micro-tip="Close open tab" aria-label="Close open tab">×</button>`
+            : ''
+        }
+        ${
+          !isArc
+            ? `<button type="button" class="ide-row-act pin-act${isPinnedRow ? ' active' : ''}" data-sess-act="pin" data-id="${esc(r.id)}" data-val="${isPinnedRow ? 'false' : 'true'}" data-micro-tip="${isPinnedRow ? 'Unpin chat' : 'Pin chat'}" aria-pressed="${isPinnedRow}" aria-label="${isPinnedRow ? 'Unpin chat' : 'Pin chat'}">${isPinnedRow ? PIN_FILLED_SVG : PIN_OUTLINE_SVG}</button>`
+            : ''
+        }
+        <button type="button" class="ide-row-act" data-sess-ctx-menu="${esc(r.id)}" data-micro-tip="Session actions" aria-label="Session actions">⋯</button>
+        <button type="button" class="ide-row-act" data-sess-act="archive" data-id="${esc(r.id)}" data-val="${isArc ? 'false' : 'true'}" data-micro-tip="${isArc ? 'Restore session' : 'Archive session'}" aria-label="${isArc ? 'Restore session' : 'Archive session'}">${isArc ? '↩' : '✕'}</button>
+      </span>
+    `;
+  }
+
+  function patchIdeTreeRowNode(rowEl, r, curSelected) {
+    const provKey = r.provider === 'claude' ? 'claude' : 'antigravity';
+    const isSelected = r.id === curSelected;
+    const isRunningNow = isSessionActivelyRunning(r.id);
+    const isOpenTab = isSessionOpenTab(r);
+    const isPinnedRow = isRowPinned(r);
+    const qCnt = getSessionPendingQuestionCount(r);
+    const dotCls = isRunningNow
+      ? 'working'
+      : r.status === 'waiting' || qCnt > 0
+        ? 'waiting'
+        : isOpenTab
+          ? 'open'
+          : 'closed';
+    const age = shortSidebarAge(getRowLastWorkedMs(r));
+    const bgBadge = r.bgTask?.state === 'running' ? getSessionRunningBgBadge(r) : '';
+    const isArc = Boolean(r.archived);
+    const desiredClass = `ide-tree-row${isSelected ? ' active' : ''}${isPinnedRow ? ' is-pinned' : ''}${isOpenTab ? ' is-open-tab' : ''}${r.unread ? ' is-unread' : ''}${isArc ? ' is-archived' : ''}`;
+    if (rowEl.className !== desiredClass) rowEl.className = desiredClass;
+    if (rowEl.getAttribute('role') !== 'button') rowEl.setAttribute('role', 'button');
+    if (rowEl.getAttribute('tabindex') !== '0') rowEl.setAttribute('tabindex', '0');
+    if (rowEl.dataset.ideOpenSession !== r.id) rowEl.dataset.ideOpenSession = r.id;
+    if (rowEl.dataset.sessionProv !== provKey) rowEl.dataset.sessionProv = provKey;
+
+    if (activeIdeRename && activeIdeRename.kind === 'session' && activeIdeRename.id === r.id) {
+      return;
+    }
+
+    const neon = Boolean(
+      !isArc && provKey === 'antigravity' && (r.neonWarning || /neon/i.test(String(r.model || '')))
+    );
+    const desk = isClaudeDesktopRow(r);
+    const sig = `${provKey}|${dotCls}|${isPinnedRow ? 1 : 0}|${r.title || ''}|${desk ? 1 : 0}|${neon ? 1 : 0}|${qCnt}|${bgBadge}|${age}|${isOpenTab ? 1 : 0}|${isArc ? 1 : 0}`;
+    if (rowEl.dataset.rowRenderSig !== sig) {
+      rowEl.dataset.rowRenderSig = sig;
+      rowEl.innerHTML = buildIdeTreeRowInnerHtml(
+        r,
+        provKey,
+        dotCls,
+        isPinnedRow,
+        qCnt,
+        bgBadge,
+        age,
+        isOpenTab
+      );
+    }
+  }
+
+  function reconcileIdeRowsContainer(itemsEl, rows, curSelected) {
+    const existingById = new Map();
+    for (const child of Array.from(itemsEl.children)) {
+      const sid = child.dataset?.ideOpenSession;
+      if (child.classList?.contains('ide-tree-row') && sid) {
+        existingById.set(sid, child);
+      } else {
+        child.remove();
+      }
+    }
+    const wantIds = new Set(rows.map((r) => r.id));
+    for (const [sid, el] of existingById.entries()) {
+      if (!wantIds.has(sid)) {
+        el.remove();
+        existingById.delete(sid);
+      }
+    }
+    rows.forEach((r, idx) => {
+      let rowEl = existingById.get(r.id);
+      if (!rowEl) {
+        rowEl = document.createElement('div');
+      }
+      patchIdeTreeRowNode(rowEl, r, curSelected);
+      const curAtIdx = itemsEl.children[idx];
+      if (curAtIdx !== rowEl) {
+        itemsEl.insertBefore(rowEl, curAtIdx || null);
+      }
+    });
+  }
+
+  function reconcileIdeTreeDOM(treeEl, groupSpecs, flatRows, curSelected) {
+    if (!groupSpecs) {
+      const sliceRows = Array.isArray(flatRows) ? flatRows : [];
+      if (sliceRows.length === 0) return;
+      for (const ch of Array.from(treeEl.children)) {
+        if (!ch.classList?.contains('ide-tree-group-items') || ch.dataset?.flatRoot !== '1') {
+          ch.remove();
+        }
+      }
+      let flatContainer = treeEl.firstElementChild;
+      if (!flatContainer || !flatContainer.classList.contains('ide-tree-group-items')) {
+        flatContainer = document.createElement('div');
+        flatContainer.className = 'ide-tree-group-items';
+        flatContainer.dataset.flatRoot = '1';
+        treeEl.appendChild(flatContainer);
+      }
+      reconcileIdeRowsContainer(flatContainer, sliceRows, curSelected);
+      return;
+    }
+
+    const existingGroups = new Map();
+    for (const ch of Array.from(treeEl.children)) {
+      const gid = ch.dataset?.ideGroup;
+      if (ch.classList?.contains('ide-tree-group') && gid) {
+        existingGroups.set(gid, ch);
+      } else {
+        ch.remove();
+      }
+    }
+    const wantKeys = new Set(groupSpecs.map((s) => s.key));
+    for (const [gid, el] of existingGroups.entries()) {
+      if (!wantKeys.has(gid)) {
+        el.remove();
+        existingGroups.delete(gid);
+      }
+    }
+
+    groupSpecs.forEach((spec, gIdx) => {
+      let grpEl = existingGroups.get(spec.key);
+      if (!grpEl) {
+        grpEl = document.createElement('div');
+        grpEl.className = `ide-tree-group${spec.collapsed ? ' collapsed' : ''}`;
+        grpEl.dataset.ideGroup = spec.key;
+        grpEl.innerHTML = `
+          <div class="ide-tree-group-hdr">
+            <button type="button" class="ide-tree-group-btn" data-group-act="toggle" data-group-id="${esc(spec.key)}" aria-expanded="${!spec.collapsed}">
+              <span class="ide-chevron-sm"></span>
+              <span class="ide-tree-group-name"></span>
+              <span class="ide-group-pin-slot"></span>
+              <span class="ide-group-pill tabular"></span>
+            </button>
+            <div class="ide-tree-group-acts"></div>
+          </div>
+          <div class="ide-tree-group-items"></div>
+        `;
+      }
+      const wantGrpCls = `ide-tree-group${spec.collapsed ? ' collapsed' : ''}`;
+      if (grpEl.className !== wantGrpCls) grpEl.className = wantGrpCls;
+      if (grpEl.dataset.ideGroup !== spec.key) grpEl.dataset.ideGroup = spec.key;
+
+      const hdrBtn = grpEl.querySelector(':scope > .ide-tree-group-hdr > .ide-tree-group-btn');
+      if (hdrBtn) {
+        hdrBtn.setAttribute('aria-expanded', spec.collapsed ? 'false' : 'true');
+        hdrBtn.dataset.groupId = spec.key;
+        const chevEl = hdrBtn.querySelector('.ide-chevron-sm');
+        const wantChev = spec.collapsed ? CHEVRON_RIGHT_SVG : CHEVRON_DOWN_SVG;
+        if (chevEl && chevEl.dataset.chevDir !== (spec.collapsed ? 'r' : 'd')) {
+          chevEl.dataset.chevDir = spec.collapsed ? 'r' : 'd';
+          chevEl.innerHTML = wantChev;
+        }
+        const nameEl = hdrBtn.querySelector('.ide-tree-group-name');
+        if (nameEl && !(activeIdeRename && activeIdeRename.kind === 'group' && activeIdeRename.id === spec.key)) {
+          if (nameEl.textContent !== spec.name) nameEl.textContent = spec.name;
+        }
+        const pinSlot = hdrBtn.querySelector('.ide-group-pin-slot');
+        const wantPinHtml = renderCollapsedGroupPinBadgeHtml(
+          spec.items,
+          spec.collapsed,
+          'ide-group-pin-badge'
+        );
+        if (pinSlot && pinSlot.dataset.pinSig !== wantPinHtml) {
+          pinSlot.dataset.pinSig = wantPinHtml;
+          pinSlot.innerHTML = wantPinHtml;
+        }
+        const pillEl = hdrBtn.querySelector('.ide-group-pill');
+        const countTxt = String(spec.items.length);
+        if (pillEl && pillEl.textContent !== countTxt) pillEl.textContent = countTxt;
+      }
+
+      const actsEl = grpEl.querySelector(':scope > .ide-tree-group-hdr > .ide-tree-group-acts');
+      if (actsEl) {
+        const wantActsHtml = spec.actionsHtml || '';
+        const pinnedCls = `ide-tree-group-acts${spec.alwaysShowActions ? ' is-pinned-visible' : ''}`;
+        if (actsEl.className !== pinnedCls) actsEl.className = pinnedCls;
+        if (actsEl.dataset.actsSig !== wantActsHtml) {
+          actsEl.dataset.actsSig = wantActsHtml;
+          actsEl.innerHTML = wantActsHtml;
+        }
+      }
+
+      let itemsEl = grpEl.querySelector(':scope > .ide-tree-group-items');
+      if (spec.collapsed) {
+        if (itemsEl) itemsEl.remove();
+      } else {
+        if (!itemsEl) {
+          itemsEl = document.createElement('div');
+          itemsEl.className = 'ide-tree-group-items';
+          grpEl.appendChild(itemsEl);
+        }
+        reconcileIdeRowsContainer(itemsEl, spec.items, curSelected);
+      }
+      const curAtIdx = treeEl.children[gIdx];
+      if (curAtIdx !== grpEl) {
+        treeEl.insertBefore(grpEl, curAtIdx || null);
+      }
+    });
+  }
+
   function renderIdeSidebar() {
     const accountsEl = $('ide-sidebar-accounts');
+    const acctsCountEl = $('ide-accounts-count');
     const approvalsEl = $('ide-sidebar-approvals');
     const secQuestionsEl = $('ide-sec-questions');
     const questionsCountEl = $('ide-questions-count');
@@ -8993,7 +10106,9 @@
     const treeEl = $('ide-sidebar-tree');
     if (!treeEl) return;
 
-    // 1. Account & Usage compact VS Code Hub cards
+    // 1. Account & Usage compact VS Code Hub cards + Pending Login + Exception Host Health Cards
+    renderIdePendingLoginBanner();
+    renderIdeHostHealthCards();
     const hide3pSide = isThirdPartyQuotaHidden();
     const has3pSide = hasAnyAntigravityThirdPartyBars();
     const side3pPill = $('ide-toggle-3p-pill');
@@ -9005,114 +10120,160 @@
     }
     if (accountsEl) {
       const { ordered, sameProvCounts } = getOrderedPulseQuotaCards();
-      const nowMs = Date.now();
-      accountsEl.innerHTML = ordered
-        .map(({ acct, provKey }) => {
-          const acctId = acct?.id || `${provKey}:default`;
-          const label = provKey === 'claude' ? 'Claude Code' : 'Antigravity';
-          if (!isSignedInQuotaCard(acct)) {
+      const signedInCards = ordered.filter(({ acct }) => isSignedInQuotaCard(acct));
+      if (acctsCountEl) {
+        acctsCountEl.hidden = signedInCards.length === 0;
+        acctsCountEl.textContent = String(signedInCards.length);
+      }
+      const editingAccountInput = Boolean(
+        activeInlineAcctEdit &&
+          document.activeElement &&
+          accountsEl.contains(document.activeElement) &&
+          document.activeElement.matches('.ide-acct-inline-edit')
+      );
+      if (!editingAccountInput) {
+        const nowMs = Date.now();
+        const canReorderSide =
+          ordered.length > 1 && ordered.every(({ acct }) => isSignedInQuotaCard(acct));
+        accountsEl.innerHTML = ordered
+          .map(({ acct, provKey }, cardIdx) => {
+            const acctId = acct?.id || `${provKey}:default`;
+            const label = provKey === 'claude' ? 'Claude Code' : 'Antigravity';
+            if (!isSignedInQuotaCard(acct)) {
+              return `
+                <div class="ide-acct-card is-offline" data-quota-card-id="${esc(acctId)}" data-account-prov="${provKey}">
+                  <div class="ide-acct-head">
+                    <span class="ide-acct-left">
+                      <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
+                      <span class="ide-acct-name">${esc(label)}</span>
+                    </span>
+                    <button type="button" class="ide-acct-use-btn" data-account-add-remote="${provKey}">+ Sign in</button>
+                  </div>
+                </div>
+              `;
+            }
+            const isActive = acct?.active !== false;
+            const multi = (sameProvCounts[provKey] || 1) > 1;
+            const collapseKey = multi ? acctId : provKey;
+            const isCollapsed = Boolean(
+              prefs.collapsedQuotaCards &&
+                (prefs.collapsedQuotaCards[collapseKey] ?? prefs.collapsedQuotaCards[acctId])
+            );
+            const email = String(acct?.account?.email || acct?.email || '').trim();
+            const shortEmail = email.includes('@') ? email.split('@')[0] : email;
+            const plan = String(
+              acct?.account?.plan || acct?.plan || (provKey === 'claude' ? 'Max' : 'Pro')
+            )
+              .replace(/^Google AI\s+/i, '')
+              .trim();
+            // Never fall back to acct?.label (provider name) so "Antigravity [Antigravity]" never occurs
+            const nick = String(acct?.nickname || acct?.account?.nickname || '').trim();
+            const badgeTxt =
+              nick || (multi ? shortEmail || (isActive ? 'Primary' : 'Secondary') : '');
+            const limits = acct?.usage?.limits?.length
+              ? acct.usage.limits
+              : acct?.usage?.allLimits || [];
+            const renderSideRow = (l, isThirdParty) => {
+              const passed = Boolean(l.expired || (l.reset && l.reset <= nowMs));
+              const known = l.known !== false;
+              const rawPct = l.pct !== undefined ? l.pct : l.usedPercent;
+              const pct =
+                passed || !known ? 0 : Math.min(100, Math.max(0, Math.round(Number(rawPct || 0))));
+              const pctTxt = known ? `${pct}%` : '—';
+              const barCls =
+                pct >= 90
+                  ? 'crit'
+                  : pct >= 78
+                    ? 'warn'
+                    : isThirdParty
+                      ? 'third-party'
+                      : provKey === 'claude'
+                        ? 'claude'
+                        : 'agy';
+              const rst = formatQuotaResetLine(l, nowMs);
+              return `
+                <div class="ide-qrow tabular">
+                  <div class="ide-qlabels">
+                    <span class="ide-qlbl">${esc(String(l.label || '').replace(/\s*Ledger$/i, ''))}</span>
+                    <span class="ide-qmeta">${rst ? `<span class="ide-qrst">${esc(rst)}</span>` : ''}<strong>${pctTxt}</strong></span>
+                  </div>
+                  <div class="ide-qtrack"><div class="ide-qfill ${barCls}" style="width:${pct}%"></div></div>
+                </div>
+              `;
+            };
+            let barsHtml = '';
+            if (!limits.length) {
+              barsHtml = `<div class="ide-acct-empty-usage">${esc(acct?.usageMessage || (isActive ? 'Window idle' : 'Signed in · Standby'))}</div>`;
+            } else if (provKey === 'antigravity') {
+              const gemBars = limits.filter((l) => !isThirdPartyQuotaBar(l));
+              const tpBars = limits.filter((l) => isThirdPartyQuotaBar(l));
+              if (hide3pSide) {
+                barsHtml = gemBars.length
+                  ? gemBars.map((l) => renderSideRow(l, false)).join('')
+                  : tpBars.length
+                    ? `<div class="q-pool-hidden-note"><span>Claude &amp; GPT hidden</span><button type="button" class="q-pool-toggle-btn" data-toggle-3p-quota="show" aria-label="Show Claude and GPT quota bars">Show</button></div>`
+                    : `<div class="ide-acct-empty-usage">${esc(acct?.usageMessage || 'Window idle')}</div>`;
+              } else if (tpBars.length) {
+                const gemHtml = gemBars.length
+                  ? `<div class="ide-qpool-group"><div class="ide-qpool-head"><span class="q-pool-dot agy"></span><span class="q-pool-title">Gemini models</span></div>${gemBars.map((l) => renderSideRow(l, false)).join('')}</div>`
+                  : '';
+                const tpHtml = `<div class="ide-qpool-3p"><div class="ide-qpool-head"><span class="q-pool-dot third-party"></span><span class="q-pool-title">Claude &amp; GPT pool</span><button type="button" class="q-pool-toggle-btn" data-toggle-3p-quota="hide" aria-label="Hide Claude and GPT quota bars">Hide</button></div>${tpBars.map((l) => renderSideRow(l, true)).join('')}</div>`;
+                barsHtml = gemHtml + tpHtml;
+              } else {
+                barsHtml = gemBars.map((l) => renderSideRow(l, false)).join('');
+              }
+            } else {
+              barsHtml = limits.map((l) => renderSideRow(l, false)).join('');
+            }
+            const canMoveUp = canReorderSide && cardIdx > 0;
+            const canMoveDown = canReorderSide && cardIdx < ordered.length - 1;
+            const moveBtnsHtml =
+              canReorderSide && (canMoveUp || canMoveDown)
+                ? (canMoveUp
+                    ? `<button type="button" class="ide-acct-icon-btn ide-acct-move-btn" data-account-move="up" data-account-id="${esc(acctId)}" data-account-prov="${provKey}" data-micro-tip="Move up" aria-label="Move account up">↑</button>`
+                    : '') +
+                  (canMoveDown
+                    ? `<button type="button" class="ide-acct-icon-btn ide-acct-move-btn" data-account-move="down" data-account-id="${esc(acctId)}" data-account-prov="${provKey}" data-micro-tip="Move down" aria-label="Move account down">↓</button>`
+                    : '')
+                : '';
+            const isEditingLabel = Boolean(
+              activeInlineAcctEdit &&
+                activeInlineAcctEdit.accountId === acctId &&
+                activeInlineAcctEdit.surface === 'sidebar'
+            );
+            const editRowHtml = isEditingLabel
+              ? `<form class="ide-acct-edit-row" data-acct-label-form="${esc(acctId)}" data-acct-prov="${provKey}"><input type="text" class="ide-acct-inline-edit" value="${esc(activeInlineAcctEdit.value ?? nick)}" placeholder="Label (e.g. Work, Personal)" maxlength="32" autocomplete="off"><button type="submit" class="ide-link-pill">Save</button><button type="button" class="ide-link-pill" data-acct-label-cancel="1">Cancel</button></form>`
+              : '';
             return `
-              <div class="ide-acct-card is-offline">
+              <div class="ide-acct-card${isActive ? ' is-active' : ''}${isCollapsed ? ' collapsed' : ''}" data-quota-card-id="${esc(acctId)}" data-account-prov="${provKey}"${canReorderSide ? ' draggable="true"' : ''}>
                 <div class="ide-acct-head">
-                  <span class="ide-acct-left">
+                  <button type="button" class="ide-acct-toggle" data-quota-collapse="${esc(collapseKey)}" aria-expanded="${!isCollapsed}">
+                    <span class="ide-chevron-sm">${isCollapsed ? CHEVRON_RIGHT_SVG : CHEVRON_DOWN_SVG}</span>
                     <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
                     <span class="ide-acct-name">${esc(label)}</span>
-                  </span>
-                  <button type="button" class="ide-acct-use-btn" data-account-add-remote="${provKey}">+ Sign in</button>
+                    ${badgeTxt ? `<span class="ide-acct-role${isActive ? ' primary' : ''}">${esc(badgeTxt)}</span>` : ''}
+                  </button>
+                  <div class="ide-acct-actions">
+                    ${
+                      !isActive
+                        ? `<button type="button" class="ide-acct-use-btn" data-account-switch="${esc(acctId)}" data-account-prov="${provKey}">⇄ Use</button>`
+                        : `<span class="ide-acct-live-pill">● Active</span>`
+                    }
+                    ${moveBtnsHtml}
+                    <button type="button" class="ide-acct-icon-btn" data-account-label="${esc(acctId)}" data-account-prov="${provKey}" data-account-nick="${esc(nick)}" data-account-surface="sidebar" data-micro-tip="Edit account label" aria-label="Edit account label">✎</button>
+                    <button type="button" class="ide-acct-icon-btn" data-acct-ctx-menu="${esc(acctId)}" data-acct-prov="${provKey}" data-micro-tip="Account actions" aria-label="Account actions">⋯</button>
+                  </div>
                 </div>
+                ${
+                  isCollapsed
+                    ? editRowHtml
+                    : `${editRowHtml}<div class="ide-acct-sub">${email ? `<span>${esc(email)}</span>` : '<span></span>'}<span class="ide-plan-tag">${esc(plan)}</span></div>${barsHtml ? `<div class="ide-qstack">${barsHtml}</div>` : ''}${provKey === 'claude' && isActive ? renderClaudeModeSelectorHtml('sidebar') : ''}`
+                }
               </div>
             `;
-          }
-          const isActive = acct?.active !== false;
-          const multi = (sameProvCounts[provKey] || 1) > 1;
-          const collapseKey = multi ? acctId : provKey;
-          const isCollapsed = Boolean(
-            prefs.collapsedQuotaCards &&
-              (prefs.collapsedQuotaCards[collapseKey] ?? prefs.collapsedQuotaCards[acctId])
-          );
-          const email = String(acct?.account?.email || acct?.email || '').trim();
-          const plan = String(acct?.account?.plan || acct?.plan || (provKey === 'claude' ? 'Max' : 'Pro'))
-            .replace(/^Google AI\s+/i, '')
-            .trim();
-          const nick = String(acct?.nickname || acct?.account?.nickname || acct?.label || '').trim();
-          const badgeTxt = nick || (multi ? (isActive ? 'Primary' : 'Secondary') : '');
-          let limits = acct?.usage?.limits?.length ? acct.usage.limits : acct?.usage?.allLimits || [];
-          if (!limits.length && provKey === 'claude' && isActive) {
-            const claudeSum = appState?.summaryByProvider?.claude || appState?.summary || {};
-            const tok5h = Number(claudeSum.today?.tokens || 0);
-            const tok7d = Number(claudeSum.week?.tokens || 0);
-            limits = [
-              { label: 'Session (5hr)', pct: Math.min(95, Math.max(4, Math.round((tok5h / 250000000) * 100))), resetText: `${fmtCompact(tok5h)}` },
-              { label: 'Weekly (7 day)', pct: Math.min(95, Math.max(8, Math.round((tok7d / 1800000000) * 100))), resetText: `${fmtCompact(tok7d)}` }
-            ];
-          }
-          const renderSideRow = (l, isThirdParty) => {
-            const passed = Boolean(l.expired || (l.reset && l.reset <= nowMs));
-            const rawPct = l.pct !== undefined ? l.pct : l.usedPercent;
-            const pct = passed ? 0 : Math.min(100, Math.max(0, Math.round(Number(rawPct || 0))));
-            const barCls = pct >= 90 ? 'crit' : pct >= 78 ? 'warn' : isThirdParty ? 'third-party' : provKey === 'claude' ? 'claude' : 'agy';
-            const rst = passed
-              ? 'Idle'
-              : String(l.resetText || (l.reset ? `Resets ${timeUntil(l.reset)}` : '')).slice(0, 26);
-            return `
-              <div class="ide-qrow tabular">
-                <div class="ide-qlabels">
-                  <span class="ide-qlbl">${esc(String(l.label || '').replace(/\s*Ledger$/i, ''))}</span>
-                  <span class="ide-qmeta">${rst ? `<span class="ide-qrst">${esc(rst)}</span>` : ''}<strong>${pct}%</strong></span>
-                </div>
-                <div class="ide-qtrack"><div class="ide-qfill ${barCls}" style="width:${pct}%"></div></div>
-              </div>
-            `;
-          };
-          let barsHtml = '';
-          if (provKey === 'antigravity') {
-            const gemBars = limits.filter((l) => !isThirdPartyQuotaBar(l));
-            const tpBars = limits.filter((l) => isThirdPartyQuotaBar(l));
-            if (hide3pSide) {
-              barsHtml = gemBars.length
-                ? gemBars.map((l) => renderSideRow(l, false)).join('')
-                : tpBars.length
-                  ? `<div class="q-pool-hidden-note"><span>Claude &amp; GPT hidden</span><button type="button" class="q-pool-toggle-btn" data-toggle-3p-quota="show" aria-label="Show Claude and GPT quota bars">Show</button></div>`
-                  : '';
-            } else if (tpBars.length) {
-              const gemHtml = gemBars.length
-                ? `<div class="ide-qpool-group"><div class="ide-qpool-head"><span class="q-pool-dot agy"></span><span class="q-pool-title">Gemini models</span></div>${gemBars.map((l) => renderSideRow(l, false)).join('')}</div>`
-                : '';
-              const tpHtml = `<div class="ide-qpool-3p"><div class="ide-qpool-head"><span class="q-pool-dot third-party"></span><span class="q-pool-title">Claude &amp; GPT pool</span><button type="button" class="q-pool-toggle-btn" data-toggle-3p-quota="hide" aria-label="Hide Claude and GPT quota bars">Hide</button></div>${tpBars.map((l) => renderSideRow(l, true)).join('')}</div>`;
-              barsHtml = gemHtml + tpHtml;
-            } else {
-              barsHtml = gemBars.map((l) => renderSideRow(l, false)).join('');
-            }
-          } else {
-            barsHtml = limits.map((l) => renderSideRow(l, false)).join('');
-          }
-
-          return `
-            <div class="ide-acct-card${isActive ? ' is-active' : ''}${isCollapsed ? ' collapsed' : ''}">
-              <div class="ide-acct-head">
-                <button type="button" class="ide-acct-toggle" data-quota-collapse="${esc(collapseKey)}" aria-expanded="${!isCollapsed}">
-                  <span class="ide-chevron-sm">${isCollapsed ? CHEVRON_RIGHT_SVG : CHEVRON_DOWN_SVG}</span>
-                  <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
-                  <span class="ide-acct-name">${esc(label)}</span>
-                  ${badgeTxt ? `<span class="ide-acct-role${isActive ? ' primary' : ''}">${esc(badgeTxt)}</span>` : ''}
-                </button>
-                <div class="ide-acct-actions">
-                  ${
-                    !isActive
-                      ? `<button type="button" class="ide-acct-use-btn" data-account-switch="${esc(acctId)}" data-account-prov="${provKey}">⇄ Use</button>`
-                      : `<span class="ide-acct-live-pill">● Active</span>`
-                  }
-                </div>
-              </div>
-              ${
-                isCollapsed
-                  ? ''
-                  : `<div class="ide-acct-sub">${email ? `<span>${esc(email)}</span>` : '<span></span>'}<span class="ide-plan-tag">${esc(plan)}</span></div>${barsHtml ? `<div class="ide-qstack">${barsHtml}</div>` : ''}${provKey === 'claude' && isActive ? renderClaudeModeSelectorHtml('sidebar') : ''}`
-              }
-            </div>
-          `;
-        })
-        .join('');
+          })
+          .join('');
+      }
     }
 
     // 2. Live Approvals Banner in Sidebar
@@ -9162,9 +10323,21 @@
     }
 
     // 3. Session Manager Tree + Interactive QUESTIONS & SIDE AGENTS Sections
-    const allRows = (appState?.rows || []).filter(
-      (r) => r && r.id && !r.archived && (!devFilter || !r.deviceId || r.deviceId === devFilter)
+    const hideDesktop = isClaudeDesktopHidden();
+    const rawHostRows = (appState?.rows || []).filter(
+      (r) => r && r.id && (!devFilter || !r.deviceId || r.deviceId === devFilter)
     );
+    const hasDesktopRows = rawHostRows.some(isClaudeDesktopRow);
+    const hideDesktopChip = $('ide-hide-desktop-chip');
+    if (hideDesktopChip) {
+      hideDesktopChip.hidden = !(hasDesktopRows || hideDesktop);
+      hideDesktopChip.classList.toggle('active', hideDesktop);
+      hideDesktopChip.setAttribute('aria-pressed', hideDesktop ? 'true' : 'false');
+      hideDesktopChip.textContent = hideDesktop ? 'Desktop Hidden' : 'Hide Desktop';
+    }
+    const visibleHostRows = hideDesktop ? rawHostRows.filter((r) => !isClaudeDesktopRow(r)) : rawHostRows;
+    const allRows = visibleHostRows.filter((r) => !r.archived);
+    const archivedRows = visibleHostRows.filter((r) => r.archived);
     if (countEl) countEl.textContent = String(allRows.length);
 
     // 3A. Sidebar Interactive QUESTIONS Section (VS Code Hub Parity)
@@ -9341,7 +10514,7 @@
       }
     }
 
-    document.querySelectorAll('#ide-sidebar-filters .ide-fchip').forEach((btn) => {
+    document.querySelectorAll('#ide-sidebar-filters .ide-fchip[data-side-filter]').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.sideFilter === prefs.sidebarFilter);
     });
 
@@ -9349,7 +10522,8 @@
     const groupIds = new Set(groups.map((g) => g.id));
     const q = ($('ide-sidebar-search')?.value || '').trim().toLowerCase();
 
-    const rawFiltered = allRows.filter((r) => {
+    const filterSourceRows = prefs.sidebarFilter === 'archived' ? archivedRows : allRows;
+    const rawFiltered = filterSourceRows.filter((r) => {
       if (prefs.sidebarFilter === 'working' && r.status !== 'working') return false;
       if (prefs.sidebarFilter === 'needs_input' && r.status !== 'waiting') return false;
       if (prefs.sidebarFilter === 'unread' && !r.unread) return false;
@@ -9368,121 +10542,104 @@
     const rowBaseWeight = (r) =>
       (r.status === 'working' ? 500 : r.status === 'waiting' ? 400 : 0) +
       Math.max(0, 299 - Math.min(299, Math.floor(Math.max(0, nowRankMs - getRowLastWorkedMs(r)) / 3600000)));
-    const filtered = q
-      ? rankSearchMatchesWithPinnedFirst(rawFiltered, q, rowBaseWeight)
-      : [...rawFiltered].sort(
-          (a, b) =>
-            (isRowPinned(b) ? 1 : 0) - (isRowPinned(a) ? 1 : 0) ||
-            (isSessionActivelyRunning(b.id) ? 1 : 0) - (isSessionActivelyRunning(a.id) ? 1 : 0) ||
-            getRowLastWorkedMs(b) - getRowLastWorkedMs(a) ||
-            Number(b.pinnedAt || 0) - Number(a.pinnedAt || 0)
-        );
+    const sortRowsChrono = (list) =>
+      q
+        ? rankSearchMatchesWithPinnedFirst(list, q, rowBaseWeight)
+        : [...list].sort(
+            (a, b) =>
+              (isRowPinned(b) ? 1 : 0) - (isRowPinned(a) ? 1 : 0) ||
+              (isSessionActivelyRunning(b.id) ? 1 : 0) - (isSessionActivelyRunning(a.id) ? 1 : 0) ||
+              getRowLastWorkedMs(b) - getRowLastWorkedMs(a) ||
+              Number(b.pinnedAt || 0) - Number(a.pinnedAt || 0)
+          );
+    const filtered = sortRowsChrono(rawFiltered);
 
-    const renderTreeRow = (r) => {
-      const provKey = r.provider === 'claude' ? 'claude' : 'antigravity';
-      const isSelected = r.id === curSelected;
-      const isRunningNow = isSessionActivelyRunning(r.id);
-      const isOpenTab = isSessionOpenTab(r);
-      const isPinnedRow = isRowPinned(r);
-      const qCnt = getSessionPendingQuestionCount(r);
-      const dotCls = isRunningNow
-        ? 'working'
-        : r.status === 'waiting' || qCnt > 0
-          ? 'waiting'
-          : isOpenTab
-            ? 'open'
-            : 'closed';
-      const age = shortSidebarAge(getRowLastWorkedMs(r));
-      const bgBadge = r.bgTask?.state === 'running' ? getSessionRunningBgBadge(r) : '';
-      return `
-        <div class="ide-tree-row${isSelected ? ' active' : ''}${isPinnedRow ? ' is-pinned' : ''}${isOpenTab ? ' is-open-tab' : ''}${r.unread ? ' is-unread' : ''}" role="button" tabindex="0" data-ide-open-session="${esc(r.id)}" data-session-prov="${provKey}">
-          <span class="ide-dot ${dotCls}"></span>
-          <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
-          ${
-            isPinnedRow
-              ? `<span class="ide-pin-ind" aria-label="Pinned chat">${PIN_FILLED_SVG}</span>`
-              : ''
-          }
-          <span class="ide-tree-title">${esc(r.title || 'Untitled Session')}</span>
-          ${
-            !r.archived && provKey === 'antigravity' && (r.neonWarning || /neon/i.test(String(r.model || '')))
-              ? `<button type="button" class="session-neon-pill" data-switch-neon-carbon="${esc(r.id)}" data-micro-tip="Switch session from Neon to Carbon" aria-label="Neon model active — switch to Carbon">Neon</button>`
-              : ''
-          }
-          ${qCnt > 0 ? `<span class="ide-row-pill q-pill tabular">?${qCnt}</span>` : ''}
-          ${bgBadge ? `<span class="ide-row-pill bg-pill tabular">${esc(bgBadge)}</span>` : ''}
-          <span class="ide-tree-age tabular">${esc(age)}</span>
-          <span class="ide-tree-acts">
-            ${
-              dotCls === 'working'
-                ? `<button type="button" class="ide-row-act stop" data-sess-act="stop" data-id="${esc(r.id)}" data-micro-tip="Stop session" aria-label="Stop session">■</button>`
-                : ''
-            }
-            ${
-              isOpenTab
-                ? `<button type="button" class="ide-row-act close-tab" data-close-editor-tab="${esc(r.id)}" data-micro-tip="Close open tab" aria-label="Close open tab">×</button>`
-                : ''
-            }
-            <button type="button" class="ide-row-act pin-act${isPinnedRow ? ' active' : ''}" data-sess-act="pin" data-id="${esc(r.id)}" data-val="${isPinnedRow ? 'false' : 'true'}" data-micro-tip="${isPinnedRow ? 'Unpin chat' : 'Pin chat'}" aria-pressed="${isPinnedRow}" aria-label="${isPinnedRow ? 'Unpin chat' : 'Pin chat'}">${isPinnedRow ? PIN_FILLED_SVG : PIN_OUTLINE_SVG}</button>
-            <button type="button" class="ide-row-act" data-sess-ctx-menu="${esc(r.id)}" data-micro-tip="Session actions" aria-label="Session actions">⋯</button>
-            <button type="button" class="ide-row-act" data-sess-act="archive" data-id="${esc(r.id)}" data-val="true" data-micro-tip="Archive session" aria-label="Archive session">✕</button>
-          </span>
-        </div>
-      `;
-    };
-
-    if (filtered.length === 0) {
-      treeEl.innerHTML = `<div class="ide-tree-empty">${allRows.length === 0 ? 'No sessions synced yet.' : 'No matching sessions.'}</div>`;
+    if (filtered.length === 0 && !(prefs.sidebarFilter === 'all' && !q && archivedRows.length > 0)) {
+      const emptyTxt =
+        prefs.sidebarFilter === 'archived'
+          ? 'No archived sessions.'
+          : allRows.length === 0
+            ? 'No sessions synced yet.'
+            : 'No matching sessions.';
+      treeEl.innerHTML = `<div class="ide-tree-empty">${emptyTxt}</div>`;
       reconcileIdeMicroTip();
       return;
     }
 
-    if (!q && groups.length > 0) {
-      let html = '';
+    if (!q && prefs.sidebarFilter !== 'archived' && groups.length > 0) {
+      const groupSpecs = [];
       for (const g of groups) {
-        const gItems = filtered.filter((r) => r.group === g.id);
+        const gItems = applyFrozenIdeOrder(
+          g.id,
+          filtered.filter((r) => r.group === g.id),
+          false
+        );
         if (prefs.sidebarFilter !== 'all' && gItems.length === 0) continue;
         const collapsed =
           prefs.sidebarFilter !== 'all'
             ? false
             : isSessionGroupCollapsed(g.id, gItems.length === 0 ? true : Boolean(g.collapsed));
-        const pinBadgeHtml = renderCollapsedGroupPinBadgeHtml(gItems, collapsed, 'ide-group-pin-badge');
-        html += `
-          <div class="ide-tree-group${collapsed ? ' collapsed' : ''}" data-ide-group="${esc(g.id)}">
-            <div class="ide-tree-group-hdr">
-              <button type="button" class="ide-tree-group-btn" data-group-act="toggle" data-group-id="${esc(g.id)}" aria-expanded="${!collapsed}">
-                <span class="ide-chevron-sm">${collapsed ? CHEVRON_RIGHT_SVG : CHEVRON_DOWN_SVG}</span>
-                <span class="ide-tree-group-name">${esc(g.name || 'Group')}</span>
-                ${pinBadgeHtml}<span class="ide-group-pill tabular">${gItems.length}</span>
-              </button>
-            </div>
-            ${collapsed ? '' : `<div class="ide-tree-group-items">${gItems.map(renderTreeRow).join('')}</div>`}
-          </div>
-        `;
+        groupSpecs.push({
+          key: g.id,
+          name: g.name || 'Group',
+          collapsed,
+          items: gItems,
+          alwaysShowActions: false,
+          actionsHtml: `
+            <button type="button" class="ide-group-act-btn" data-group-act="new-in-group" data-group-id="${esc(g.id)}" data-micro-tip="New session in group" aria-label="New session in ${esc(g.name || 'group')}">+</button>
+            <button type="button" class="ide-group-act-btn" data-group-ctx-menu="${esc(g.id)}" data-micro-tip="Group actions" aria-label="Group actions for ${esc(g.name || 'group')}">⋯</button>
+          `
+        });
       }
-      const ungrouped = filtered.filter((r) => !r.group || !groupIds.has(r.group));
+      const ungrouped = applyFrozenIdeOrder(
+        'ungrouped',
+        filtered.filter((r) => !r.group || !groupIds.has(r.group)),
+        false
+      );
       if (ungrouped.length > 0) {
-        const ugCollapsed = prefs.sidebarFilter !== 'all' ? false : isSessionGroupCollapsed('ungrouped', false);
-        const ugPinBadgeHtml = renderCollapsedGroupPinBadgeHtml(ungrouped, ugCollapsed, 'ide-group-pin-badge');
-        html += `
-          <div class="ide-tree-group${ugCollapsed ? ' collapsed' : ''}" data-ide-group="ungrouped">
-            <div class="ide-tree-group-hdr">
-              <button type="button" class="ide-tree-group-btn" data-group-act="toggle" data-group-id="ungrouped" aria-expanded="${!ugCollapsed}">
-                <span class="ide-chevron-sm">${ugCollapsed ? CHEVRON_RIGHT_SVG : CHEVRON_DOWN_SVG}</span>
-                <span class="ide-tree-group-name">Ungrouped</span>
-                ${ugPinBadgeHtml}<span class="ide-group-pill tabular">${ungrouped.length}</span>
-              </button>
-            </div>
-            ${ugCollapsed ? '' : `<div class="ide-tree-group-items">${ungrouped.map(renderTreeRow).join('')}</div>`}
-          </div>
-        `;
+        const ugCollapsed =
+          prefs.sidebarFilter !== 'all' ? false : isSessionGroupCollapsed('ungrouped', false);
+        const archivableCount = ungrouped.filter(
+          (r) =>
+            r.id &&
+            !r.archived &&
+            !isRowPinned(r) &&
+            !isSessionOpenTab(r) &&
+            r.status !== 'working' &&
+            r.status !== 'waiting' &&
+            !r.unread
+        ).length;
+        groupSpecs.push({
+          key: 'ungrouped',
+          name: 'Ungrouped',
+          collapsed: ugCollapsed,
+          items: ungrouped,
+          alwaysShowActions: archivableCount > 0,
+          actionsHtml:
+            archivableCount > 0
+              ? `<button type="button" class="ide-group-act-btn" data-group-act="archive-closed" data-micro-tip="Archive ${archivableCount} closed idle sessions" aria-label="Archive closed sessions">Archive closed</button>`
+              : ''
+        });
       }
-      treeEl.innerHTML = html;
+      if (prefs.sidebarFilter === 'all' && archivedRows.length > 0) {
+        const arcSorted = applyFrozenIdeOrder('archived', sortRowsChrono(archivedRows), false);
+        const arcCollapsed = isSessionGroupCollapsed('archived', true);
+        groupSpecs.push({
+          key: 'archived',
+          name: 'Archived sessions',
+          collapsed: arcCollapsed,
+          items: arcSorted,
+          alwaysShowActions: !arcCollapsed,
+          actionsHtml: `<button type="button" class="ide-group-act-btn" data-group-act="unarchive-all" data-micro-tip="Restore all archived sessions" aria-label="Unarchive all sessions">Unarchive all</button>`
+        });
+      }
+      reconcileIdeTreeDOM(treeEl, groupSpecs, null, curSelected);
       reconcileIdeMicroTip();
       return;
     }
 
-    treeEl.innerHTML = `<div class="ide-tree-group-items">${filtered.slice(0, 120).map(renderTreeRow).join('')}</div>`;
+    const flatList = applyFrozenIdeOrder('__flat__', filtered.slice(0, 120), Boolean(q));
+    reconcileIdeTreeDOM(treeEl, null, flatList, curSelected);
     reconcileIdeMicroTip();
   }
 
@@ -11192,7 +12349,7 @@
         ? `Synced ${timeAgo(appState.generatedAt)}`
         : 'Live telemetry';
     }
-    if (quotaGrid) {
+    if (quotaGrid && !(activeInlineAcctEdit && document.activeElement && quotaGrid.contains(document.activeElement) && document.activeElement.matches('.ide-acct-inline-edit'))) {
       const { ordered, sameProvCounts } = getOrderedPulseQuotaCards();
       quotaGrid.innerHTML = ordered
         .map(({ acct, provKey }, index) =>
@@ -11439,51 +12596,24 @@
     const canReorder = totalCards > 1;
     const canMoveUp = canReorder && cardIndex > 0;
     const canMoveDown = canReorder && cardIndex < totalCards - 1;
-    let limits = provInfo?.usage?.limits?.length
+    const limits = provInfo?.usage?.limits?.length
       ? provInfo.usage.limits
       : provInfo?.usage?.allLimits || [];
-
-    if (!limits.length && key === 'claude' && isActive && isSignedInQuotaCard(provInfo)) {
-      const claudeSum = appState?.summaryByProvider?.claude || appState?.summary || {};
-      const tok5h = Number(claudeSum.today?.tokens || 0);
-      const tok7d = Number(claudeSum.week?.tokens || 0);
-      const turns5h = Number(claudeSum.today?.turns || 0);
-      const turns7d = Number(claudeSum.week?.turns || 0);
-      const pct5h = Math.min(95, Math.max(4, Math.round((tok5h / 250000000) * 100)));
-      const pct7d = Math.min(95, Math.max(8, Math.round((tok7d / 1800000000) * 100)));
-      limits = [
-        {
-          label: 'Session (5hr) Ledger',
-          pct: pct5h,
-          resetText: `${fmtCompact(tok5h)} tokens · ${fmtInt(turns5h)} turns today`
-        },
-        {
-          label: 'Weekly (7 day) Ledger',
-          pct: pct7d,
-          resetText: `${fmtCompact(tok7d)} tokens · ${fmtInt(turns7d)} turns (7d)`
-        },
-        {
-          label: 'Fable limit',
-          pct: 0,
-          resetText: 'Window idle'
-        }
-      ];
-    }
 
     const nowMs = Date.now();
     const renderPulseBar = (l, isThirdParty) => {
       const passed = Boolean(l.expired || (l.reset && l.reset <= nowMs));
+      const known = l.known !== false;
       const rawPct = l.pct !== undefined ? l.pct : l.usedPercent;
-      const pct = passed ? 0 : Math.min(100, Math.max(0, Math.round(Number(rawPct || 0))));
+      const pct = passed || !known ? 0 : Math.min(100, Math.max(0, Math.round(Number(rawPct || 0))));
+      const pctTxt = known ? `${pct}%` : '—';
       const cls = pct >= 90 ? 'crit' : pct >= 78 ? 'warn' : isThirdParty ? 'third-party' : key === 'claude' ? 'claude' : '';
-      const resetTxt = passed
-        ? 'Window idle'
-        : l.resetText || (l.reset ? `Resets ${timeUntil(l.reset)}` : '');
+      const resetTxt = formatQuotaResetLine(l, nowMs);
       return `
         <div class="q-bar-row tabular">
           <div class="q-bar-labels">
             <span>${esc(l.label)}</span>
-            <span class="q-bar-meta">${resetTxt ? `<span class="q-reset">${esc(resetTxt)}</span>` : ''}<span class="q-pct">${pct}%</span></span>
+            <span class="q-bar-meta">${resetTxt ? `<span class="q-reset">${esc(resetTxt)}</span>` : ''}<span class="q-pct">${pctTxt}</span></span>
           </div>
           <div class="q-track">
             <div class="q-fill ${cls}" style="width:${pct}%"></div>
@@ -11559,7 +12689,11 @@
         ${
           isCollapsed
             ? ''
-            : `<div class="quota-sub-line">${email ? `<span class="meta-timestamp">${esc(email)}</span>` : '<span></span>'}<span class="plan-pill">${esc(shortPlan)}</span></div><div class="quota-bars-stack">${barsHtml}</div>${key === 'claude' && isActive ? renderClaudeModeSelectorHtml('quota') : ''}`
+            : `${
+                activeInlineAcctEdit && activeInlineAcctEdit.accountId === acctId && activeInlineAcctEdit.surface === 'pulse'
+                  ? `<form class="ide-acct-edit-row" data-acct-label-form="${esc(acctId)}" data-acct-prov="${key}"><input type="text" class="ide-acct-inline-edit" value="${esc(activeInlineAcctEdit.value ?? nick)}" placeholder="Nickname (e.g. Work, Personal)" maxlength="32" autocomplete="off"><button type="submit" class="ide-link-pill">Save</button><button type="button" class="ide-link-pill" data-acct-label-cancel="1">Cancel</button></form>`
+                  : ''
+              }<div class="quota-sub-line">${email ? `<span class="meta-timestamp">${esc(email)}</span>` : '<span></span>'}<span class="plan-pill">${esc(shortPlan)}</span></div><div class="quota-bars-stack">${barsHtml}</div>${key === 'claude' && isActive ? renderClaudeModeSelectorHtml('quota') : ''}`
         }
       </div>
     `;
@@ -11628,6 +12762,7 @@
             </div>
             <div class="sess-sub-row tabular">
               ${devBadgeHtml}
+              ${isClaudeDesktopRow(r) ? `<span class="session-origin-pill">Desktop</span>` : ''}
               ${r.folder ? `<span class="tag-pill">${esc(r.folder)}</span>` : ''}
               ${r.branch ? `<span>⎇ ${esc(r.branch)}</span>` : ''}
               <span>${esc(displayModel)}</span>
@@ -11738,7 +12873,10 @@
     syncProviderNewSessionButtons();
     const container = $('sessions-full-list');
     if (!container) return;
-    const rows = (appState?.rows || []).filter((r) => r.id);
+    const hideDesktop = isClaudeDesktopHidden();
+    const rows = (appState?.rows || []).filter(
+      (r) => r.id && (!hideDesktop || !isClaudeDesktopRow(r))
+    );
     const groups = Array.isArray(appState?.groups) ? appState.groups : [];
     const groupIds = new Set(groups.map((g) => g.id));
     const q = ($('sess-search-input')?.value || '').trim().toLowerCase();
@@ -15010,9 +16148,18 @@
             ''
         ).trim();
         const tagHtml = tagTxt ? `<span class="vs-model-item-tag${tagClassFor(tagTxt)}">${esc(tagTxt)}</span>` : '';
+        const quotaPct =
+          typeof m.quotaRemainingFraction === 'number' && Number.isFinite(m.quotaRemainingFraction)
+            ? Math.max(0, Math.min(100, Math.round(m.quotaRemainingFraction * 100)))
+            : null;
+        const quotaCls = quotaPct == null ? '' : quotaPct <= 10 ? ' is-crit' : quotaPct <= 25 ? ' is-low' : '';
+        const quotaBarHtml =
+          quotaPct == null
+            ? ''
+            : `<span class="vs-model-quota${quotaCls}" aria-hidden="true"><span class="vs-model-quota-bar"><i style="width:${quotaPct}%"></i></span><span class="vs-model-quota-pct tabular">${quotaPct}%</span></span>`;
         const quotaAttr =
-          typeof m.quotaRemainingFraction === 'number'
-            ? ` data-micro-tip="Quota remaining: ${Math.round(m.quotaRemainingFraction * 100)}%"`
+          quotaPct != null
+            ? ` data-micro-tip="Quota remaining: ${quotaPct}%"`
             : '';
         const modelSupportsEff =
           m.supportsEffort !== false && (!Array.isArray(m.efforts) || m.efforts.length > 0);
@@ -15022,6 +16169,7 @@
             <button type="button" role="menuitemradio" aria-checked="${isSel ? 'true' : 'false'}" class="vs-model-menu-item${isSel ? ' active' : ''}" data-select-model-combo="${esc(`${m.id}:`)}" data-select-ai-model="${esc(m.id)}" data-model-prov="${cleanProv}"${quotaAttr}>
               <span class="vs-model-item-check">${isSel ? CHECK_MARK_SVG : ''}</span>
               <span class="vs-model-item-name">${esc(m.label)}</span>
+              ${quotaBarHtml}
               ${tagHtml}
             </button>
           `;
@@ -15038,6 +16186,7 @@
               <button type="button" role="menuitemradio" aria-checked="${isSel ? 'true' : 'false'}" class="vs-model-menu-item${isSel ? ' active' : ''}" data-select-model-combo="${esc(`${m.id}:${effObj.id}`)}"${isPrimaryFamilyMatch ? ` data-select-ai-model="${esc(m.id)}"` : ''} data-model-prov="${cleanProv}"${quotaAttr}>
                 <span class="vs-model-item-check">${isSel ? CHECK_MARK_SVG : ''}</span>
                 <span class="vs-model-item-name">${esc(`${m.label} (${effObj.label})`)}</span>
+                ${quotaBarHtml}
                 ${tagHtml}
               </button>
             `;
@@ -15340,9 +16489,9 @@
     const explicitUsedRaw = rawCtx.usedTokens ?? activeRow?.usedTokens ?? activeRow?.contextTokens;
     const rawUsed = isNewDraft
       ? 0
-      : explicitUsedRaw != null && explicitUsedRaw !== ''
+      : explicitUsedRaw != null && explicitUsedRaw !== '' && Number.isFinite(Number(explicitUsedRaw))
         ? Number(explicitUsedRaw)
-        : 22019;
+        : 0;
     const rawLimit = hasThreadModelOverride
       ? inferDefaultContextLimit(provKey, resolvedModelLabel)
       : Number(
@@ -15362,19 +16511,20 @@
       isSoftOverrun,
       overrunArcPct
     } = resolveDisplayContextMetrics(provKey, modelForLimit, rawUsed, rawLimit, isNewDraft, rawHardMax);
-    const breakdownArr = isNewDraft
-      ? [
-          { label: 'System Prompt & Rules', tokens: 0, color: '#D9A54A' },
-          { label: 'Tool I/O & Files', tokens: 0, color: '#10B981' },
-          { label: 'Conversation & Responses', tokens: 0, color: '#4F8FD6' }
-        ]
-      : Array.isArray(rawCtx.breakdown)
-        ? rawCtx.breakdown
-        : [
-            { label: 'System Prompt & Rules', tokens: Math.round(usedTokens * 0.35), color: '#D9A54A' },
-            { label: 'Tool I/O & Files', tokens: Math.round(usedTokens * 0.45), color: '#10B981' },
-            { label: 'Conversation & Responses', tokens: Math.max(200, usedTokens - Math.round(usedTokens * 0.8)), color: '#4F8FD6' }
-          ];
+    const breakdownArr =
+      isNewDraft || usedTokens <= 0
+        ? [
+            { label: 'System Prompt & Rules', tokens: 0, color: '#D9A54A' },
+            { label: 'Tool I/O & Files', tokens: 0, color: '#10B981' },
+            { label: 'Conversation & Responses', tokens: 0, color: '#4F8FD6' }
+          ]
+        : Array.isArray(rawCtx.breakdown)
+          ? rawCtx.breakdown
+          : [
+              { label: 'System Prompt & Rules', tokens: Math.round(usedTokens * 0.35), color: '#D9A54A' },
+              { label: 'Tool I/O & Files', tokens: Math.round(usedTokens * 0.45), color: '#10B981' },
+              { label: 'Conversation & Responses', tokens: Math.max(0, usedTokens - Math.round(usedTokens * 0.8)), color: '#4F8FD6' }
+            ];
     const ctx = {
       usedTokens,
       limitTokens,
@@ -17767,9 +18917,11 @@
         ctxMenuEl &&
         !ctxMenuEl.hidden &&
         !e.target?.closest?.('#ide-context-menu') &&
-        !e.target?.closest?.('[data-sess-ctx-menu]')
+        !e.target?.closest?.('[data-sess-ctx-menu]') &&
+        !e.target?.closest?.('[data-group-ctx-menu]') &&
+        !e.target?.closest?.('[data-acct-ctx-menu]')
       ) {
-        ctxMenuEl.hidden = true;
+        closeIdeContextMenu();
       }
       const modPop = $('model-picker-popover');
       if (
@@ -18312,7 +19464,7 @@
       if (ctxActBtn) {
         e.preventDefault();
         e.stopPropagation();
-        if (ctxMenuEl) ctxMenuEl.hidden = true;
+        closeIdeContextMenu(ctxActBtn.dataset.ctxMenuAct === 'rename');
         const cAct = ctxActBtn.dataset.ctxMenuAct;
         const sid = ctxActBtn.dataset.id || '';
         const prov = ctxActBtn.dataset.prov || 'antigravity';
@@ -18332,6 +19484,8 @@
           }
           renderIdeSidebar();
           fetchThreadDetail(sid, prov).catch(() => {});
+        } else if (cAct === 'rename') {
+          beginIdeInlineRename('session', sid);
         } else if (cAct === 'pin-bg') {
           prefs.pinnedBgSessionId = prefs.pinnedBgSessionId === sid ? '' : sid;
           saveJson(STORAGE_KEYS.PREFS, prefs);
@@ -18565,7 +19719,7 @@
       if (
         ideOpenRow &&
         ideOpenRow.dataset.ideOpenSession &&
-        !e.target.closest('[data-sess-act], [data-approve-act], [data-close-editor-tab], [data-switch-neon-carbon]')
+        !e.target.closest('[data-sess-act], [data-sess-ctx-menu], [data-approve-act], [data-close-editor-tab], [data-switch-neon-carbon], [contenteditable="true"]')
       ) {
         const sid = ideOpenRow.dataset.ideOpenSession;
         const prov = ideOpenRow.dataset.sessionProv || '';
@@ -18754,6 +19908,9 @@
       const acctMoveBtn = e.target.closest('[data-account-move]');
       if (acctMoveBtn) {
         e.stopPropagation();
+        if (ctxMenuEl && !ctxMenuEl.hidden && acctMoveBtn.closest('#ide-context-menu')) {
+          closeIdeContextMenu();
+        }
         const dir = acctMoveBtn.dataset.accountMove;
         const accountId = acctMoveBtn.dataset.accountId;
         const provider = acctMoveBtn.dataset.accountProv === 'claude' ? 'claude' : 'antigravity';
@@ -18770,37 +19927,108 @@
         const accountId = acctLabelBtn.dataset.accountLabel;
         const provider = acctLabelBtn.dataset.accountProv === 'claude' ? 'claude' : 'antigravity';
         const curNick = acctLabelBtn.dataset.accountNick || '';
-        const nextVal = prompt(
-          'Set friendly label / nickname for this account (e.g. Friend, Personal, Work — leave empty to clear):',
-          curNick
+        const surface = acctLabelBtn.dataset.accountSurface === 'sidebar' ? 'sidebar' : 'pulse';
+        activeInlineAcctEdit = { accountId, provider, surface, value: curNick };
+        if (surface === 'sidebar') renderIdeSidebar();
+        else renderPulseView();
+        setTimeout(() => {
+          const inp = (surface === 'sidebar' ? $('ide-sidebar-accounts') : $('pulse-quota-grid'))?.querySelector('.ide-acct-inline-edit');
+          inp?.focus();
+          inp?.select();
+        }, 20);
+        return;
+      }
+
+      if (e.target.closest('[data-acct-label-cancel]')) {
+        e.stopPropagation();
+        const prevSurf = activeInlineAcctEdit?.surface || 'sidebar';
+        activeInlineAcctEdit = null;
+        if (prevSurf === 'sidebar') renderIdeSidebar();
+        else renderPulseView();
+        return;
+      }
+
+      const acctCtxBtn = e.target.closest('[data-acct-ctx-menu]');
+      if (acctCtxBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = acctCtxBtn.getBoundingClientRect();
+        openAccountContextMenu(
+          acctCtxBtn.dataset.acctCtxMenu || '',
+          acctCtxBtn.dataset.acctProv || 'antigravity',
+          rect.right - 180,
+          rect.bottom + 4
         );
-        if (nextVal === null) return;
-        const cleanLabel = nextVal.trim();
-        const provList = appState?.providers?.[provider]?.accounts;
-        if (Array.isArray(provList)) {
-          const item = provList.find((x) => x.id === accountId);
-          if (item) {
-            item.nickname = cleanLabel;
-            if (item.account) item.account.nickname = cleanLabel;
+        return;
+      }
+
+      const acctMenuAct = e.target.closest('[data-acct-menu-act]');
+      if (acctMenuAct) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeIdeContextMenu();
+        const act = acctMenuAct.dataset.acctMenuAct;
+        const accountId = acctMenuAct.dataset.accountId || '';
+        const provider = acctMenuAct.dataset.accountProv === 'claude' ? 'claude' : 'antigravity';
+        if (act === 'switch' && accountId) {
+          const provList = appState?.providers?.[provider]?.accounts;
+          if (Array.isArray(provList)) {
+            for (const item of provList) item.active = item.id === accountId;
+            persistCache();
+            renderPulseView();
+            renderIdeSidebar();
           }
-          persistCache();
-          renderPulseView();
+          await dispatchRemoteCommand({
+            type: 'sessionAction',
+            action: 'accountSwitch',
+            subAction: 'accountSwitch',
+            accountId,
+            provider
+          });
+          showToast(`⇄ Switched active ${provider === 'claude' ? 'Claude Code' : 'Antigravity'} account`);
+        } else if (act === 'new-session' && accountId) {
+          const curGrp = resolveCurrentActiveSessionGroupId();
+          dispatchRemoteCommand({
+            type: 'sessionAction',
+            action: 'accountNewSession',
+            subAction: 'accountNewSession',
+            accountId,
+            provider,
+            group: curGrp
+          }).catch(() => {});
+          enterNewSessionMode(provider, { groupId: curGrp });
+          showToast(`+ Starting new ${provider === 'claude' ? 'Claude Code' : 'Antigravity'} session`);
+        } else if (act === 'label' && accountId) {
+          const curNick = acctMenuAct.dataset.accountNick || '';
+          activeInlineAcctEdit = { accountId, provider, surface: 'sidebar', value: curNick };
           renderIdeSidebar();
+          setTimeout(() => {
+            const inp = $('ide-sidebar-accounts')?.querySelector('.ide-acct-inline-edit');
+            inp?.focus();
+            inp?.select();
+          }, 20);
+        } else if (act === 'refresh') {
+          const targetDeviceId = resolveLiveAccountHostForAdd()?.id || (prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all' ? prefs.selectedDeviceFilter : '');
+          await dispatchRemoteCommand({
+            type: 'sessionAction',
+            action: 'accountRefresh',
+            subAction: 'accountRefresh',
+            accountId,
+            provider,
+            ...(targetDeviceId ? { targetDeviceId } : {})
+          }).catch(() => {});
+          syncData({ toast: false });
+          showToast('↻ Refreshing account quotas…');
+        } else if (act === 'details') {
+          openAccountDetailsModal();
         }
-        await dispatchRemoteCommand({
-          type: 'sessionAction',
-          action: 'accountLabel',
-          subAction: 'accountLabel',
-          accountId,
-          provider,
-          label: cleanLabel,
-          prompt: false
-        });
-        showToast(cleanLabel ? `🏷️ Saved label "${cleanLabel}"` : 'Cleared account label');
         return;
       }
 
       const acctRemoveBtn = e.target.closest('[data-account-remove]');
+      if (acctRemoveBtn && ctxMenuEl && !ctxMenuEl.hidden && acctRemoveBtn.closest('#ide-context-menu')) {
+        closeIdeContextMenu();
+      }
       if (acctRemoveBtn) {
         e.stopPropagation();
         const accountId = acctRemoveBtn.dataset.accountRemove;
@@ -18846,68 +20074,230 @@
         return;
       }
 
+      const addTrayBtn = e.target.closest('[data-account-add-tray]');
+      if (addTrayBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (addAccountTrayState && addAccountTrayState.surface === 'tray') {
+          closeAddAccountTray();
+        } else {
+          openAddAccountTray('');
+        }
+        return;
+      }
+
+      const addTrayProvTab = e.target.closest('[data-add-tray-prov]');
+      if (addTrayProvTab && addAccountTrayState) {
+        e.preventDefault();
+        e.stopPropagation();
+        const inpEl =
+          addAccountTrayState.surface === 'modal'
+            ? $('acct-modal-add-label')
+            : $('ide-add-tray-label');
+        addAccountTrayState.label = String(inpEl?.value || addAccountTrayState.label || '');
+        addAccountTrayState.provider =
+          addTrayProvTab.dataset.addTrayProv === 'claude' ? 'claude' : 'antigravity';
+        const hostBox =
+          addAccountTrayState.surface === 'modal' ? $('acct-signin-body') : $('ide-add-account-tray');
+        if (hostBox) {
+          hostBox.innerHTML = renderAddAccountTrayHtml(addAccountTrayState.surface);
+        }
+        return;
+      }
+
+      if (e.target.closest('[data-add-tray-cancel]')) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeAddAccountTray();
+        return;
+      }
+
       const addAcctRemoteBtn = e.target.closest('[data-account-add-remote]');
       if (addAcctRemoteBtn) {
         e.preventDefault();
         e.stopPropagation();
         const hintProv = addAcctRemoteBtn.dataset.accountAddRemote;
-        // An account is added on one PC (sign-ins are never copied between PCs). No VS Code is needed there:
-        // the PC's background service runs the sign-in and this app shows its link and takes its code.
-        // Only a PC whose build reports that ability gets the sign-in sheet; an older one gets the request as before.
-        const acctHosts = getUnifiedFleetDevices().filter((d) => d && d.online && d.pwaReady && d.pwaReady.signIn);
-        const acctFilterDev =
-          prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
-            ? String(prefs.selectedDeviceFilter).trim()
-            : '';
-        const acctSignInHost =
-          acctHosts.find((d) => d.id === acctFilterDev) ||
-          acctHosts.find((d) => localWsDevice?.id && d.id === localWsDevice.id) ||
-          acctHosts[0] ||
-          null;
-        // A sign-in is never queued for later: with no PC online there is nothing to start it on.
-        if (!acctSignInHost && !getUnifiedFleetDevices().some((d) => d && d.online)) {
-          showToast('A PC has to be online to add an account. Nothing was sent.');
-          return;
+        openAddAccountTray(hintProv === 'claude' ? 'claude' : hintProv === 'antigravity' ? 'antigravity' : '', {
+          preferModal: !addAcctRemoteBtn.closest('#ide-explorer-sidebar')
+        });
+        return;
+      }
+
+      if (e.target.closest('[data-account-details]')) {
+        e.preventDefault();
+        e.stopPropagation();
+        openAccountDetailsModal();
+        return;
+      }
+
+      if (e.target.closest('#acct-details-close') || e.target === $('acct-details-modal')) {
+        closeAccountDetailsModal();
+        return;
+      }
+
+      const acctDetailsAct = e.target.closest('[data-acct-details-act]');
+      if (acctDetailsAct) {
+        e.preventDefault();
+        e.stopPropagation();
+        const act = acctDetailsAct.dataset.acctDetailsAct;
+        if (act === 'refresh') {
+          const targetDeviceId = resolveLiveAccountHostForAdd()?.id || (prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all' ? prefs.selectedDeviceFilter : '');
+          await dispatchRemoteCommand({
+            type: 'sessionAction',
+            action: 'accountRefresh',
+            subAction: 'accountRefresh',
+            ...(targetDeviceId ? { targetDeviceId } : {})
+          }).catch(() => {});
+          syncData({ toast: false });
+          showToast('↻ Refreshing quotas…');
+        } else if (act === 'add') {
+          closeAccountDetailsModal();
+          openAddAccountTray('', { preferModal: true });
         }
-        const defaultPromptVal =
-          hintProv === 'claude'
-            ? 'claude'
-            : hintProv === 'antigravity'
-              ? 'antigravity'
-              : 'antigravity:Friend';
-        const rawChoice = prompt(
-          `Add another account on ${acctSignInHost?.name || 'your PC'} (existing accounts stay signed in).\nEnter "antigravity" or "claude" (optionally add a label after a colon, e.g. "antigravity:Friend" or "claude:Work"):`,
-          defaultPromptVal
-        );
-        if (!rawChoice || !rawChoice.trim()) return;
-        const [rawProv, ...rest] = rawChoice.trim().split(':');
-        const provider = rawProv.trim().toLowerCase().startsWith('c') ? 'claude' : 'antigravity';
-        const label = rest.join(':').trim();
-        if (acctSignInHost) {
-          startAccountSignIn(provider, label, acctSignInHost);
-          return;
+        return;
+      }
+
+      const pendingLoginBtn = e.target.closest('[data-pending-login-act]');
+      if (pendingLoginBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const pAct = pendingLoginBtn.dataset.pendingLoginAct;
+        const pl = appState?.pendingAccountLogin;
+        if (pAct === 'cancel') {
+          const targetDeviceId = pl?.hostId || resolveLiveAccountHostForAdd()?.id || (prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all' ? prefs.selectedDeviceFilter : '');
+          await dispatchRemoteCommand({
+            type: 'sessionAction',
+            action: 'accountSignInCancel',
+            subAction: 'accountSignInCancel',
+            liveOnly: true,
+            provider: pl?.provider || '',
+            ...(targetDeviceId ? { targetDeviceId } : {})
+          }).catch(() => {});
+          if (appState) appState.pendingAccountLogin = null;
+          for (const d of Array.isArray(appState?.devices) ? appState.devices : []) {
+            if (d?.hostHealth?.pendingAccountLogin && (!targetDeviceId || d.id === targetDeviceId)) {
+              d.hostHealth.pendingAccountLogin = null;
+            }
+          }
+          for (const [devId, snap] of hostSnapshotsByDevice.entries()) {
+            if (!snap || (targetDeviceId && devId !== targetDeviceId)) continue;
+            if (snap.pendingAccountLogin) snap.pendingAccountLogin = null;
+            if (snap.hostHealth?.pendingAccountLogin) snap.hostHealth.pendingAccountLogin = null;
+          }
+          for (const d of fleetDevicesMap.values()) {
+            if (d?.hostHealth?.pendingAccountLogin && (!targetDeviceId || d.id === targetDeviceId)) {
+              d.hostHealth.pendingAccountLogin = null;
+            }
+          }
+          persistCache();
+          renderIdePendingLoginBanner();
+          showToast('Cancelled pending sign-in');
+        } else if (pAct === 'resume') {
+          const host = resolveLiveAccountHostForAdd();
+          if (acctSignIn) {
+            const modal = $('acct-signin-modal');
+            if (modal) modal.hidden = false;
+            renderAccountSignInModal();
+          } else if (host && pl) {
+            acctSignIn = {
+              provider: pl.provider === 'claude' ? 'claude' : 'antigravity',
+              label: String(pl.label || ''),
+              hostId: host.id,
+              hostName: host.name || 'the PC',
+              phase: 'pending',
+              progress: { pending: { ...pl } },
+              error: '',
+              note: '',
+              linkLost: false,
+              pollTimer: null
+            };
+            const modal = $('acct-signin-modal');
+            if (modal) {
+              const wasHidden = modal.hidden;
+              modal.hidden = false;
+              if (wasHidden) pushUiHistoryState('acct-signin-modal');
+            }
+            renderAccountSignInModal();
+            acctSignIn.pollTimer = setInterval(() => pollAccountSignIn(acctSignIn), 2000);
+            pollAccountSignIn(acctSignIn);
+          } else {
+            openAddAccountTray(pl?.provider || '', { preferModal: true });
+          }
         }
-        // No PC reports itself ready for this flow (an older THEO build there): send the request as before.
-        const acctRes = await dispatchRemoteCommand({
-          type: 'sessionAction',
-          action: 'accountAdd',
-          subAction: 'accountAdd',
-          provider,
-          label,
-          switchOnComplete: true
-        }).catch(() => null);
-        const acctProvName = provider === 'claude' ? 'Claude Code' : 'Antigravity';
-        const acctReplyInfo = readDirectPcReply(acctRes);
-        const acctReply = acctReplyInfo.reply || {};
-        showToast(
-          acctReplyInfo.mode === 'quarantined'
-            ? `🔐 ${acctProvName} sign-in requested on the PC. Existing accounts stay signed in.`
-            : acctReplyInfo.answered && acctReply.started === false
-              ? String(acctReply.error || `The PC could not start the ${acctProvName} sign-in.`)
-              : acctReplyInfo.answered
-                ? `🔐 ${acctProvName} sign-in requested on the PC. Existing accounts stay signed in.`
-                : `The PC did not answer directly. The ${acctProvName} sign-in opens there only if VS Code is running when the request arrives.`
-        );
+        return;
+      }
+
+      const hostActBtn = e.target.closest('[data-host-act]');
+      if (hostActBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const hAct = hostActBtn.dataset.hostAct;
+        const targetDeviceId = hostActBtn.dataset.deviceId || '';
+        if (hAct === 'checkPcSetup' || hAct === 'reload' || hAct === 'dismissAutoReloadFailure') {
+          await dispatchRemoteCommand({
+            type: 'sessionAction',
+            action: hAct,
+            subAction: hAct,
+            ...(targetDeviceId ? { targetDeviceId } : {})
+          }).catch(() => {});
+          if (hAct === 'dismissAutoReloadFailure') {
+            const clearArFailure = (arObj) => {
+              if (!arObj || typeof arObj !== 'object') return;
+              arObj.failure = null;
+              arObj.canaryFailure = null;
+              if (arObj.state === 'failed') {
+                arObj.state = arObj.pending || arObj.pendingReload ? 'waiting' : 'idle';
+              }
+            };
+            clearArFailure(appState?.autoReload);
+            for (const d of Array.isArray(appState?.devices) ? appState.devices : []) {
+              if (!targetDeviceId || d?.id === targetDeviceId) {
+                clearArFailure(d?.hostHealth?.autoReload);
+              }
+            }
+            for (const snap of hostSnapshotsByDevice.values()) {
+              clearArFailure(snap?.autoReload);
+              for (const d of Array.isArray(snap?.devices) ? snap.devices : []) {
+                if (!targetDeviceId || d?.id === targetDeviceId) {
+                  clearArFailure(d?.hostHealth?.autoReload);
+                }
+              }
+            }
+            if (targetDeviceId) {
+              clearArFailure(fleetDevicesMap.get(targetDeviceId)?.hostHealth?.autoReload);
+            } else {
+              for (const d of fleetDevicesMap.values()) {
+                clearArFailure(d?.hostHealth?.autoReload);
+              }
+            }
+            persistCache();
+            renderIdeHostHealthCards();
+          }
+          syncData({ toast: false });
+          showToast(
+            hAct === 'reload'
+              ? '↻ Sent window reload to PC'
+              : hAct === 'dismissAutoReloadFailure'
+                ? 'Dismissed auto-reload alert'
+                : '↻ Rechecking PC setup…'
+          );
+        }
+        return;
+      }
+
+      if (e.target.closest('[data-toggle-hide-desktop]')) {
+        e.preventDefault();
+        e.stopPropagation();
+        await setHideClaudeDesktopRemote(!isClaudeDesktopHidden());
+        return;
+      }
+
+      const grpCtxBtn = e.target.closest('[data-group-ctx-menu]');
+      if (grpCtxBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = grpCtxBtn.getBoundingClientRect();
+        openGroupContextMenu(grpCtxBtn.dataset.groupCtxMenu || '', rect.right - 170, rect.bottom + 4);
         return;
       }
 
@@ -19044,7 +20434,11 @@
 
       const groupAct = e.target.closest('[data-group-act]');
       if (groupAct) {
+        if (e.target.closest('[contenteditable="true"]')) return;
         e.stopPropagation();
+        if (ctxMenuEl && !ctxMenuEl.hidden && groupAct.closest('#ide-context-menu')) {
+          closeIdeContextMenu();
+        }
         const act = groupAct.dataset.groupAct;
         const gId = groupAct.dataset.groupId || '';
         const gName = groupAct.dataset.groupName || '';
@@ -19068,7 +20462,7 @@
           persistCache();
           renderSessionsView();
           renderIdeSidebar();
-          if (gId !== 'ungrouped') {
+          if (gId !== 'ungrouped' && gId !== 'archived') {
             dispatchRemoteCommand({
               type: 'sessionAction',
               action: 'groupToggle',
@@ -19102,6 +20496,7 @@
           return;
         }
         if (act === 'rename' && gId) {
+          if (beginIdeInlineRename('group', gId)) return;
           const nextName = prompt('Rename session group:', gName || '');
           if (!nextName || !nextName.trim()) return;
           const clean = nextName.trim();
@@ -19209,6 +20604,29 @@
           showToast(`Archived ${closedIds.length} closed sessions`);
           return;
         }
+        if (act === 'unarchive-all') {
+          const archivedIds = (appState?.rows || [])
+            .filter((r) => r && r.id && r.archived)
+            .map((r) => r.id);
+          if (!archivedIds.length) return;
+          for (const r of appState?.rows || []) {
+            if (archivedIds.includes(r.id)) {
+              r.archived = false;
+              noteRowOverride(r.id, { archived: false });
+            }
+          }
+          persistCache();
+          renderAll();
+          await dispatchRemoteCommand({
+            type: 'sessionAction',
+            action: 'archive',
+            subAction: 'archive',
+            ids: archivedIds,
+            value: false
+          });
+          showToast(`Restored ${archivedIds.length} archived sessions`);
+          return;
+        }
         return;
       }
 
@@ -19216,7 +20634,7 @@
       if (sessAct) {
         e.stopPropagation();
         if (ctxMenuEl && !ctxMenuEl.hidden && sessAct.closest('#ide-context-menu')) {
-          ctxMenuEl.hidden = true;
+          closeIdeContextMenu();
         }
         const action = sessAct.dataset.sessAct;
         const id = sessAct.dataset.id;
@@ -19931,15 +21349,208 @@
       }
     });
 
-    // Desktop Sidebar Rich Hover Card & Right-Click Context Menu
+    // Inline Account Label & Add-Account Tray Forms + Drag-and-Drop Reorder
+    document.addEventListener('submit', async (e) => {
+      if (isPinLocked()) return;
+      const acctForm = e.target.closest?.('[data-acct-label-form]');
+      if (acctForm) {
+        e.preventDefault();
+        const accountId = acctForm.dataset.acctLabelForm || '';
+        const provider = acctForm.dataset.acctProv === 'claude' ? 'claude' : 'antigravity';
+        const inp = acctForm.querySelector('.ide-acct-inline-edit');
+        const cleanLabel = String(inp?.value || '').trim();
+        activeInlineAcctEdit = null;
+        const provList = appState?.providers?.[provider]?.accounts;
+        if (Array.isArray(provList) && accountId) {
+          const item = provList.find((x) => x.id === accountId);
+          if (item) {
+            item.nickname = cleanLabel;
+            if (item.account) item.account.nickname = cleanLabel;
+          }
+          persistCache();
+        }
+        renderPulseView();
+        renderIdeSidebar();
+        if (accountId) {
+          await dispatchRemoteCommand({
+            type: 'sessionAction',
+            action: 'accountLabel',
+            subAction: 'accountLabel',
+            accountId,
+            provider,
+            label: cleanLabel,
+            prompt: false
+          }).catch(() => {});
+          showToast(cleanLabel ? `🏷️ Saved label "${cleanLabel}"` : 'Cleared account label');
+        }
+        return;
+      }
+      if (e.target.closest?.('[data-add-acct-form]')) {
+        e.preventDefault();
+        await submitAddAccountTray();
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && e.target?.classList?.contains('ide-acct-inline-edit')) {
+        e.preventDefault();
+        e.stopPropagation();
+        const surf = activeInlineAcctEdit?.surface || 'sidebar';
+        activeInlineAcctEdit = null;
+        if (surf === 'sidebar') renderIdeSidebar();
+        else renderPulseView();
+      }
+    });
+
+    // HTML5 Drag & Drop Account Card Reordering across Sidebar & Pulse
+    let draggedAcctCardId = '';
+    const attachAcctReorderDnd = (container) => {
+      if (!container) return;
+      container.addEventListener('dragstart', (e) => {
+        const card = e.target.closest?.('[data-quota-card-id][draggable="true"]');
+        if (!card) return;
+        draggedAcctCardId = card.dataset.quotaCardId || '';
+        card.classList.add('is-dragging');
+        if (e.dataTransfer) {
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', draggedAcctCardId);
+        }
+      });
+      container.addEventListener('dragover', (e) => {
+        if (!draggedAcctCardId) return;
+        const card = e.target.closest?.('[data-quota-card-id]');
+        if (!card || card.dataset.quotaCardId === draggedAcctCardId) return;
+        e.preventDefault();
+        const rect = card.getBoundingClientRect();
+        const before = e.clientY < rect.top + rect.height / 2;
+        container.querySelectorAll('.drag-over-before, .drag-over-after').forEach((el) => {
+          el.classList.remove('drag-over-before', 'drag-over-after');
+        });
+        card.classList.add(before ? 'drag-over-before' : 'drag-over-after');
+      });
+      container.addEventListener('drop', async (e) => {
+        if (!draggedAcctCardId) return;
+        const card = e.target.closest?.('[data-quota-card-id]');
+        container.querySelectorAll('.is-dragging, .drag-over-before, .drag-over-after').forEach((el) => {
+          el.classList.remove('is-dragging', 'drag-over-before', 'drag-over-after');
+        });
+        if (!card || !card.dataset.quotaCardId || card.dataset.quotaCardId === draggedAcctCardId) {
+          draggedAcctCardId = '';
+          return;
+        }
+        e.preventDefault();
+        const targetId = card.dataset.quotaCardId;
+        const rect = card.getBoundingClientRect();
+        const position = e.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+        const srcId = draggedAcctCardId;
+        draggedAcctCardId = '';
+        await reorderPulseQuotaCard(srcId, {
+          targetAccountId: targetId,
+          position,
+          provider: srcId.startsWith('claude:') ? 'claude' : 'antigravity'
+        });
+        renderIdeSidebar();
+      });
+      container.addEventListener('dragend', () => {
+        draggedAcctCardId = '';
+        container.querySelectorAll('.is-dragging, .drag-over-before, .drag-over-after').forEach((el) => {
+          el.classList.remove('is-dragging', 'drag-over-before', 'drag-over-after');
+        });
+      });
+    };
+    attachAcctReorderDnd($('ide-sidebar-accounts'));
+    attachAcctReorderDnd($('pulse-quota-grid'));
+
+    // Desktop Sidebar Rich Hover Card, Pointer-Hover Order Freeze, Keyboard & Right-Click Context Menu
     const sideTree = $('ide-sidebar-tree');
     if (sideTree) {
+      sideTree.addEventListener('pointerenter', (e) => {
+        if (e.pointerType !== 'touch') idePointerInsideTree = true;
+      });
+      sideTree.addEventListener('pointermove', (e) => {
+        if (e.pointerType !== 'touch') idePointerInsideTree = true;
+      });
+      sideTree.addEventListener('pointerleave', () => {
+        idePointerInsideTree = false;
+        flushDeferredIdeTreeOrder();
+      });
       sideTree.addEventListener('contextmenu', (e) => {
         if (isPinLocked()) return;
         const rowEl = e.target.closest?.('.ide-tree-row[data-ide-open-session]');
         if (rowEl && rowEl.dataset.ideOpenSession) {
           e.preventDefault();
           openSessionContextMenu(rowEl.dataset.ideOpenSession, e.clientX, e.clientY);
+          return;
+        }
+        const grpHdr = e.target.closest?.('.ide-tree-group-hdr');
+        const grpEl = grpHdr?.closest?.('.ide-tree-group[data-ide-group]');
+        const gid = grpEl?.dataset?.ideGroup || '';
+        if (gid && gid !== 'ungrouped' && gid !== 'archived') {
+          e.preventDefault();
+          openGroupContextMenu(gid, e.clientX, e.clientY);
+        }
+      });
+      sideTree.addEventListener('keydown', async (e) => {
+        if (isPinLocked()) return;
+        if (activeIdeRename) {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            e.stopPropagation();
+            finishIdeInlineRename(true);
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            finishIdeInlineRename(false);
+          }
+          return;
+        }
+        const activeRowOrTarget =
+          e.target.closest?.('.ide-tree-row[data-ide-open-session]') ||
+          document.activeElement?.closest?.('.ide-tree-row[data-ide-open-session]');
+        const activeGrpOrTarget =
+          e.target.closest?.('.ide-tree-group-btn[data-group-id]') ||
+          document.activeElement?.closest?.('.ide-tree-group-btn[data-group-id]');
+        const rowEl = activeRowOrTarget || null;
+        const grpBtn = activeGrpOrTarget || null;
+        if (e.key === 'F2') {
+          e.preventDefault();
+          if (rowEl && rowEl.dataset.ideOpenSession) {
+            beginIdeInlineRename('session', rowEl.dataset.ideOpenSession);
+          } else if (grpBtn && grpBtn.dataset.groupId && grpBtn.dataset.groupId !== 'ungrouped' && grpBtn.dataset.groupId !== 'archived') {
+            beginIdeInlineRename('group', grpBtn.dataset.groupId);
+          }
+          return;
+        }
+        if ((e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) && rowEl?.dataset?.ideOpenSession) {
+          e.preventDefault();
+          const rect = rowEl.getBoundingClientRect();
+          openSessionContextMenu(rowEl.dataset.ideOpenSession, rect.left + 24, rect.bottom + 2);
+          return;
+        }
+        if (e.key === 'Delete' && rowEl?.dataset?.ideOpenSession && e.target === rowEl) {
+          const sid = rowEl.dataset.ideOpenSession;
+          const r = (appState?.rows || []).find((x) => x && x.id === sid);
+          if (r && !r.archived) {
+            e.preventDefault();
+            rowEl.querySelector('[data-sess-act="archive"]')?.click();
+          }
+          return;
+        }
+        if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && rowEl && e.target === rowEl) {
+          e.preventDefault();
+          const allVisible = Array.from(sideTree.querySelectorAll('.ide-tree-row[data-ide-open-session]')).filter(
+            (n) => !n.closest('.ide-tree-group.collapsed')
+          );
+          const idx = allVisible.indexOf(rowEl);
+          const nextIdx = e.key === 'ArrowDown' ? idx + 1 : idx - 1;
+          if (nextIdx >= 0 && nextIdx < allVisible.length) {
+            allVisible[nextIdx].focus();
+          }
+        }
+      });
+      sideTree.addEventListener('focusout', (e) => {
+        if (activeIdeRename && e.target === activeIdeRename.el) {
+          finishIdeInlineRename(true);
         }
       });
       sideTree.addEventListener('pointerover', (e) => {
@@ -20482,7 +22093,8 @@
           ($('cmd-modal') && !$('cmd-modal').hidden) ||
             ($('conn-modal') && !$('conn-modal').hidden) ||
             ($('notif-modal') && !$('notif-modal').hidden) ||
-            ($('acct-signin-modal') && !$('acct-signin-modal').hidden)
+            ($('acct-signin-modal') && !$('acct-signin-modal').hidden) ||
+            ($('acct-details-modal') && !$('acct-details-modal').hidden)
         );
         const dock = $('chat-question-dock');
         if (!inField && !anyModalOpen && dock && !dock.hidden && getComputedStyle(dock).display !== 'none') {
@@ -20544,6 +22156,21 @@
         if ($('acct-signin-modal') && !$('acct-signin-modal').hidden) {
           closeAccountSignInModal();
         }
+        if ($('acct-details-modal') && !$('acct-details-modal').hidden) {
+          closeAccountDetailsModal();
+        }
+        if (addAccountTrayState) {
+          closeAddAccountTray();
+        }
+        if (activeInlineAcctEdit) {
+          const prevSurf = activeInlineAcctEdit.surface;
+          activeInlineAcctEdit = null;
+          if (prevSurf === 'sidebar') renderIdeSidebar();
+          else renderPulseView();
+        }
+        if (activeIdeRename) {
+          finishIdeInlineRename(false);
+        }
         if (prefs.inspectorOpen && prefs.inspectorFullStage) {
           prefs.inspectorFullStage = false;
           saveJson(STORAGE_KEYS.PREFS, prefs);
@@ -20593,6 +22220,11 @@
       const acctModal = $('acct-signin-modal');
       if (acctModal && !acctModal.hidden) {
         closeAccountSignInModal();
+        return;
+      }
+      const detailsModal = $('acct-details-modal');
+      if (detailsModal && !detailsModal.hidden) {
+        closeAccountDetailsModal();
         return;
       }
       const notifModal = $('notif-modal');
@@ -20806,6 +22438,12 @@
           r.unread = rec.unread;
           if (!rec.unread && r.dot === 'unread') r.dot = r.open ? 'idle' : null;
           if (rec.unread && !r.dot && r.status !== 'working' && r.status !== 'waiting') r.dot = 'unread';
+          settled = false;
+        }
+      }
+      if ('title' in rec && rec.title) {
+        if (String(r.title || '').trim() !== rec.title) {
+          r.title = rec.title;
           settled = false;
         }
       }
@@ -21535,7 +23173,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=90', { updateViaCache: 'none' })
+        .register('sw.js?v=91', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
@@ -21828,7 +23466,7 @@
 
   window.__theoTestWs = {
     ...((isHeadlessBrowser || (typeof window !== 'undefined' && window.__THEO_ALLOW_PROBE_MOCK_FETCH))
-      ? { buildMigrationUrl: () => buildTheoMigrationUrl() }
+      ? { buildMigrationUrl: () => buildTheoMigrationUrl(), renderSidebar: () => renderIdeSidebar() }
       : {}),
     connectLocalWs,
     connectEdgeWs,

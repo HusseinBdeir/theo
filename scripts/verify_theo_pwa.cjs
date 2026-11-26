@@ -3612,7 +3612,7 @@ async function main() {
       after?.click();
       await new Promise((r) => setTimeout(r, 40));
       out.secondCmd = window.__theoLastQuarantinedCmd ? 1 : 0;
-      // Account sign-in with VS Code closed on the PC: the sign-in is started on that PC and its sheet opens.
+      // Account sign-in with VS Code closed on the PC: inline/modal form opens without prompt(), and starts sign-in on that PC.
       let promptCalls = 0;
       const origPrompt = window.prompt;
       window.prompt = () => { promptCalls += 1; return 'claude'; };
@@ -3621,6 +3621,8 @@ async function main() {
       probe.dataset.accountAddRemote = 'claude';
       document.body.appendChild(probe);
       probe.click();
+      await new Promise((r) => setTimeout(r, 30));
+      document.querySelector('[data-add-acct-form]')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
       await new Promise((r) => setTimeout(r, 60));
       probe.remove();
       window.prompt = origPrompt;
@@ -3663,7 +3665,7 @@ async function main() {
     assert.strictEqual(readyA.afterDisabled, true, 'the button locks while the PC applies its setup');
     assert.ok(readyA.afterLabel.startsWith('Applying on Gamma'));
     assert.strictEqual(readyA.secondCmd, 0, 'a second tap does not send a second request');
-    assert.strictEqual(readyA.promptCalls, 1, 'adding an account no longer needs VS Code open on the PC');
+    assert.strictEqual(readyA.promptCalls, 0, 'adding an account uses the add-account form with zero window.prompt calls');
     assert.deepStrictEqual(
       readyA.accountCmd,
       { subAction: 'accountAdd', targetDeviceId: 'host-gamma', provider: 'claude', liveOnly: true },
@@ -3710,17 +3712,18 @@ async function main() {
       q()?.querySelector('[data-pwa-ready-toggle]')?.click();
       await new Promise((r) => setTimeout(r, 40));
       out.hiddenAgain = q()?.querySelector('.pwa-ready-body')?.hasAttribute('hidden');
-      // With VS Code open on a PC, the sign-in is sent to that PC by id.
-      const origPrompt = window.prompt;
-      window.prompt = () => 'claude:Work';
+      // With VS Code open on a PC, the sign-in is sent to that PC by id via the add-account form (zero prompt()).
       window.__theoLastQuarantinedCmd = null;
       const probe = document.createElement('button');
       probe.dataset.accountAddRemote = 'claude';
       document.body.appendChild(probe);
       probe.click();
-      await new Promise((r) => setTimeout(r, 40));
+      await new Promise((r) => setTimeout(r, 30));
+      const lblInp = document.getElementById('acct-modal-add-label') || document.getElementById('ide-add-tray-label');
+      if (lblInp) lblInp.value = 'Work';
+      document.querySelector('[data-add-acct-form]')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 50));
       probe.remove();
-      window.prompt = origPrompt;
       const cmd = window.__theoLastQuarantinedCmd || {};
       out.accountCmd = { subAction: cmd.subAction, targetDeviceId: cmd.targetDeviceId, provider: cmd.provider, label: cmd.label };
 
@@ -3841,16 +3844,15 @@ async function main() {
         setupText: document.getElementById('pulse-pc-setup-card')?.textContent || ''
       };
       // A PC on an older build cannot report a sign-in's progress: no sheet, the request goes out as before.
-      const origPrompt = window.prompt;
-      window.prompt = () => 'claude';
       window.__theoLastQuarantinedCmd = null;
       const probe = document.createElement('button');
       probe.dataset.accountAddRemote = 'claude';
       document.body.appendChild(probe);
       probe.click();
+      await new Promise((r) => setTimeout(r, 30));
+      document.querySelector('[data-add-acct-form]')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
       await new Promise((r) => setTimeout(r, 60));
       probe.remove();
-      window.prompt = origPrompt;
       const cmd = window.__theoLastQuarantinedCmd || {};
       out.legacyCmd = { subAction: cmd.subAction, liveOnly: cmd.liveOnly === true, targetDeviceId: cmd.targetDeviceId || '' };
       out.sheetOpen = !document.getElementById('acct-signin-modal').hidden;
@@ -3935,7 +3937,7 @@ async function main() {
     assert.strictEqual(pulse3p5h.crit, true, 'Claude & GPT (5hr) >= 90% must render .crit bar on Pulse');
     assert.strictEqual(side3p5h.crit, true, 'Claude & GPT (5hr) >= 90% must render .crit bar on Desktop IDE sidebar');
     assert.strictEqual(pulse3p7d.reset, 'Window idle', 'Expired Claude & GPT (7 day) must show Window idle on Pulse');
-    assert.strictEqual(side3p7d.reset, 'Idle', 'Expired Claude & GPT (7 day) must show compact Idle on Desktop IDE sidebar');
+    assert.strictEqual(side3p7d.reset, 'Window idle', 'Expired Claude & GPT (7 day) must show Window idle on Desktop IDE sidebar');
 
     // Pool distinction + hide/show toggle parity + stale-snapshot resistance + 90% alert muting across Pulse and Desktop IDE Sidebar
     const togglePoolVerify = await evalJs(`(async () => {
@@ -4661,7 +4663,13 @@ async function main() {
         return true;
       })()`);
       await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
-      await new Promise((r) => setTimeout(r, 600));
+      const navDeadline = Date.now() + 5000;
+      while (Date.now() < navDeadline) {
+        const ready = await evalJs(`Boolean(document.getElementById('view-chat')?.classList.contains('active') && document.getElementById('ctx-pill-label')?.textContent?.trim() && document.getElementById('ctx-pill-label').textContent.trim() !== '0 / 512k · 0%')`);
+        if (ready) break;
+        await new Promise((r) => setTimeout(r, 80));
+      }
+      await new Promise((r) => setTimeout(r, 60));
       return evalJs(`(() => {
         document.getElementById('btn-ctx-window')?.click();
         return {
@@ -8324,7 +8332,13 @@ async function main() {
 
       // Verify reload preserves dynamic XHigh choice on sess-v90-claude via cachedStore pre-sanitization hydration
       await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
-      await new Promise((r) => setTimeout(r, 600));
+      const navDeadline = Date.now() + 5000;
+      while (Date.now() < navDeadline) {
+        const ready = await evalJs(`Boolean(document.getElementById('view-chat')?.classList.contains('active') && document.getElementById('ctx-pill-label')?.textContent?.trim() && document.getElementById('ctx-pill-label').textContent.trim() !== '0 / 512k · 0%')`);
+        if (ready) break;
+        await new Promise((r) => setTimeout(r, 80));
+      }
+      await new Promise((r) => setTimeout(r, 60));
       const postReloadClaude = await evalJs(`(() => {
         document.querySelector('.ide-tree-row[data-ide-open-session="sess-v90-claude"]')?.click();
         return document.getElementById('chat-model-pill')?.textContent?.trim() || '';
@@ -8347,6 +8361,415 @@ async function main() {
       assert.strictEqual(freshAutoAlign.agy, 'orchestrator-carbon', 'Fresh browser must auto-align to live default Orchestrator (Carbon)');
       assert.strictEqual(freshAutoAlign.claude, 'claude-opus-5-5', 'Fresh browser must auto-align to live default Claude Opus 5.5');
       console.log('[PASS] Adversarial #26: v90 Live Model Catalog Replacement, 0-Effort Orchestrator, XHigh, LWW, Neon 1-tap Carbon & isabi-app default verified');
+    }
+
+    // --- Adversarial #27: Phase 2 (1:1 Sidebar Accounts, Quota Bars, Reconciler, Inline Rename, Host Health) + Ext #1 ---
+    {
+      await cdp.send('Emulation.setDeviceMetricsOverride', {
+        width: 1280,
+        height: 820,
+        deviceScaleFactor: 1,
+        mobile: false
+      }, sessionId);
+      await evalJs(`(() => {
+        const now = Date.now();
+        const rawCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{"threads":{}}');
+        rawCache.threads = rawCache.threads || {};
+        rawCache.threads['v91-s1'] = { id: 'v91-s1', provider: 'antigravity', model: 'Gemini 4 Carbon (High)', messages: [{ id: 'm1', role: 'user', text: 'Phase 2 check', createdAt: new Date(now - 5000).toISOString() }] };
+        const snap = {
+          generatedAt: now,
+          hideClaudeDesktop: false,
+          hideThirdPartyQuota: false,
+          accountOrder: ['antigravity:p2-a@example.com', 'claude:p2-c@example.com'],
+          groups: [{ id: 'v91-grp', name: 'Sprint V91', collapsed: false }],
+          devices: [
+            {
+              id: 'p2-dev',
+              name: 'StudioPC',
+              online: true,
+              local: true,
+              sessionCount: 4,
+              pwaReady: { ok: true, signIn: true, vscodeOpen: true },
+              pcSetup: { ok: false, okCount: 6, totalCount: 8, pendingCount: 2, pendingTitles: ['Sync scripts', 'Bridge'] },
+              hostHealth: {
+                hotSwapHold: { held: true, stage: 'canary', file: 'extension.js', error: 'Hold check test' },
+                autoReload: { pending: true, state: 'failed', reasons: ['Bundle updated'], failure: { firstAt: now } },
+                skipMessage: 'Skipped 1 patch notice test'
+              }
+            }
+          ],
+          pcSetup: { ok: false, okCount: 6, totalCount: 8, pendingCount: 2, pendingTitles: ['Sync scripts', 'Bridge'] },
+          hotSwapHold: { held: true, stage: 'canary', file: 'extension.js', error: 'Hold check test' },
+          autoReload: { pending: true, state: 'failed', reasons: ['Bundle updated'], failure: { firstAt: now } },
+          bridge: { active: true, skipMessage: 'Skipped 1 patch notice test' },
+          pendingAccountLogin: { active: true, provider: 'claude', label: 'Team', message: 'Waiting for verification', awaitingVerification: true },
+          antigravityModelCatalog: {
+            source: 'live-rpc',
+            updatedAt: now,
+            activeDefaultModelId: 'MODEL_PLACEHOLDER_M427',
+            activeDefaultLabel: 'Gemini 4 Carbon (High)',
+            models: [
+              { modelId: 'MODEL_PLACEHOLDER_M427', slugId: 'gemini-4-carbon-high', label: 'Gemini 4 Carbon (High)', baseLabel: 'Gemini 4 Carbon', isFirstPartyGemini: true, supportsThinking: true, effortTier: 'high', inClientPicker: true, sortOrder: 0, maxContextTokens: 512000, quotaRemainingFraction: 0.72 },
+              { modelId: 'MODEL_PLACEHOLDER_M525', slugId: 'gemini-4-hydrogen-high', label: 'Gemini 4 Hydrogen (High)', baseLabel: 'Gemini 4 Hydrogen', isFirstPartyGemini: true, supportsThinking: true, effortTier: 'high', inClientPicker: true, sortOrder: 1, maxContextTokens: 512000, quotaRemainingFraction: 0.22 },
+              { modelId: 'MODEL_PLACEHOLDER_M301', slugId: 'gemini-4-crit-low', label: 'Gemini 4 Critical', baseLabel: 'Gemini 4 Critical', isFirstPartyGemini: true, supportsThinking: false, inClientPicker: true, sortOrder: 2, maxContextTokens: 256000, quotaRemainingFraction: 0.08 }
+            ]
+          },
+          providers: {
+            antigravity: {
+              signedIn: true,
+              accounts: [
+                {
+                  id: 'antigravity:p2-a@example.com',
+                  provider: 'antigravity',
+                  active: true,
+                  label: 'Antigravity',
+                  account: { available: true, email: 'p2-a@example.com', plan: 'Google AI Ultra' },
+                  usage: {
+                    limits: [
+                      { label: 'Gemini Pro Window', pct: 34, reset: now + 3 * 86400000 + 2 * 3600000 },
+                      { label: 'Idle Pool', pct: 0, expired: true, reset: now - 10000 },
+                      { label: 'Unknown Quota Pool', pct: 0, known: false }
+                    ]
+                  }
+                }
+              ]
+            },
+            claude: {
+              signedIn: true,
+              accounts: [
+                {
+                  id: 'claude:p2-c@example.com',
+                  provider: 'claude',
+                  active: true,
+                  label: 'Claude Code',
+                  account: { available: true, email: 'p2-c@example.com', plan: 'Claude Max' },
+                  usage: { limits: [] }
+                }
+              ]
+            }
+          },
+          rows: [
+            { id: 'v91-s1', key: 'v91-s1', title: 'Alpha Stream', provider: 'antigravity', group: 'v91-grp', at: now - 1000, status: 'idle', deviceId: 'p2-dev' },
+            { id: 'v91-s2', key: 'v91-s2', title: 'Beta Stream', provider: 'antigravity', group: 'v91-grp', at: now - 4000, status: 'idle', deviceId: 'p2-dev' },
+            { id: 'v91-desk', key: 'v91-desk', title: 'Desktop Origin Row', provider: 'claude', claudeDesktop: true, origin: 'claude_desktop', at: now - 6000, status: 'idle', deviceId: 'p2-dev' },
+            { id: 'v91-arc', key: 'v91-arc', title: 'Archived Item', provider: 'antigravity', archived: true, at: now - 9000, status: 'completed', deviceId: 'p2-dev' }
+          ]
+        };
+        rawCache.snapshot = snap;
+        rawCache.state = snap;
+        localStorage.setItem('theo_remote_cache_v3', JSON.stringify(rawCache));
+        localStorage.removeItem('theo_remote_outbox_v1');
+        try { sessionStorage.removeItem('theo_pinned_nav_v1'); } catch {}
+        localStorage.setItem('theo_remote_prefs_v1', JSON.stringify({
+          customBridgeUrl: '',
+          edgeRelayUrl: '',
+          cloudUrl: '',
+          activeTab: 'chat',
+          sidebarFilter: 'all',
+          selectedThreadId: 'v91-s1',
+          composerMode: 'reply',
+          collapsedSessionGroups: {}
+        }));
+        window.__theoPromptCalls = 0;
+        window.prompt = () => { window.__theoPromptCalls++; return null; };
+      })()`);
+      await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+      await new Promise((r) => setTimeout(r, 700));
+
+      const p2Probe = await evalJs(`(async () => {
+        const swSrc = await fetch('./sw.js?t=' + Date.now()).then((r) => r.text());
+        const swHasV91 = swSrc.includes("'theo-remote-v91'");
+        const titleCount = document.querySelectorAll('[title]').length;
+        const ctxPillIdle = document.getElementById('ctx-pill-label')?.textContent?.trim() || '';
+        const ctxHas22019 = ctxPillIdle.includes('22019');
+
+        // Extension #1: Quota bars inside #model-picker-body
+        document.getElementById('chat-model-picker-btn')?.click();
+        await new Promise((r) => setTimeout(r, 60));
+        const pickerEl = document.getElementById('model-picker-body');
+        const quotaCount = pickerEl ? pickerEl.querySelectorAll('.vs-model-quota').length : 0;
+        const hasLowCls = Boolean(pickerEl?.querySelector('.vs-model-quota.is-low'));
+        const hasCritCls = Boolean(pickerEl?.querySelector('.vs-model-quota.is-crit'));
+        const has72Pct = Boolean(pickerEl?.textContent?.includes('72%'));
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+        // Phase 2.1: Accounts & Quota
+        const acctCards = Array.from(document.querySelectorAll('#ide-sidebar-accounts .ide-acct-card'));
+        const roleTexts = Array.from(document.querySelectorAll('#ide-sidebar-accounts .ide-acct-role')).map((e) => e.textContent.trim());
+        const hasDuplicateRole = roleTexts.includes('Antigravity') || roleTexts.includes('Claude Code');
+        const acctHtml = document.getElementById('ide-sidebar-accounts')?.innerHTML || '';
+        const hasResetsIn3d = acctHtml.includes('Resets in 3d 2h');
+        const hasWindowIdle = acctHtml.includes('Window idle');
+        const hasUnknownDash = Array.from(document.querySelectorAll('#ide-sidebar-accounts .ide-qmeta strong')).some((e) => e.textContent.trim() === '—');
+        const resetSingleLine = Array.from(document.querySelectorAll('#ide-sidebar-accounts .ide-qrst')).every((e) => e.getClientRects().length <= 1);
+        const claudeEmptyNoFake250 = !acctHtml.includes('Fable limit') && !acctHtml.includes('250M');
+        const acctCountBadge = document.getElementById('ide-accounts-count')?.textContent?.trim() || '';
+        const pendingLoginHtml = document.getElementById('ide-pending-login-slot')?.innerHTML || '';
+        const pendingHasBanner = !document.getElementById('ide-pending-login-slot')?.hidden && pendingLoginHtml.includes('Claude Code');
+        const pendingLeaksUrl = pendingLoginHtml.includes('https://');
+
+        // Pending login Cancel -> sends accountSignInCancel (liveOnly + targetDeviceId) & hides banner
+        window.__theoLastQuarantinedCmd = null;
+        document.querySelector('[data-pending-login-act="cancel"]')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+        const cancelLoginCmd = window.__theoLastQuarantinedCmd || null;
+        const pendingHiddenAfterCancel = Boolean(document.getElementById('ide-pending-login-slot')?.hidden);
+
+        // Inline + Add Tray & Details Modal (0 prompt calls)
+        document.getElementById('ide-acct-add-btn')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+        const addTrayOpen = !document.getElementById('ide-add-account-tray')?.hidden && Boolean(document.getElementById('ide-add-tray-label'));
+        document.querySelector('[data-add-tray-cancel]')?.click();
+
+        document.getElementById('ide-acct-details-btn')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+        const detailsOpen = !document.getElementById('acct-details-modal')?.hidden;
+        window.__theoLastQuarantinedCmd = null;
+        document.querySelector('[data-acct-details-act="refresh"]')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+        const refreshAcctCmd = window.__theoLastQuarantinedCmd || null;
+        document.getElementById('acct-details-close')?.click();
+
+        // Inline nickname edit + move down reorder
+        document.querySelector('#ide-sidebar-accounts [data-account-label="antigravity:p2-a@example.com"]')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+        const nickInp = document.querySelector('#ide-sidebar-accounts .ide-acct-inline-edit');
+        if (nickInp) nickInp.value = 'Primary Work';
+        document.querySelector('#ide-sidebar-accounts [data-acct-label-form]')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        await new Promise((r) => setTimeout(r, 50));
+        const savedRole = document.querySelector('#ide-sidebar-accounts .ide-acct-role')?.textContent?.trim() || '';
+        const orderBeforeMove = Array.from(document.querySelectorAll('#ide-sidebar-accounts .ide-acct-card')).map((e) => e.dataset.quotaCardId);
+        document.querySelector('#ide-sidebar-accounts [data-account-move="down"][data-account-id="antigravity:p2-a@example.com"]')?.click();
+        await new Promise((r) => setTimeout(r, 50));
+        const orderAfterMove = Array.from(document.querySelectorAll('#ide-sidebar-accounts .ide-acct-card')).map((e) => e.dataset.quotaCardId);
+
+        // Host Health Stack (all 4 exception cards) + Dismiss AutoReload failure clears card across hostHealth
+        const healthStack = document.getElementById('ide-host-health-stack');
+        const healthCardCount = healthStack ? healthStack.querySelectorAll('.ide-health-card').length : 0;
+        window.__theoLastQuarantinedCmd = null;
+        document.querySelector('#ide-host-health-stack [data-host-act="dismissAutoReloadFailure"]')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+        const dismissCmd = window.__theoLastQuarantinedCmd || null;
+        const autoReloadFailGoneAfterDismiss = !document.querySelector('#ide-host-health-stack [data-host-act="dismissAutoReloadFailure"]');
+
+        // Zero-flicker reconcileIdeTreeDOM + pointer freeze
+        const treeEl = document.getElementById('ide-sidebar-tree');
+        const rowBefore = treeEl?.querySelector('.ide-tree-row[data-ide-open-session="v91-s1"]') || null;
+        treeEl?.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true, pointerType: 'mouse' }));
+        const st = window.__theoTestWs.getState();
+        const betaRow = st.rows.find((r) => r.id === 'v91-s2');
+        if (betaRow) betaRow.at = Date.now() + 60000;
+        window.__theoTestWs.renderSidebar?.();
+        if (rowBefore) {
+          // Negative rename guard: F2 + Escape reverts title without queuing rename
+          rowBefore.focus();
+          window.__theoLastQuarantinedCmd = null;
+          rowBefore.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true }));
+          await new Promise((r) => setTimeout(r, 20));
+          const escSpan = rowBefore.querySelector('.ide-tree-title');
+          if (escSpan) {
+            escSpan.textContent = 'Should Not Save';
+            escSpan.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          }
+          await new Promise((r) => setTimeout(r, 20));
+          const titleAfterEscape = rowBefore.querySelector('.ide-tree-title')?.textContent?.trim() || '';
+          const cmdAfterEscape = window.__theoLastQuarantinedCmd;
+
+          // Negative rename guard: whitespace-only Enter reverts without queuing rename
+          rowBefore.focus();
+          window.__theoLastQuarantinedCmd = null;
+          rowBefore.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true }));
+          await new Promise((r) => setTimeout(r, 20));
+          if (escSpan) {
+            escSpan.textContent = '   ';
+            escSpan.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+          }
+          await new Promise((r) => setTimeout(r, 20));
+          const titleAfterBlank = rowBefore.querySelector('.ide-tree-title')?.textContent?.trim() || '';
+          const cmdAfterBlank = window.__theoLastQuarantinedCmd;
+
+          // Positive title rename via F2 -> Enter
+          rowBefore.focus();
+          rowBefore.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true }));
+          await new Promise((r) => setTimeout(r, 30));
+          const titleSpan = rowBefore.querySelector('.ide-tree-title');
+          const renameEditable = titleSpan?.contentEditable === 'true';
+          if (titleSpan) {
+            titleSpan.textContent = 'Alpha Renamed V91';
+            titleSpan.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+          }
+          window.__theoTestWs.renderSidebar?.();
+          await new Promise((r) => setTimeout(r, 40));
+          // Check row order frozen while pointer inside tree
+          const idsWhileFrozen = Array.from(treeEl.querySelectorAll('.ide-tree-group[data-ide-group="v91-grp"] .ide-tree-row')).map((e) => e.dataset.ideOpenSession);
+          treeEl.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true, pointerType: 'mouse' }));
+          await new Promise((r) => setTimeout(r, 40));
+          const rowAfter = treeEl.querySelector('.ide-tree-row[data-ide-open-session="v91-s1"]');
+          const idsAfterUnfreeze = Array.from(treeEl.querySelectorAll('.ide-tree-group[data-ide-group="v91-grp"] .ide-tree-row')).map((e) => e.dataset.ideOpenSession);
+
+          // Context menu outside-click must clear ideMenuPinFreeze so deferred order flushes cleanly
+          const freezeTargetRow = treeEl.querySelector('.ide-tree-row[data-ide-open-session="v91-s1"]');
+          freezeTargetRow?.querySelector('[data-sess-ctx-menu]')?.click();
+          await new Promise((r) => setTimeout(r, 20));
+          const alphaRow = st.rows.find((r) => r.id === 'v91-s1');
+          if (alphaRow) alphaRow.at = Date.now() + 120000;
+          window.__theoTestWs.renderSidebar?.();
+          const idsFrozenDuringMenu = Array.from(treeEl.querySelectorAll('.ide-tree-group[data-ide-group="v91-grp"] .ide-tree-row')).map((e) => e.dataset.ideOpenSession);
+          document.body.click();
+          await new Promise((r) => setTimeout(r, 30));
+          const idsAfterOutsideMenuClose = Array.from(treeEl.querySelectorAll('.ide-tree-group[data-ide-group="v91-grp"] .ide-tree-row')).map((e) => e.dataset.ideOpenSession);
+
+          // Remove from group reversal via session context menu
+          treeEl.querySelector('.ide-tree-row[data-ide-open-session="v91-s2"] [data-sess-ctx-menu]')?.click();
+          await new Promise((r) => setTimeout(r, 20));
+          window.__theoLastQuarantinedCmd = null;
+          document.querySelector('#ide-context-menu [data-sess-act="group-remove"]')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          const groupRemoveCmd = window.__theoLastQuarantinedCmd || null;
+          const s2NowUngrouped = Boolean(treeEl.querySelector('.ide-tree-group[data-ide-group="ungrouped"] .ide-tree-row[data-ide-open-session="v91-s2"]'));
+
+          // Desktop pill & Hide Desktop toggle + Archived section + Unarchive all reversal
+          const hasDesktopPill = Boolean(treeEl.querySelector('.ide-tree-row[data-ide-open-session="v91-desk"] .session-origin-pill'));
+          const hasArchivedGroup = Boolean(treeEl.querySelector('.ide-tree-group[data-ide-group="archived"]'));
+          document.getElementById('ide-hide-desktop-chip')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          const desktopRowHidden = !treeEl.querySelector('.ide-tree-row[data-ide-open-session="v91-desk"]');
+
+          window.__theoLastQuarantinedCmd = null;
+          document.querySelector('.ide-tree-group[data-ide-group="archived"] [data-group-act="unarchive-all"]')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          const unarchiveAllCmd = window.__theoLastQuarantinedCmd || null;
+          const arcNowRestored = Boolean(treeEl.querySelector('.ide-tree-row[data-ide-open-session="v91-arc"]'));
+
+          // Group context menu
+          document.querySelector('[data-group-ctx-menu="v91-grp"]')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          const grpMenuHtml = document.getElementById('ide-context-menu')?.innerHTML || '';
+          const hasGrpRenameMenu = !document.getElementById('ide-context-menu')?.hidden && grpMenuHtml.includes('Rename Group');
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+          return {
+            swHasV91,
+            titleCount,
+            ctxHas22019,
+            quotaCount,
+            hasLowCls,
+            hasCritCls,
+            has72Pct,
+            acctCount: acctCards.length,
+            hasDuplicateRole,
+            hasResetsIn3d,
+            hasWindowIdle,
+            hasUnknownDash,
+            resetSingleLine,
+            claudeEmptyNoFake250,
+            acctCountBadge,
+            pendingHasBanner,
+            pendingLeaksUrl,
+            cancelLoginCmd: cancelLoginCmd ? { subAction: cancelLoginCmd.subAction, liveOnly: cancelLoginCmd.liveOnly, targetDeviceId: cancelLoginCmd.targetDeviceId } : null,
+            pendingHiddenAfterCancel,
+            addTrayOpen,
+            detailsOpen,
+            refreshAcctCmd: refreshAcctCmd ? { subAction: refreshAcctCmd.subAction, targetDeviceId: refreshAcctCmd.targetDeviceId } : null,
+            savedRole,
+            orderChanged: JSON.stringify(orderBeforeMove) !== JSON.stringify(orderAfterMove),
+            healthCardCount,
+            dismissCmd: dismissCmd ? { subAction: dismissCmd.subAction, targetDeviceId: dismissCmd.targetDeviceId } : null,
+            autoReloadFailGoneAfterDismiss,
+            titleAfterEscape,
+            cmdAfterEscape,
+            titleAfterBlank,
+            cmdAfterBlank,
+            renameEditable,
+            renamedTitle: treeEl.querySelector('.ide-tree-row[data-ide-open-session="v91-s1"] .ide-tree-title')?.textContent?.trim() || '',
+            idsWhileFrozen,
+            idsAfterUnfreeze,
+            idsFrozenDuringMenu,
+            idsAfterOutsideMenuClose,
+            groupRemoveCmd: groupRemoveCmd ? { subAction: groupRemoveCmd.subAction, ids: groupRemoveCmd.ids || [] } : null,
+            s2NowUngrouped,
+            sameDomNode: rowBefore === rowAfter,
+            hasDesktopPill,
+            hasArchivedGroup,
+            desktopRowHidden,
+            unarchiveAllCmd: unarchiveAllCmd ? { subAction: unarchiveAllCmd.subAction, value: unarchiveAllCmd.value } : null,
+            arcNowRestored,
+            hasGrpRenameMenu,
+            promptCalls: window.__theoPromptCalls || 0
+          };
+        }
+        return { error: 'rowBefore missing' };
+      })()`);
+
+      assert.strictEqual(p2Probe.swHasV91, true, 'sw.js must advertise theo-remote-v91');
+      assert.strictEqual(p2Probe.titleCount, 0, 'Zero native [title] tooltips allowed');
+      assert.strictEqual(p2Probe.ctxHas22019, false, 'Context pill must never show hardcoded 22019 fallback');
+      assert.ok(p2Probe.quotaCount >= 3, 'Model picker must render per-model quotaRemainingFraction bars');
+      assert.strictEqual(p2Probe.hasLowCls && p2Probe.hasCritCls && p2Probe.has72Pct, true, 'Quota bars must show percentage and is-low/is-crit classes');
+      assert.strictEqual(p2Probe.hasDuplicateRole, false, 'Sidebar accounts must never show duplicate Antigravity/Claude Code badge');
+      assert.strictEqual(p2Probe.hasResetsIn3d && p2Probe.hasWindowIdle && p2Probe.hasUnknownDash, true, 'Reset lines must show full Resets in 3d 2h, Window idle, and em-dash for known:false');
+      assert.strictEqual(p2Probe.resetSingleLine, true, 'Quota reset labels must remain single-line nowrap');
+      assert.strictEqual(p2Probe.claudeEmptyNoFake250, true, 'Empty Claude limits must never fabricate 250M or Fable limit');
+      assert.strictEqual(p2Probe.acctCountBadge, '2', 'Account section header count must reflect signed-in accounts');
+      assert.strictEqual(p2Probe.pendingHasBanner && !p2Probe.pendingLeaksUrl, true, 'Pending login banner must show progress without leaking OAuth URLs');
+      assert.deepStrictEqual(p2Probe.cancelLoginCmd, { subAction: 'accountSignInCancel', liveOnly: true, targetDeviceId: 'p2-dev' }, 'Pending login Cancel must send liveOnly accountSignInCancel with targetDeviceId');
+      assert.strictEqual(p2Probe.pendingHiddenAfterCancel, true, 'Pending login Cancel must hide banner');
+      assert.strictEqual(p2Probe.addTrayOpen, true, '+ Add tray must open inline without window.prompt');
+      assert.strictEqual(p2Probe.detailsOpen, true, 'Details modal must open cleanly');
+      assert.deepStrictEqual(p2Probe.refreshAcctCmd, { subAction: 'accountRefresh', targetDeviceId: 'p2-dev' }, 'Details Refresh Quotas must send accountRefresh with targetDeviceId');
+      assert.strictEqual(p2Probe.savedRole, 'Primary Work', 'Inline account label edit must update role badge');
+      assert.strictEqual(p2Probe.orderChanged, true, 'Account move down must reorder accounts');
+      assert.strictEqual(p2Probe.healthCardCount, 4, 'Host health stack must surface setup, hold, reload, and patch skip cards when active');
+      assert.deepStrictEqual(p2Probe.dismissCmd, { subAction: 'dismissAutoReloadFailure', targetDeviceId: 'p2-dev' });
+      assert.strictEqual(p2Probe.autoReloadFailGoneAfterDismiss, true, 'Dismiss must clear auto-reload failure card optimistically across hostHealth');
+      assert.strictEqual(p2Probe.titleAfterEscape, 'Alpha Stream', 'F2 Escape must revert inline session title');
+      assert.strictEqual(p2Probe.cmdAfterEscape, null, 'F2 Escape must emit zero rename command');
+      assert.strictEqual(p2Probe.titleAfterBlank, 'Alpha Stream', 'F2 blank submit must revert inline session title');
+      assert.strictEqual(p2Probe.cmdAfterBlank, null, 'F2 blank submit must emit zero rename command');
+      assert.strictEqual(p2Probe.renameEditable, true, 'F2 must enter inline contentEditable session rename');
+      assert.strictEqual(p2Probe.renamedTitle, 'Alpha Renamed V91', 'Enter must commit inline session rename');
+      assert.strictEqual(p2Probe.sameDomNode, true, 'reconcileIdeTreeDOM must preserve exact row DOM node identity across updates');
+      assert.deepStrictEqual(p2Probe.idsWhileFrozen, ['v91-s1', 'v91-s2'], 'Pointer-hover freeze must keep row order while pointer is inside tree');
+      assert.deepStrictEqual(p2Probe.idsAfterUnfreeze, ['v91-s2', 'v91-s1'], 'Order update must flush once pointer leaves tree');
+      assert.deepStrictEqual(p2Probe.idsFrozenDuringMenu, ['v91-s2', 'v91-s1'], 'Context menu open must freeze row order');
+      assert.deepStrictEqual(p2Probe.idsAfterOutsideMenuClose, ['v91-s1', 'v91-s2'], 'Outside-click menu close must unfreeze and flush deferred order');
+      assert.deepStrictEqual(p2Probe.groupRemoveCmd, { subAction: 'groupRemove', ids: ['v91-s2'] });
+      assert.strictEqual(p2Probe.s2NowUngrouped, true, 'Remove from Group must move session to Ungrouped');
+      assert.strictEqual(p2Probe.hasDesktopPill && p2Probe.hasArchivedGroup && p2Probe.desktopRowHidden, true, 'Desktop pill, Hide Desktop filter, and collapsible Archived group must work');
+      assert.deepStrictEqual(p2Probe.unarchiveAllCmd, { subAction: 'archive', value: false });
+      assert.strictEqual(p2Probe.arcNowRestored, true, 'Unarchive all must restore archived session into tree');
+      assert.strictEqual(p2Probe.hasGrpRenameMenu, true, 'Group context menu must open from group header actions');
+      assert.strictEqual(p2Probe.promptCalls, 0, 'Account add and label edit must use inline/modal controls without window.prompt');
+
+      // Mobile 390px iOS zoom guard: .ide-acct-inline-edit & .ide-add-tray-input >= 16px computed fontSize
+      await cdp.send('Emulation.setDeviceMetricsOverride', {
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 2,
+        mobile: true
+      }, sessionId);
+      const mobInputFonts = await evalJs(`(async () => {
+        document.querySelector('[data-tab="pulse"]')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+        document.querySelector('#pulse-quota-grid [data-account-label]')?.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const inlineFont = parseFloat(getComputedStyle(document.querySelector('#pulse-quota-grid .ide-acct-inline-edit')).fontSize || '0');
+        document.querySelector('#pulse-quota-grid [data-acct-label-cancel]')?.click();
+        const probe = document.createElement('button');
+        probe.dataset.accountAddRemote = 'antigravity';
+        document.body.appendChild(probe);
+        probe.click();
+        probe.remove();
+        await new Promise((r) => setTimeout(r, 30));
+        const trayInp = document.querySelector('#acct-signin-body .ide-add-tray-input');
+        const trayFont = trayInp ? parseFloat(getComputedStyle(trayInp).fontSize || '0') : 0;
+        document.querySelector('[data-add-tray-cancel]')?.click();
+        return { inlineFont, trayFont, overflowX: Math.max(0, document.documentElement.scrollWidth - window.innerWidth) };
+      })()`);
+      assert.ok(mobInputFonts.inlineFont >= 16, `Mobile inline account edit must be >= 16px, got ${mobInputFonts.inlineFont}`);
+      assert.ok(mobInputFonts.trayFont >= 16, `Mobile add-account tray input must be >= 16px, got ${mobInputFonts.trayFont}`);
+      assert.strictEqual(mobInputFonts.overflowX, 0, '0px horizontal overflow on mobile account edit & tray');
+      console.log('[PASS] Adversarial #27: Phase 2 (Accounts, Quota Bars, Reconcile DOM, Pointer Freeze, Inline Rename, Group Menu, Archived/Desktop, Host Health) + Ext #1 verified');
     }
 
     // Final error & network quarantine assertions (#21)
