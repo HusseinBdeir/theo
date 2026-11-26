@@ -80,6 +80,62 @@ function startStaticServer(rootDir) {
           }, delayMs);
           return;
         }
+        if (u.pathname === '/api/deliverable-preview') {
+          const reqPath = String(u.searchParams.get('path') || '').trim();
+          const page = Math.max(1, Number(u.searchParams.get('page') || 1));
+          if (!reqPath || reqPath.includes('..') || /\.(env|dev\.vars|sqlite)/i.test(reqPath) || reqPath.includes('bank-kyc-ali-bdeir')) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: 'Blocked sensitive deliverable path' }));
+            return;
+          }
+          if (reqPath.includes('deck_err') && page === 2) {
+            res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+            res.end(JSON.stringify({ ok: false, error: 'Page 2 failed to rasterize' }));
+            return;
+          }
+          const isHtml = /\.html?$/i.test(reqPath);
+          const isPptx = /\.pptx$/i.test(reqPath);
+          const isPdf = /\.pdf$/i.test(reqPath);
+          const samplePngB64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=';
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+          if (isHtml) {
+            res.end(JSON.stringify({
+              ok: true,
+              kind: 'html',
+              file: path.basename(reqPath),
+              relPath: reqPath,
+              size: 1200,
+              sourceHtml: '<!doctype html><html><body><h1>Demo Prototype</h1></body></html>',
+              sandboxedHtml: '<!doctype html><html><body><h1 id="proto-h1">Demo Prototype</h1></body></html>'
+            }));
+          } else {
+            res.end(JSON.stringify({
+              ok: true,
+              kind: isPptx ? 'pptx' : isPdf ? 'pdf' : 'pdf',
+              sourceKind: isPptx ? 'sibling-pdf' : 'pdf',
+              file: path.basename(reqPath),
+              relPath: reqPath,
+              size: 4096,
+              pageCount: 3,
+              page,
+              width: 1920,
+              height: 1080,
+              pageMime: 'image/png',
+              pageImageBase64: samplePngB64
+            }));
+          }
+          return;
+        }
+        if (u.pathname === '/api/deliverable-raw') {
+          res.writeHead(200, { 'Content-Type': 'application/pdf', 'Cache-Control': 'no-store' });
+          res.end('%PDF-1.4\n%%EOF\n');
+          return;
+        }
+        if (u.pathname === '/api/open-deliverable-app') {
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ ok: true, mode: 'dryRun', file: 'TransRep_Demo.pptx' }));
+          return;
+        }
         if (u.pathname === '/api/studio-capabilities') {
           res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
           res.end(
@@ -563,6 +619,121 @@ async function main() {
     console.log('[PASS] Static: sync SHA-256 matches Node crypto and edge-paired devices derive the Edge store URL and key');
   }
 
+  // Static/VM deliverable checks: multi-device bridge isolation, WS chunk continuation & :line parsing
+  {
+    const vm = require('vm');
+    const appText = fs.readFileSync(path.join(REPO_ROOT, 'js', 'app.js'), 'utf8');
+    const fnStart = appText.indexOf('function revokeActiveDeliverableBlobs()');
+    const fnEnd = appText.indexOf('function getThreadOpenDetailsMap(');
+    const fnStart2 = appText.indexOf('function parsePreviewTargetClient(');
+    const fnEnd2 = appText.indexOf('function collectSessionTouchedFiles(');
+    const fnStart3 = appText.indexOf('async function reassembleChunkedDeliverable(');
+    const fnEnd3 = appText.indexOf('async function openActiveDeliverableInApp(');
+    assert.ok(fnStart > 0 && fnEnd > fnStart && fnStart2 > 0 && fnEnd2 > fnStart2 && fnStart3 > 0 && fnEnd3 > fnStart3);
+    const dlvSlice = [
+      appText.slice(fnStart, fnEnd),
+      appText.slice(fnStart2, fnEnd2),
+      appText.slice(fnStart3, fnEnd3),
+      'this.__dlvApi = { revokeActiveDeliverableBlobs, fetchDeliverableFromVaultR2, parsePreviewTargetClient, reassembleChunkedDeliverable, fetchDeliverablePreview, blobMap, deliverablePreviewCache, deliverablePageCache, activeDeliverableBlobUrls };'
+    ].join('\n');
+    const httpCalls = [];
+    const wsCalls = [];
+    const revoked = [];
+    const blobMap = new Map();
+    const vmBox = {
+      URL: {
+        createObjectURL: (b) => { const u = `blob:mock-${blobMap.size + 1}`; blobMap.set(u, b); return u; },
+        revokeObjectURL: (u) => { revoked.push(u); blobMap.delete(u); }
+      },
+      Blob: function MockBlob(parts, opts) { this.parts = parts; this.type = opts?.type || ''; },
+      Uint8Array,
+      TextDecoder,
+      TextEncoder,
+      atob: (s) => Buffer.from(s, 'base64').toString('binary'),
+      btoa: (s) => Buffer.from(s, 'binary').toString('base64'),
+      window: { THEO_CLOUD_CFG: { memoryVaultUrl: 'https://memory.example.workers.dev' }, __THEO_ALLOW_PROBE_MOCK_FETCH: true },
+      document: { currentScript: null },
+      $: () => null,
+      connMode: 'local',
+      localBridgeBase: 'http://127.0.0.1:4318',
+      localWsDevice: { id: 'dev-local' },
+      localWsAuthed: false,
+      localWs: null,
+      edgeWsAuthed: true,
+      edgeWs: { readyState: 1 },
+      prefs: { activeTab: 'chat', inspectorOpen: true, selectedThreadId: 's-rem', customBridgeUrl: '' },
+      appState: { rows: [{ id: 's-rem', deviceId: 'dev-remote-mac', folder: 'ws1' }] },
+      threadsCache: {},
+      cloudCfg: { edgeAccessKey: 'k'.repeat(64) },
+      refreshCloudConfig: () => ({ edgeAccessKey: 'k'.repeat(64) }),
+      getEdgeStoreKeyHex: () => 'deadbeef',
+      isHeadlessBrowser: false,
+      inspectorFetchSeq: 0,
+      activeInspectorFileTarget: 'deck.pdf',
+      deliverablePreviewCache: new Map(),
+      deliverablePageCache: new Map(),
+      deliverableInFlightKeys: new Set(),
+      activeDeliverableBlobUrls: new Set(),
+      isNewSessionMode: () => false,
+      resolveStudioWorkspaceId: (ws) => String(ws || 'memory'),
+      coalesceThreadMessages: () => [],
+      renderSplitInspector: () => {},
+      authFetchLocal: async (u) => { httpCalls.push(u); return { ok: true, json: async () => ({ ok: true }) }; },
+      sendWsRpc: async (_ws, body) => {
+        wsCalls.push(body);
+        if (body.cmd?.type === 'getDeliverableChunk') {
+          return { ok: true, chunkBase64: Buffer.from('</body></html>').toString('base64'), nextOffset: 24, done: true };
+        }
+        return { ok: true, kind: 'pdf', file: 'deck.pdf', pageCount: 1, page: 1, pageImageBase64: 'AA==' };
+      },
+      fetch: async (u) => {
+        if (String(u).includes('/api/file/raw?')) {
+          return {
+            ok: true,
+            headers: { get: () => '' },
+            arrayBuffer: async () => new TextEncoder().encode('%PDF-1.4\n%%EOF\n').buffer
+          };
+        }
+        return { ok: false };
+      },
+      blobMap
+    };
+    vm.runInNewContext(dlvSlice, vmBox, { filename: 'app-deliverable-extract.js' });
+    const api = vmBox.__dlvApi;
+
+    assert.strictEqual(api.parsePreviewTargetClient('TransRep_Deck.pdf:2').filePath, 'TransRep_Deck.pdf');
+    assert.strictEqual(api.parsePreviewTargetClient('AEG/proto.html:42').filePath, 'AEG/proto.html');
+    assert.strictEqual(api.parsePreviewTargetClient('AEG/proto.html:10-20').startLine, 10);
+
+    // Multi-device isolation: remote session with connMode==='local' must dispatch over Edge WS, never localBridgeBase HTTP
+    await api.fetchDeliverablePreview('remote_deck.pdf', { id: 's-rem', deviceId: 'dev-remote-mac', folder: 'ws1' }, { page: 1 });
+    assert.strictEqual(httpCalls.length, 0, 'Remote-device deliverable must NEVER query localBridgeBase HTTP');
+    assert.strictEqual(wsCalls.some((c) => c.targetDeviceId === 'dev-remote-mac' && c.cmd?.type === 'getDeliverablePreview'), true);
+
+    // Chunk reassembly must NOT abort when effectiveLocalBase is truthy
+    const merged = await api.reassembleChunkedDeliverable(
+      { ok: true, kind: 'html', chunkBase64: Buffer.from('<html><body>').toString('base64'), nextOffset: 12, totalBytes: 26 },
+      'big.html',
+      's-rem',
+      'ws1',
+      'http://127.0.0.1:4318',
+      true,
+      'dev-remote-mac'
+    );
+    assert.strictEqual(merged.sandboxedHtml, '<html><body></body></html>', 'Chunk reassembly must finish even with localBridgeBase set');
+
+    // Vault R2 + revokeActiveDeliverableBlobs clears stale blobUrl on teardown
+    const vaultRes = await api.fetchDeliverableFromVaultR2('AEG-boxMind/deck.pptx', 'pptx', { folder: 'memory' });
+    assert.strictEqual(vaultRes.sourceKind, 'vault-r2-pdf');
+    assert.strictEqual(vaultRes.downloadFile, 'deck.pdf');
+    assert.ok(vaultRes.blobUrl.startsWith('blob:mock-'));
+    api.deliverablePageCache.set('k::p1', vaultRes);
+    api.revokeActiveDeliverableBlobs();
+    assert.strictEqual(revoked.length, 1);
+    assert.strictEqual(vaultRes.blobUrl, '', 'revokeActiveDeliverableBlobs must clear cached blobUrl to prevent dead iframe');
+    console.log('[PASS] Static: Deliverable multi-device isolation, WS chunk continuation, :line target strip & blobUrl revocation verified');
+  }
+
   const edgeExe = findEdgeBinary();
   const cdpPort = await getFreePort();
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'theo-cdp-verify-'));
@@ -627,22 +798,26 @@ async function main() {
       {
         source: `
           window.__THEO_HEADLESS_TEST = true;
-          if (!localStorage.getItem('theo_remote_cache_v3')) {
-            localStorage.setItem('theo_remote_cache_v3', ${JSON.stringify(seedCacheJson)});
-            localStorage.setItem('theo_remote_prefs_v1', JSON.stringify({
-              theme: 'light',
-              themeUserSet: true,
-              sound: false,
-              activeTab: 'pulse',
-              selectedThreadId: 'sess-alpha',
-              composerMode: 'reply',
-              freqUsage: {
-                devices: { 'theo-laptop': 5 },
-                repos: {},
-                threads: { 'sess-beta': 12, 'sess-alpha': 1 },
-                commands: {}
+          if (window === window.top) {
+            try {
+              if (!localStorage.getItem('theo_remote_cache_v3')) {
+                localStorage.setItem('theo_remote_cache_v3', ${JSON.stringify(seedCacheJson)});
+                localStorage.setItem('theo_remote_prefs_v1', JSON.stringify({
+                  theme: 'light',
+                  themeUserSet: true,
+                  sound: false,
+                  activeTab: 'pulse',
+                  selectedThreadId: 'sess-alpha',
+                  composerMode: 'reply',
+                  freqUsage: {
+                    devices: { 'theo-laptop': 5 },
+                    repos: {},
+                    threads: { 'sess-beta': 12, 'sess-alpha': 1 },
+                    commands: {}
+                  }
+                }));
               }
-            }));
+            } catch {}
           }
         `
       },
@@ -1842,7 +2017,7 @@ async function main() {
 
       // Negative #3c: Sensitive .env preview returns 403 error without rendering source rows
       envChip?.click();
-      await new Promise((r) => setTimeout(r, 45));
+      await new Promise((r) => setTimeout(r, 120));
       const envBlockedOk =
         document.querySelectorAll('#ide-inspector-body .insp-code-row').length === 0 &&
         Boolean(document.getElementById('ide-inspector-body')?.textContent?.includes('Blocked sensitive'));
@@ -7697,6 +7872,237 @@ async function main() {
       await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
       await new Promise((r) => setTimeout(r, 350));
       console.log('[PASS] Zero-secret Memory Vault shortcut + PIN-lock guard + 1280x500 rail reachability verified');
+    }
+
+    // Adversarial #25: v89 First-class .html / .pdf / .pptx Deliverable Viewer, Wide/Full-Stage, Keyboard/Swipe & 0px Overflow
+    {
+      const dlvProbe = await evalJs(`(async () => {
+        const swText = await fetch('./sw.js', { cache: 'no-store' }).then((r) => r.text());
+        const mfJson = await fetch('./manifest.json', { cache: 'no-store' }).then((r) => r.json());
+        const swMatch = swText.match(/CACHE_NAME = 'theo-remote-v(\\d+)'/);
+        const swVer = swMatch ? Number(swMatch[1]) : 0;
+        const mfAllMatched = Array.isArray(mfJson.icons) && mfJson.icons.every((ic) => String(ic.src || '').includes('?v=' + swVer));
+
+        document.querySelector('[data-tab="analytics"]')?.click();
+        await new Promise((r) => setTimeout(r, 25));
+        const bridgeInp = document.getElementById('input-custom-bridge');
+        if (bridgeInp) {
+          bridgeInp.value = location.origin;
+          document.getElementById('btn-save-bridge')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+        }
+        return { swVer, mfAllMatched };
+      })()`);
+      assert.ok(dlvProbe.swVer >= 89, `Expected sw.js >= v89 (got v${dlvProbe.swVer})`);
+      assert.strictEqual(dlvProbe.mfAllMatched, true, 'manifest.json icons must match sw.js version');
+
+      const chipProbe = await evalJs(`(async () => {
+        const mockState = {
+          rows: [{
+            id: 'sess-dlv-89',
+            title: 'Deliverables Demo',
+            provider: 'antigravity',
+            status: 'completed',
+            folder: 'theo',
+            updatedAt: Date.now()
+          }],
+          groups: [],
+          workspaces: [{ id: 'theo', name: 'THEO Remote PWA', branch: 'main', dirtyCount: 0 }]
+        };
+        const stream = document.getElementById('chat-stream');
+        // Open sess-v59 or inject test chips directly to verify bare + backtick deliverable rendering
+        const firstSess = document.querySelector('#ide-sidebar-tree [data-ide-open-session]');
+        if (firstSess) firstSess.click();
+        await new Promise((r) => setTimeout(r, 40));
+
+        // Inject synthetic deliverable chips matching formatTurnMarkdown output (on body so renderChatView does not detach them)
+        const hostDiv = document.createElement('div');
+        hostDiv.id = 'v89-dlv-test-chips';
+        hostDiv.innerHTML =
+          '<span class="md-file-chip is-clickable" data-preview-file="AEG-boxMind/aeg_clerk_assistant_prototype.html"><span class="md-chip-ico html">HTML</span><span>aeg_clerk_assistant_prototype.html</span></span>' +
+          '<span class="md-file-chip is-clickable" data-preview-file="AEG-boxMind/aeg_clerk_assistant_prototype.html:42"><span class="md-chip-ico html">HTML</span><span>aeg_clerk_assistant_prototype.html:42</span></span>' +
+          '<span class="md-file-chip is-clickable" data-preview-file="TransRep_AI_Assistant_Work_to_Date_2026-11-26.pptx"><span class="md-chip-ico ppt">PPT</span><span>TransRep_AI_Assistant_Work_to_Date_2026-11-26.pptx</span></span>' +
+          '<span class="md-file-chip is-clickable" data-preview-file="TransRep_AI_Assistant_Work_to_Date_2026-11-26.pdf:2"><span class="md-chip-ico pdf">PDF</span><span>TransRep_AI_Assistant_Work_to_Date_2026-11-26.pdf:2</span></span>' +
+          '<span class="md-file-chip is-clickable" data-preview-file="deck_err.pdf"><span class="md-chip-ico pdf">PDF</span><span>deck_err.pdf</span></span>';
+        document.body.appendChild(hostDiv);
+
+        // 1. Click HTML chip -> opens Preview mode + is-deliverable-wide + sandboxed iframe without allow-same-origin
+        hostDiv.querySelector('[data-preview-file$=".html"]')?.click();
+        await new Promise((r) => setTimeout(r, 110));
+        const pane = document.getElementById('ide-inspector-pane');
+        const htmlWide = Boolean(pane?.classList.contains('is-deliverable-wide'));
+        const htmlFrame = document.querySelector('#ide-inspector-body iframe.insp-html-frame');
+        const htmlSandbox = htmlFrame ? (htmlFrame.getAttribute('sandbox') || '') : '';
+        const htmlSrcdocOk = Boolean(htmlFrame && String(htmlFrame.srcdoc || '').includes('Demo Prototype'));
+
+        // Toggle Source & Full Stage
+        document.querySelector('#ide-inspector-subbar [data-insp-full-stage="1"]')?.click();
+        await new Promise((r) => setTimeout(r, 35));
+        const fullStageOn = Boolean(pane?.classList.contains('is-full-stage'));
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        await new Promise((r) => setTimeout(r, 35));
+        const fullStageOffOnEsc = Boolean(pane && !pane.hidden && !pane.classList.contains('is-full-stage'));
+
+        document.querySelector('#ide-inspector-subbar [data-insp-view-mode="source"]')?.click();
+        await new Promise((r) => setTimeout(r, 80));
+        const sourceRowsVisible = document.querySelectorAll('#ide-inspector-body .insp-code-row').length > 0;
+
+        // Re-click clean HTML chip while Source mode was active -> must stay in live Preview (no flip back to Source)
+        hostDiv.querySelector('[data-preview-file$=".html"]')?.click();
+        await new Promise((r) => setTimeout(r, 110));
+        const htmlPreviewRestored =
+          Boolean(document.querySelector('#ide-inspector-body iframe.insp-html-frame')) &&
+          document.querySelectorAll('#ide-inspector-body .insp-code-row').length === 0;
+
+        // Click HTML:42 chip -> strips :42 and opens Source at line
+        hostDiv.querySelector('[data-preview-file$=".html:42"]')?.click();
+        await new Promise((r) => setTimeout(r, 90));
+        const htmlLineSourceOk = (document.querySelector('#ide-inspector-subbar .insp-sub-path-txt')?.textContent || '').includes('#L42');
+
+        // 2. Click PDF:2 chip -> opens Preview Page 1 / 3 (verifies :line suffix strip + PDF forces Preview mode)
+        hostDiv.querySelector('[data-preview-file$=".pdf:2"]')?.click();
+        await new Promise((r) => setTimeout(r, 100));
+        const pdfPageLabel = document.querySelector('#ide-inspector-body .insp-deliverable-label')?.textContent || '';
+
+        // 3. Click PPTX chip -> opens Slide 1 / 3 + Next advances to Slide 2 / 3 + All Pages renders all 3 cards cleanly
+        hostDiv.querySelector('[data-preview-file$=".pptx"]')?.click();
+        await new Promise((r) => setTimeout(r, 100));
+        const slide1Text = document.querySelector('#ide-inspector-body .insp-deliverable-label')?.textContent || '';
+        document.querySelector('#ide-inspector-body [data-insp-dlv-page="2"]')?.click();
+        await new Promise((r) => setTimeout(r, 100));
+        const slide2Text = document.querySelector('#ide-inspector-body .insp-deliverable-label')?.textContent || '';
+
+        document.querySelector('#ide-inspector-body [data-insp-dlv-deck-mode="all"]')?.click();
+        let allSlideImgs = 0;
+        let allStillRendering = true;
+        for (let w = 0; w < 12; w++) {
+          await new Promise((r) => setTimeout(r, 45));
+          allSlideImgs = document.querySelectorAll('#ide-inspector-body .insp-page-card img').length;
+          allStillRendering = (document.getElementById('ide-inspector-body')?.textContent || '').includes('Rendering');
+          if (allSlideImgs === 3 && !allStillRendering) break;
+        }
+        document.querySelector('#ide-inspector-body [data-insp-dlv-deck-mode="single"]')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+
+        // 4. Negative: All Pages partial page failure (deck_err.pdf page 2 = 500) must NOT loop or poison deliverablePreviewCache
+        let errPage2Fetches = 0;
+        const origFetchDlv = window.fetch;
+        window.fetch = async (url, init) => {
+          const s = String(url || '');
+          if (s.includes('/api/deliverable-preview') && s.includes('deck_err') && s.includes('page=2')) {
+            errPage2Fetches += 1;
+          }
+          return origFetchDlv(url, init);
+        };
+        let errStageImgs = 0;
+        let errHasErrorMsg = false;
+        let errStillRendering = true;
+        let errPage2FetchesBeforeArrow = 0;
+        let errLabelAfterArrow = '';
+        try {
+          hostDiv.querySelector('[data-preview-file="deck_err.pdf"]')?.click();
+          await new Promise((r) => setTimeout(r, 100));
+          document.querySelector('#ide-inspector-body [data-insp-dlv-deck-mode="all"]')?.click();
+          await new Promise((r) => setTimeout(r, 260));
+          errPage2FetchesBeforeArrow = errPage2Fetches;
+          errStageImgs = document.querySelectorAll('#ide-inspector-body .insp-page-card img').length;
+          const errBodyTxt = document.getElementById('ide-inspector-body')?.textContent || '';
+          errHasErrorMsg = errBodyTxt.includes('Page 2 failed to rasterize');
+          errStillRendering = errBodyTxt.includes('Rendering');
+          document.querySelector('#ide-inspector-body [data-insp-dlv-deck-mode="single"]')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+          await new Promise((r) => setTimeout(r, 50));
+          errLabelAfterArrow = document.querySelector('#ide-inspector-body .insp-deliverable-label')?.textContent || '';
+        } finally {
+          window.fetch = origFetchDlv;
+        }
+
+        // Leave HTML deliverable open for mobile viewport + Full-Stage bbox checks
+        hostDiv.querySelector('[data-preview-file$=".html"]')?.click();
+        await new Promise((r) => setTimeout(r, 100));
+
+        const desktopOverflow = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+        const titleCount = document.querySelectorAll('[title]').length;
+        hostDiv.remove();
+        return {
+          htmlWide,
+          htmlSandbox,
+          htmlSrcdocOk,
+          fullStageOn,
+          fullStageOffOnEsc,
+          sourceRowsVisible,
+          htmlPreviewRestored,
+          htmlLineSourceOk,
+          pdfPageLabel,
+          slide1Text,
+          slide2Text,
+          allSlideImgs,
+          allStillRendering,
+          errPage2FetchesBeforeArrow,
+          errPage2Fetches,
+          errStageImgs,
+          errHasErrorMsg,
+          errStillRendering,
+          errLabelAfterArrow,
+          desktopOverflow,
+          titleCount
+        };
+      })()`);
+
+      assert.strictEqual(chipProbe.htmlWide, true, 'HTML preview must apply .is-deliverable-wide');
+      assert.strictEqual(chipProbe.htmlSandbox.includes('allow-same-origin'), false, 'HTML sandbox must NOT grant allow-same-origin');
+      assert.strictEqual(chipProbe.htmlSrcdocOk, true, 'HTML iframe must render srcdoc');
+      assert.strictEqual(chipProbe.fullStageOn, true, 'Full Stage toggle must add .is-full-stage');
+      assert.strictEqual(chipProbe.fullStageOffOnEsc, true, 'First Escape must exit Full Stage cleanly');
+      assert.strictEqual(chipProbe.sourceRowsVisible, true, 'Source toggle must show code rows');
+      assert.strictEqual(chipProbe.htmlPreviewRestored, true, 'Clicking .html chip from Source mode must restore HTML Preview without flipping back');
+      assert.strictEqual(chipProbe.htmlLineSourceOk, true, 'Clicking .html:42 chip must strip :42 into #L42 Source view');
+      assert.ok(chipProbe.pdfPageLabel.includes('Page 1 / 3'), `Expected PDF chip .pdf:2 label, got ${chipProbe.pdfPageLabel}`);
+      assert.ok(chipProbe.slide1Text.includes('Slide 1 / 3'), `Expected Slide 1 / 3, got ${chipProbe.slide1Text}`);
+      assert.ok(chipProbe.slide2Text.includes('Slide 2 / 3'), `Expected Slide 2 / 3, got ${chipProbe.slide2Text}`);
+      assert.strictEqual(chipProbe.allSlideImgs, 3, `All Pages mode must render all 3 slide images (got ${chipProbe.allSlideImgs})`);
+      assert.strictEqual(chipProbe.allStillRendering, false, 'All Pages mode must settle without leftover Rendering placeholders');
+      assert.strictEqual(chipProbe.errPage2FetchesBeforeArrow, 1, `Partial All Pages failure must fetch failed page 2 at most once before manual retry (got ${chipProbe.errPage2FetchesBeforeArrow})`);
+      assert.ok(chipProbe.errPage2Fetches <= 2, `Total fetches including manual ArrowRight retry must remain bounded (got ${chipProbe.errPage2Fetches})`);
+      assert.strictEqual(chipProbe.errStageImgs, 2, `Partial All Pages failure must render pages 1 & 3 (got ${chipProbe.errStageImgs})`);
+      assert.strictEqual(chipProbe.errHasErrorMsg, true, 'Failed page 2 card must show server error message');
+      assert.strictEqual(chipProbe.errStillRendering, false, 'Failed page 2 must NOT stay stuck on Rendering placeholder');
+      assert.ok(chipProbe.errLabelAfterArrow.includes('Page 2 / 3'), `ArrowRight must retain unpoisoned 3-page metadata, got ${chipProbe.errLabelAfterArrow}`);
+      assert.strictEqual(chipProbe.desktopOverflow, 0, `Desktop deliverable viewer overflow must be 0 (got ${chipProbe.desktopOverflow})`);
+      assert.strictEqual(chipProbe.titleCount, 0, 'Deliverable viewer must have 0 native [title] attributes');
+
+      // Mobile 390x844 & 844x390 bottom-sheet + Full-Stage bbox & 0px overflow checks while HTML deliverable is open
+      for (const vp of [{ width: 390, height: 844, mobile: true }, { width: 844, height: 390, mobile: true }]) {
+        await cdp.send('Emulation.setDeviceMetricsOverride', { ...vp, deviceScaleFactor: 2 }, sessionId);
+        await new Promise((r) => setTimeout(r, 70));
+        const mobSheet = await evalJs(`(() => {
+          const ov = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+          const fr = document.querySelector('#ide-inspector-body iframe.insp-html-frame');
+          const r = fr ? fr.getBoundingClientRect() : null;
+          document.querySelector('#ide-inspector-subbar [data-insp-full-stage="1"]')?.click();
+          const fsRect = fr ? fr.getBoundingClientRect() : null;
+          const fsOv = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+          document.querySelector('#ide-inspector-subbar [data-insp-full-stage="1"]')?.click();
+          return {
+            ov,
+            fsOv,
+            w: r ? Math.round(r.width) : 0,
+            h: r ? Math.round(r.height) : 0,
+            rightOk: r ? r.right <= window.innerWidth + 1 : false,
+            fsW: fsRect ? Math.round(fsRect.width) : 0,
+            fsH: fsRect ? Math.round(fsRect.height) : 0,
+            fsRightOk: fsRect ? fsRect.right <= window.innerWidth + 1 : false
+          };
+        })()`);
+        assert.strictEqual(mobSheet.ov, 0, `Bottom-sheet overflow at ${vp.width}x${vp.height} must be 0 (got ${mobSheet.ov})`);
+        assert.strictEqual(mobSheet.fsOv, 0, `Full-stage overflow at ${vp.width}x${vp.height} must be 0 (got ${mobSheet.fsOv})`);
+        assert.ok(mobSheet.w > 200 && mobSheet.h > 150 && mobSheet.rightOk, `Mobile HTML iframe bbox invalid at ${vp.width}x${vp.height}: ${JSON.stringify(mobSheet)}`);
+        assert.ok(mobSheet.fsW > 200 && mobSheet.fsH > 150 && mobSheet.fsRightOk, `Mobile Full-Stage HTML iframe bbox invalid at ${vp.width}x${vp.height}: ${JSON.stringify(mobSheet)}`);
+      }
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 2, mobile: false }, sessionId);
+      await evalJs(`document.getElementById('btn-close-inspector')?.click()`);
+      console.log('[PASS] Adversarial #25: v89 First-class .html/.pdf/.pptx Deliverable Viewer, Wide/Full-Stage & 0px overflow verified');
     }
 
     // Final error & network quarantine assertions (#21)

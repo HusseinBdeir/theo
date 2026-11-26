@@ -721,6 +721,7 @@
     inspectorOpen: false,
     inspectorTab: 'code',
     inspectorViewMode: 'source',
+    inspectorFullStage: false,
     splitWatchOpen: false,
     splitWatchThreadId: '',
     composerRouteExpanded: false,
@@ -778,9 +779,10 @@
   if (!['code', 'git', 'canvas', 'agents', 'outline'].includes(prefs.inspectorTab)) {
     prefs.inspectorTab = 'code';
   }
-  if (!['source', 'diff'].includes(prefs.inspectorViewMode)) {
+  if (!['preview', 'source', 'diff'].includes(prefs.inspectorViewMode)) {
     prefs.inspectorViewMode = 'source';
   }
+  prefs.inspectorFullStage = Boolean(prefs.inspectorFullStage);
   prefs.splitWatchOpen = Boolean(prefs.splitWatchOpen);
   prefs.splitWatchThreadId =
     typeof prefs.splitWatchThreadId === 'string' ? prefs.splitWatchThreadId.trim() : '';
@@ -11608,11 +11610,180 @@
 
   const chatOpenDetailsByThread = new Map();
   const filePreviewCache = new Map();
+  const deliverablePreviewCache = new Map();
+  const deliverablePageCache = new Map();
+  const deliverableInFlightKeys = new Set();
+  const activeDeliverableBlobUrls = new Set();
   const activeDockStepByCardKey = new Map();
   let activeInspectorFileTarget = '';
   let activeInspectorAgentId = '';
   let lastScrolledInspectorHlKey = '';
   let inspectorFetchSeq = 0;
+  let activeDeliverablePage = 1;
+  let activeDeliverableDeckMode = 'single';
+  let activeDeliverableZoomPct = 0;
+  let activeDeliverableSheetIdx = 0;
+
+  function revokeActiveDeliverableBlobs() {
+    for (const u of activeDeliverableBlobUrls) {
+      try { URL.revokeObjectURL(u); } catch {}
+    }
+    activeDeliverableBlobUrls.clear();
+    for (const entry of deliverablePreviewCache.values()) {
+      if (entry && entry.blobUrl) entry.blobUrl = '';
+    }
+    for (const entry of deliverablePageCache.values()) {
+      if (entry && entry.blobUrl) entry.blobUrl = '';
+    }
+  }
+
+  function teardownDeliverableInspectorFrames() {
+    const bodyEl = $('ide-inspector-body');
+    if (bodyEl) {
+      bodyEl.querySelectorAll('iframe.insp-html-frame').forEach((fr) => {
+        try { fr.removeAttribute('srcdoc'); } catch {}
+        try { fr.src = 'about:blank'; } catch {}
+      });
+    }
+    revokeActiveDeliverableBlobs();
+  }
+
+  function getDeliverableKindClient(filePath) {
+    const s = String(filePath || '').trim().split(/[?#]/)[0];
+    if (!s) return '';
+    if (/\.(html?|xhtml)$/i.test(s)) return 'html';
+    if (/\.pdf$/i.test(s)) return 'pdf';
+    if (/\.(pptx|ppsx|pptm)$/i.test(s)) return 'pptx';
+    if (/\.(xlsx|xlsm|xls|xlsb|csv|tsv)$/i.test(s)) return 'spreadsheet';
+    return '';
+  }
+
+  function injectOpaqueStorageShimClient(rawHtml) {
+    const html = String(rawHtml || '');
+    if (html.includes('data-theo-storage-shim="1"')) return html;
+    const shim =
+      '(function(){function mk(){var d=Object.create(null);return{get length(){return Object.keys(d).length;},clear:function(){d=Object.create(null);},getItem:function(k){k=String(k);return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null;},key:function(i){var ks=Object.keys(d);return i>=0&&i<ks.length?ks[i]:null;},removeItem:function(k){delete d[String(k)];},setItem:function(k,v){d[String(k)]=String(v);}};}["localStorage","sessionStorage"].forEach(function(p){try{var s=window[p];s.setItem("__t","1");s.removeItem("__t");}catch(_e){try{Object.defineProperty(window,p,{value:mk(),configurable:true});}catch(_e2){}}});})();';
+    const tag = `<script data-theo-storage-shim="1">${shim}</script>`;
+    if (/<head(?:\s[^>]*)?>/i.test(html)) return html.replace(/<head(?:\s[^>]*)?>/i, (m) => m + tag);
+    if (/<html(?:\s[^>]*)?>/i.test(html)) return html.replace(/<html(?:\s[^>]*)?>/i, (m) => m + tag);
+    return tag + html;
+  }
+
+  function mapMemoryPathForVaultR2(rawTarget, activeRow = null) {
+    const parsed = parsePreviewTargetClient(rawTarget);
+    let clean = String(parsed.filePath || '').replace(/\\/g, '/').trim();
+    if (!clean) return '';
+    const memIdx = clean.toLowerCase().indexOf('/bhfirms/memory/');
+    if (memIdx >= 0) {
+      clean = clean.slice(memIdx + '/bhfirms/memory/'.length);
+    } else if (/^[A-Za-z]:\//.test(clean) || clean.startsWith('/')) {
+      return '';
+    } else {
+      const wsId = resolveStudioWorkspaceId(activeRow);
+      if (wsId && wsId !== 'theo-memory' && wsId !== 'memory') {
+        // Still allow well-known memory subfolders when mentioned without full path
+        if (!/^(AEG-boxMind|ISABI|Docs|Reports|memory|Phases)\//i.test(clean)) return '';
+      }
+    }
+    clean = clean.replace(/^\/+/, '');
+    const low = clean.toLowerCase();
+    if (!clean || low.startsWith('private/') || low === 'private' || low.includes('..')) return '';
+    if (low.includes('bank-kyc-ali-bdeir') || low.includes('user-passports-antigua-lebanon')) return '';
+    return clean;
+  }
+
+  function hasPdfMagicHeaderClient(bytes) {
+    if (!(bytes instanceof Uint8Array) || bytes.length < 5) return false;
+    const maxScan = Math.min(bytes.length - 5, 1024);
+    for (let i = 0; i <= maxScan; i++) {
+      if (bytes[i] === 0x25 && bytes[i + 1] === 0x50 && bytes[i + 2] === 0x44 && bytes[i + 3] === 0x46 && bytes[i + 4] === 0x2d) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  async function fetchDeliverableFromVaultR2(rawTarget, kind, activeRow = null) {
+    if (isHeadlessBrowser) return null;
+    refreshCloudConfig();
+    if (!cloudCfg.edgeAccessKey) return null;
+    const rel = mapMemoryPathForVaultR2(rawTarget, activeRow);
+    if (!rel) return null;
+    const vaultBase = String(
+      window.THEO_CLOUD_CFG?.memoryVaultUrl || 'https://memory.husseinbdeir.workers.dev'
+    ).replace(/\/+$/, '');
+    const token = getEdgeStoreKeyHex(cloudCfg.edgeAccessKey);
+    if (!token) return null;
+
+    const tryVaultRaw = async (vaultPath) => {
+      const res = await fetch(`${vaultBase}/api/file/raw?path=${encodeURIComponent(vaultPath)}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) return null;
+      const metaHdr = res.headers.get('X-Vault-File-Meta') || '';
+      let meta = null;
+      try { meta = metaHdr ? JSON.parse(decodeURIComponent(metaHdr)) : null; } catch {}
+      if (meta && meta.encrypted) return null;
+      const buf = new Uint8Array(await res.arrayBuffer());
+      return { buf, meta, vaultPath };
+    };
+
+    try {
+      if (kind === 'html') {
+        const got = await tryVaultRaw(rel);
+        if (!got) return null;
+        const sourceHtml = new TextDecoder('utf-8', { fatal: false }).decode(got.buf);
+        return {
+          ok: true,
+          kind: 'html',
+          sourceKind: 'vault-r2',
+          file: rel.split('/').pop() || rel,
+          relPath: rel,
+          size: got.buf.length,
+          sourceHtml,
+          sandboxedHtml: injectOpaqueStorageShimClient(sourceHtml)
+        };
+      }
+      if (kind === 'pdf' || kind === 'pptx') {
+        const probeRel = kind === 'pptx' ? rel.replace(/\.(pptx|ppsx|pptm)$/i, '.pdf') : rel;
+        const got = await tryVaultRaw(probeRel);
+        if (got && hasPdfMagicHeaderClient(got.buf)) {
+          const blob = new Blob([got.buf], { type: 'application/pdf' });
+          const blobUrl = URL.createObjectURL(blob);
+          activeDeliverableBlobUrls.add(blobUrl);
+          return {
+            ok: true,
+            kind,
+            sourceKind: 'vault-r2-pdf',
+            file: rel.split('/').pop() || rel,
+            downloadFile: probeRel.split('/').pop() || probeRel,
+            rawMime: 'application/pdf',
+            relPath: probeRel,
+            size: got.buf.length,
+            blobUrl,
+            rawBytes: got.buf
+          };
+        }
+        if (kind === 'pptx') {
+          const rawPpt = await tryVaultRaw(rel);
+          if (rawPpt) {
+            return {
+              ok: true,
+              kind: 'pptx',
+              sourceKind: 'vault-r2-download',
+              file: rel.split('/').pop() || rel,
+              downloadFile: rel.split('/').pop() || rel,
+              rawMime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+              relPath: rel,
+              size: rawPpt.buf.length,
+              rawBytes: rawPpt.buf
+            };
+          }
+        }
+      }
+    } catch {}
+    return null;
+  }
 
   function getThreadOpenDetailsMap(threadId, create = false) {
     const clean = String(threadId || '').trim();
@@ -11648,6 +11819,13 @@
       if (m) {
         startLine = Math.max(1, Number(m[1]) || 0);
         endLine = Math.max(startLine, Number(m[2] || m[1]) || startLine);
+      }
+    } else {
+      const colMatch = raw.match(/:(\d+)(?:-(\d+))?$/);
+      if (colMatch && !/^[a-zA-Z]:$/.test(raw.slice(0, colMatch.index + 1))) {
+        filePath = raw.slice(0, colMatch.index).trim();
+        startLine = Math.max(1, Number(colMatch[1]) || 0);
+        endLine = Math.max(startLine, Number(colMatch[2] || colMatch[1]) || startLine);
       }
     }
     const displayBase = filePath.split(/[\\/]/).pop() || filePath;
@@ -11742,6 +11920,347 @@
 
   const filePreviewInFlightKeys = new Set();
 
+  async function reassembleChunkedDeliverable(firstPayload, rawTarget, sid, wsId, effectiveLocalBase, allowProbeHttp, targetDeviceId) {
+    const chunks = [];
+    const firstBytes = Uint8Array.from(atob(firstPayload.chunkBase64 || ''), (c) => c.charCodeAt(0));
+    chunks.push(firstBytes);
+    let offset = Number(firstPayload.nextOffset || firstBytes.length);
+    const total = Number(firstPayload.totalBytes || firstBytes.length);
+    let safety = 0;
+    while (offset < total && safety < 24) {
+      safety += 1;
+      let part = null;
+      if (!isHeadlessBrowser && edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
+        const rpcOut = await sendWsRpc(
+          edgeWs,
+          {
+            type: 'rpc_cmd',
+            targetDeviceId,
+            cmd: {
+              type: 'getDeliverableChunk',
+              path: rawTarget,
+              sessionId: sid,
+              workspaceId: wsId,
+              offset,
+              length: 512 * 1024,
+              channel: firstPayload.channel || 'sandboxed'
+            }
+          },
+          15000
+        );
+        part = rpcOut?.result && typeof rpcOut.result === 'object' ? rpcOut.result : rpcOut;
+      }
+      if (!part || !part.ok || !part.chunkBase64) break;
+      const b = Uint8Array.from(atob(part.chunkBase64), (c) => c.charCodeAt(0));
+      chunks.push(b);
+      offset = Number(part.nextOffset || offset + b.length);
+      if (part.done || b.length === 0) break;
+    }
+    const mergedLen = chunks.reduce((a, b) => a + b.length, 0);
+    const merged = new Uint8Array(mergedLen);
+    let pos = 0;
+    for (const c of chunks) {
+      merged.set(c, pos);
+      pos += c.length;
+    }
+    const decoded = new TextDecoder('utf-8', { fatal: false }).decode(merged);
+    return {
+      ...firstPayload,
+      chunked: false,
+      sandboxedHtml: decoded,
+      sourceHtml: firstPayload.sourceHtml || decoded
+    };
+  }
+
+  async function fetchDeliverablePreview(rawTarget, activeRow = null, opts = {}) {
+    const parsed = parsePreviewTargetClient(rawTarget);
+    const kind = getDeliverableKindClient(parsed.filePath);
+    if (!parsed.filePath || !kind) return null;
+    const page = Math.max(1, Number(opts.page || 1));
+    const forceRefresh = Boolean(opts.forceRefresh);
+    const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
+    const wsId = String(prefs.selectedRepoId || activeRow?.folder || '').trim();
+    const cacheKey = `${sid || wsId || 'global'}::${parsed.filePath.replace(/\\/g, '/')}`;
+    const pageKey = `${cacheKey}::p${page}`;
+
+    if (!forceRefresh) {
+      if (kind === 'pdf' || kind === 'pptx') {
+        const cachedPage = deliverablePageCache.get(pageKey);
+        if (cachedPage && cachedPage.ok) return cachedPage;
+      } else {
+        const cachedDoc = deliverablePreviewCache.get(cacheKey);
+        if (cachedDoc && cachedDoc.ok) return cachedDoc;
+      }
+    }
+
+    const seq = (opts.backgroundPrefetch || opts.batchRender) ? inspectorFetchSeq : ++inspectorFetchSeq;
+    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid);
+    const targetDeviceId = matchedRow?.deviceId || '';
+    const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
+    const effectiveLocalBase =
+      connMode === 'local' && localBridgeBase && !isRemote
+        ? localBridgeBase
+        : !isRemote && prefs.customBridgeUrl
+          ? String(prefs.customBridgeUrl).trim().replace(/\/+$/, '')
+          : '';
+    const allowProbeHttp =
+      !isHeadlessBrowser || Boolean(prefs.customBridgeUrl) || Boolean(window.__THEO_ALLOW_PROBE_MOCK_FETCH);
+
+    deliverableInFlightKeys.add(pageKey);
+    let result = null;
+    try {
+      if (effectiveLocalBase && allowProbeHttp) {
+        try {
+          const q = `path=${encodeURIComponent(parsed.filePath)}&sessionId=${encodeURIComponent(sid)}&workspaceId=${encodeURIComponent(wsId)}&page=${page}`;
+          const res = await authFetchLocal(`${effectiveLocalBase}/api/deliverable-preview?${q}`);
+          const data = await res.json().catch(() => null);
+          if (data && typeof data === 'object') result = data;
+        } catch {}
+      }
+
+      if (!result && !isHeadlessBrowser && edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
+        try {
+          const rpcOut = await sendWsRpc(
+            edgeWs,
+            {
+              type: 'rpc_cmd',
+              targetDeviceId,
+              cmd: {
+                type: 'getDeliverablePreview',
+                path: parsed.filePath,
+                sessionId: sid,
+                workspaceId: wsId,
+                page,
+                transport: 'ws'
+              }
+            },
+            28000
+          );
+          const payload = rpcOut?.result && typeof rpcOut.result === 'object' ? rpcOut.result : rpcOut;
+          if (payload && typeof payload === 'object' && ('ok' in payload || 'error' in payload)) {
+            if (payload.ok && payload.chunked && payload.kind === 'html') {
+              result = await reassembleChunkedDeliverable(
+                payload,
+                parsed.filePath,
+                sid,
+                wsId,
+                effectiveLocalBase,
+                allowProbeHttp,
+                targetDeviceId
+              );
+            } else {
+              result = payload;
+            }
+          }
+        } catch {}
+      }
+
+      if ((!result || !result.ok) && !opts.backgroundPrefetch) {
+        const vaultRes = await fetchDeliverableFromVaultR2(parsed.filePath, kind, matchedRow);
+        if (vaultRes && vaultRes.ok) {
+          result = vaultRes;
+        }
+      }
+
+      if (!result) {
+        result = {
+          ok: false,
+          kind,
+          file: parsed.displayBase,
+          relPath: parsed.filePath,
+          error: isHeadlessBrowser
+            ? 'Live deliverable preview ready when connected to :4318 or Edge WS.'
+            : 'Connect to workstation bridge (:4318 or Edge WS) or sync to Memory Vault to preview.'
+        };
+      }
+    } finally {
+      deliverableInFlightKeys.delete(pageKey);
+    }
+
+    if (result) {
+      if (result.ok || !deliverablePreviewCache.has(cacheKey)) {
+        if (deliverablePreviewCache.size >= 24 && !deliverablePreviewCache.has(cacheKey)) {
+          const oldest = deliverablePreviewCache.keys().next().value;
+          if (oldest) deliverablePreviewCache.delete(oldest);
+        }
+        deliverablePreviewCache.set(cacheKey, result);
+      }
+      if (kind === 'pdf' || kind === 'pptx') {
+        if (deliverablePageCache.size >= 80 && !deliverablePageCache.has(pageKey)) {
+          const oldestP = deliverablePageCache.keys().next().value;
+          if (oldestP) deliverablePageCache.delete(oldestP);
+        }
+        deliverablePageCache.set(pageKey, result);
+      }
+    }
+
+    if (
+      !opts.backgroundPrefetch &&
+      (seq === inspectorFetchSeq || opts.batchRender) &&
+      prefs.inspectorOpen &&
+      prefs.activeTab === 'chat' &&
+      sid === String(prefs.selectedThreadId || '').trim()
+    ) {
+      const activeParsed = parsePreviewTargetClient(activeInspectorFileTarget);
+      if (activeParsed.filePath.replace(/\\/g, '/').toLowerCase() === parsed.filePath.replace(/\\/g, '/').toLowerCase()) {
+        const td = threadsCache[sid] || null;
+        const msgs = coalesceThreadMessages(td?.messages || []);
+        const provKey = (td?.provider || matchedRow?.provider) === 'claude' ? 'claude' : 'antigravity';
+        renderSplitInspector(matchedRow, td, msgs, provKey, isNewSessionMode(), true);
+      }
+    }
+
+    if (
+      !opts.backgroundPrefetch &&
+      !opts.batchRender &&
+      result &&
+      result.ok &&
+      (kind === 'pdf' || kind === 'pptx') &&
+      Number(result.pageCount || 0) > page &&
+      !result.blobUrl &&
+      !deliverablePageCache.has(`${cacheKey}::p${page + 1}`) &&
+      !deliverableInFlightKeys.has(`${cacheKey}::p${page + 1}`)
+    ) {
+      fetchDeliverablePreview(rawTarget, matchedRow, { page: page + 1, backgroundPrefetch: true }).catch(() => {});
+    }
+
+    return result;
+  }
+
+  async function openActiveDeliverableInApp(rawTarget, activeRow = null) {
+    const parsed = parsePreviewTargetClient(rawTarget);
+    if (!parsed.filePath) return;
+    const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
+    const wsId = String(prefs.selectedRepoId || activeRow?.folder || '').trim();
+    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid);
+    const targetDeviceId = matchedRow?.deviceId || '';
+    const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
+    const effectiveLocalBase =
+      connMode === 'local' && localBridgeBase && !isRemote
+        ? localBridgeBase
+        : !isRemote && prefs.customBridgeUrl
+          ? String(prefs.customBridgeUrl).trim().replace(/\/+$/, '')
+          : '';
+    let out = null;
+    if (effectiveLocalBase) {
+      try {
+        const res = await authFetchLocal(`${effectiveLocalBase}/api/open-deliverable-app`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: parsed.filePath, sessionId: sid, workspaceId: wsId })
+        });
+        out = await res.json().catch(() => null);
+      } catch {}
+    } else if (!isHeadlessBrowser && edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
+      try {
+        const rpcOut = await sendWsRpc(
+          edgeWs,
+          {
+            type: 'rpc_cmd',
+            targetDeviceId,
+            cmd: { type: 'openDeliverableApp', path: parsed.filePath, sessionId: sid, workspaceId: wsId }
+          },
+          10000
+        );
+        out = rpcOut?.result && typeof rpcOut.result === 'object' ? rpcOut.result : rpcOut;
+      } catch {}
+    }
+    if (out && out.ok) {
+      showToast(`Opened ${out.file || parsed.displayBase} on host`);
+    } else {
+      showToast(out?.error || 'Connect to workstation bridge to open desktop app');
+    }
+  }
+
+  async function exportActiveDeliverable(rawTarget, activeRow = null) {
+    const parsed = parsePreviewTargetClient(rawTarget);
+    if (!parsed.filePath) return;
+    const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
+    const wsId = String(prefs.selectedRepoId || activeRow?.folder || '').trim();
+    const cacheKey = `${sid || wsId || 'global'}::${parsed.filePath.replace(/\\/g, '/')}`;
+    const cached = deliverablePreviewCache.get(cacheKey);
+    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid);
+    const targetDeviceId = matchedRow?.deviceId || '';
+    const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
+    const effectiveLocalBase =
+      connMode === 'local' && localBridgeBase && !isRemote
+        ? localBridgeBase
+        : !isRemote && prefs.customBridgeUrl
+          ? String(prefs.customBridgeUrl).trim().replace(/\/+$/, '')
+          : '';
+
+    let blob = null;
+    let fileName = cached?.file || parsed.displayBase || 'deliverable';
+    if (cached?.rawBytes instanceof Uint8Array) {
+      fileName = cached?.downloadFile || cached?.file || parsed.displayBase || 'deliverable';
+      blob = new Blob([cached.rawBytes], { type: cached?.rawMime || 'application/octet-stream' });
+    } else if (effectiveLocalBase) {
+      try {
+        const q = `path=${encodeURIComponent(parsed.filePath)}&sessionId=${encodeURIComponent(sid)}&workspaceId=${encodeURIComponent(wsId)}`;
+        const res = await authFetchLocal(`${effectiveLocalBase}/api/deliverable-raw?${q}`);
+        if (res.ok) {
+          blob = await res.blob();
+        }
+      } catch {}
+    } else if (!isHeadlessBrowser && edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
+      try {
+        const chunks = [];
+        let offset = 0;
+        for (let i = 0; i < 48; i++) {
+          const rpcOut = await sendWsRpc(
+            edgeWs,
+            {
+              type: 'rpc_cmd',
+              targetDeviceId,
+              cmd: { type: 'getDeliverableChunk', path: parsed.filePath, sessionId: sid, workspaceId: wsId, offset, length: 512 * 1024, channel: 'raw' }
+            },
+            15000
+          );
+          const part = rpcOut?.result && typeof rpcOut.result === 'object' ? rpcOut.result : rpcOut;
+          if (!part || !part.ok || !part.chunkBase64) break;
+          const b = Uint8Array.from(atob(part.chunkBase64), (c) => c.charCodeAt(0));
+          chunks.push(b);
+          offset = Number(part.nextOffset || offset + b.length);
+          if (part.done || b.length === 0) break;
+        }
+        if (chunks.length) blob = new Blob(chunks, { type: 'application/octet-stream' });
+      } catch {}
+    }
+    if (!blob && cached?.sourceHtml) {
+      blob = new Blob([cached.sourceHtml], { type: 'text/html;charset=utf-8' });
+    }
+    if (!blob) {
+      showToast('Connect to bridge or Vault to download this file');
+      return;
+    }
+
+    const prefersShare =
+      Boolean(window.navigator?.standalone) ||
+      Boolean(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+      Boolean(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+    if (prefersShare && typeof navigator.share === 'function') {
+      try {
+        const fileObj = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+        if (!navigator.canShare || navigator.canShare({ files: [fileObj] })) {
+          await navigator.share({ files: [fileObj], title: fileName });
+          return;
+        }
+      } catch (err) {
+        if (err && err.name === 'AbortError') return;
+      }
+    }
+
+    const u = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = u;
+    a.download = fileName;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => { try { URL.revokeObjectURL(u); } catch {} }, 1500);
+  }
+
   async function fetchSafeFilePreview(rawTarget, activeRow = null, forceRefresh = false) {
     const parsed = parsePreviewTargetClient(rawTarget);
     if (!parsed.filePath) return null;
@@ -11759,7 +12278,7 @@
     let result = null;
 
     const effectiveLocalBase =
-      connMode === 'local' && localBridgeBase
+      connMode === 'local' && localBridgeBase && !isRemote
         ? localBridgeBase
         : !isRemote && prefs.customBridgeUrl
           ? String(prefs.customBridgeUrl).trim().replace(/\/+$/, '')
@@ -11898,7 +12417,7 @@
     const targetDeviceId = matchedRow?.deviceId || '';
     const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
     const effectiveLocalBase =
-      connMode === 'local' && localBridgeBase
+      connMode === 'local' && localBridgeBase && !isRemote
         ? localBridgeBase
         : !isRemote && prefs.customBridgeUrl
           ? String(prefs.customBridgeUrl).trim().replace(/\/+$/, '')
@@ -11980,7 +12499,7 @@
     const targetDeviceId = matchedRow?.deviceId || '';
     const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
     const effectiveLocalBase =
-      connMode === 'local' && localBridgeBase
+      connMode === 'local' && localBridgeBase && !isRemote
         ? localBridgeBase
         : !isRemote && prefs.customBridgeUrl
           ? String(prefs.customBridgeUrl).trim().replace(/\/+$/, '')
@@ -12197,15 +12716,36 @@
     prefs.inspectorOpen = Boolean(openBool);
     if (!prefs.inspectorOpen || opts.fileTarget !== undefined) {
       ++inspectorFetchSeq;
+      teardownDeliverableInspectorFrames();
     }
     const normTab = tab === 'checks' ? 'agents' : tab;
     if (normTab && ['code', 'git', 'canvas', 'agents', 'outline'].includes(normTab)) {
+      if (prefs.inspectorTab === 'code' && normTab !== 'code') {
+        teardownDeliverableInspectorFrames();
+      }
       prefs.inspectorTab = normTab;
+    }
+    if (!prefs.inspectorOpen || prefs.inspectorTab !== 'code') {
+      prefs.inspectorFullStage = false;
     }
     if (opts.fileTarget !== undefined) {
       activeInspectorFileTarget = String(opts.fileTarget || '');
-      if (opts.viewMode && ['source', 'diff'].includes(opts.viewMode)) {
+      activeDeliverablePage = 1;
+      activeDeliverableDeckMode = 'single';
+      activeDeliverableZoomPct = 0;
+      activeDeliverableSheetIdx = 0;
+      if (opts.viewMode && ['preview', 'source', 'diff'].includes(opts.viewMode)) {
         prefs.inspectorViewMode = opts.viewMode;
+      }
+    } else if (
+      prefs.inspectorOpen &&
+      prefs.inspectorTab === 'code' &&
+      activeInspectorFileTarget &&
+      prefs.inspectorViewMode !== 'diff'
+    ) {
+      const parsedCur = parsePreviewTargetClient(activeInspectorFileTarget);
+      if (getDeliverableKindClient(parsedCur.filePath) && !parsedCur.startLine && prefs.inspectorViewMode === 'source') {
+        prefs.inspectorViewMode = 'preview';
       }
     }
     if (opts.agentId !== undefined) {
@@ -12219,7 +12759,16 @@
     const provKey = (td?.provider || row?.provider) === 'claude' ? 'claude' : 'antigravity';
     renderSplitInspector(row, td, msgs, provKey, isNewSessionMode(), true);
     if (prefs.inspectorOpen && prefs.inspectorTab === 'code' && activeInspectorFileTarget) {
-      fetchSafeFilePreview(activeInspectorFileTarget, row, Boolean(opts.forceRefresh)).catch(() => {});
+      const parsedTgt = parsePreviewTargetClient(activeInspectorFileTarget);
+      const dKind = getDeliverableKindClient(parsedTgt.filePath);
+      if (dKind && prefs.inspectorViewMode === 'preview') {
+        fetchDeliverablePreview(activeInspectorFileTarget, row, {
+          page: activeDeliverablePage,
+          forceRefresh: Boolean(opts.forceRefresh)
+        }).catch(() => {});
+      } else {
+        fetchSafeFilePreview(activeInspectorFileTarget, row, Boolean(opts.forceRefresh)).catch(() => {});
+      }
     }
     if (prefs.inspectorOpen && ['git', 'canvas', 'agents'].includes(prefs.inspectorTab)) {
       fetchStudioCapabilities(row, Boolean(opts.forceRefresh)).catch(() => {});
@@ -12295,6 +12844,8 @@
     });
 
     if (!prefs.inspectorOpen) {
+      teardownDeliverableInspectorFrames();
+      paneEl.classList.remove('is-deliverable-wide', 'is-full-stage');
       paneEl.hidden = true;
       if (backdropEl) backdropEl.hidden = true;
       if (subbarEl) subbarEl.hidden = true;
@@ -12302,6 +12853,9 @@
     }
 
     paneEl.hidden = false;
+    if (prefs.inspectorTab !== 'code') {
+      paneEl.classList.remove('is-deliverable-wide', 'is-full-stage');
+    }
     if (backdropEl) {
       backdropEl.hidden = window.innerWidth > 1024;
     }
@@ -12328,10 +12882,13 @@
       const cacheKey = parsed.filePath
         ? `${sid || rawWsId || 'global'}::${parsed.filePath.replace(/\\/g, '/')}`
         : '';
+      const deliverableKind = getDeliverableKindClient(parsed.filePath);
+      const pageCacheKey = `${cacheKey}::p${activeDeliverablePage}`;
       const cached = cacheKey ? filePreviewCache.get(cacheKey) : null;
-      if (!skipAutoFetch && parsed.filePath && !cached && !filePreviewInFlightKeys.has(cacheKey)) {
-        fetchSafeFilePreview(activeInspectorFileTarget, activeRow).catch(() => {});
-      }
+      const delivCached =
+        deliverableKind === 'pdf' || deliverableKind === 'pptx'
+          ? deliverablePageCache.get(pageCacheKey) || deliverablePreviewCache.get(cacheKey)
+          : deliverablePreviewCache.get(cacheKey);
 
       const pillsHtml = touchedFiles.length
         ? `<div class="insp-file-pills">${touchedFiles
@@ -12347,49 +12904,238 @@
         : '';
 
       if (!parsed.filePath) {
+        paneEl.classList.remove('is-deliverable-wide', 'is-full-stage');
         if (subbarEl) subbarEl.hidden = true;
-        bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">Click any file chip in the conversation or change-set strip to inspect source code, quote lines (<code class="md-inline-code">@L</code>), or review live git diffs.</div>`;
+        bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">Click any file chip in the conversation or change-set strip to inspect deliverables, source code, quote lines (<code class="md-inline-code">@L</code>), or review live git diffs.</div>`;
         return;
       }
 
-      const displayPath = String(cached?.relPath || parsed.filePath);
+      const displayPath = String(delivCached?.relPath || cached?.relPath || parsed.filePath);
       const rangeSuffix = parsed.startLine
         ? `#L${parsed.startLine}${parsed.endLine > parsed.startLine ? `-L${parsed.endLine}` : ''}`
         : '';
       const diffText = String(cached?.gitDiff ?? cached?.diffPatch ?? cached?.diff ?? '');
       const hasDiff = Boolean(diffText.trim());
-      const hasSource = Boolean(cached && cached.ok && typeof cached.content === 'string' && !cached.fallbackOnly);
+      const hasSource = Boolean(
+        (cached && cached.ok && typeof cached.content === 'string' && !cached.fallbackOnly) ||
+          (delivCached && delivCached.ok && typeof delivCached.sourceHtml === 'string')
+      );
+      const allowSourceTab = !deliverableKind || deliverableKind === 'html';
       const effectiveMode =
         prefs.inspectorViewMode === 'diff' && hasDiff
           ? 'diff'
-          : hasSource
-            ? 'source'
-            : hasDiff
-              ? 'diff'
-              : 'source';
+          : deliverableKind && prefs.inspectorViewMode === 'preview'
+            ? 'preview'
+            : hasSource && allowSourceTab
+              ? 'source'
+              : hasDiff
+                ? 'diff'
+                : deliverableKind
+                  ? 'preview'
+                  : 'source';
+
+      paneEl.classList.toggle('is-deliverable-wide', Boolean(deliverableKind && effectiveMode === 'preview'));
+      paneEl.classList.toggle('is-full-stage', Boolean(deliverableKind && effectiveMode === 'preview' && prefs.inspectorFullStage));
+
+      if (!skipAutoFetch) {
+        if (effectiveMode === 'preview' && deliverableKind) {
+          if (!delivCached && !deliverableInFlightKeys.has(pageCacheKey)) {
+            fetchDeliverablePreview(activeInspectorFileTarget, activeRow, { page: activeDeliverablePage }).catch(() => {});
+          }
+        } else if (!cached && !filePreviewInFlightKeys.has(cacheKey)) {
+          fetchSafeFilePreview(activeInspectorFileTarget, activeRow).catch(() => {});
+        }
+      }
 
       if (subbarEl) {
         subbarEl.hidden = false;
+        const previewBtnHtml = deliverableKind
+          ? `<button type="button" class="insp-mini-btn${effectiveMode === 'preview' ? ' active' : ''}" data-insp-view-mode="preview">Preview</button>`
+          : '';
+        const sourceBtnHtml = allowSourceTab
+          ? `<button type="button" class="insp-mini-btn${effectiveMode === 'source' ? ' active' : ''}" data-insp-view-mode="source">Source</button>`
+          : '';
+        const fullStageBtnHtml = deliverableKind
+          ? `<button type="button" class="insp-mini-btn${prefs.inspectorFullStage ? ' active' : ''}" data-insp-full-stage="1">${prefs.inspectorFullStage ? 'Split' : 'Full Stage'}</button>`
+          : '';
+        const copyOrShareHtml = deliverableKind
+          ? `<button type="button" class="insp-mini-btn" data-insp-dlv-export="${esc(parsed.filePath)}">${window.navigator?.standalone ? 'Share' : 'Download'}</button>`
+          : `<button type="button" class="insp-mini-btn" data-insp-copy-code="${esc(cacheKey)}">Copy</button>`;
         subbarEl.innerHTML = `
           <span class="insp-sub-path">
             <span class="insp-sub-path-txt">${esc(displayPath)}${esc(rangeSuffix)}</span>
           </span>
           <span class="insp-sub-actions">
-            <button type="button" class="insp-mini-btn${effectiveMode === 'source' ? ' active' : ''}" data-insp-view-mode="source">Source</button>
+            ${previewBtnHtml}
+            ${sourceBtnHtml}
             <button type="button" class="insp-mini-btn${effectiveMode === 'diff' ? ' active' : ''}" data-insp-view-mode="diff" ${hasDiff ? '' : 'disabled'}>Diff</button>
+            ${fullStageBtnHtml}
             <button type="button" class="insp-mini-btn" data-step-mention-file="${esc(displayPath)}">@ Mention</button>
-            <button type="button" class="insp-mini-btn" data-insp-ask-review="${esc(displayPath)}">Ask AI Review</button>
-            <button type="button" class="insp-mini-btn" data-insp-copy-code="${esc(cacheKey)}">Copy</button>
+            ${!deliverableKind ? `<button type="button" class="insp-mini-btn" data-insp-ask-review="${esc(displayPath)}">Ask AI Review</button>` : ''}
+            ${copyOrShareHtml}
           </span>
         `;
       }
 
-      if (!cached) {
-        bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">Loading preview for <span class="mono">${esc(displayPath)}</span>…</div>`;
+      if (effectiveMode === 'preview' && deliverableKind) {
+        if (!delivCached) {
+          bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">Rendering <span class="mono">${esc(displayPath)}</span>…</div>`;
+          return;
+        }
+        const docMeta = deliverablePreviewCache.get(cacheKey);
+        if (!delivCached.ok && !(docMeta && docMeta.ok && (deliverableKind === 'pdf' || deliverableKind === 'pptx'))) {
+          bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">${esc(delivCached.error || 'Unable to preview deliverable.')}</div>`;
+          return;
+        }
+        if (deliverableKind === 'html') {
+          const existingFrame = bodyEl.querySelector('iframe.insp-html-frame');
+          if (existingFrame && existingFrame.dataset.dlvKey === cacheKey) {
+            return;
+          }
+          teardownDeliverableInspectorFrames();
+          bodyEl.innerHTML = `${pillsHtml}<div class="insp-deliverable-stage"><iframe class="insp-html-frame" sandbox="allow-scripts allow-forms allow-modals" referrerpolicy="no-referrer"></iframe></div>`;
+          const fr = bodyEl.querySelector('iframe.insp-html-frame');
+          if (fr) {
+            fr.dataset.dlvKey = cacheKey;
+            fr.srcdoc = String(delivCached.sandboxedHtml || delivCached.sourceHtml || '');
+          }
+          return;
+        }
+        if (deliverableKind === 'spreadsheet') {
+          const sheets = Array.isArray(delivCached.sheets) ? delivCached.sheets : [];
+          if (!sheets.length) {
+            bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">${delivCached.unsupportedBinary ? 'Legacy binary workbook — open in Excel to view.' : 'Empty workbook.'}</div>`;
+            return;
+          }
+          const idx = Math.max(0, Math.min(sheets.length - 1, activeDeliverableSheetIdx));
+          const sh = sheets[idx];
+          const tabsHtml = sheets
+            .map((s, si) => `<button type="button" class="insp-thumb-btn${si === idx ? ' active' : ''}" data-insp-sheet-idx="${si}">${esc(s.name || `Sheet${si + 1}`)}</button>`)
+            .join('');
+          const maxRows = Math.min(sh.grid?.length || 0, 200);
+          const maxCols = Math.min(sh.colCount || 0, 32);
+          let hdrCols = '<tr><th>#</th>';
+          for (let c = 0; c < maxCols; c++) {
+            let n = c + 1;
+            let colLbl = '';
+            while (n > 0) {
+              const rem = (n - 1) % 26;
+              colLbl = String.fromCharCode(65 + rem) + colLbl;
+              n = Math.floor((n - 1) / 26);
+            }
+            hdrCols += `<th>${colLbl}</th>`;
+          }
+          hdrCols += '</tr>';
+          let bodyRowsHtml = '';
+          for (let r = 0; r < maxRows; r++) {
+            const rowArr = sh.grid[r] || [];
+            let tds = `<td class="num">${r + 1}</td>`;
+            for (let c = 0; c < maxCols; c++) {
+              const cell = rowArr[c];
+              const cls = cell && cell.a === 'right' ? ' class="num"' : '';
+              tds += `<td${cls}>${esc(cell ? cell.t : '')}</td>`;
+            }
+            bodyRowsHtml += `<tr>${tds}</tr>`;
+          }
+          bodyEl.innerHTML = `${pillsHtml}<div class="insp-deliverable-stage"><div class="insp-deliverable-bar"><span class="insp-deliverable-label">${esc(delivCached.file || displayPath)} · ${sh.totalRowsInSheet || maxRows} rows</span><span class="insp-deliverable-grp"><button type="button" class="insp-mini-btn" data-insp-dlv-app="${esc(parsed.filePath)}">Open in Excel</button></span></div><div class="insp-sheet-tabs">${tabsHtml}</div><div class="insp-sheet-grid-wrap"><table class="insp-sheet-grid"><thead>${hdrCols}</thead><tbody>${bodyRowsHtml}</tbody></table></div></div>`;
+          return;
+        }
+        // PDF or PPTX deck stage
+        const unitLabel = deliverableKind === 'pptx' ? 'Slide' : 'Page';
+        const pageMetaSrc = delivCached.ok ? delivCached : (deliverablePreviewCache.get(cacheKey) || delivCached);
+        const pageCount = Math.max(1, Number(pageMetaSrc.pageCount || (Array.isArray(pageMetaSrc.slides) ? pageMetaSrc.slides.length : 1) || 1));
+        const curPage = Math.max(1, Math.min(pageCount, activeDeliverablePage));
+        activeDeliverablePage = curPage;
+        const canOpenBridgeApp = Boolean(
+          (connMode === 'local' && localBridgeBase) ||
+            prefs.customBridgeUrl ||
+            (edgeWsAuthed && edgeWs && edgeWs.readyState === 1)
+        );
+        if (!delivCached.blobUrl && delivCached.rawBytes instanceof Uint8Array && (delivCached.sourceKind === 'vault-r2-pdf' || deliverableKind === 'pdf')) {
+          const freshBlob = new Blob([delivCached.rawBytes], { type: delivCached.rawMime || 'application/pdf' });
+          delivCached.blobUrl = URL.createObjectURL(freshBlob);
+          activeDeliverableBlobUrls.add(delivCached.blobUrl);
+        }
+        const appBtnLabel = deliverableKind === 'pptx' ? 'PowerPoint' : 'Open App';
+        const barHtml = `
+          <div class="insp-deliverable-bar">
+            <span class="insp-deliverable-grp">
+              <button type="button" class="insp-mini-btn" data-insp-dlv-page="${curPage - 1}" ${curPage <= 1 ? 'disabled' : ''}>←</button>
+              <span class="insp-deliverable-label tabular">${unitLabel} ${curPage} / ${pageCount}</span>
+              <button type="button" class="insp-mini-btn" data-insp-dlv-page="${curPage + 1}" ${curPage >= pageCount ? 'disabled' : ''}>→</button>
+              ${delivCached.blobUrl ? '' : `<button type="button" class="insp-mini-btn${activeDeliverableDeckMode === 'single' ? ' active' : ''}" data-insp-dlv-deck-mode="single">Single</button><button type="button" class="insp-mini-btn${activeDeliverableDeckMode === 'all' ? ' active' : ''}" data-insp-dlv-deck-mode="all">All</button>`}
+            </span>
+            <span class="insp-deliverable-grp">
+              ${delivCached.blobUrl ? '' : `<button type="button" class="insp-mini-btn" data-insp-dlv-zoom="out">−</button><button type="button" class="insp-mini-btn${activeDeliverableZoomPct === 0 ? ' active' : ''}" data-insp-dlv-zoom="fit">${activeDeliverableZoomPct === 0 ? 'Fit' : `${activeDeliverableZoomPct}%`}</button><button type="button" class="insp-mini-btn" data-insp-dlv-zoom="in">+</button>`}
+              ${canOpenBridgeApp ? `<button type="button" class="insp-mini-btn" data-insp-dlv-app="${esc(parsed.filePath)}">${appBtnLabel}</button>` : ''}
+            </span>
+          </div>
+        `;
+
+        let stageHtml = '';
+        if (delivCached.blobUrl) {
+          const isStandaloneTouch = Boolean(window.navigator?.standalone);
+          if (isStandaloneTouch) {
+            stageHtml = `<div class="insp-empty">PDF ready from Memory Vault (${esc(delivCached.file)}). Tap <strong>Share</strong> above to open full-screen in iOS QuickLook or Files.</div>`;
+          } else {
+            stageHtml = `<iframe class="insp-html-frame" src="${esc(delivCached.blobUrl)}"></iframe>`;
+          }
+        } else if (delivCached.sourceKind === 'vault-r2-download') {
+          stageHtml = `<div class="insp-empty">${esc(delivCached.file)} (${Math.round((delivCached.size || 0) / 1024)} KB) is stored in Memory Vault without a PDF twin. Connect to workstation or tap Download / Share above to open in PowerPoint.</div>`;
+        } else if (Array.isArray(delivCached.slides) && !delivCached.pageImageBase64) {
+          if (delivCached.slides.length === 0) {
+            stageHtml = `<div class="insp-empty">No slides found in this presentation.</div>`;
+          } else {
+            const indices = activeDeliverableDeckMode === 'all' ? delivCached.slides.map((_, i) => i + 1) : [curPage];
+            stageHtml = `<div class="insp-deck-stage">${indices.map((pNum) => {
+              const s = delivCached.slides[pNum - 1];
+              if (!s) return '';
+              const bulletsHtml = (s.bullets || []).map((b) => `<li dir="auto">${esc(b)}</li>`).join('');
+              const imgHtml = s.imageDataUri ? `<img src="${esc(s.imageDataUri)}" alt="Slide ${pNum}" style="max-width:100%;border-radius:6px">` : '';
+              return `<div class="insp-ooxml-card"><div class="insp-ooxml-title" dir="auto">${esc(s.title || `Slide ${pNum}`)}</div>${bulletsHtml ? `<ul class="insp-ooxml-bullets">${bulletsHtml}</ul>` : ''}${imgHtml}</div>`;
+            }).join('')}</div>`;
+          }
+        } else {
+          const pagesToRender = activeDeliverableDeckMode === 'all'
+            ? Array.from({ length: Math.min(pageCount, 30) }, (_, i) => i + 1)
+            : [curPage];
+          const cardsHtml = pagesToRender.map((pNum) => {
+            const pObj = pNum === curPage && delivCached.page === curPage
+              ? delivCached
+              : deliverablePageCache.get(`${cacheKey}::p${pNum}`);
+            if (!pObj) {
+              if (!deliverableInFlightKeys.has(`${cacheKey}::p${pNum}`)) {
+                fetchDeliverablePreview(activeInspectorFileTarget, activeRow, { page: pNum, batchRender: true }).catch(() => {});
+              }
+              return `<div class="insp-empty">Rendering ${unitLabel} ${pNum}…</div>`;
+            }
+            if (!pObj.ok || !pObj.pageImageBase64) {
+              return `<div class="insp-empty">${esc(pObj.error || `Unable to render ${unitLabel} ${pNum}.`)}</div>`;
+            }
+            const widthStyle = activeDeliverableZoomPct > 0 ? ` style="width:${activeDeliverableZoomPct}%"` : '';
+            const imgStyle = activeDeliverableZoomPct > 0 ? ' style="width:100%"' : '';
+            return `<div class="insp-page-card"${widthStyle}><img src="data:${esc(pObj.pageMime || 'image/png')};base64,${pObj.pageImageBase64}" alt="${unitLabel} ${pNum}"${imgStyle}><div class="insp-page-cap">${unitLabel} ${pNum} of ${pageCount}</div></div>`;
+          }).join('');
+          stageHtml = `<div class="insp-deck-stage">${cardsHtml}</div>`;
+        }
+
+        const thumbsHtml = !delivCached.blobUrl && pageCount > 1
+          ? `<div class="insp-thumb-strip">${Array.from({ length: pageCount }, (_, i) => i + 1).map((pNum) => `<button type="button" class="insp-thumb-btn${pNum === curPage ? ' active' : ''}" data-insp-dlv-page="${pNum}">${pNum}</button>`).join('')}</div>`
+          : '';
+        bodyEl.innerHTML = `${pillsHtml}<div class="insp-deliverable-stage">${barHtml}${stageHtml}${thumbsHtml}</div>`;
         return;
       }
 
-      if (!cached.ok && !hasDiff) {
+      if (!cached) {
+        if (deliverableKind === 'html' && delivCached && delivCached.ok && delivCached.sourceHtml) {
+          // Allow instant Source view from already-loaded HTML deliverable
+        } else {
+          bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">Loading preview for <span class="mono">${esc(displayPath)}</span>…</div>`;
+          return;
+        }
+      }
+
+      if (cached && !cached.ok && !hasDiff) {
         bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">${esc(cached.error || 'Unable to preview this file path.')}</div>`;
         return;
       }
@@ -12399,10 +13145,13 @@
         return;
       }
 
-      const rawLines = String(cached.content || '').replace(/\r\n/g, '\n').split('\n');
+      const sourceContent = cached && typeof cached.content === 'string' && !cached.fallbackOnly
+        ? cached.content
+        : (delivCached?.sourceHtml || '');
+      const rawLines = String(sourceContent).replace(/\r\n/g, '\n').split('\n');
       const maxRenderLines = 900;
-      const hlStart = Number(parsed.startLine || cached.startLine || 0);
-      const hlEnd = Math.max(hlStart, Number(parsed.endLine || cached.endLine || hlStart));
+      const hlStart = Number(parsed.startLine || cached?.startLine || 0);
+      const hlEnd = Math.max(hlStart, Number(parsed.endLine || cached?.endLine || hlStart));
       let sliceStart = 0;
       if (rawLines.length > maxRenderLines && hlStart > maxRenderLines - 80) {
         sliceStart = Math.max(0, hlStart - 120);
@@ -12416,8 +13165,8 @@
         })
         .join('');
       const truncNote =
-        cached.truncated || rawLines.length > maxRenderLines
-          ? `<div class="meta-timestamp tabular" style="padding:2px 4px">Showing lines ${sliceStart + 1}–${sliceStart + visibleLines.length} of ${cached.lineCount || rawLines.length}</div>`
+        cached?.truncated || rawLines.length > maxRenderLines
+          ? `<div class="meta-timestamp tabular" style="padding:2px 4px">Showing lines ${sliceStart + 1}–${sliceStart + visibleLines.length} of ${cached?.lineCount || rawLines.length}</div>`
           : '';
       bodyEl.innerHTML = `${pillsHtml}<div class="insp-code-surface">${rowsHtml}</div>${truncNote}`;
 
@@ -14556,7 +15305,22 @@
     } else if (/\.json(#|$|\s)/i.test(extProbe)) {
       ico = '{}';
       icoCls = ' json';
-    } else if (/\.(css|html|svg)(#|$|\s)/i.test(extProbe)) {
+    } else if (/\.pdf(#|$|\s)/i.test(extProbe)) {
+      ico = 'PDF';
+      icoCls = ' pdf';
+    } else if (/\.(pptx|ppsx|pptm)(#|$|\s)/i.test(extProbe)) {
+      ico = 'PPT';
+      icoCls = ' ppt';
+    } else if (/\.(xlsx|xlsm|xls|xlsb|csv|tsv)(#|$|\s)/i.test(extProbe)) {
+      ico = 'XLS';
+      icoCls = ' xls';
+    } else if (/\.(docx?)(#|$|\s)/i.test(extProbe)) {
+      ico = 'DOC';
+      icoCls = ' doc';
+    } else if (/\.(html?|xhtml)(#|$|\s)/i.test(extProbe)) {
+      ico = 'HTML';
+      icoCls = ' html';
+    } else if (/\.(css|svg)(#|$|\s)/i.test(extProbe)) {
       ico = '<>';
       icoCls = ' css';
     }
@@ -14572,7 +15336,7 @@
     } else if (href) {
       previewTarget = href;
     } else if (
-      /\.(md|py|js|jsx|ts|tsx|cjs|mjs|json|css|html|svg|ps1|sh|bat|cmd|cs|sql|yml|yaml|toml|xml)(#L?\d+(?:-L?\d+)?|$)/i.test(
+      /\.(md|py|js|jsx|ts|tsx|cjs|mjs|json|css|html?|xhtml|svg|ps1|sh|bat|cmd|cs|sql|yml|yaml|toml|xml|pdf|pptx|ppsx|pptm|xlsx|xlsm|xls|xlsb|csv|tsv|docx?|png|jpe?g|webp)(#L?\d+(?:-L?\d+)?|:\d+(?:-\d+)?|$)/i.test(
         clean
       )
     ) {
@@ -14623,10 +15387,25 @@
 
     const inlineCodes = [];
     src = src.replace(/`([^`\n]+)`/g, (_, code) => {
+      const trimmedCode = String(code || '').trim();
+      if (
+        !/[\s"'`<>|;&$]/.test(trimmedCode) &&
+        /\.(html?|xhtml|pdf|pptx|ppsx|pptm|xlsx|xlsm|xls|xlsb|csv|tsv|docx?)(#L?\d+(?:-L?\d+)?|:\d+(?:-\d+)?)?$/i.test(
+          trimmedCode
+        )
+      ) {
+        return pushChip(trimmedCode, trimmedCode);
+      }
       const idx = inlineCodes.length;
       inlineCodes.push(`<code class="md-inline-code">${esc(code)}</code>`);
       return `\x00INLINECODE_${idx}\x00`;
     });
+
+    // Convert bare deliverable filenames (e.g. "open aeg_clerk_assistant_prototype.html.") into clickable chips
+    src = src.replace(
+      /(^|[\s(])(?!https?:\/\/|file:\/\/\/)([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*\.(?:html?|xhtml|pdf|pptx|ppsx|pptm|xlsx|xlsm|xls|xlsb))(?=$|[\s.,;:!?)\n])/gi,
+      (_, prefix, fileName) => `${prefix}${pushChip(fileName, fileName)}`
+    );
 
     const formatInline = (lineStr) => {
       let s = esc(lineStr);
@@ -16021,6 +16800,7 @@
       return;
     }
     overlay.hidden = false;
+    teardownDeliverableInspectorFrames();
     if (appShell) appShell.inert = true;
     closeFloatingUiMenus();
     document.documentElement.classList.remove('pin-locked-boot');
@@ -16689,9 +17469,84 @@
       }
       const inspModeBtn = e.target.closest('[data-insp-view-mode]');
       if (inspModeBtn) {
-        prefs.inspectorViewMode = inspModeBtn.dataset.inspViewMode === 'diff' ? 'diff' : 'source';
+        const nextMode = inspModeBtn.dataset.inspViewMode;
+        prefs.inspectorViewMode =
+          nextMode === 'diff' ? 'diff' : nextMode === 'preview' ? 'preview' : 'source';
+        if (prefs.inspectorViewMode !== 'preview') {
+          teardownDeliverableInspectorFrames();
+          prefs.inspectorFullStage = false;
+        }
         saveJson(STORAGE_KEYS.PREFS, prefs);
         renderChatView(false);
+        if (prefs.inspectorViewMode === 'preview' && activeInspectorFileTarget) {
+          const parsedCur = parsePreviewTargetClient(activeInspectorFileTarget);
+          const dKind = getDeliverableKindClient(parsedCur.filePath);
+          if (dKind) {
+            const sid = String(prefs.selectedThreadId || '').trim();
+            const wsId = String(prefs.selectedRepoId || '').trim();
+            const cacheKey = `${sid || wsId || 'global'}::${parsedCur.filePath.replace(/\\/g, '/')}`;
+            const pageKey = `${cacheKey}::p${activeDeliverablePage}`;
+            const hasEntry = dKind === 'pdf' || dKind === 'pptx'
+              ? deliverablePageCache.has(pageKey)
+              : deliverablePreviewCache.has(cacheKey);
+            if (!hasEntry) {
+              const activeRow = (appState?.rows || []).find((r) => r && r.id === sid) || null;
+              fetchDeliverablePreview(activeInspectorFileTarget, activeRow, { page: activeDeliverablePage }).catch(() => {});
+            }
+          }
+        }
+        return;
+      }
+      if (e.target.closest('[data-insp-full-stage]')) {
+        prefs.inspectorFullStage = !prefs.inspectorFullStage;
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        renderChatView(false);
+        return;
+      }
+      const inspSheetBtn = e.target.closest('[data-insp-sheet-idx]');
+      if (inspSheetBtn) {
+        activeDeliverableSheetIdx = Math.max(0, Number(inspSheetBtn.dataset.inspSheetIdx || 0));
+        renderChatView(false);
+        return;
+      }
+      const inspPageBtn = e.target.closest('[data-insp-dlv-page]');
+      if (inspPageBtn) {
+        const nextP = Math.max(1, Number(inspPageBtn.dataset.inspDlvPage || 1));
+        if (nextP !== activeDeliverablePage) {
+          activeDeliverablePage = nextP;
+          const activeRow = (appState?.rows || []).find((r) => r && r.id === prefs.selectedThreadId) || null;
+          renderChatView(false);
+          if (activeInspectorFileTarget) {
+            fetchDeliverablePreview(activeInspectorFileTarget, activeRow, { page: nextP }).catch(() => {});
+          }
+        }
+        return;
+      }
+      const inspDeckModeBtn = e.target.closest('[data-insp-dlv-deck-mode]');
+      if (inspDeckModeBtn) {
+        activeDeliverableDeckMode = inspDeckModeBtn.dataset.inspDlvDeckMode === 'all' ? 'all' : 'single';
+        renderChatView(false);
+        return;
+      }
+      const inspZoomBtn = e.target.closest('[data-insp-dlv-zoom]');
+      if (inspZoomBtn) {
+        const act = inspZoomBtn.dataset.inspDlvZoom;
+        if (act === 'fit') activeDeliverableZoomPct = 0;
+        else if (act === 'in') activeDeliverableZoomPct = activeDeliverableZoomPct === 0 ? 115 : Math.min(200, activeDeliverableZoomPct + 20);
+        else if (act === 'out') activeDeliverableZoomPct = activeDeliverableZoomPct === 0 ? 80 : Math.max(40, activeDeliverableZoomPct - 20);
+        renderChatView(false);
+        return;
+      }
+      const inspDlvAppBtn = e.target.closest('[data-insp-dlv-app]');
+      if (inspDlvAppBtn) {
+        const activeRow = (appState?.rows || []).find((r) => r && r.id === prefs.selectedThreadId) || null;
+        await openActiveDeliverableInApp(inspDlvAppBtn.dataset.inspDlvApp || activeInspectorFileTarget, activeRow);
+        return;
+      }
+      const inspDlvExportBtn = e.target.closest('[data-insp-dlv-export]');
+      if (inspDlvExportBtn) {
+        const activeRow = (appState?.rows || []).find((r) => r && r.id === prefs.selectedThreadId) || null;
+        await exportActiveDeliverable(inspDlvExportBtn.dataset.inspDlvExport || activeInspectorFileTarget, activeRow);
         return;
       }
       const inspCopyBtn = e.target.closest('[data-insp-copy-code]');
@@ -16734,7 +17589,18 @@
         e.preventDefault();
         e.stopPropagation();
         const fileTarget = previewFileEl.dataset.previewFile || '';
-        const viewMode = previewFileEl.dataset.previewMode === 'diff' ? 'diff' : 'source';
+        const parsedClicked = parsePreviewTargetClient(fileTarget);
+        const dlvKind = getDeliverableKindClient(parsedClicked.filePath);
+        const viewMode =
+          previewFileEl.dataset.previewMode === 'diff'
+            ? 'diff'
+            : dlvKind && dlvKind !== 'html'
+              ? 'preview'
+              : parsedClicked.startLine > 0
+                ? 'source'
+                : dlvKind
+                  ? 'preview'
+                  : 'source';
         if (fileTarget) {
           if (prefs.activeTab !== 'chat') switchTab('chat');
           setInspectorOpen(true, 'code', { fileTarget, viewMode });
@@ -19045,6 +19911,36 @@
           e.preventDefault();
           $('btn-apply-pair-token')?.click();
         }
+      } else if (
+        (e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
+        prefs.inspectorOpen &&
+        prefs.inspectorTab === 'code' &&
+        prefs.inspectorViewMode !== 'source' &&
+        prefs.inspectorViewMode !== 'diff' &&
+        activeInspectorFileTarget
+      ) {
+        const ae = document.activeElement;
+        const inField = Boolean(
+          ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT' || ae.isContentEditable)
+        );
+        const parsedCur = parsePreviewTargetClient(activeInspectorFileTarget);
+        const dKind = getDeliverableKindClient(parsedCur.filePath);
+        if (!inField && (dKind === 'pdf' || dKind === 'pptx')) {
+          const sid = String(prefs.selectedThreadId || '').trim();
+          const wsId = String(prefs.selectedRepoId || '').trim();
+          const cacheKey = `${sid || wsId || 'global'}::${parsedCur.filePath.replace(/\\/g, '/')}`;
+          const dlv = deliverablePreviewCache.get(cacheKey);
+          const total = Math.max(1, Number(dlv?.pageCount || dlv?.slides?.length || 1));
+          const delta = e.key === 'ArrowRight' ? 1 : -1;
+          const nextP = Math.max(1, Math.min(total, activeDeliverablePage + delta));
+          if (nextP !== activeDeliverablePage) {
+            e.preventDefault();
+            activeDeliverablePage = nextP;
+            const activeRow = (appState?.rows || []).find((r) => r && r.id === sid) || null;
+            renderChatView(false);
+            fetchDeliverablePreview(activeInspectorFileTarget, activeRow, { page: nextP }).catch(() => {});
+          }
+        }
       } else if (e.key === 'Escape') {
         closeFloatingUiMenus();
         closeSlashPopover();
@@ -19054,9 +19950,15 @@
         if ($('acct-signin-modal') && !$('acct-signin-modal').hidden) {
           closeAccountSignInModal();
         }
-        if (
+        if (prefs.inspectorOpen && prefs.inspectorFullStage) {
+          prefs.inspectorFullStage = false;
+          saveJson(STORAGE_KEYS.PREFS, prefs);
+          renderChatView(false);
+        } else if (
           prefs.inspectorOpen &&
-          (window.innerWidth <= 1024 || document.activeElement?.closest?.('#ide-inspector-pane'))
+          (window.innerWidth <= 1024 ||
+            document.activeElement?.closest?.('#ide-inspector-pane') ||
+            $('ide-inspector-pane')?.classList.contains('is-deliverable-wide'))
         ) {
           setInspectorOpen(false);
         }
@@ -19134,6 +20036,44 @@
         }
       }
     });
+
+    let deckSwipeStartX = 0;
+    let deckSwipeStartY = 0;
+    document.addEventListener('touchstart', (e) => {
+      if (isPinLocked() || !prefs.inspectorOpen || prefs.inspectorTab !== 'code') return;
+      if (activeDeliverableDeckMode !== 'single' || !e.target?.closest?.('.insp-deck-stage')) return;
+      const t = e.touches && e.touches[0];
+      if (!t) return;
+      deckSwipeStartX = t.clientX;
+      deckSwipeStartY = t.clientY;
+    }, { passive: true });
+    document.addEventListener('touchend', (e) => {
+      if (!deckSwipeStartX) return;
+      const t = e.changedTouches && e.changedTouches[0];
+      const sx = deckSwipeStartX;
+      const sy = deckSwipeStartY;
+      deckSwipeStartX = 0;
+      deckSwipeStartY = 0;
+      if (!t || !prefs.inspectorOpen || prefs.inspectorTab !== 'code' || activeDeliverableDeckMode !== 'single') return;
+      const dx = t.clientX - sx;
+      const dy = t.clientY - sy;
+      if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.4) return;
+      const parsedCur = parsePreviewTargetClient(activeInspectorFileTarget);
+      const dKind = getDeliverableKindClient(parsedCur.filePath);
+      if (dKind !== 'pdf' && dKind !== 'pptx') return;
+      const sid = String(prefs.selectedThreadId || '').trim();
+      const wsId = String(prefs.selectedRepoId || '').trim();
+      const cacheKey = `${sid || wsId || 'global'}::${parsedCur.filePath.replace(/\\/g, '/')}`;
+      const dlv = deliverablePreviewCache.get(cacheKey);
+      const total = Math.max(1, Number(dlv?.pageCount || dlv?.slides?.length || 1));
+      const nextP = Math.max(1, Math.min(total, activeDeliverablePage + (dx < 0 ? 1 : -1)));
+      if (nextP !== activeDeliverablePage) {
+        activeDeliverablePage = nextP;
+        const activeRow = (appState?.rows || []).find((r) => r && r.id === sid) || null;
+        renderChatView(false);
+        fetchDeliverablePreview(activeInspectorFileTarget, activeRow, { page: nextP }).catch(() => {});
+      }
+    }, { passive: true });
   }
 
   const stoppedSessionsById = new Map();
@@ -20001,7 +20941,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=88', { updateViaCache: 'none' })
+        .register('sw.js?v=89', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
