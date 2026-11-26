@@ -8105,6 +8105,250 @@ async function main() {
       console.log('[PASS] Adversarial #25: v89 First-class .html/.pdf/.pptx Deliverable Viewer, Wide/Full-Stage & 0px overflow verified');
     }
 
+    // --- Adversarial #26: v90 Live Model Catalog Replacement, 0-Effort Orchestrator, XHigh, modelUpdatedAt LWW, .session-neon-pill & isabi-app default ---
+    {
+      await evalJs(`(() => {
+        const now = Date.now();
+        const rawCache = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+        const snap = rawCache.snapshot || rawCache.state || {};
+        snap.antigravityModelCatalog = {
+          updatedAt: now,
+          source: 'live-rpc',
+          activeDefaultModelId: 'MODEL_PLACEHOLDER_M667',
+          activeDefaultLabel: 'Orchestrator (Carbon)',
+          orchestratorPlannerModelId: 'MODEL_PLACEHOLDER_M427',
+          models: [
+            { modelId: 'MODEL_PLACEHOLDER_M667', slugId: 'orchestrator-carbon', label: 'Orchestrator (Carbon)', baseLabel: 'Orchestrator (Carbon)', isOrchestrator: true, isFirstPartyGemini: true, supportsThinking: false, inClientPicker: true, sortOrder: 0, maxContextTokens: 512000 },
+            { modelId: 'MODEL_PLACEHOLDER_M427', slugId: 'gemini-4-carbon-high', label: 'Gemini 4 Carbon (High)', baseLabel: 'Gemini 4 Carbon', isFirstPartyGemini: true, supportsThinking: true, effortTier: 'high', inClientPicker: true, sortOrder: 1, tagTitle: 'New', maxContextTokens: 512000 },
+            { modelId: 'MODEL_PLACEHOLDER_M437', slugId: 'gemini-4-carbon-medium', label: 'Gemini 4 Carbon (Medium)', baseLabel: 'Gemini 4 Carbon', isFirstPartyGemini: true, supportsThinking: true, effortTier: 'medium', inClientPicker: true, sortOrder: 2, tagTitle: 'New', maxContextTokens: 512000 },
+            { modelId: 'MODEL_PLACEHOLDER_M528', slugId: 'gemini-4-hydrogen-xhigh', label: 'Gemini 4 Hydrogen (XHigh)', baseLabel: 'Gemini 4 Hydrogen', isFirstPartyGemini: true, supportsThinking: true, effortTier: 'xhigh', inClientPicker: true, sortOrder: 3, maxContextTokens: 512000 },
+            { modelId: 'MODEL_PLACEHOLDER_M525', slugId: 'gemini-4-hydrogen-high', label: 'Gemini 4 Hydrogen (High)', baseLabel: 'Gemini 4 Hydrogen', isFirstPartyGemini: true, supportsThinking: true, effortTier: 'high', inClientPicker: true, sortOrder: 4, maxContextTokens: 512000 },
+            { modelId: 'MODEL_PLACEHOLDER_M417', slugId: 'gemini-4-argon-high', label: 'Gemini 4 Argon (High)', baseLabel: 'Gemini 4 Argon', isFirstPartyGemini: true, supportsThinking: true, effortTier: 'high', inClientPicker: true, sortOrder: 5, tagTitle: 'Leaving Soon', maxContextTokens: 512000 },
+            { modelId: 'MODEL_PLACEHOLDER_M301', slugId: 'fast-lite-medium', label: 'Fast Lite (Medium)', baseLabel: 'Fast Lite (Medium)', isFirstPartyGemini: false, supportsThinking: false, inClientPicker: true, sortOrder: 6, maxContextTokens: 256000 },
+            { modelId: 'MODEL_PLACEHOLDER_M532', slugId: 'gemini-4-neon-high', label: 'Gemini 4 Neon (High)', baseLabel: 'Gemini 4 Neon', isFirstPartyGemini: true, isNeon: true, supportsThinking: true, effortTier: 'high', inClientPicker: true, sortOrder: 7, maxContextTokens: 512000 }
+          ]
+        };
+        snap.claudeModelCatalog = {
+          updatedAt: now,
+          sourceKind: 'vscode-extension',
+          sourceVersion: '2.1.332',
+          activeDefaultModelId: 'claude-opus-5-5',
+          activeDefaultLabel: 'Claude Opus 5.5',
+          models: [
+            { modelId: 'claude-opus-5-5', slugId: 'claude-opus-5-5', family: 'opus', label: 'Claude Opus 5.5', displayName: 'Opus 5.5', defaultEffort: 'high', efforts: ['low', 'medium', 'high', 'xhigh'], supportsThinking: true, supportsXHigh: true, supports1m: true, contextLimit: 1000000, inClientPicker: true, isLatest: true, tagTitle: '1M' },
+            { modelId: 'claude-fable-5-2', slugId: 'claude-fable-5-2', family: 'fable', label: 'Fable 5.2', displayName: 'Fable 5.2', defaultEffort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh'], supportsThinking: true, supportsXHigh: true, supports1m: true, contextLimit: 1000000, inClientPicker: true, isLatest: true },
+            { modelId: 'claude-sonnet-5-5', slugId: 'claude-sonnet-5-5', family: 'sonnet', label: 'Claude Sonnet 5.5', displayName: 'Sonnet 5.5', defaultEffort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh'], supportsThinking: true, supportsXHigh: true, supports1m: true, contextLimit: 1000000, inClientPicker: true, isLatest: true },
+            { modelId: 'claude-haiku-5-5', slugId: 'claude-haiku-5-5', family: 'haiku', label: 'Claude Haiku 5.5', displayName: 'Haiku 5.5', defaultEffort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh'], supportsThinking: true, supportsXHigh: true, supports1m: true, contextLimit: 1000000, inClientPicker: true, isLatest: true }
+          ]
+        };
+        snap.rows = Array.isArray(snap.rows) ? snap.rows.filter((r) => r && r.id !== 'sess-v90-neon' && r.id !== 'sess-v90-lww' && r.id !== 'sess-v90-claude') : [];
+        snap.rows.unshift(
+          {
+            id: 'sess-v90-neon',
+            key: 'sess-v90-neon',
+            title: 'Neon Active Session',
+            provider: 'antigravity',
+            model: 'Gemini 4 Neon (High)',
+            modelUpdatedAt: now - 1000,
+            neonWarning: true,
+            folder: 'isabi-app',
+            status: 'completed',
+            usedTokens: 120000,
+            limitTokens: 512000,
+            at: now - 500
+          },
+          {
+            id: 'sess-v90-lww',
+            key: 'sess-v90-lww',
+            title: 'Server Newer Model Session',
+            provider: 'antigravity',
+            model: 'Gemini 4 Hydrogen (XHigh)',
+            modelUpdatedAt: now + 60000,
+            folder: 'isabi-app',
+            status: 'completed',
+            usedTokens: 90000,
+            limitTokens: 512000,
+            at: now - 600
+          },
+          {
+            id: 'sess-v90-claude',
+            key: 'sess-v90-claude',
+            title: 'Claude Live Catalog Session',
+            provider: 'claude',
+            model: 'Claude Sonnet 5.5',
+            modelUpdatedAt: now,
+            folder: 'isabi-app',
+            status: 'completed',
+            usedTokens: 80000,
+            limitTokens: 1000000,
+            at: now - 700
+          }
+        );
+        rawCache.snapshot = snap;
+        rawCache.state = snap;
+        rawCache.threads = rawCache.threads || {};
+        rawCache.threads['sess-v90-lww'] = { id: 'sess-v90-lww', provider: 'antigravity', model: 'Gemini 4 Hydrogen (XHigh)', modelUpdatedAt: now + 60000, messages: [{ id: 'v90-1', role: 'user', text: 'Check LWW', createdAt: new Date(now - 600).toISOString() }] };
+        rawCache.threads['sess-v90-neon'] = { id: 'sess-v90-neon', provider: 'antigravity', model: 'Gemini 4 Neon (High)', modelUpdatedAt: now - 1000, messages: [{ id: 'v90-2', role: 'user', text: 'Check Neon switch', createdAt: new Date(now - 500).toISOString() }] };
+        rawCache.threads['sess-v90-claude'] = { id: 'sess-v90-claude', provider: 'claude', model: 'Claude Sonnet 5.5', modelUpdatedAt: now, messages: [{ id: 'v90-3', role: 'user', text: 'Check Claude 5.5', createdAt: new Date(now - 700).toISOString() }] };
+        localStorage.setItem('theo_remote_cache_v3', JSON.stringify(rawCache));
+        localStorage.removeItem('theo_remote_outbox_v1');
+        try { sessionStorage.removeItem('theo_pinned_nav_v1'); } catch {}
+        const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+        delete prefs.selectedRepoId;
+        prefs.customBridgeUrl = '';
+        prefs.edgeRelayUrl = '';
+        prefs.cloudUrl = '';
+        prefs.activeTab = 'chat';
+        prefs.sidebarFilter = 'all';
+        prefs.collapsedSessionGroups = {};
+        prefs.selectedThreadId = 'sess-v90-lww';
+        prefs.composerMode = 'reply';
+        prefs.threadModelConfig = {
+          'sess-v90-lww': { modelId: 'gemini-4-argon', effort: 'low', provider: 'antigravity', updatedAt: now - 60000 }
+        };
+        localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+      })()`);
+      await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+      await new Promise((r) => setTimeout(r, 650));
+
+      const v90Probe = await evalJs(`(async () => {
+        const bootPrefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+        const lwwModelPill = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+        document.getElementById('chat-model-picker-btn')?.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const agyPickerHtml = document.getElementById('model-picker-body')?.innerHTML || '';
+        const agyOrchButtons = document.querySelectorAll('#model-picker-body [data-select-ai-model="orchestrator-carbon"]').length;
+        const hasLeavingSoonTag = Boolean(document.querySelector('#model-picker-body .vs-model-item-tag.tag-leaving'));
+        const hasXHighOption = Boolean(document.querySelector('#model-picker-body [data-select-model-combo="gemini-4-hydrogen:xhigh"]'));
+        // Click 0-effort Orchestrator (Carbon) and verify no fake effort bar / no (High) suffix
+        document.querySelector('#model-picker-body [data-select-model-combo="orchestrator-carbon:"]')?.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const orchSelectedPill = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+        document.getElementById('chat-model-picker-btn')?.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const effortBarHiddenOnZeroTier = document.querySelector('#model-picker-body .vs-model-effort-bar') === null;
+        document.getElementById('chat-model-picker-btn')?.click();
+
+        // Verify 0-effort non-thinking single-tier model with (Medium) in label hides effort bar
+        document.getElementById('chat-model-picker-btn')?.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const fastLiteButtons = document.querySelectorAll('#model-picker-body [data-select-ai-model="fast-lite"]').length;
+        document.querySelector('#model-picker-body [data-select-model-combo="fast-lite:"]')?.click();
+        await new Promise((r) => setTimeout(r, 30));
+        document.getElementById('chat-model-picker-btn')?.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const effortBarHiddenOnNonThinkingSingle = document.querySelector('#model-picker-body .vs-model-effort-bar') === null;
+        document.getElementById('chat-model-picker-btn')?.click();
+
+        // Check Claude session live catalog replacement
+        document.querySelector('.ide-tree-row[data-ide-open-session="sess-v90-claude"]')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+        document.getElementById('chat-model-picker-btn')?.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const claudePickerHtml = document.getElementById('model-picker-body')?.innerHTML || '';
+        document.querySelector('#model-picker-body [data-select-model-combo="claude-fable-5-2:xhigh"]')?.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const claudeSelectedPill = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+
+        // Check Neon pill in Sessions cards 1-tap switch + tree + chat header 1-tap switch to Carbon
+        const treeNeonPillPresent = Boolean(document.querySelector('.ide-tree-row[data-ide-open-session="sess-v90-neon"] .session-neon-pill'));
+        document.querySelector('.tab-btn[data-tab="sessions"]')?.click();
+        await new Promise((r) => setTimeout(r, 50));
+        const cardNeonBefore = Boolean(document.querySelector('.session-card[data-session-id="sess-v90-neon"] .session-neon-pill'));
+        document.querySelector('.session-card[data-session-id="sess-v90-neon"] [data-switch-neon-carbon]')?.click();
+        await new Promise((r) => setTimeout(r, 50));
+        const cardNeonAfter = Boolean(document.querySelector('.session-card[data-session-id="sess-v90-neon"] .session-neon-pill'));
+        document.querySelector('.tab-btn[data-tab="chat"]')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+        // Switch back to chat header test with a second Neon click (restore Neon via picker first on sess-v90-lww, or verify chat header synced)
+        document.querySelector('.ide-tree-row[data-ide-open-session="sess-v90-neon"]')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+        const chatNeonPillHiddenAfter = document.getElementById('chat-neon-pill')?.hidden === true;
+        const postNeonPillText = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+        const outboxAfter = JSON.parse(localStorage.getItem('theo_remote_outbox_v1') || '[]');
+        const neonSwitchCmd =
+          (window.__theoLastQuarantinedCmd &&
+          window.__theoLastQuarantinedCmd.subAction === 'setModel' &&
+          (window.__theoLastQuarantinedCmd.sessionId === 'sess-v90-neon' ||
+            window.__theoLastQuarantinedCmd.threadId === 'sess-v90-neon')
+            ? window.__theoLastQuarantinedCmd
+            : null) ||
+          [...outboxAfter].reverse().find((c) => c && c.subAction === 'setModel' && (c.sessionId === 'sess-v90-neon' || c.threadId === 'sess-v90-neon')) ||
+          null;
+        return {
+          defaultRepoId: bootPrefs.selectedRepoId,
+          lwwModelPill,
+          agyOrchButtons,
+          fastLiteButtons,
+          effortBarHiddenOnNonThinkingSingle,
+          hasLeavingSoonTag,
+          hasXHighOption,
+          hasGemini38FallbackInLiveAgy: agyPickerHtml.includes('Gemini 3.8 Flash'),
+          orchSelectedPill,
+          effortBarHiddenOnZeroTier,
+          hasOpus55: claudePickerHtml.includes('Claude Opus 5.5'),
+          hasFable52: claudePickerHtml.includes('Fable 5.2'),
+          hasOpus47Fallback: claudePickerHtml.includes('Opus 4.7'),
+          claudeSelectedPill,
+          treeNeonPillPresent,
+          cardNeonBefore,
+          cardNeonAfter,
+          chatNeonPillHiddenAfter,
+          postNeonPillText,
+          neonSwitchCmdModel: neonSwitchCmd?.model || '',
+          titleCount: document.querySelectorAll('[title]').length,
+          overflowX: Math.max(0, document.documentElement.scrollWidth - window.innerWidth)
+        };
+      })()`);
+      assert.strictEqual(v90Probe.defaultRepoId, 'isabi-app', 'Default selectedRepoId must be isabi-app');
+      assert.strictEqual(v90Probe.lwwModelPill, 'Gemini 4 Hydrogen (XHigh)', 'Newer server modelUpdatedAt must beat stale prefs.threadModelConfig');
+      assert.strictEqual(v90Probe.agyOrchButtons, 1, '0-effort Orchestrator (Carbon) must render exactly one single-tier item');
+      assert.strictEqual(v90Probe.fastLiteButtons, 1, '0-effort non-thinking model must render one single-tier item');
+      assert.strictEqual(v90Probe.effortBarHiddenOnNonThinkingSingle, true, 'Effort bar must hide for non-thinking model even when label has (Medium)');
+      assert.strictEqual(v90Probe.hasLeavingSoonTag, true, 'Upstream tagTitle Leaving Soon badge must render');
+      assert.strictEqual(v90Probe.hasXHighOption, true, 'XHigh effort tier must render for Hydrogen');
+      assert.strictEqual(v90Probe.hasGemini38FallbackInLiveAgy, false, 'Live Antigravity catalog must completely replace static fallback list');
+      assert.strictEqual(v90Probe.orchSelectedPill, 'Orchestrator (Carbon)', '0-effort Orchestrator must not get a fake (High) suffix');
+      assert.strictEqual(v90Probe.effortBarHiddenOnZeroTier, true, 'Effort bar must hide for 0-effort single-tier models');
+      assert.strictEqual(v90Probe.hasOpus55 && v90Probe.hasFable52, true, 'Live Claude catalog models must render in picker');
+      assert.strictEqual(v90Probe.hasOpus47Fallback, false, 'Live Claude catalog must replace static fallback list');
+      assert.strictEqual(v90Probe.claudeSelectedPill, 'Fable 5.2 (XHigh)', 'Claude Fable 5.2 XHigh must be selectable');
+      assert.strictEqual(v90Probe.treeNeonPillPresent, true, 'Neon session must surface .session-neon-pill in tree');
+      assert.strictEqual(v90Probe.cardNeonBefore, true, 'Sessions card must render .session-neon-pill before switch');
+      assert.strictEqual(v90Probe.cardNeonAfter, false, 'Sessions card 1-tap Neon switch must immediately re-render card without Neon pill');
+      assert.strictEqual(v90Probe.chatNeonPillHiddenAfter, true, '1-tap Neon switch to Carbon must hide #chat-neon-pill');
+      assert.strictEqual(v90Probe.postNeonPillText, 'Gemini 4 Carbon (High)', '1-tap Neon switch must select Gemini 4 Carbon (High)');
+      assert.strictEqual(v90Probe.neonSwitchCmdModel, 'MODEL_PLACEHOLDER_M427', '1-tap Neon switch must enqueue M427 Carbon setModel command');
+      assert.strictEqual(v90Probe.titleCount, 0);
+      assert.strictEqual(v90Probe.overflowX, 0);
+
+      // Verify reload preserves dynamic XHigh choice on sess-v90-claude via cachedStore pre-sanitization hydration
+      await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+      await new Promise((r) => setTimeout(r, 600));
+      const postReloadClaude = await evalJs(`(() => {
+        document.querySelector('.ide-tree-row[data-ide-open-session="sess-v90-claude"]')?.click();
+        return document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+      })()`);
+      assert.strictEqual(postReloadClaude, 'Fable 5.2 (XHigh)', 'Reload must preserve live dynamic Fable 5.2 (XHigh) selection');
+
+      // Verify fresh browser WITHOUT initial prefs.selectedModelByProvider auto-aligns when live catalogs arrive
+      await evalJs(`(() => {
+        localStorage.removeItem('theo_remote_prefs_v1');
+      })()`);
+      await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+      await new Promise((r) => setTimeout(r, 550));
+      const freshAutoAlign = await evalJs(`(() => {
+        const p = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+        return {
+          agy: p.selectedModelByProvider?.antigravity || '',
+          claude: p.selectedModelByProvider?.claude || ''
+        };
+      })()`);
+      assert.strictEqual(freshAutoAlign.agy, 'orchestrator-carbon', 'Fresh browser must auto-align to live default Orchestrator (Carbon)');
+      assert.strictEqual(freshAutoAlign.claude, 'claude-opus-5-5', 'Fresh browser must auto-align to live default Claude Opus 5.5');
+      console.log('[PASS] Adversarial #26: v90 Live Model Catalog Replacement, 0-Effort Orchestrator, XHigh, LWW, Neon 1-tap Carbon & isabi-app default verified');
+    }
+
     // Final error & network quarantine assertions (#21)
     assert.strictEqual(pageExceptions.length, 0, `Uncaught page exceptions: ${JSON.stringify(pageExceptions)}`);
     assert.strictEqual(consoleErrors.length, 0, `Console errors: ${JSON.stringify(consoleErrors)}`);

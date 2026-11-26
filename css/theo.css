@@ -9934,6 +9934,59 @@ html[data-theme="light"] .sb-q-btn.primary {
   flex-shrink: 0;
 }
 
+.vs-model-item-tag.tag-leaving {
+  border-color: rgba(245, 158, 11, 0.45);
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.vs-model-item-tag.tag-new {
+  border-color: rgba(16, 185, 129, 0.45);
+  color: var(--emerald);
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.vs-model-item-tag.tag-notice,
+.vs-model-item-tag.tag-1m {
+  border-color: rgba(200, 162, 90, 0.45);
+  color: var(--brass);
+  background: rgba(200, 162, 90, 0.12);
+}
+
+.session-neon-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 9.8px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #fde68a;
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(245, 158, 11, 0.55);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.14s ease, border-color 0.14s ease, transform 0.12s ease;
+}
+
+.session-neon-pill[hidden] {
+  display: none !important;
+}
+
+.session-neon-pill:hover,
+.session-neon-pill:focus-visible {
+  background: rgba(245, 158, 11, 0.28);
+  border-color: #f59e0b;
+  outline: none;
+}
+
+.session-neon-pill:active {
+  transform: scale(0.95);
+}
+
 .vs-model-menu-item.active .vs-model-menu-tag,
 .vs-model-menu-item.active .vs-model-item-tag {
   border-color: rgba(200, 162, 90, 0.45);

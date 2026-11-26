@@ -146,14 +146,36 @@
   const THINKING_EFFORT_LEVELS = [
     { id: 'low', label: 'Low', desc: 'Fastest turnaround · concise reasoning' },
     { id: 'medium', label: 'Medium', desc: 'Balanced speed & multi-step verification' },
-    { id: 'high', label: 'High', desc: 'Maximum thinking depth & edge-case rigor' }
+    { id: 'high', label: 'High', desc: 'Deep thinking & edge-case rigor' },
+    { id: 'xhigh', label: 'XHigh', desc: 'Maximum extended reasoning budget' }
   ];
 
   const CHEVRON_DOWN_SVG = `<svg class="ui-chev" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6L8 9.5L11.5 6"/></svg>`;
   const CHEVRON_RIGHT_SVG = `<svg class="ui-chev" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4.5L9.5 8L6 11.5"/></svg>`;
   const CHECK_MARK_SVG = `<svg class="vs-model-check-ico" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-6.5"/></svg>`;
 
-  let liveAntigravityCatalog = { updatedAt: 0, source: '', models: [], byAlias: new Map() };
+  let liveAntigravityCatalog = {
+    updatedAt: 0,
+    source: '',
+    activeDefaultModelId: '',
+    activeDefaultLabel: '',
+    orchestratorPlannerModelId: '',
+    clientModelSorts: [],
+    families: [],
+    models: [],
+    byAlias: new Map()
+  };
+
+  let liveClaudeCatalog = {
+    updatedAt: 0,
+    sourceKind: '',
+    sourceVersion: '',
+    activeDefaultModelId: '',
+    activeDefaultLabel: '',
+    latestPerFamily: {},
+    models: [],
+    byAlias: new Map()
+  };
 
   function normalizeCatalogLookupKey(raw = '') {
     return String(raw || '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -176,6 +198,15 @@
       .replace(/^-+|-+$/g, '');
   }
 
+  function formatEffortWord(effId = '') {
+    const low = String(effId || '').trim().toLowerCase();
+    if (low === 'xhigh') return 'XHigh';
+    if (low === 'low') return 'Low';
+    if (low === 'medium') return 'Medium';
+    if (low === 'high') return 'High';
+    return '';
+  }
+
   function ingestLiveAntigravityCatalog(catObj) {
     if (!catObj || typeof catObj !== 'object' || !Array.isArray(catObj.models)) return;
     const nextAt = Number(catObj.updatedAt || 0);
@@ -196,22 +227,38 @@
       const label = String(rawEntry.label || '').trim();
       const baseLabel = String(rawEntry.baseLabel || stripEffortSuffixForCatalog(label) || label).trim();
       if (!modelId && !label && !baseLabel) continue;
-      const isOwnOrchestrator =
-        /orchestrator|model_placeholder_m66[79]|model_placeholder_m681/i.test(`${modelId} ${label}`);
+      const isOwnOrchestrator = Boolean(
+        rawEntry.isOrchestrator ||
+          /orchestrator|model_placeholder_m66[79]|model_placeholder_m681|model_placeholder_m537/i.test(
+            `${modelId} ${label}`
+          )
+      );
       const filteredAliases = Array.isArray(rawEntry.aliases)
         ? rawEntry.aliases
             .map((a) => String(a || '').trim())
-            .filter((a) => a && (isOwnOrchestrator || !/^\s*orchestrator\s*\((?:carbon|argon)\)\s*$/i.test(a)))
+            .filter((a) => a && (isOwnOrchestrator || !/^\s*orchestrator\s*\((?:carbon|argon|neon)\)\s*$/i.test(a)))
         : [];
       const entry = {
         modelId,
+        slugId: String(rawEntry.slugId || '').trim(),
         label: label || baseLabel,
         baseLabel: baseLabel || label,
         aliases: filteredAliases,
         isFirstPartyGemini: Boolean(rawEntry.isFirstPartyGemini),
         isClaudeLike: Boolean(rawEntry.isClaudeLike),
-        supportsThinking: rawEntry.supportsThinking !== false,
+        isOrchestrator: isOwnOrchestrator,
+        isNeon: Boolean(rawEntry.isNeon || /neon|model_placeholder_m53[2-57]/i.test(`${modelId} ${label}`)),
+        supportsThinking: rawEntry.supportsThinking === true || (!isOwnOrchestrator && rawEntry.supportsThinking !== false),
         isRecommended: Boolean(rawEntry.isRecommended),
+        inClientPicker: rawEntry.inClientPicker !== false,
+        sortOrder: Number.isFinite(Number(rawEntry.sortOrder)) ? Number(rawEntry.sortOrder) : cleanModels.length,
+        tagTitle: String(rawEntry.tagTitle || '').trim(),
+        tagDescription: String(rawEntry.tagDescription || '').trim(),
+        quotaRemainingFraction:
+          typeof rawEntry.quotaRemainingFraction === 'number' && Number.isFinite(rawEntry.quotaRemainingFraction)
+            ? rawEntry.quotaRemainingFraction
+            : null,
+        effortTier: String(rawEntry.effortTier || '').trim().toLowerCase(),
         maxContextTokens: Number(rawEntry.maxContextTokens || 0),
         softCompactionTargetTokens: Number(rawEntry.softCompactionTargetTokens || 0),
         hardMaxTokens: Number(rawEntry.hardMaxTokens || 0)
@@ -219,7 +266,7 @@
       cleanModels.push(entry);
       pendingEntries.push(entry);
     }
-    // Pass 1: secondary aliases; Pass 2: primary baseLabel -> label -> modelId always win
+    // Pass 1: secondary aliases; Pass 2: primary baseLabel -> label -> slugId -> modelId always win
     for (const entry of pendingEntries) {
       for (const k of entry.aliases) {
         const nk = normalizeCatalogLookupKey(k);
@@ -237,12 +284,84 @@
     for (const entry of pendingEntries) {
       const lk = normalizeCatalogLookupKey(entry.label);
       if (lk) byAlias.set(lk, entry);
+      const sk = normalizeCatalogLookupKey(entry.slugId);
+      if (sk) byAlias.set(sk, entry);
       const mk = normalizeCatalogLookupKey(entry.modelId);
       if (mk) byAlias.set(mk, entry);
     }
     liveAntigravityCatalog = {
       updatedAt: nextAt || Date.now(),
       source: String(catObj.source || ''),
+      activeDefaultModelId: String(catObj.activeDefaultModelId || '').trim(),
+      activeDefaultLabel: String(catObj.activeDefaultLabel || '').trim(),
+      orchestratorPlannerModelId: String(catObj.orchestratorPlannerModelId || '').trim(),
+      clientModelSorts: Array.isArray(catObj.clientModelSorts) ? catObj.clientModelSorts : [],
+      families: Array.isArray(catObj.families) ? catObj.families : [],
+      models: cleanModels,
+      byAlias
+    };
+  }
+
+  function ingestLiveClaudeCatalog(catObj) {
+    if (!catObj || typeof catObj !== 'object' || !Array.isArray(catObj.models)) return;
+    const nextAt = Number(catObj.updatedAt || 0);
+    if (
+      nextAt > 0 &&
+      liveClaudeCatalog.updatedAt > 0 &&
+      nextAt < liveClaudeCatalog.updatedAt &&
+      liveClaudeCatalog.models.length > 0
+    ) {
+      return;
+    }
+    const cleanModels = [];
+    const byAlias = new Map();
+    for (const rawEntry of catObj.models) {
+      if (!rawEntry || typeof rawEntry !== 'object') continue;
+      const modelId = String(rawEntry.modelId || rawEntry.slugId || '').trim();
+      const label = String(rawEntry.label || rawEntry.displayName || modelId).trim();
+      if (!modelId && !label) continue;
+      const effs = Array.isArray(rawEntry.efforts)
+        ? rawEntry.efforts.map((e) => String(e || '').trim().toLowerCase()).filter(Boolean)
+        : [];
+      const entry = {
+        modelId,
+        slugId: String(rawEntry.slugId || modelId).trim(),
+        family: String(rawEntry.family || '').trim().toLowerCase(),
+        label,
+        displayName: String(rawEntry.displayName || label).trim(),
+        defaultEffort: String(rawEntry.defaultEffort || '').trim().toLowerCase(),
+        efforts: effs,
+        supportsThinking: rawEntry.supportsThinking !== false,
+        supportsXHigh: Boolean(rawEntry.supportsXHigh || effs.includes('xhigh')),
+        supports1m: Boolean(rawEntry.supports1m || Number(rawEntry.contextLimit || 0) >= 1000000),
+        contextLimit: Number(rawEntry.contextLimit || (rawEntry.supports1m ? 1000000 : 200000)),
+        inClientPicker: rawEntry.inClientPicker !== false,
+        isLatest: Boolean(rawEntry.isLatest),
+        tagTitle: String(rawEntry.tagTitle || '').trim(),
+        tagDescription: String(rawEntry.tagDescription || '').trim(),
+        cliValue: String(rawEntry.cliValue || modelId).trim()
+      };
+      cleanModels.push(entry);
+      for (const k of [
+        entry.modelId,
+        entry.slugId,
+        entry.displayName,
+        entry.label,
+        entry.cliValue,
+        slugCatalogModelId(entry.label)
+      ]) {
+        const nk = normalizeCatalogLookupKey(k);
+        if (nk) byAlias.set(nk, entry);
+      }
+    }
+    liveClaudeCatalog = {
+      updatedAt: nextAt || Date.now(),
+      sourceKind: String(catObj.sourceKind || ''),
+      sourceVersion: String(catObj.sourceVersion || ''),
+      activeDefaultModelId: String(catObj.activeDefaultModelId || '').trim(),
+      activeDefaultLabel: String(catObj.activeDefaultLabel || '').trim(),
+      latestPerFamily:
+        catObj.latestPerFamily && typeof catObj.latestPerFamily === 'object' ? catObj.latestPerFamily : {},
       models: cleanModels,
       byAlias
     };
@@ -259,62 +378,163 @@
     return stripped ? liveAntigravityCatalog.byAlias.get(stripped) || null : null;
   }
 
+  function lookupPwaClaudeCatalogModel(rawModel = '') {
+    const exact = normalizeCatalogLookupKey(rawModel);
+    if (!exact || !(liveClaudeCatalog.byAlias instanceof Map) || liveClaudeCatalog.byAlias.size === 0) {
+      return null;
+    }
+    const hit = liveClaudeCatalog.byAlias.get(exact);
+    if (hit) return hit;
+    const stripped = normalizeCatalogLookupKey(stripEffortSuffixForCatalog(rawModel).replace(/\[1m\]$/i, ''));
+    return stripped ? liveClaudeCatalog.byAlias.get(stripped) || null : null;
+  }
+
   function getEffectiveModelCatalog(provKey = 'antigravity') {
     const cleanProv = provKey === 'claude' ? 'claude' : 'antigravity';
     const base = MODEL_CATALOG[cleanProv] || MODEL_CATALOG.antigravity;
-    if (cleanProv !== 'antigravity' || !liveAntigravityCatalog.models.length) {
+    if (cleanProv === 'claude') {
+      if (!liveClaudeCatalog.models.length) {
+        return base;
+      }
+      const rawPicker = liveClaudeCatalog.models.filter((m) => m && m.inClientPicker !== false);
+      const sourceList = rawPicker.length ? rawPicker : liveClaudeCatalog.models;
+      const mapped = sourceList.map((m) => {
+        const effList = m.supportsThinking === false
+          ? []
+          : Array.isArray(m.efforts) && m.efforts.length
+            ? m.efforts
+            : ['low', 'medium', 'high'];
+        return {
+          id: m.modelId,
+          label: m.label,
+          shortLabel: m.displayName || m.label,
+          badge: m.tagTitle || (m.supports1m ? '1M' : m.isLatest ? 'Latest' : 'Claude'),
+          tagTitle: m.tagTitle || '',
+          tagDescription: m.tagDescription || '',
+          desc: m.tagDescription || (m.supports1m ? '1M-token context window' : 'Claude Code model'),
+          cliModel: m.cliValue || m.modelId,
+          supportsEffort: effList.length > 0,
+          efforts: effList,
+          contextLimit: Number(m.contextLimit || 200000),
+          isDefault: Boolean(liveClaudeCatalog.activeDefaultModelId && m.modelId === liveClaudeCatalog.activeDefaultModelId),
+          liveCatalogEntry: m
+        };
+      });
+      return mapped.length ? mapped : base;
+    }
+
+    if (!liveAntigravityCatalog.models.length) {
       return base;
     }
-    const existingIds = new Set(base.map((m) => m.id));
-    const existingLabels = new Set(base.map((m) => String(m.label || '').toLowerCase()));
-    const dynamic = [];
-    const dynamicById = new Map();
-    for (const entry of liveAntigravityCatalog.models) {
-      if (!entry || !entry.isFirstPartyGemini || entry.isClaudeLike || entry.supportsThinking === false) {
-        continue;
+    const pickerEntries = liveAntigravityCatalog.models.filter((e) => e && e.inClientPicker !== false);
+    const ordered = (pickerEntries.length ? pickerEntries : liveAntigravityCatalog.models)
+      .slice()
+      .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
+
+    const groups = [];
+    const groupByKey = new Map();
+    for (const entry of ordered) {
+      const cleanBase = String(stripEffortSuffixForCatalog(entry.baseLabel || entry.label) || entry.label).trim();
+      if (!cleanBase) continue;
+      const isOrch = Boolean(entry.isOrchestrator || /orchestrator/i.test(cleanBase));
+      const key = isOrch ? cleanBase.toLowerCase() : stripEffortSuffixForCatalog(cleanBase).toLowerCase();
+      let grp = groupByKey.get(key);
+      if (!grp) {
+        grp = { key, cleanBase, entries: [] };
+        groupByKey.set(key, grp);
+        groups.push(grp);
       }
-      const cleanBase = String(stripEffortSuffixForCatalog(entry.baseLabel || entry.label) || '').trim();
-      if (!cleanBase || /orchestrator|argon|3\.8|flash|carbon|hydrogen/i.test(cleanBase)) {
-        continue;
-      }
-      const id = slugCatalogModelId(cleanBase);
-      if (!id || existingIds.has(id)) {
-        continue;
-      }
-      const effTier = inferEffortIdFromRaw(`${entry.modelId || ''} ${entry.label || ''}`, '');
-      const existingDyn = dynamicById.get(id);
-      if (existingDyn) {
-        if (effTier && entry.modelId) {
-          existingDyn.effortModelIds[effTier] = entry.modelId;
-        }
-        continue;
-      }
-      if (existingLabels.has(cleanBase.toLowerCase())) {
-        continue;
-      }
-      existingLabels.add(cleanBase.toLowerCase());
-      const dynObj = {
-        id,
-        label: cleanBase,
-        shortLabel: cleanBase,
-        badge: entry.isRecommended ? 'Recommended' : 'Live',
-        desc: 'Live synced Antigravity Gemini model',
-        cliModel: entry.modelId || cleanBase,
-        supportsEffort: entry.supportsThinking !== false,
-        liveCatalogEntry: entry,
-        effortModelIds: effTier && entry.modelId ? { [effTier]: entry.modelId } : {}
-      };
-      dynamicById.set(id, dynObj);
-      dynamic.push(dynObj);
+      grp.entries.push(entry);
     }
-    return dynamic.length ? [...base, ...dynamic] : base;
+
+    const activeDefId = String(liveAntigravityCatalog.activeDefaultModelId || '').toLowerCase();
+    const out = [];
+    const seenIds = new Set();
+    for (const grp of groups) {
+      const first = grp.entries[0];
+      const isOrch = grp.entries.some((e) => e.isOrchestrator || /orchestrator/i.test(`${e.label} ${e.modelId}`));
+      const isGptOss = grp.entries.length === 1 && /gpt[-_\s]*oss/i.test(grp.cleanBase);
+      const isSingleNonThinking = grp.entries.length === 1 && first.supportsThinking === false;
+      const isFixedSingleTier = isOrch || isGptOss || isSingleNonThinking;
+      const isNeon = grp.entries.some((e) => e.isNeon || /neon/i.test(`${e.label} ${e.modelId}`));
+      const effortModelIds = {};
+      const effortsSet = new Set();
+      for (const e of grp.entries) {
+        if (isFixedSingleTier) continue;
+        const tier =
+          e.effortTier ||
+          inferEffortIdFromRaw(`${e.modelId || ''} ${e.label || ''}`, '');
+        if (tier && ['low', 'medium', 'high', 'xhigh'].includes(tier)) {
+          effortsSet.add(tier);
+          if (e.modelId && !effortModelIds[tier]) {
+            effortModelIds[tier] = e.modelId;
+          }
+        }
+      }
+      const efforts = ['low', 'medium', 'high', 'xhigh'].filter((t) => effortsSet.has(t));
+      const supportsEffort = !isFixedSingleTier && efforts.length > 0;
+      const displayLabel = supportsEffort ? grp.cleanBase : first.label || grp.cleanBase;
+      const baseSlug = slugCatalogModelId(isFixedSingleTier ? displayLabel : grp.cleanBase);
+      if (!baseSlug || seenIds.has(baseSlug)) continue;
+      seenIds.add(baseSlug);
+
+      const tagTitle = (grp.entries.find((e) => e.tagTitle)?.tagTitle || '').trim();
+      const tagDescription = (grp.entries.find((e) => e.tagDescription)?.tagDescription || '').trim();
+      const qEntry = grp.entries.find((e) => typeof e.quotaRemainingFraction === 'number');
+      const quotaRemainingFraction = qEntry ? qEntry.quotaRemainingFraction : null;
+      const isDefault = Boolean(
+        activeDefId && grp.entries.some((e) => String(e.modelId || '').toLowerCase() === activeDefId)
+      );
+      const defaultCliModel = supportsEffort
+        ? effortModelIds.high || effortModelIds.xhigh || effortModelIds.medium || effortModelIds.low || first.modelId
+        : first.modelId || displayLabel;
+
+      out.push({
+        id: baseSlug,
+        label: displayLabel,
+        shortLabel: displayLabel,
+        badge:
+          tagTitle ||
+          (isNeon
+            ? 'Neon'
+            : isOrch
+              ? 'Auto'
+              : efforts.includes('xhigh')
+                ? 'XHigh'
+                : first.isRecommended
+                  ? 'Recommended'
+                  : 'Live'),
+        tagTitle,
+        tagDescription,
+        quotaRemainingFraction,
+        desc: tagDescription || (isOrch ? 'Antigravity multi-step Orchestrator' : 'Live Antigravity model'),
+        cliModel: defaultCliModel,
+        supportsEffort,
+        efforts,
+        isOrchestrator: isOrch,
+        isNeon,
+        isDefault,
+        liveCatalogEntry: first,
+        effortModelIds
+      });
+    }
+    return out.length ? out : base;
   }
 
   function inferEffortIdFromRaw(rawModel = '', effortHint = '') {
     const eff = String(effortHint || '').trim().toLowerCase();
-    if (eff === 'xhigh') return 'high';
-    if (eff === 'low' || eff === 'medium' || eff === 'high') return eff;
+    if (eff === 'low' || eff === 'medium' || eff === 'high' || eff === 'xhigh') return eff;
     const low = String(rawModel || '').toLowerCase();
+    if (
+      low === 'model_placeholder_m528' ||
+      low === 'model_placeholder_m535' ||
+      low.includes('(xhigh)') ||
+      low.endsWith('-xhigh') ||
+      low.includes('· xhigh') ||
+      /\sxhigh$/i.test(low)
+    ) {
+      return 'xhigh';
+    }
     if (
       low === 'model_placeholder_m419' ||
       low === 'model_placeholder_m438' ||
@@ -345,15 +565,12 @@
       low === 'model_placeholder_m417' ||
       low === 'model_placeholder_m427' ||
       low === 'model_placeholder_m525' ||
-      low === 'model_placeholder_m528' ||
       low === 'model_placeholder_m318' ||
       low === 'model_placeholder_m322' ||
       low === 'model_placeholder_m402' ||
       low === 'model_placeholder_m405' ||
       low.includes('(high)') ||
-      low.includes('(xhigh)') ||
       low.endsWith('-high') ||
-      low.endsWith('-xhigh') ||
       low.includes('· high')
     ) {
       return 'high';
@@ -364,20 +581,85 @@
   function inferModelIdFromRaw(rawModel = '', provider = 'antigravity') {
     const provKey = provider === 'claude' ? 'claude' : 'antigravity';
     const low = String(rawModel || '').trim().toLowerCase();
+    const effCatalog = getEffectiveModelCatalog(provKey);
+
     if (provKey === 'claude') {
-      if (low.includes('sonnet')) return 'claude-sonnet-4-6';
-      if (low.includes('fable')) return 'fable-5-1';
-      if (low.includes('opus')) return 'claude-opus-4-7';
+      const liveClaudeHit = lookupPwaClaudeCatalogModel(rawModel);
+      if (liveClaudeHit && effCatalog.some((m) => m.id === liveClaudeHit.modelId)) {
+        return liveClaudeHit.modelId;
+      }
+      const cleanLow = low.replace(/\[1m\]/gi, '').replace(/\s*\((low|medium|high|xhigh|1m)\)\s*/gi, '').trim();
+      const slugMatch = effCatalog.find(
+        (m) =>
+          m.id.toLowerCase() === cleanLow ||
+          String(m.label || '').toLowerCase() === cleanLow ||
+          String(m.shortLabel || '').toLowerCase() === cleanLow
+      );
+      if (slugMatch) return slugMatch.id;
+      if (low.includes('fable')) {
+        return effCatalog.find((m) => m.id.includes('fable'))?.id || 'fable-5-1';
+      }
+      if (low.includes('haiku')) {
+        return effCatalog.find((m) => m.id.includes('haiku'))?.id || '';
+      }
+      if (low.includes('sonnet')) {
+        return effCatalog.find((m) => m.id.includes('sonnet'))?.id || 'claude-sonnet-4-6';
+      }
+      if (low.includes('opus')) {
+        return effCatalog.find((m) => m.id.includes('opus'))?.id || 'claude-opus-4-7';
+      }
       return '';
+    }
+
+    const liveMatch = lookupPwaLiveCatalogModel(rawModel);
+    if (liveMatch) {
+      const isOrch = Boolean(liveMatch.isOrchestrator || /orchestrator/i.test(`${liveMatch.modelId} ${liveMatch.label}`));
+      const isGptOss = /gpt[-_\s]*oss/i.test(`${liveMatch.modelId} ${liveMatch.label}`);
+      const candId = slugCatalogModelId(
+        isOrch || isGptOss ? liveMatch.label || liveMatch.baseLabel : stripEffortSuffixForCatalog(liveMatch.baseLabel || liveMatch.label)
+      );
+      if (candId && effCatalog.some((m) => m.id === candId)) {
+        return candId;
+      }
+    }
+    if (effCatalog.length) {
+      if (
+        low === 'model_placeholder_m667' ||
+        low === 'model_placeholder_m669' ||
+        low === 'gemini-pro-orchestrator' ||
+        low === 'gemini-flash-worker-agy' ||
+        (low.includes('orchestrator') && low.includes('carbon'))
+      ) {
+        const hit = effCatalog.find((m) => m.id === 'orchestrator-carbon');
+        if (hit) return hit.id;
+      }
+      if (low === 'model_placeholder_m681' || (low.includes('orchestrator') && low.includes('argon'))) {
+        const hit = effCatalog.find((m) => m.id === 'orchestrator-argon');
+        if (hit) return hit.id;
+      }
+      if (low === 'model_placeholder_m537' || (low.includes('orchestrator') && low.includes('neon'))) {
+        const hit = effCatalog.find((m) => m.id === 'orchestrator-neon');
+        if (hit) return hit.id;
+      }
+      const exactCatHit = effCatalog.find((m) => {
+        if (m.id.toLowerCase() === low || String(m.label || '').toLowerCase() === low) return true;
+        if (String(m.cliModel || '').toLowerCase() === low) return true;
+        if (m.effortModelIds && Object.values(m.effortModelIds).some((v) => String(v || '').toLowerCase() === low)) {
+          return true;
+        }
+        return false;
+      });
+      if (exactCatHit) return exactCatHit.id;
     }
     if (
       low === 'model_placeholder_m318' ||
       low === 'model_placeholder_m319' ||
       low === 'model_placeholder_m320' ||
+      low === 'model_placeholder_m322' ||
       low.includes('3.8') ||
       low.includes('flash')
     ) {
-      return 'gemini-3.8-flash';
+      return effCatalog.find((m) => m.id.includes('flash'))?.id || 'gemini-3.8-flash';
     }
     if (
       low === 'model_placeholder_m417' ||
@@ -388,16 +670,54 @@
         !low.includes('carbon') &&
         !low.includes('hydrogen'))
     ) {
-      return 'gemini-4-argon';
+      return effCatalog.find((m) => m.id.includes('argon') && !m.isOrchestrator)?.id || 'gemini-4-argon';
     }
-    const liveMatch = lookupPwaLiveCatalogModel(rawModel);
-    if (liveMatch && liveMatch.isFirstPartyGemini && !liveMatch.isClaudeLike) {
-      const cleanBase = String(stripEffortSuffixForCatalog(liveMatch.baseLabel || liveMatch.label) || '').trim();
-      const candId = slugCatalogModelId(cleanBase);
-      const effCatalog = getEffectiveModelCatalog('antigravity');
-      if (candId && effCatalog.some((m) => m.id === candId)) {
-        return candId;
-      }
+    if (
+      low === 'model_placeholder_m427' ||
+      low === 'model_placeholder_m437' ||
+      low === 'model_placeholder_m438' ||
+      (low.includes('carbon') && !low.includes('orchestrator'))
+    ) {
+      return effCatalog.find((m) => m.id.includes('carbon') && !m.isOrchestrator)?.id || '';
+    }
+    if (
+      low === 'model_placeholder_m525' ||
+      low === 'model_placeholder_m526' ||
+      low === 'model_placeholder_m527' ||
+      low === 'model_placeholder_m528' ||
+      low.includes('hydrogen')
+    ) {
+      return effCatalog.find((m) => m.id.includes('hydrogen'))?.id || '';
+    }
+    if (
+      low === 'model_placeholder_m532' ||
+      low === 'model_placeholder_m533' ||
+      low === 'model_placeholder_m534' ||
+      low === 'model_placeholder_m535' ||
+      (low.includes('neon') && !low.includes('orchestrator'))
+    ) {
+      return effCatalog.find((m) => m.id.includes('neon') && !m.isOrchestrator)?.id || '';
+    }
+    if (
+      low === 'model_placeholder_m400' ||
+      low === 'model_placeholder_m401' ||
+      low === 'model_placeholder_m402' ||
+      low.includes('opus-5-5') ||
+      low.includes('opus 5.5')
+    ) {
+      return effCatalog.find((m) => m.id.includes('opus'))?.id || '';
+    }
+    if (
+      low === 'model_placeholder_m403' ||
+      low === 'model_placeholder_m404' ||
+      low === 'model_placeholder_m405' ||
+      low.includes('sonnet-5-5') ||
+      low.includes('sonnet 5.5')
+    ) {
+      return effCatalog.find((m) => m.id.includes('sonnet'))?.id || '';
+    }
+    if (low === 'model_openai_gpt_oss_120b_medium' || low.includes('gpt-oss-120b')) {
+      return effCatalog.find((m) => m.id.includes('gpt-oss'))?.id || '';
     }
     return '';
   }
@@ -407,8 +727,11 @@
     const s = String(rawModel || '').trim();
     const low = s.toLowerCase();
     const effId = inferEffortIdFromRaw(s, effortHint) || 'high';
-    const effCap = effId === 'low' ? 'Low' : effId === 'medium' ? 'Medium' : 'High';
+    const effCap = formatEffortWord(effId) || 'High';
     if (provKey === 'antigravity') {
+      if (low === 'model_placeholder_m537' || (low.includes('orchestrator') && low.includes('neon'))) {
+        return 'Orchestrator (Neon)';
+      }
       if (
         low === 'model_placeholder_m667' ||
         low === 'model_placeholder_m669' ||
@@ -444,6 +767,17 @@
       }
       if (low === 'model_openai_gpt_oss_120b_medium' || low.includes('gpt-oss-120b')) {
         return 'GPT-OSS 120B (Medium)';
+      }
+      if (low === 'model_placeholder_m535' || (low.includes('neon') && low.includes('xhigh'))) {
+        return 'Gemini 4 Neon (XHigh)';
+      }
+      if (
+        low === 'model_placeholder_m532' ||
+        low === 'model_placeholder_m533' ||
+        low === 'model_placeholder_m534' ||
+        low.includes('neon')
+      ) {
+        return `Gemini 4 Neon (${effCap})`;
       }
       if (
         low === 'model_placeholder_m427' ||
@@ -489,17 +823,24 @@
       const liveMatch = lookupPwaLiveCatalogModel(s);
       if (liveMatch) {
         const cleanBase = String(stripEffortSuffixForCatalog(liveMatch.baseLabel || liveMatch.label) || s).trim();
-        if (liveMatch.supportsThinking === false || /orchestrator/i.test(cleanBase)) {
-          return cleanBase;
+        if (liveMatch.supportsThinking === false || liveMatch.isOrchestrator || /orchestrator/i.test(cleanBase)) {
+          return liveMatch.label || cleanBase;
         }
         return `${cleanBase} (${effCap})`;
       }
       return s;
     }
     const explicitEff = inferEffortIdFromRaw(s, effortHint);
-    const claudeSuffix = explicitEff
-      ? ` (${explicitEff === 'low' ? 'Low' : explicitEff === 'medium' ? 'Medium' : 'High'})`
-      : '';
+    const explicitWord = formatEffortWord(explicitEff);
+    const claudeSuffix = explicitWord ? ` (${explicitWord})` : '';
+    const liveClaudeMatch = lookupPwaClaudeCatalogModel(s);
+    if (liveClaudeMatch && liveClaudeMatch.label) {
+      return `${liveClaudeMatch.label}${claudeSuffix}`;
+    }
+    if (low.includes('opus-5-5') || low.includes('opus 5.5')) return `Claude Opus 5.5${claudeSuffix}`;
+    if (low.includes('sonnet-5-5') || low.includes('sonnet 5.5')) return `Claude Sonnet 5.5${claudeSuffix}`;
+    if (low.includes('haiku-5-5') || low.includes('haiku 5.5')) return `Claude Haiku 5.5${claudeSuffix}`;
+    if (low.includes('fable-5-2') || low.includes('fable 5.2')) return `Fable 5.2${claudeSuffix}`;
     if (low.includes('sonnet-4-6') || low.includes('sonnet 4.6') || low.includes('sonnet')) {
       return `Claude Sonnet 4.6${claudeSuffix}`;
     }
@@ -516,6 +857,10 @@
   function inferDefaultContextLimit(provider, modelLabel = '') {
     const low = String(modelLabel || '').trim().toLowerCase();
     if (provider === 'claude') {
+      const liveClaude = lookupPwaClaudeCatalogModel(modelLabel);
+      if (liveClaude && Number(liveClaude.contextLimit || 0) > 0) {
+        return Number(liveClaude.contextLimit);
+      }
       if (
         low.includes('[1m]') ||
         low.includes('1m') ||
@@ -741,7 +1086,7 @@
     freqUsage: { devices: {}, repos: {}, threads: {}, commands: {}, skills: {}, checks: {} },
     telemetryProv: 'all',
     selectedThreadId: '',
-    selectedRepoId: 'resort-operations',
+    selectedRepoId: 'isabi-app',
     composerMode: 'reply',
     composerRepoPrefix: '',
     customBridgeUrl: '',
@@ -752,6 +1097,18 @@
     hideThirdPartyQuota: false,
     notif: { ...DEFAULT_NOTIF }
   };
+  const cachedStore = loadJson(STORAGE_KEYS.CACHE, {
+    state: null,
+    threads: {},
+    workspacesDetail: {},
+    updatedAt: 0
+  });
+  if (cachedStore?.state?.antigravityModelCatalog) {
+    ingestLiveAntigravityCatalog(cachedStore.state.antigravityModelCatalog);
+  }
+  if (cachedStore?.state?.claudeModelCatalog) {
+    ingestLiveClaudeCatalog(cachedStore.state.claudeModelCatalog);
+  }
   const rawStoredPrefs = loadJson(STORAGE_KEYS.PREFS, null);
   const prefs = Object.assign(
     {},
@@ -792,21 +1149,72 @@
   if (!['all', 'working', 'needs_input', 'unread', 'open'].includes(prefs.sidebarFilter)) {
     prefs.sidebarFilter = 'all';
   }
+  const rawStoredModelExplicit =
+    rawStoredPrefs?.modelSelectionExplicit &&
+    typeof rawStoredPrefs.modelSelectionExplicit === 'object' &&
+    !Array.isArray(rawStoredPrefs.modelSelectionExplicit)
+      ? rawStoredPrefs.modelSelectionExplicit
+      : null;
+  if (
+    !prefs.modelSelectionExplicit ||
+    typeof prefs.modelSelectionExplicit !== 'object' ||
+    Array.isArray(prefs.modelSelectionExplicit)
+  ) {
+    const rawSavedModels =
+      rawStoredPrefs?.selectedModelByProvider &&
+      typeof rawStoredPrefs.selectedModelByProvider === 'object' &&
+      !Array.isArray(rawStoredPrefs.selectedModelByProvider)
+        ? rawStoredPrefs.selectedModelByProvider
+        : null;
+    prefs.modelSelectionExplicit = {
+      antigravity: rawStoredModelExplicit
+        ? Boolean(rawStoredModelExplicit.antigravity)
+        : Boolean(
+            rawSavedModels?.antigravity &&
+              String(rawSavedModels.antigravity).trim() !== 'gemini-4-argon'
+          ),
+      claude: rawStoredModelExplicit
+        ? Boolean(rawStoredModelExplicit.claude)
+        : Boolean(
+            rawSavedModels?.claude && String(rawSavedModels.claude).trim() !== 'claude-opus-4-7'
+          )
+    };
+  }
+  const effAgyCat = getEffectiveModelCatalog('antigravity');
+  const effClaudeCat = getEffectiveModelCatalog('claude');
+  const defaultAgyModelId = effAgyCat.find((m) => m.isDefault)?.id || effAgyCat[0]?.id || 'gemini-4-argon';
+  const defaultClaudeModelId = effClaudeCat.find((m) => m.isDefault)?.id || effClaudeCat[0]?.id || 'claude-opus-4-7';
   if (
     !prefs.selectedModelByProvider ||
     typeof prefs.selectedModelByProvider !== 'object' ||
     Array.isArray(prefs.selectedModelByProvider)
   ) {
-    prefs.selectedModelByProvider = { antigravity: 'gemini-4-argon', claude: 'claude-opus-4-7' };
+    prefs.selectedModelByProvider = { antigravity: defaultAgyModelId, claude: defaultClaudeModelId };
   } else {
     const agyMod = String(prefs.selectedModelByProvider.antigravity || '').trim();
-    prefs.selectedModelByProvider.antigravity = MODEL_CATALOG.antigravity.some((m) => m.id === agyMod)
-      ? agyMod
-      : 'gemini-4-argon';
+    prefs.selectedModelByProvider.antigravity =
+      prefs.modelSelectionExplicit.antigravity && effAgyCat.some((m) => m.id === agyMod)
+        ? agyMod
+        : defaultAgyModelId;
     const clMod = String(prefs.selectedModelByProvider.claude || '').trim();
-    prefs.selectedModelByProvider.claude = MODEL_CATALOG.claude.some((m) => m.id === clMod)
-      ? clMod
-      : 'claude-opus-4-7';
+    prefs.selectedModelByProvider.claude =
+      prefs.modelSelectionExplicit.claude && effClaudeCat.some((m) => m.id === clMod)
+        ? clMod
+        : defaultClaudeModelId;
+  }
+  function syncDefaultModelPrefsIfAuto(provKey = 'antigravity') {
+    const cleanProv = provKey === 'claude' ? 'claude' : 'antigravity';
+    if (prefs.modelSelectionExplicit?.[cleanProv]) return;
+    const hasLive =
+      cleanProv === 'claude' ? liveClaudeCatalog.models.length > 0 : liveAntigravityCatalog.models.length > 0;
+    if (!hasLive) return;
+    const effCat = getEffectiveModelCatalog(cleanProv);
+    const liveDefId = effCat.find((m) => m.isDefault)?.id || effCat[0]?.id || '';
+    if (!liveDefId) return;
+    if (!prefs.selectedModelByProvider || typeof prefs.selectedModelByProvider !== 'object') {
+      prefs.selectedModelByProvider = { antigravity: 'gemini-4-argon', claude: 'claude-opus-4-7' };
+    }
+    prefs.selectedModelByProvider[cleanProv] = liveDefId;
   }
   if (
     !prefs.selectedThinkingEffort ||
@@ -816,11 +1224,11 @@
     prefs.selectedThinkingEffort = { antigravity: 'high', claude: 'high' };
   } else {
     const agyEff = String(prefs.selectedThinkingEffort.antigravity || '').trim().toLowerCase();
-    prefs.selectedThinkingEffort.antigravity = ['low', 'medium', 'high'].includes(agyEff)
+    prefs.selectedThinkingEffort.antigravity = ['low', 'medium', 'high', 'xhigh'].includes(agyEff)
       ? agyEff
       : 'high';
     const clEff = String(prefs.selectedThinkingEffort.claude || '').trim().toLowerCase();
-    prefs.selectedThinkingEffort.claude = ['low', 'medium', 'high'].includes(clEff)
+    prefs.selectedThinkingEffort.claude = ['low', 'medium', 'high', 'xhigh'].includes(clEff)
       ? clEff
       : 'high';
   }
@@ -837,10 +1245,14 @@
         if (!tid || tid === '__new__' || String(tid).startsWith('draft-new-')) return false;
         if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return false;
         const prov = cfg.provider === 'claude' ? 'claude' : 'antigravity';
-        const cat = MODEL_CATALOG[prov] || MODEL_CATALOG.antigravity;
-        const mOk = cat.some((m) => m.id === cfg.modelId);
+        const cat = getEffectiveModelCatalog(prov);
+        const catMatch = cat.find((m) => m.id === cfg.modelId);
+        const mOk = Boolean(catMatch);
         const customOk = typeof cfg.customModel === 'string' && cfg.customModel.trim().length > 0;
-        const eOk = ['low', 'medium', 'high'].includes(String(cfg.effort || '').toLowerCase());
+        const effLow = String(cfg.effort || '').trim().toLowerCase();
+        const eOk =
+          ['low', 'medium', 'high', 'xhigh'].includes(effLow) ||
+          (effLow === '' && catMatch?.supportsEffort === false);
         return (mOk || customOk) && eOk;
       })
       .sort((a, b) => Number(b[1]?.updatedAt || 0) - Number(a[1]?.updatedAt || 0))
@@ -1451,17 +1863,7 @@
       .map((x) => x.item);
   }
 
-  const cachedStore = loadJson(STORAGE_KEYS.CACHE, {
-    state: null,
-    threads: {},
-    workspacesDetail: {},
-    updatedAt: 0
-  });
-
   let appState = cachedStore.state || null;
-  if (appState?.antigravityModelCatalog) {
-    ingestLiveAntigravityCatalog(appState.antigravityModelCatalog);
-  }
   let threadsCache = cachedStore.threads || {};
   let workspacesDetailCache = cachedStore.workspacesDetail || {};
   let outbox = loadJson(STORAGE_KEYS.OUTBOX, []);
@@ -4530,6 +4932,7 @@
     let chosenSummaryByProv = primarySnap?.summaryByProvider || null;
     let chosenTopSessions = Array.isArray(primarySnap?.topSessions) ? primarySnap.topSessions : [];
     let bestModelCatalog = primarySnap?.antigravityModelCatalog || null;
+    let bestClaudeCatalog = primarySnap?.claudeModelCatalog || null;
     let bestClaudeMode = extractClaudeModeFields(
       primarySnap?.claudePermissionMode || primarySnap?.connection?.claudePermissionMode
     );
@@ -4582,6 +4985,14 @@
           Number(snap.antigravityModelCatalog.updatedAt || 0) >= Number(bestModelCatalog.updatedAt || 0))
       ) {
         bestModelCatalog = snap.antigravityModelCatalog;
+      }
+      if (
+        snap?.claudeModelCatalog &&
+        Array.isArray(snap.claudeModelCatalog.models) &&
+        (!bestClaudeCatalog ||
+          Number(snap.claudeModelCatalog.updatedAt || 0) >= Number(bestClaudeCatalog.updatedAt || 0))
+      ) {
+        bestClaudeCatalog = snap.claudeModelCatalog;
       }
 
       for (const r of snap.rows || []) {
@@ -4660,6 +5071,11 @@
     }
     if (bestModelCatalog) {
       ingestLiveAntigravityCatalog(bestModelCatalog);
+      syncDefaultModelPrefsIfAuto('antigravity');
+    }
+    if (bestClaudeCatalog) {
+      ingestLiveClaudeCatalog(bestClaudeCatalog);
+      syncDefaultModelPrefsIfAuto('claude');
     }
 
     return {
@@ -4680,6 +5096,7 @@
       summaryByProvider: chosenSummaryByProv || appState?.summaryByProvider || null,
       topSessions: chosenTopSessions.length ? chosenTopSessions : appState?.topSessions || [],
       antigravityModelCatalog: bestModelCatalog || appState?.antigravityModelCatalog || null,
+      claudeModelCatalog: bestClaudeCatalog || appState?.claudeModelCatalog || null,
       claudePermissionMode: { ...claudeModeState },
       ...(bestHide3p
         ? {
@@ -4694,6 +5111,11 @@
     if (!st || typeof st !== 'object') return;
     if (st.antigravityModelCatalog) {
       ingestLiveAntigravityCatalog(st.antigravityModelCatalog);
+      syncDefaultModelPrefsIfAuto('antigravity');
+    }
+    if (st.claudeModelCatalog) {
+      ingestLiveClaudeCatalog(st.claudeModelCatalog);
+      syncDefaultModelPrefsIfAuto('claude');
     }
     const directMode = st.claudePermissionMode || st.connection?.claudePermissionMode;
     if (directMode) {
@@ -8982,6 +9404,11 @@
               : ''
           }
           <span class="ide-tree-title">${esc(r.title || 'Untitled Session')}</span>
+          ${
+            !r.archived && provKey === 'antigravity' && (r.neonWarning || /neon/i.test(String(r.model || '')))
+              ? `<button type="button" class="session-neon-pill" data-switch-neon-carbon="${esc(r.id)}" data-micro-tip="Switch session from Neon to Carbon" aria-label="Neon model active — switch to Carbon">Neon</button>`
+              : ''
+          }
           ${qCnt > 0 ? `<span class="ide-row-pill q-pill tabular">?${qCnt}</span>` : ''}
           ${bgBadge ? `<span class="ide-row-pill bg-pill tabular">${esc(bgBadge)}</span>` : ''}
           <span class="ide-tree-age tabular">${esc(age)}</span>
@@ -11144,8 +11571,9 @@
     const grpObj = r.group ? groups.find((g) => g && g.id === r.group) : null;
     const td = threadsCache[r.id];
     const ctxW = td?.contextWindow;
+    const savedCardOverride = r.id && prefs.threadModelConfig ? prefs.threadModelConfig[r.id] : null;
     const hasThreadModelOverride = Boolean(
-      r.id && prefs.threadModelConfig && prefs.threadModelConfig[r.id]
+      savedCardOverride && !(Number(r.modelUpdatedAt || 0) > Number(savedCardOverride.updatedAt || 0))
     );
     const cardCfg = hasThreadModelOverride
       ? getEffectiveSessionModelConfig(r, provKey, false)
@@ -11156,6 +11584,9 @@
     const displayModel = hasThreadModelOverride
       ? cardCfg.displayLabel
       : normalizeDisplayModel(rawCardModel, provKey);
+    const showNeonCardPill = Boolean(
+      !r.archived && provKey === 'antigravity' && (r.neonWarning || /neon/i.test(String(displayModel || '')))
+    );
     const rawUsedTok = ctxW?.usedTokens ?? r.usedTokens ?? r.contextTokens ?? 0;
     const rawLimTok = hasThreadModelOverride
       ? inferDefaultContextLimit(provKey, displayModel)
@@ -11200,6 +11631,11 @@
               ${r.folder ? `<span class="tag-pill">${esc(r.folder)}</span>` : ''}
               ${r.branch ? `<span>⎇ ${esc(r.branch)}</span>` : ''}
               <span>${esc(displayModel)}</span>
+              ${
+                showNeonCardPill && r.id
+                  ? `<button type="button" class="session-neon-pill" data-switch-neon-carbon="${esc(r.id)}" data-micro-tip="Switch session from Neon to Carbon" aria-label="Neon model active — switch to Carbon">Neon</button>`
+                  : ''
+              }
               ${
                 safeUsed > 0
                   ? `<span class="tag-pill tabular" aria-label="Context window usage">${fmtCompact(safeUsed)} / ${fmtCompact(limTok)} · ${ctxPct}%</span>`
@@ -14208,10 +14644,14 @@
     const cleanProv = provKey === 'claude' ? 'claude' : 'antigravity';
     const catalog = getEffectiveModelCatalog(cleanProv);
     const tid = !isNewDraft ? String(activeRow?.id || prefs.selectedThreadId || '').trim() : '';
-    const savedThreadCfg =
+    const rawSavedThreadCfg =
       tid && tid !== '__new__' && prefs.threadModelConfig && typeof prefs.threadModelConfig === 'object'
         ? prefs.threadModelConfig[tid] || null
         : null;
+    const serverModelAt = !isNewDraft ? Number(activeRow?.modelUpdatedAt || 0) : 0;
+    const savedAt = Number(rawSavedThreadCfg?.updatedAt || 0);
+    const savedThreadCfg =
+      rawSavedThreadCfg && !(serverModelAt > 0 && serverModelAt > savedAt) ? rawSavedThreadCfg : null;
     const savedCatalogMatch = Boolean(
       savedThreadCfg && catalog.some((m) => m.id === savedThreadCfg.modelId)
     );
@@ -14229,15 +14669,16 @@
           Boolean(rawRowModel) &&
           !/gemini\s*3\.1|antigravity|^gemini$/i.test(rawRowModel)));
 
+    const defaultModelObj = catalog.find((m) => m.isDefault) || catalog[0];
     let modelId =
       (savedCatalogMatch && savedThreadCfg.modelId) ||
       (inferredRowModelId && catalog.some((m) => m.id === inferredRowModelId) && inferredRowModelId) ||
       (prefs.selectedModelByProvider &&
         catalog.some((m) => m.id === prefs.selectedModelByProvider[cleanProv]) &&
         prefs.selectedModelByProvider[cleanProv]) ||
-      catalog[0].id;
+      defaultModelObj.id;
 
-    // If the user explicitly changed their provider default or thread config, honor it over generic server defaults
+    // If the user explicitly changed their thread config (and server isn't newer), honor it over generic server defaults
     if (savedCatalogMatch) {
       modelId = savedThreadCfg.modelId;
     } else if (
@@ -14248,31 +14689,50 @@
       const prefMod = prefs.selectedModelByProvider?.[cleanProv];
       if (prefMod && catalog.some((m) => m.id === prefMod)) {
         modelId = prefMod;
+      } else {
+        modelId = defaultModelObj.id;
       }
     }
 
-    let effort = isNonCatalogSessionModel
-      ? (savedThreadCfg && ['low', 'medium', 'high'].includes(savedThreadCfg.effort) && savedThreadCfg.effort) ||
-        inferredRowEffort ||
-        (prefs.selectedThinkingEffort &&
-          ['low', 'medium', 'high'].includes(prefs.selectedThinkingEffort[cleanProv]) &&
-          prefs.selectedThinkingEffort[cleanProv]) ||
-        'high'
-      : (savedThreadCfg && ['low', 'medium', 'high'].includes(savedThreadCfg.effort) && savedThreadCfg.effort) ||
-        (prefs.selectedThinkingEffort &&
-          ['low', 'medium', 'high'].includes(prefs.selectedThinkingEffort[cleanProv]) &&
-          prefs.selectedThinkingEffort[cleanProv]) ||
-        inferredRowEffort ||
-        'high';
+    const modelEntry = catalog.find((m) => m.id === modelId) || defaultModelObj;
+    const modelSupportsEffort =
+      isNonCatalogSessionModel ||
+      (modelEntry?.supportsEffort !== false &&
+        (!Array.isArray(modelEntry?.efforts) || modelEntry.efforts.length > 0));
+    const allowedEfforts =
+      !isNonCatalogSessionModel && Array.isArray(modelEntry?.efforts) && modelEntry.efforts.length > 0
+        ? modelEntry.efforts
+        : ['low', 'medium', 'high', 'xhigh'];
 
-    const modelEntry = catalog.find((m) => m.id === modelId) || catalog[0];
-    const effortEntry = THINKING_EFFORT_LEVELS.find((e) => e.id === effort) || THINKING_EFFORT_LEVELS[2];
+    let effort = '';
+    if (modelSupportsEffort) {
+      const validEffs = new Set(allowedEfforts);
+      const savedEff = String(savedThreadCfg?.effort || '').toLowerCase();
+      const prefEff = String(prefs.selectedThinkingEffort?.[cleanProv] || '').toLowerCase();
+      effort = isNonCatalogSessionModel
+        ? (validEffs.has(savedEff) && savedEff) ||
+          (validEffs.has(inferredRowEffort) && inferredRowEffort) ||
+          (validEffs.has(prefEff) && prefEff) ||
+          'high'
+        : (validEffs.has(savedEff) && savedEff) ||
+          (validEffs.has(inferredRowEffort) && inferredRowEffort) ||
+          (validEffs.has(prefEff) && prefEff) ||
+          (validEffs.has('high') ? 'high' : allowedEfforts[allowedEfforts.length - 1] || 'high');
+    }
+
+    const effortEntry = modelSupportsEffort
+      ? THINKING_EFFORT_LEVELS.find((e) => e.id === effort) || THINKING_EFFORT_LEVELS[2]
+      : null;
     const displayLabel = isNonCatalogSessionModel
-      ? normalizeDisplayModel(rawRowModel, cleanProv, effortEntry.id)
-      : `${modelEntry.label} (${effortEntry.label})`;
+      ? normalizeDisplayModel(rawRowModel, cleanProv, effortEntry?.id || 'high')
+      : !modelSupportsEffort
+        ? modelEntry.label
+        : `${modelEntry.label} (${effortEntry.label})`;
     const compactLabel = isNonCatalogSessionModel
       ? displayLabel.replace(/\s*\((Low|Medium|High|XHigh)\)$/i, ' · $1')
-      : `${modelEntry.shortLabel || modelEntry.label} · ${effortEntry.label}`;
+      : !modelSupportsEffort
+        ? modelEntry.shortLabel || modelEntry.label
+        : `${modelEntry.shortLabel || modelEntry.label} · ${effortEntry.label}`;
     return {
       provider: cleanProv,
       isNonCatalog: isNonCatalogSessionModel,
@@ -14280,11 +14740,15 @@
       modelId: isNonCatalogSessionModel ? '' : modelEntry.id,
       cliModel: isNonCatalogSessionModel
         ? displayLabel || rawRowModel
-        : (modelEntry.effortModelIds && modelEntry.effortModelIds[effortEntry.id]) ||
-          modelEntry.cliModel ||
-          modelEntry.id,
-      effort: effortEntry.id,
-      effortLabel: effortEntry.label,
+        : !modelSupportsEffort
+          ? modelEntry.cliModel || modelEntry.id
+          : (modelEntry.effortModelIds && modelEntry.effortModelIds[effortEntry.id]) ||
+            modelEntry.cliModel ||
+            modelEntry.id,
+      supportsEffort: modelSupportsEffort,
+      efforts: modelSupportsEffort ? allowedEfforts : [],
+      effort: effortEntry ? effortEntry.id : '',
+      effortLabel: effortEntry ? effortEntry.label : '',
       modelEntry: isNonCatalogSessionModel ? null : modelEntry,
       displayLabel,
       compactLabel
@@ -14292,9 +14756,11 @@
   }
 
   function setSessionModelConfig({ modelId, effort, provider, threadId } = {}) {
-    const isNewDraft = isNewSessionMode();
+    const targetTidArg = String(threadId || '').trim();
+    const isNewDraft = !targetTidArg && isNewSessionMode();
+    const lookupTid = targetTidArg || prefs.selectedThreadId;
     const activeRow = !isNewDraft
-      ? (appState?.rows || []).find((r) => r && r.id === (threadId || prefs.selectedThreadId))
+      ? (appState?.rows || []).find((r) => r && r.id === lookupTid)
       : null;
     const cleanProv =
       (provider || (isNewDraft ? (prefs.composerMode === 'new-claude' ? 'claude' : 'antigravity') : activeRow?.provider)) ===
@@ -14306,17 +14772,40 @@
     const explicitCatalogModelId =
       modelId && catalog.some((m) => m.id === modelId) ? modelId : '';
     const keepNonCatalog = Boolean(!explicitCatalogModelId && current.isNonCatalog && !isNewDraft);
-    const nextModelId = explicitCatalogModelId || (keepNonCatalog ? '' : current.modelId || catalog[0].id);
+    const defaultMod = catalog.find((m) => m.isDefault) || catalog[0];
+    const nextModelId = explicitCatalogModelId || (keepNonCatalog ? '' : current.modelId || defaultMod.id);
+    const nextModelObj = catalog.find((m) => m.id === nextModelId) || defaultMod;
+    const nextSupportsEffort =
+      keepNonCatalog ||
+      (nextModelObj?.supportsEffort !== false &&
+        (!Array.isArray(nextModelObj?.efforts) || nextModelObj.efforts.length > 0));
     const nextCustomModel = keepNonCatalog
       ? String(current.customModel || current.displayLabel || '').trim()
       : '';
-    const nextEffort =
-      effort && ['low', 'medium', 'high'].includes(String(effort).toLowerCase())
-        ? String(effort).toLowerCase()
-        : current.effort;
+    const allowedNextEfforts =
+      !keepNonCatalog && Array.isArray(nextModelObj?.efforts) && nextModelObj.efforts.length > 0
+        ? nextModelObj.efforts
+        : ['low', 'medium', 'high', 'xhigh'];
+    const reqEff = String(effort ?? '').trim().toLowerCase();
+    let nextEffort = '';
+    if (nextSupportsEffort) {
+      if (reqEff && ['low', 'medium', 'high', 'xhigh'].includes(reqEff) && allowedNextEfforts.includes(reqEff)) {
+        nextEffort = reqEff;
+      } else if (reqEff === 'xhigh' && !allowedNextEfforts.includes('xhigh')) {
+        nextEffort = allowedNextEfforts.includes('high')
+          ? 'high'
+          : allowedNextEfforts[allowedNextEfforts.length - 1] || 'high';
+      } else if (current.effort && allowedNextEfforts.includes(current.effort)) {
+        nextEffort = current.effort;
+      } else {
+        nextEffort = allowedNextEfforts.includes('high')
+          ? 'high'
+          : allowedNextEfforts[allowedNextEfforts.length - 1] || 'high';
+      }
+    }
 
     if (!prefs.selectedModelByProvider || typeof prefs.selectedModelByProvider !== 'object') {
-      prefs.selectedModelByProvider = { antigravity: 'gemini-4-argon', claude: 'claude-opus-4-7' };
+      prefs.selectedModelByProvider = { antigravity: defaultAgyModelId, claude: defaultClaudeModelId };
     }
     if (!prefs.selectedThinkingEffort || typeof prefs.selectedThinkingEffort !== 'object') {
       prefs.selectedThinkingEffort = { antigravity: 'high', claude: 'high' };
@@ -14327,17 +14816,26 @@
 
     if (nextModelId) {
       prefs.selectedModelByProvider[cleanProv] = nextModelId;
+      if (explicitCatalogModelId) {
+        if (!prefs.modelSelectionExplicit || typeof prefs.modelSelectionExplicit !== 'object') {
+          prefs.modelSelectionExplicit = { antigravity: false, claude: false };
+        }
+        prefs.modelSelectionExplicit[cleanProv] = true;
+      }
     }
-    prefs.selectedThinkingEffort[cleanProv] = nextEffort;
+    if (nextEffort) {
+      prefs.selectedThinkingEffort[cleanProv] = nextEffort;
+    }
 
-    const targetTid = !isNewDraft ? String(threadId || prefs.selectedThreadId || '').trim() : '';
+    const nowAt = Date.now();
+    const targetTid = !isNewDraft ? String(targetTidArg || prefs.selectedThreadId || '').trim() : '';
     if (targetTid && targetTid !== '__new__') {
       prefs.threadModelConfig[targetTid] = {
         modelId: nextModelId,
         ...(nextCustomModel ? { customModel: nextCustomModel } : {}),
         effort: nextEffort,
         provider: cleanProv,
-        updatedAt: Date.now()
+        updatedAt: nowAt
       };
       const keys = Object.keys(prefs.threadModelConfig);
       if (keys.length > 120) {
@@ -14358,6 +14856,10 @@
     if (activeRow) {
       activeRow.model = updatedCfg.displayLabel;
       activeRow.effort = updatedCfg.effort;
+      activeRow.modelUpdatedAt = nowAt;
+      activeRow.neonWarning = Boolean(
+        !activeRow.archived && cleanProv !== 'claude' && /neon/i.test(updatedCfg.displayLabel)
+      );
       if (nextLimit > 0) {
         activeRow.limitTokens = nextLimit;
         const rowUsed = Math.max(0, Math.round(Number(activeRow.usedTokens || 0)));
@@ -14367,11 +14869,14 @@
       noteRowOverride(activeRow.id, {
         model: updatedCfg.displayLabel,
         effort: updatedCfg.effort,
+        modelUpdatedAt: nowAt,
+        neonWarning: activeRow.neonWarning,
         ...(nextLimit > 0 ? { limitTokens: nextLimit } : {})
       });
     }
     if (targetTid && threadsCache[targetTid]) {
       threadsCache[targetTid].model = updatedCfg.displayLabel;
+      threadsCache[targetTid].modelUpdatedAt = nowAt;
       if (threadsCache[targetTid].contextWindow) {
         const cw = threadsCache[targetTid].contextWindow;
         cw.modelLabel = updatedCfg.displayLabel;
@@ -14389,6 +14894,8 @@
     persistCache();
     renderChatView(false);
     renderIdeSidebar();
+    renderSessionsView();
+    renderPulseView();
 
     if (targetTid && targetTid !== '__new__' && !targetTid.startsWith('draft-new-')) {
       dispatchRemoteCommand({
@@ -14480,28 +14987,58 @@
     if (titleEl) {
       titleEl.textContent = cleanProv === 'claude' ? 'Claude Code Model' : 'Model Selection';
     }
-    const effortOrder = ['high', 'medium', 'low'];
+    const effortOrder = ['xhigh', 'high', 'medium', 'low'];
+    const tagClassFor = (txt) => {
+      const l = String(txt || '').toLowerCase();
+      if (l.includes('leaving')) return ' tag-leaving';
+      if (l.includes('new')) return ' tag-new';
+      if (l.includes('1m')) return ' tag-1m';
+      if (l.includes('notice') || l.includes('neon')) return ' tag-notice';
+      return '';
+    };
     const familyGroupsHtml = catalog
       .map((m, famIdx) => {
-        const rowsHtml = effortOrder
+        const tagTxt = String(
+          m.tagTitle ||
+            (cleanProv === 'antigravity'
+              ? m.id.includes('flash')
+                ? 'Fast'
+                : m.badge === 'Live' || m.badge === 'Recommended'
+                  ? m.badge
+                  : ''
+              : m.badge) ||
+            ''
+        ).trim();
+        const tagHtml = tagTxt ? `<span class="vs-model-item-tag${tagClassFor(tagTxt)}">${esc(tagTxt)}</span>` : '';
+        const quotaAttr =
+          typeof m.quotaRemainingFraction === 'number'
+            ? ` data-micro-tip="Quota remaining: ${Math.round(m.quotaRemainingFraction * 100)}%"`
+            : '';
+        const modelSupportsEff =
+          m.supportsEffort !== false && (!Array.isArray(m.efforts) || m.efforts.length > 0);
+        if (!modelSupportsEff) {
+          const isSel = m.id === modelCfg.modelId;
+          return `${famIdx > 0 ? '<div class="vs-model-menu-sep" role="separator"></div>' : ''}
+            <button type="button" role="menuitemradio" aria-checked="${isSel ? 'true' : 'false'}" class="vs-model-menu-item${isSel ? ' active' : ''}" data-select-model-combo="${esc(`${m.id}:`)}" data-select-ai-model="${esc(m.id)}" data-model-prov="${cleanProv}"${quotaAttr}>
+              <span class="vs-model-item-check">${isSel ? CHECK_MARK_SVG : ''}</span>
+              <span class="vs-model-item-name">${esc(m.label)}</span>
+              ${tagHtml}
+            </button>
+          `;
+        }
+        const mEffs = Array.isArray(m.efforts) && m.efforts.length ? m.efforts : ['low', 'medium', 'high'];
+        const visibleEffs = effortOrder.filter((e) => mEffs.includes(e));
+        const rowsHtml = visibleEffs
           .map((effId) => {
             const effObj =
               THINKING_EFFORT_LEVELS.find((e) => e.id === effId) || THINKING_EFFORT_LEVELS[2];
             const isSel = m.id === modelCfg.modelId && effObj.id === modelCfg.effort;
             const isPrimaryFamilyMatch = effObj.id === modelCfg.effort;
-            const tagTxt =
-              cleanProv === 'antigravity'
-                ? m.id.includes('flash')
-                  ? 'Fast'
-                  : m.badge === 'Live' || m.badge === 'Recommended'
-                    ? m.badge
-                    : 'New'
-                : m.badge;
             return `
-              <button type="button" role="menuitemradio" aria-checked="${isSel ? 'true' : 'false'}" class="vs-model-menu-item${isSel ? ' active' : ''}" data-select-model-combo="${esc(`${m.id}:${effObj.id}`)}"${isPrimaryFamilyMatch ? ` data-select-ai-model="${esc(m.id)}"` : ''} data-model-prov="${cleanProv}">
+              <button type="button" role="menuitemradio" aria-checked="${isSel ? 'true' : 'false'}" class="vs-model-menu-item${isSel ? ' active' : ''}" data-select-model-combo="${esc(`${m.id}:${effObj.id}`)}"${isPrimaryFamilyMatch ? ` data-select-ai-model="${esc(m.id)}"` : ''} data-model-prov="${cleanProv}"${quotaAttr}>
                 <span class="vs-model-item-check">${isSel ? CHECK_MARK_SVG : ''}</span>
                 <span class="vs-model-item-name">${esc(`${m.label} (${effObj.label})`)}</span>
-                <span class="vs-model-item-tag">${esc(tagTxt)}</span>
+                ${tagHtml}
               </button>
             `;
           })
@@ -14510,18 +15047,28 @@
       })
       .join('');
 
-    const effortsBarHtml = THINKING_EFFORT_LEVELS.map((eff) => {
-      const isSel = eff.id === modelCfg.effort;
-      return `<button type="button" class="vs-effort-pill${isSel ? ' active' : ''}" data-select-ai-effort="${esc(eff.id)}" data-model-prov="${cleanProv}" aria-pressed="${isSel ? 'true' : 'false'}">${esc(eff.label)}</button>`;
-    }).join('');
+    const showEffortBar = modelCfg?.supportsEffort !== false;
+    const barEfforts = Array.isArray(modelCfg?.efforts) && modelCfg.efforts.length
+      ? THINKING_EFFORT_LEVELS.filter((e) => modelCfg.efforts.includes(e.id))
+      : THINKING_EFFORT_LEVELS;
+    const effortsBarHtml = barEfforts
+      .map((eff) => {
+        const isSel = eff.id === modelCfg.effort;
+        return `<button type="button" class="vs-effort-pill${isSel ? ' active' : ''}" data-select-ai-effort="${esc(eff.id)}" data-model-prov="${cleanProv}" aria-pressed="${isSel ? 'true' : 'false'}">${esc(eff.label)}</button>`;
+      })
+      .join('');
 
     bodyEl.innerHTML = `
       <div class="vs-model-menu-list">${familyGroupsHtml}</div>
-      <div class="vs-model-menu-sep" role="separator"></div>
-      <div class="vs-model-effort-bar" role="group" aria-label="Thinking Level">
-        <span class="vs-model-effort-lbl">Thinking</span>
-        <div class="vs-model-effort-pills">${effortsBarHtml}</div>
-      </div>
+      ${
+        showEffortBar
+          ? `<div class="vs-model-menu-sep" role="separator"></div>
+             <div class="vs-model-effort-bar" role="group" aria-label="Thinking Level">
+               <span class="vs-model-effort-lbl">Thinking</span>
+               <div class="vs-model-effort-pills">${effortsBarHtml}</div>
+             </div>`
+          : ''
+      }
     `;
   }
 
@@ -14546,10 +15093,18 @@
       })
       .join('');
 
-    const effortPills = THINKING_EFFORT_LEVELS.map((eff) => {
-      const isSel = eff.id === modelCfg.effort;
-      return `<button type="button" class="lp-effort-btn${isSel ? ' active' : ''}" data-select-ai-effort="${esc(eff.id)}" data-model-prov="${cleanProv}" aria-pressed="${isSel ? 'true' : 'false'}">${esc(eff.label)}</button>`;
-    }).join('');
+    const lpShowEffort = modelCfg?.supportsEffort !== false;
+    const lpEfforts = Array.isArray(modelCfg?.efforts) && modelCfg.efforts.length
+      ? THINKING_EFFORT_LEVELS.filter((e) => modelCfg.efforts.includes(e.id))
+      : THINKING_EFFORT_LEVELS;
+    const effortPills = lpShowEffort
+      ? lpEfforts
+          .map((eff) => {
+            const isSel = eff.id === modelCfg.effort;
+            return `<button type="button" class="lp-effort-btn${isSel ? ' active' : ''}" data-select-ai-effort="${esc(eff.id)}" data-model-prov="${cleanProv}" aria-pressed="${isSel ? 'true' : 'false'}">${esc(eff.label)}</button>`;
+          })
+          .join('')
+      : '<span class="lp-effort-static">Single preset tier</span>';
 
     const scopeChips = [
       `<button type="button" class="lp-scope-chip${!curScope ? ' active' : ''}" data-launchpad-scope="">All / Default</button>`,
@@ -14658,6 +15213,7 @@
                 'antigravity',
               folder: threadDetail?.folder || '',
               model: threadDetail?.model || '',
+              modelUpdatedAt: Number(threadDetail?.modelUpdatedAt || 0),
               status: 'done',
               at: Date.now()
             }
@@ -14757,13 +15313,25 @@
     if (compModelEl) {
       compModelEl.textContent = modelCfg.compactLabel;
     }
+    const chatNeonPill = $('chat-neon-pill');
+    if (chatNeonPill) {
+      const showChatNeon = Boolean(
+        !isNewDraft &&
+          activeRow?.id &&
+          !activeRow?.archived &&
+          provKey === 'antigravity' &&
+          (activeRow?.neonWarning || /neon/i.test(String(resolvedModelLabel || '')))
+      );
+      chatNeonPill.hidden = !showChatNeon;
+      chatNeonPill.dataset.switchNeonCarbon = showChatNeon ? String(activeRow.id) : '';
+    }
     renderModelPickerPopover(provKey, modelCfg);
 
     // Context Window Pill & Popover (512k / 840k on Antigravity, 1M / 200k on Claude Code)
+    const activeTidForOv = activeRow?.id || prefs.selectedThreadId || '';
+    const savedHeaderOv = !isNewDraft && activeTidForOv ? prefs.threadModelConfig?.[activeTidForOv] : null;
     const hasThreadModelOverride = Boolean(
-      !isNewDraft &&
-        prefs.threadModelConfig &&
-        prefs.threadModelConfig[activeRow?.id || prefs.selectedThreadId || '']
+      savedHeaderOv && !(Number(activeRow?.modelUpdatedAt || 0) > Number(savedHeaderOv.updatedAt || 0))
     );
     const modelForLimit =
       !isNewDraft && !hasThreadModelOverride
@@ -17249,15 +17817,41 @@
         $('composer-model-btn')?.setAttribute('aria-expanded', 'false');
         return;
       }
+      const neonSwitchBtn = e.target.closest('[data-switch-neon-carbon]');
+      if (neonSwitchBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        haptic(8);
+        const tid = String(neonSwitchBtn.dataset.switchNeonCarbon || prefs.selectedThreadId || '').trim();
+        const cat = getEffectiveModelCatalog('antigravity');
+        const rowObj = (appState?.rows || []).find((r) => r && r.id === tid);
+        const curIsOrch = /orchestrator/i.test(String(rowObj?.model || ''));
+        const targetCarbon =
+          (curIsOrch ? cat.find((m) => m.id === 'orchestrator-carbon') : cat.find((m) => m.id === 'gemini-4-carbon')) ||
+          cat.find((m) => m.id === 'orchestrator-carbon') ||
+          cat.find((m) => m.id.includes('carbon')) ||
+          cat.find((m) => m.id.includes('argon')) ||
+          cat[0];
+        if (tid && targetCarbon) {
+          const cfg = setSessionModelConfig({
+            threadId: tid,
+            provider: 'antigravity',
+            modelId: targetCarbon.id,
+            effort: targetCarbon.supportsEffort === false ? '' : 'high'
+          });
+          showToast(`Switched session from Neon to ${cfg.displayLabel}`);
+        }
+        return;
+      }
       const selComboBtn = e.target.closest('[data-select-model-combo]');
       if (selComboBtn) {
         e.preventDefault();
         e.stopPropagation();
         haptic(8);
         const rawCombo = String(selComboBtn.dataset.selectModelCombo || '');
-        const [mId, effId] = rawCombo.split(':');
+        const [mId, effId = ''] = rawCombo.split(':');
         const prov = selComboBtn.dataset.modelProv || '';
-        if (mId && effId) {
+        if (mId) {
           const cfg = setSessionModelConfig({ modelId: mId, effort: effId, provider: prov });
           if (modPop) modPop.hidden = true;
           $('chat-model-picker-btn')?.setAttribute('aria-expanded', 'false');
@@ -17971,7 +18565,7 @@
       if (
         ideOpenRow &&
         ideOpenRow.dataset.ideOpenSession &&
-        !e.target.closest('[data-sess-act], [data-approve-act], [data-close-editor-tab]')
+        !e.target.closest('[data-sess-act], [data-approve-act], [data-close-editor-tab], [data-switch-neon-carbon]')
       ) {
         const sid = ideOpenRow.dataset.ideOpenSession;
         const prov = ideOpenRow.dataset.sessionProv || '';
@@ -20941,7 +21535,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=89', { updateViaCache: 'none' })
+        .register('sw.js?v=90', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
