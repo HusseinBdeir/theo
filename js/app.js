@@ -1073,6 +1073,7 @@
     pinnedBgSessionId: '',
     sound: true,
     activeTab: 'pulse',
+    desktopWorkbenchBootV92: false,
     sessProvider: 'all',
     sessStatus: 'all',
     selectedDeviceFilter: 'all',
@@ -2214,7 +2215,7 @@
       haptic(18);
       if (!opts.silent) {
         const label = getClaudeModeDisplayLabel(nextMode);
-        showToast(`⚡ Fleet Claude Mode → ${label} across all PCs`);
+        showToast(`Fleet Claude Mode: ${label} across all PCs`);
       }
     }
 
@@ -3873,7 +3874,7 @@
 
   async function sendTestPush(isWelcome = false) {
     const msg = {
-      title: isWelcome ? 'THEO Notifications Active 🔔' : 'THEO Remote Workbench ⚡',
+      title: isWelcome ? 'THEO Notifications Active' : 'THEO',
       body: isWelcome
         ? 'Lock-screen 1-tap approvals, session turn completions & daily briefings are now active.'
         : 'Test Web Push delivered from THEO Cloud! Lock-screen alerts are working.',
@@ -4103,11 +4104,11 @@
           : `./?tab=${targetTab}`
       };
       const notifTitle = isQ
-        ? `❓ Question from THEO — ${a.title || 'Session'}`
-        : `⚡ Approval Needed · ${a.provider === 'claude' ? 'Claude Code' : 'Antigravity'}`;
+        ? `Question from THEO: ${a.title || 'Session'}`
+        : `Approval Needed · ${a.provider === 'claude' ? 'Claude Code' : 'Antigravity'}`;
       const notifBody = isQ
         ? `${a.detail || 'THEO is waiting for your answer.'}`
-        : `${a.title || 'Session'}: ${a.toolName || 'Permission'} — ${a.detail || 'Waiting for confirmation'}`;
+        : `${a.title || 'Session'}: ${a.toolName || 'Permission'}: ${a.detail || 'Waiting for confirmation'}`;
       recordTheoNotification(
         {
           title: notifTitle,
@@ -4119,8 +4120,8 @@
       playChime('approve');
       showToast(
         isQ
-          ? `❓ Question (${a.title || 'THEO'}): ${String(a.detail || 'Waiting for your answer').slice(0, 100)}`
-          : `⚡ Approval Needed (${a.title || 'THEO'}): ${a.toolName || 'Permission'}`,
+          ? `Question (${a.title || 'THEO'}): ${String(a.detail || 'Waiting for your answer').slice(0, 100)}`
+          : `Approval Needed (${a.title || 'THEO'}): ${a.toolName || 'Permission'}`,
         navTarget
       );
       if (
@@ -4415,7 +4416,7 @@
     $('btn-palette-picker')?.setAttribute('aria-expanded', 'false');
     const modPop = $('model-picker-popover');
     if (modPop) modPop.hidden = true;
-    $('chat-model-picker-btn')?.setAttribute('aria-expanded', 'false');
+    modelPickerAdjustEffortOpen = false;
     $('composer-model-btn')?.setAttribute('aria-expanded', 'false');
     const hoverCard = $('ide-hover-card');
     if (hoverCard) {
@@ -4433,6 +4434,41 @@
     }
   }
 
+  function positionPalettePopover(anchorEl = null) {
+    const palPop = $('theme-palette-popover');
+    if (!palPop) return;
+    const vw = Math.max(280, window.innerWidth || 1280);
+    const vh = Math.max(320, window.innerHeight || 800);
+    const popW = Math.min(264, vw - 16);
+    palPop.style.width = `${popW}px`;
+    if (vw <= 1024) {
+      palPop.style.left = 'auto';
+      palPop.style.right = '12px';
+      palPop.style.top = '52px';
+      palPop.style.bottom = 'auto';
+      return;
+    }
+    const trigger = anchorEl || $('btn-palette-picker');
+    const rect = trigger && typeof trigger.getBoundingClientRect === 'function' ? trigger.getBoundingClientRect() : null;
+    if (!rect || (rect.width === 0 && rect.height === 0)) {
+      palPop.style.left = '12px';
+      palPop.style.bottom = '48px';
+      palPop.style.top = 'auto';
+      palPop.style.right = 'auto';
+      return;
+    }
+    const leftPx = Math.max(8, Math.min(Math.round(rect.left), vw - popW - 8));
+    palPop.style.left = `${leftPx}px`;
+    palPop.style.right = 'auto';
+    if (rect.top > vh * 0.45) {
+      palPop.style.bottom = `${Math.max(10, Math.round(vh - rect.top + 8))}px`;
+      palPop.style.top = 'auto';
+    } else {
+      palPop.style.top = `${Math.max(8, Math.round(rect.bottom + 8))}px`;
+      palPop.style.bottom = 'auto';
+    }
+  }
+
   function syncPalettePickerUi() {
     const activePal = prefs.theme === 'light' ? 'daylight' : prefs.palette || 'graphite';
     document.querySelectorAll('#palette-grid [data-set-palette]').forEach((btn) => {
@@ -4440,6 +4476,17 @@
       btn.classList.toggle('active', match);
       btn.setAttribute('aria-pressed', match ? 'true' : 'false');
     });
+    const themeBtn = $('btn-theme-toggle');
+    if (themeBtn) {
+      themeBtn.textContent = prefs.theme === 'light' ? 'Dark' : 'Light';
+    }
+    const soundBtn = $('btn-sound-toggle');
+    if (soundBtn) {
+      const on = prefs.sound !== false;
+      soundBtn.classList.toggle('is-active', on);
+      soundBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      soundBtn.textContent = on ? 'Chime On' : 'Muted';
+    }
   }
 
   function applyTheme(theme, userExplicit = false) {
@@ -6251,7 +6298,7 @@
               token: freshToken,
               protocol: 2,
               supportsRowPatch: true,
-              clientLabel: (navigator.userAgent || 'THEO Studio PWA').slice(0, 64)
+              clientLabel: (navigator.userAgent || 'THEO PWA').slice(0, 64)
             })
           );
         } catch {}
@@ -6503,7 +6550,7 @@
           const optAt = Number(m.optimisticAt || 0);
           if (now - optAt >= 45000) return false;
           const cleanOptText = String(m.text || '')
-            .replace(/\n*📎 Attached:.*$/s, '')
+            .replace(/\n*(?:📎\s*)?Attached:.*$/s, '')
             .trim();
           const matchedRemoteUser = remoteMsgs.some((rm) => {
             if (!rm || rm.role !== 'user') return false;
@@ -6641,14 +6688,14 @@
       return `
         <div class="push-banner-card">
           <div class="push-banner-top">
-            <span class="eyebrow">NEW CLOUDFLARE ADDRESS</span>
-            <span class="pill-count amber">MOVE APP</span>
+            <strong>New Cloudflare address</strong>
+            <span class="pill-count amber">Move App</span>
           </div>
           <div class="meta-timestamp" style="color:var(--text-secondary);font-size:12.5px">
-            THEO Remote moved off GitHub Pages to <strong>theo.husseinbdeir.workers.dev</strong>. Move your pairing and PIN in one tap.
+            THEO moved off GitHub Pages to <strong>theo.husseinbdeir.workers.dev</strong>. Move your pairing and PIN in one tap.
           </div>
           <div class="push-banner-actions">
-            <button type="button" class="btn-brass-sm" data-push-act="cf-migrate-now">Move to Cloudflare App →</button>
+            <button type="button" class="btn-brass-sm" data-push-act="cf-migrate-now">Move to Cloudflare App</button>
           </div>
         </div>
       `;
@@ -6660,14 +6707,14 @@
     return `
       <div class="push-banner-card">
         <div class="push-banner-top">
-          <span class="eyebrow">MOVED TO CLOUDFLARE</span>
-          <span class="pill-count emerald">READY</span>
+          <strong>Moved to Cloudflare</strong>
+          <span class="pill-count emerald">Ready</span>
         </div>
         <div class="meta-timestamp" style="color:var(--text-secondary);font-size:12.5px">
           ${pushActive ? 'Your data moved and your old GitHub push slot is retired.' : 'Your pairing moved here safely. Re-enable Push Notifications on this device so alerts work.'}
         </div>
         <div class="push-banner-actions">
-          ${!pushActive ? `<button type="button" class="btn-brass-sm" data-push-act="enable">${pushBusy ? 'Enabling…' : '🔔 Enable Push'}</button>` : ''}
+          ${!pushActive ? `<button type="button" class="btn-brass-sm" data-push-act="enable">${pushBusy ? 'Enabling…' : 'Enable Push'}</button>` : ''}
           <button type="button" class="btn-ghost-sm" data-push-act="cf-migrate-dismiss">Dismiss</button>
         </div>
       </div>
@@ -6747,7 +6794,7 @@
                 fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
               }
               if (options.toast) {
-                showToast(`Connected to Direct Studio Host (${(appState?.rows || []).length} sessions)`);
+                showToast(`Connected to host (${(appState?.rows || []).length} sessions)`);
               }
               maybePollCloudClaudeModeBackstop();
               return true;
@@ -7490,7 +7537,8 @@
   function pushUiHistoryState(overlay = '') {
     if (suppressHistoryPush) return;
     try {
-      history.pushState({ theoTab: prefs.activeTab || 'pulse', overlay }, '');
+      const fallbackTab = window.innerWidth >= 1025 ? 'chat' : 'pulse';
+      history.pushState({ theoTab: prefs.activeTab || fallbackTab, overlay }, '');
     } catch {}
   }
 
@@ -7852,8 +7900,8 @@
       setTimeout(() => URL.revokeObjectURL(url), 1800);
       showToast(
         minted?.formatted
-          ? `⬇ Downloaded Set-Up-THEO-PC.cmd (paired with 10m code ${minted.formatted})`
-          : '⬇ Downloaded Set-Up-THEO-PC.cmd — double-click to open THEO PC Setup'
+          ? `Downloaded Set-Up-THEO-PC.cmd (code ${minted.formatted})`
+          : 'Downloaded Set-Up-THEO-PC.cmd'
       );
     } finally {
       downloadPcSetupInFlight = false;
@@ -7868,13 +7916,12 @@
       <div class="quick-pair-card" data-quick-pair-surface="${esc(surfaceKey)}">
         <div class="quick-pair-head">
           <div>
-            <div class="eyebrow">ZERO-SECRET DEVICE PAIRING</div>
-            <div class="quick-pair-title">Pair This iPhone / Browser</div>
+            <div class="quick-pair-title">Pair This Device</div>
           </div>
           <span class="pill-count amber">One-Time Setup</span>
         </div>
         <p class="meta-timestamp quick-pair-desc">
-          Enter the <strong>6-digit code</strong> from your PC (works directly inside iOS Home Screen apps), or paste your <code>#pair=</code> link.
+          Enter the <strong>6-digit code</strong> from your PC (works inside iOS Home Screen apps), or paste your <code>#pair=</code> link.
         </p>
         <div class="quick-pair-row">
           <input
@@ -7890,7 +7937,7 @@
           <button type="button" class="btn-brass-sm quick-pair-btn" data-pair-code-submit>Connect</button>
         </div>
         <div class="quick-pair-subrow">
-          <button type="button" class="btn-ghost-sm" data-pair-paste-clipboard>📋 Paste Pair Link</button>
+          <button type="button" class="btn-ghost-sm" data-pair-paste-clipboard>Paste Pair Link</button>
           <button type="button" class="btn-ghost-sm" data-pair-toggle-link-box>${showQuickPairLinkFallback ? 'Hide Link Box' : 'Type / Paste Manually'}</button>
           <button type="button" class="btn-ghost-sm" data-download-pc-setup="1">⬇ Download PC Setup</button>
         </div>
@@ -7919,10 +7966,8 @@
     const conn = appState?.connection || {};
     const lanUrl = conn.lanUrl || '';
     const hostName = conn.hostname || 'Paired Host';
-    const rowCount = (appState?.rows || []).length;
     const activeCount = (appState?.rows || []).filter((r) => !r.archived).length;
     const runningCount = (appState?.rows || []).filter((r) => !r.archived && r.status === 'working').length;
-    const threadCount = Object.keys(threadsCache || {}).length;
     const snapTime = appState?.generatedAt ? timeAgo(appState.generatedAt) : '—';
     const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
     const pushActive = Boolean(nf.enabled && pushSub && notifPerm() === 'granted');
@@ -7935,14 +7980,14 @@
     if (titleEl) {
       titleEl.textContent =
         connMode === 'local'
-          ? `Connected · Direct Host WebSocket (${localWsRttMs ? `${localWsRttMs}ms` : 'Live'})`
+          ? `Connected · Direct Host (${localWsRttMs ? `${localWsRttMs}ms` : 'Live'})`
           : connMode === 'edge' || edgeWsAuthed
-            ? `Connected · Cloudflare Edge WebSocket (${edgeWsRttMs ? `${edgeWsRttMs}ms` : 'Live'})`
+            ? `Connected · Edge WebSocket (${edgeWsRttMs ? `${edgeWsRttMs}ms` : 'Live'})`
             : connMode === 'cloud'
-              ? 'Connected · Multi-Device Cloud Relay'
+              ? 'Connected · Cloud Relay'
               : isPairedNow
                 ? 'Offline · Local Snapshot Cache'
-                : 'Pair This Device · Zero-Secret Setup';
+                : 'Pair This Device';
     }
 
     const fleetRowsHtml = fleetList.length
@@ -7965,7 +8010,7 @@
         </div>
         <div class="conn-stat-box">
           <span class="conn-stat-lbl">Transport</span>
-          <span class="conn-stat-val">${localWsAuthed ? `⚡ Local WS (${localWsRttMs || 2}ms)` : edgeWsAuthed ? `⚡ Edge WS (${edgeWsRttMs || 18}ms)` : esc(snapTime)}</span>
+          <span class="conn-stat-val">${localWsAuthed ? `Local WS (${localWsRttMs || 2}ms)` : edgeWsAuthed ? `Edge WS (${edgeWsRttMs || 18}ms)` : esc(snapTime)}</span>
         </div>
         <div class="conn-stat-box">
           <span class="conn-stat-lbl">Fleet Sessions</span>
@@ -7973,7 +8018,7 @@
         </div>
         <div class="conn-stat-box">
           <span class="conn-stat-lbl">Web Push Alerts</span>
-          <span class="conn-stat-val" style="color:${pushActive ? 'var(--emerald)' : 'var(--amber)'}">${pushActive ? '🔔 Active' : 'Off'}</span>
+          <span class="conn-stat-val" style="color:${pushActive ? 'var(--emerald)' : 'var(--amber)'}">${pushActive ? 'Active' : 'Off'}</span>
         </div>
       </div>
       ${fleetRowsHtml}
@@ -7981,17 +8026,20 @@
       <div class="meta-timestamp" style="line-height:1.45">
         ${
           connMode === 'local'
-            ? `Streaming real-time SSE directly from this PC on <code>${esc(localBridgeBase)}</code>.`
-            : `Synced worldwide via the <strong>THEO Edge Relay</strong> (Cloudflare store). Prompts, approvals, and session actions go straight to your PC, with or without VS Code open.`
+            ? `Streaming directly from this PC on <code>${esc(localBridgeBase)}</code>.`
+            : `Synced via <strong>THEO Edge Relay</strong>. Prompts, approvals, and session actions go straight to your PC.`
         }
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
-        <button type="button" class="btn-brass-sm" id="conn-modal-sync-btn" style="flex:1">↻ Sync Now with PC</button>
+        <button type="button" class="btn-brass-sm" id="conn-modal-sync-btn" style="flex:1">↻ Sync Now</button>
+        <button type="button" class="btn-ghost-sm" id="conn-modal-pulse-btn" data-goto-tab="pulse">Pulse &amp; Accounts</button>
+        <button type="button" class="btn-ghost-sm" id="conn-modal-sessions-btn" data-goto-tab="sessions">All Sessions</button>
+        <button type="button" class="btn-ghost-sm" id="conn-modal-settings-btn" data-goto-tab="analytics">Settings &amp; Usage</button>
         <button type="button" class="btn-ghost-sm" data-download-pc-setup="1">⬇ Download PC Setup</button>
         ${
           pushActive
-            ? `<button type="button" class="btn-ghost-sm" data-push-act="test">🔔 Test Push</button><button type="button" class="btn-ghost-sm" data-push-act="reset" aria-label="Mint a fresh iOS APNs / Web Push subscription">🔄 Re-Pair Push</button>`
-            : `<button type="button" class="btn-ghost-sm" data-push-act="enable">${pushBusy ? 'Enabling…' : '🔔 Enable Push'}</button>`
+            ? `<button type="button" class="btn-ghost-sm" data-push-act="test">Test Push</button><button type="button" class="btn-ghost-sm" data-push-act="reset" aria-label="Mint a fresh iOS APNs / Web Push subscription">Re-Pair Push</button>`
+            : `<button type="button" class="btn-ghost-sm" data-push-act="enable">${pushBusy ? 'Enabling…' : 'Enable Push'}</button>`
         }
         ${
           lanUrl && /^https?:\/\//i.test(lanUrl) && connMode !== 'local'
@@ -8026,7 +8074,6 @@
     return `
       <div class="pc-setup-pulse-card" id="pulse-pc-setup-card">
         <div class="pc-setup-pulse-main">
-          <div class="eyebrow">FLEET PC SETUP UPDATE</div>
           <div class="pc-setup-pulse-title">${pendingHosts.length === 1 ? '1 PC has pending setup updates' : `${pendingHosts.length} PCs have pending setup updates`}</div>
           <div class="meta-timestamp">${summaryText}. ${applyButtons ? 'Tap <strong>Apply</strong> to run the setup on that PC from here.' : 'Click <strong>Apply Setup</strong> in the THEO sidebar on that PC, or open <strong>Set Up This PC</strong>.'}</div>
         </div>
@@ -8582,7 +8629,6 @@
       <div class="pwa-ready-card ${tone} ${open ? 'is-open' : ''}" id="pulse-pwa-ready-card">
         <button type="button" class="pwa-ready-head" data-pwa-ready-toggle="1" aria-expanded="${open ? 'true' : 'false'}" aria-controls="pulse-pwa-ready-body">
           <span class="pwa-ready-head-main">
-            <span class="eyebrow">PHONE-ONLY READINESS</span>
             <span class="pwa-ready-title">${esc(title)}</span>
             <span class="meta-timestamp">${esc(sub)}${tone === 'is-ready' && hasNotes ? ' One note inside.' : ''}</span>
           </span>
@@ -8614,15 +8660,14 @@
     return `${pcSetupNotice}
       <div class="push-banner-card">
         <div class="push-banner-top">
-          <span class="eyebrow">HOME SCREEN PUSH NOTIFICATIONS</span>
-          <span class="pill-count amber">AI WORKBENCH</span>
+          <strong>Push Notifications</strong>
         </div>
         <div class="meta-timestamp" style="color:var(--text-secondary);font-size:12.5px">
-          Get native lock-screen alerts for 1-tap tool approvals, Antigravity &amp; Claude Code session turn completions, and quota threshold warnings.
+          Get lock-screen alerts for tool approvals, session completions, and quota warnings.
         </div>
         <div class="push-banner-actions">
           <button type="button" class="btn-brass-sm" data-push-act="enable">
-            ${pushBusy ? 'Enabling…' : '🔔 Enable Push Notifications'}
+            ${pushBusy ? 'Enabling…' : 'Enable Push Notifications'}
           </button>
           <button type="button" class="btn-ghost-sm" data-push-act="dismiss-hint">Not now</button>
         </div>
@@ -8646,7 +8691,7 @@
     const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
     const iosNeedsInstall = /iPhone|iPad|iPod/.test(ua) && !isStandalone();
     const statusChip = active
-      ? '<span class="pill-count emerald">🔔 Active on this device</span>'
+      ? '<span class="pill-count emerald">Active on this device</span>'
       : perm === 'denied'
         ? '<span class="pill-count crimson">Blocked in browser settings</span>'
         : iosNeedsInstall
@@ -8672,14 +8717,13 @@
       ? 'On iPhone, open THEO from your Home Screen icon to enable Web Push notifications.'
       : perm === 'denied'
         ? 'Notifications are blocked for this app. Open your phone Settings -> THEO -> Notifications and allow notifications.'
-        : 'Works even when THEO is closed or your phone is locked. Encrypted RFC 8291 (aes128gcm) + VAPID ES256 alerts dispatch directly from your PC & the THEO Edge Relay to Apple Push / FCM.';
+        : 'Encrypted RFC 8291 (aes128gcm) + VAPID ES256 alerts dispatch directly from your PC and THEO Edge Relay.';
 
     return `
       <div class="push-settings-card">
         <div class="section-head" style="margin-bottom:0">
           <div>
-            <div class="eyebrow">WEB PUSH NOTIFICATIONS · AI WORKBENCH</div>
-            <h2 class="section-title" style="font-size:17px;margin-top:2px">1-Tap Approvals, Session Completions &amp; Quota Alerts</h2>
+            <h2 class="section-title" style="font-size:17px;margin-top:2px">Push Notifications</h2>
             <div class="brass-rule-single"></div>
           </div>
           ${statusChip}
@@ -8690,8 +8734,8 @@
             <label class="push-pref-label">
               <input type="checkbox" data-nf="approvals" ${nf.approvals !== false ? 'checked' : ''}>
               <div class="push-pref-text">
-                <strong>1-Tap tool approvals &amp; waiting-for-input alerts</strong>
-                <span>Instant lock-screen ping when Antigravity or Claude Code pauses for permission or input</span>
+                <strong>Tool approvals &amp; input requests</strong>
+                <span>Alert when Antigravity or Claude Code pauses for permission or input</span>
               </div>
             </label>
           </div>
@@ -8699,8 +8743,8 @@
             <label class="push-pref-label">
               <input type="checkbox" data-nf="completed" ${nf.completed !== false ? 'checked' : ''}>
               <div class="push-pref-text">
-                <strong>Session turn &amp; background task completion alerts</strong>
-                <span>Pings when a running cascade or Claude Code session finishes its turn while you are away</span>
+                <strong>Session turn &amp; task completions</strong>
+                <span>Alert when a running session finishes its turn while you are away</span>
               </div>
             </label>
           </div>
@@ -8708,8 +8752,8 @@
             <label class="push-pref-label">
               <input type="checkbox" data-nf="quota" ${nf.quota !== false ? 'checked' : ''}>
               <div class="push-pref-text">
-                <strong>Usage rate threshold (≥90%) &amp; stalled-task watchdog alerts</strong>
-                <span>Alerts immediately when any Antigravity or Claude Code quota window reaches 90% or if a task stalls</span>
+                <strong>Usage threshold (≥90%) &amp; stalled-task alerts</strong>
+                <span>Alert when a quota window reaches 90% or a task stalls</span>
               </div>
             </label>
           </div>
@@ -8717,8 +8761,8 @@
             <label class="push-pref-label">
               <input type="checkbox" data-nf="morning" ${nf.morning !== false ? 'checked' : ''}>
               <div class="push-pref-text">
-                <strong>Morning AI Workbench Brief</strong>
-                <span>Daily morning summary of pending approvals and active Antigravity &amp; Claude sessions</span>
+                <strong>Morning Brief</strong>
+                <span>Daily morning summary of pending approvals and active sessions</span>
               </div>
             </label>
             <select class="push-hour-select tabular" data-nf="morningHour" aria-label="Morning briefing time">
@@ -8729,8 +8773,8 @@
             <label class="push-pref-label">
               <input type="checkbox" data-nf="evening" ${nf.evening !== false ? 'checked' : ''}>
               <div class="push-pref-text">
-                <strong>Evening AI &amp; Git Repository Digest</strong>
-                <span>Evening summary of daily token velocity and uncommitted BHFIRMS git repos</span>
+                <strong>Evening Digest</strong>
+                <span>Evening summary of daily token usage and uncommitted git repos</span>
               </div>
             </label>
             <select class="push-hour-select tabular" data-nf="eveningHour" aria-label="Evening digest time">
@@ -8742,13 +8786,13 @@
           ${
             active
               ? `
-                <button type="button" class="btn-brass-sm" data-push-act="test">🔔 Send Test Push</button>
-                <button type="button" class="btn-ghost-sm" data-push-act="reset" aria-label="Unsubscribe and mint a brand-new APNs push token">${pushBusy ? 'Re-pairing…' : '🔄 Re-Pair Push'}</button>
+                <button type="button" class="btn-brass-sm" data-push-act="test">Send Test Push</button>
+                <button type="button" class="btn-ghost-sm" data-push-act="reset" aria-label="Unsubscribe and mint a brand-new APNs push token">${pushBusy ? 'Re-pairing…' : 'Re-Pair Push'}</button>
                 <button type="button" class="btn-ghost-sm" data-push-act="sync">↻ Refresh Schedule</button>
                 <button type="button" class="btn-ghost-sm" data-push-act="disable">Turn Off</button>
               `
               : `
-                <button type="button" class="btn-brass-sm" data-push-act="enable">${pushBusy ? 'Enabling…' : '🔔 Enable Push Notifications'}</button>
+                <button type="button" class="btn-brass-sm" data-push-act="enable">${pushBusy ? 'Enabling…' : 'Enable Push Notifications'}</button>
                 ${perm === 'granted' ? `<button type="button" class="btn-ghost-sm" data-push-act="test">Send Test Push</button>` : ''}
               `
           }
@@ -8777,9 +8821,10 @@
     document.querySelectorAll('.view-pane').forEach((pane) => {
       pane.classList.toggle('active', pane.dataset.view === target);
     });
-    document.querySelectorAll('.rail-nav .nav-item').forEach((btn) => {
-      btn.classList.toggle('active', btn.dataset.tab === target);
+    document.querySelectorAll('[data-sidebar-nav]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.sidebarNav === target);
     });
+    $('btn-sidebar-brand')?.classList.toggle('active', target === 'chat');
     document.querySelectorAll('.mobile-bottom-dock .dock-btn').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.tab === target);
     });
@@ -8959,7 +9004,7 @@
       ? `
         <div class="ide-editor-tab active is-draft" role="tab" tabindex="0" aria-selected="true" data-editor-tab-id="__new__" data-session-prov="${newDraftProv}">
           <span class="prov-glyph">${PROVIDER_ICONS[newDraftProv]}</span>
-          <span class="ide-tab-title">✨ New ${newDraftProv === 'claude' ? 'Claude' : 'Antigravity'} Session</span>
+          <span class="ide-tab-title">New ${newDraftProv === 'claude' ? 'Claude' : 'Antigravity'} Session</span>
           <button type="button" class="ide-tab-close" data-close-editor-tab="__new__" aria-label="Close new session draft">×</button>
         </div>
       `
@@ -9336,11 +9381,11 @@
 
     bodyEl.innerHTML = `
       <div class="acct-details-section">
-        <div class="eyebrow">CONNECTED ACCOUNTS (${signedInRows.length})</div>
+        <div class="acct-details-heading">Connected accounts (${signedInRows.length})</div>
         ${acctsHtml}
       </div>
       <div class="acct-details-section">
-        <div class="eyebrow">HOST STORAGE &amp; SETUP</div>
+        <div class="acct-details-heading">Host storage &amp; setup</div>
         <div class="acct-details-item">
           <div class="acct-details-meta">Tokens stay encrypted in host local vault storage; OAuth URLs and home paths are excluded from remote snapshots.</div>
           ${hostListHtml}
@@ -9533,13 +9578,14 @@
       return;
     }
     if (el) el.textContent = rawNext;
-    if (kind === 'session') {
+    if (kind === 'session' || kind === 'chat-session') {
       const row = (appState?.rows || []).find((r) => r && r.id === id);
       if (row) {
         row.title = rawNext;
         noteRowOverride(id, { title: rawNext });
         persistCache();
       }
+      renderIdeSidebar();
       renderSessionsView();
       if (prefs.selectedThreadId === id) renderChatView();
       dispatchRemoteCommand({
@@ -9551,7 +9597,7 @@
         provider: row?.provider || 'antigravity',
         targetDeviceId: row?.deviceId || ''
       }).catch(() => {});
-      showToast(`✎ Renamed to "${rawNext}"`);
+      showToast(`Renamed to "${rawNext}"`);
     } else if (kind === 'group') {
       noteGroupOverride(id, { op: 'rename', name: rawNext });
       const grpObj = (appState?.groups || []).find((g) => g && g.id === id);
@@ -9568,27 +9614,31 @@
         group: id,
         name: rawNext
       }).catch(() => {});
-      showToast(`✎ Renamed group to "${rawNext}"`);
+      showToast(`Renamed group to "${rawNext}"`);
     }
     flushDeferredIdeTreeOrder();
   }
 
   function beginIdeInlineRename(kind, id) {
-    if (!id) return false;
+    if (isPinLocked() || !id || id === '__new__') return false;
     if (activeIdeRename) finishIdeInlineRename(false);
-    const treeEl = $('ide-sidebar-tree');
-    if (!treeEl) return false;
     let targetEl = null;
-    if (kind === 'session') {
-      const rowEl = Array.from(treeEl.querySelectorAll('.ide-tree-row[data-ide-open-session]')).find(
-        (n) => n.dataset.ideOpenSession === id
-      );
-      targetEl = rowEl?.querySelector('.ide-tree-title') || null;
-    } else if (kind === 'group') {
-      const grpEl = Array.from(treeEl.querySelectorAll('.ide-tree-group[data-ide-group]')).find(
-        (n) => n.dataset.ideGroup === id
-      );
-      targetEl = grpEl?.querySelector('.ide-tree-group-name') || null;
+    if (kind === 'chat-session') {
+      targetEl = $('chat-session-title');
+    } else {
+      const treeEl = $('ide-sidebar-tree');
+      if (!treeEl) return false;
+      if (kind === 'session') {
+        const rowEl = Array.from(treeEl.querySelectorAll('.ide-tree-row[data-ide-open-session]')).find(
+          (n) => n.dataset.ideOpenSession === id
+        );
+        targetEl = rowEl?.querySelector('.ide-tree-title') || null;
+      } else if (kind === 'group') {
+        const grpEl = Array.from(treeEl.querySelectorAll('.ide-tree-group[data-ide-group]')).find(
+          (n) => n.dataset.ideGroup === id
+        );
+        targetEl = grpEl?.querySelector('.ide-tree-group-name') || null;
+      }
     }
     if (!targetEl) return false;
     const origText = String(targetEl.textContent || '').trim();
@@ -10296,7 +10346,7 @@
         approvalsEl.hidden = false;
         approvalsEl.innerHTML = `
           <div class="ide-appr-head tabular">
-            <span>⚡ ${approvals.length} Waiting for Input</span>
+            <span>${approvals.length} Waiting for Input</span>
           </div>
           ${approvals
             .slice(0, 3)
@@ -12163,10 +12213,10 @@
         fleetEl.hidden = false;
         const activeTotalAll = allRows.filter((r) => r.id && !r.archived).length;
         const transportHtml = localWsAuthed
-          ? `<span class="fleet-latency-badge tabular">⚡ ${localWsRttMs || 2}ms Direct WS</span>`
+          ? `<span class="fleet-latency-badge tabular">${localWsRttMs || 2}ms Direct WS</span>`
           : edgeWsAuthed
-            ? `<span class="fleet-latency-badge tabular">⚡ ${edgeWsRttMs || 18}ms Edge WS</span>`
-            : `<span class="fleet-latency-badge cloud-mode tabular">☁ Cloud Relay</span>`;
+            ? `<span class="fleet-latency-badge tabular">${edgeWsRttMs || 18}ms Edge WS</span>`
+            : `<span class="fleet-latency-badge cloud-mode tabular">Cloud Relay</span>`;
         fleetEl.innerHTML = `
           <span class="fleet-strip-head">Connected Fleet</span>
           <button type="button" class="fleet-chip ${prefs.selectedDeviceFilter === 'all' ? 'active' : ''}" data-fleet-filter="all">
@@ -12228,6 +12278,12 @@
     if (dockSessions) {
       dockSessions.hidden = activeTotal === 0;
       dockSessions.textContent = String(activeTotal);
+    }
+    const dirtyRepoCount = (appState?.workspaces || []).filter((w) => Number(w?.dirtyCount || 0) > 0).length;
+    const badgeWorkspaces = $('badge-workspaces');
+    if (badgeWorkspaces) {
+      badgeWorkspaces.hidden = dirtyRepoCount === 0;
+      badgeWorkspaces.textContent = String(dirtyRepoCount);
     }
 
     const kpisEl = $('pulse-kpis');
@@ -12794,7 +12850,7 @@
               : ''
           }
           <button type="button" class="sess-act-btn" data-sess-act="group" data-id="${esc(r.id || '')}" aria-label="Assign or move session to a group">
-            📁 ${esc(grpObj ? grpObj.name : 'Group')}
+            ${esc(grpObj ? grpObj.name : 'Group')}
           </button>
           ${
             grpObj && !r.archived
@@ -12834,7 +12890,7 @@
   }) {
     const bodyHtml = items.length
       ? items.map((r) => renderSessionCardHtml(r)).join('')
-      : `<div class="meta-timestamp" style="padding:8px 10px">No sessions in <strong>${esc(name)}</strong> yet — tap <strong>📁 Group</strong> on any session card to move it here.</div>`;
+      : `<div class="meta-timestamp" style="padding:8px 10px">No sessions in <strong>${esc(name)}</strong> yet. Use <strong>Group</strong> on any session card to move it here.</div>`;
 
     const actionsHtml = isCustomGroup
       ? `
@@ -13953,7 +14009,7 @@
       wsList.find((w) => w && (w.id === wsId || w.name === wsId)) ||
       wsList[0] || {
         id: wsId || 'theo',
-        name: activeRow?.folder || 'THEO Studio Workspace',
+        name: activeRow?.folder || 'THEO Workspace',
         branch: 'main',
         dirtyCount: 0,
         modifiedFiles: [],
@@ -14956,7 +15012,7 @@
       if (subbarEl) {
         subbarEl.hidden = false;
         subbarEl.innerHTML = `
-          <span class="insp-sub-path"><span class="insp-sub-path-txt">${rankedChecks.length} Studio Check${rankedChecks.length === 1 ? '' : 's'} · ${allTasks.length} Side Agent${allTasks.length === 1 ? '' : 's'}${runningCount > 0 ? ` · ${runningCount} Live` : ''}</span></span>
+          <span class="insp-sub-path"><span class="insp-sub-path-txt">${rankedChecks.length} Check${rankedChecks.length === 1 ? '' : 's'} · ${allTasks.length} Side Agent${allTasks.length === 1 ? '' : 's'}${runningCount > 0 ? ` · ${runningCount} Live` : ''}</span></span>
           <span class="insp-sub-actions">
             <button type="button" class="insp-mini-btn" data-insp-refresh-agents="1">↻ Refresh</button>
             ${runningCount > 0 && sid ? `<button type="button" class="insp-mini-btn" style="color:var(--crimson)" data-bg-act="stop-session-all" data-sess-id="${esc(sid)}" data-prov="${provKey}">■ Stop All</button>` : ''}
@@ -15044,7 +15100,7 @@
 
       bodyEl.innerHTML = `
         <div class="studio-lens-section">
-          <div class="studio-lens-head"><span class="studio-lens-title">1-Click Native Studio Checks &amp; Error Lens</span></div>
+          <div class="studio-lens-head"><span class="studio-lens-title">Checks &amp; Diagnostics</span></div>
           ${checksHtml}
         </div>
         <div class="studio-lens-section">
@@ -15084,7 +15140,7 @@
         m.artifacts.forEach((art, aIdx) => {
           if (!art) return;
           outlineItems.push({
-            kicker: '📄 Artifact',
+            kicker: 'Artifact',
             title: String(art.title || art.file || 'Walkthrough').trim(),
             anchor,
             detailKey: `${anchor}:art:${aIdx}`
@@ -15194,7 +15250,6 @@
     const ctxHtml = ctxBody
       ? `<details class="user-ctx-chip" data-chat-detail-key="${esc(ctxKey)}" data-rendered-open="${isCtxOpen ? '1' : '0'}"${isCtxOpen ? ' open' : ''}>
           <summary class="user-ctx-summary">
-            <span class="user-ctx-ico" aria-hidden="true">🖥️</span>
             <span>Workstation Context${ctxHeader ? ` · ${esc(ctxHeader)}` : ''}</span>
             <span class="vs-thought-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>
           </summary>
@@ -15206,7 +15261,7 @@
       ? `<div class="user-attach-strip">${attachedFiles
           .map(
             (af) =>
-              `<span class="user-attach-chip"><span aria-hidden="true">📎</span><span class="mono">${esc(af.name)}</span></span>`
+              `<span class="user-attach-chip"><span class="mono">${esc(af.name)}</span></span>`
           )
           .join('')}</div>`
       : '';
@@ -15774,7 +15829,7 @@
     if (directBtn) {
       const isDirect = prefs.composerDirectStream !== false;
       directBtn.classList.toggle('active', isDirect);
-      directBtn.textContent = isDirect ? '⚡ Direct' : '🪟 IDE Tab';
+      directBtn.textContent = isDirect ? 'Direct' : 'IDE Tab';
     }
   }
 
@@ -16052,6 +16107,7 @@
   }
 
   let lastModelAnchorEl = null;
+  let modelPickerAdjustEffortOpen = false;
 
   function positionModelPickerPopover(anchorEl = null) {
     const modPop = $('model-picker-popover');
@@ -16059,32 +16115,9 @@
     if (anchorEl) {
       lastModelAnchorEl = anchorEl;
     }
-    let trigger =
-      anchorEl ||
-      lastModelAnchorEl ||
-      (document.activeElement &&
-      (document.activeElement.id === 'composer-model-btn' ||
-        document.activeElement.id === 'chat-model-picker-btn')
-        ? document.activeElement
-        : null) ||
-      $('composer-model-btn') ||
-      $('chat-model-picker-btn');
+    const trigger = anchorEl || lastModelAnchorEl || $('composer-model-btn');
     if (!trigger || typeof trigger.getBoundingClientRect !== 'function') return;
-    let rect = trigger.getBoundingClientRect();
-    if (rect.width === 0 && rect.height === 0) {
-      const alt =
-        trigger.id === 'chat-model-picker-btn'
-          ? $('composer-model-btn')
-          : $('chat-model-picker-btn');
-      if (alt && typeof alt.getBoundingClientRect === 'function') {
-        const altRect = alt.getBoundingClientRect();
-        if (altRect.width > 0 || altRect.height > 0) {
-          trigger = alt;
-          rect = altRect;
-          lastModelAnchorEl = alt;
-        }
-      }
-    }
+    const rect = trigger.getBoundingClientRect();
     const vw = Math.max(280, window.innerWidth || 1280);
     const vh = Math.max(320, window.innerHeight || 800);
     const menuW = Math.min(280, vw - 16);
@@ -16111,6 +16144,10 @@
       const modPop = $('model-picker-popover');
       if (modPop && !modPop.hidden) {
         positionModelPickerPopover();
+      }
+      const palPop = $('theme-palette-popover');
+      if (palPop && !palPop.hidden) {
+        positionPalettePopover();
       }
     },
     { passive: true }
@@ -16197,6 +16234,7 @@
       .join('');
 
     const showEffortBar = modelCfg?.supportsEffort !== false;
+    const activeInCatalog = catalog.some((m) => m.id === modelCfg.modelId);
     const barEfforts = Array.isArray(modelCfg?.efforts) && modelCfg.efforts.length
       ? THINKING_EFFORT_LEVELS.filter((e) => modelCfg.efforts.includes(e.id))
       : THINKING_EFFORT_LEVELS;
@@ -16207,25 +16245,27 @@
       })
       .join('');
 
+    const effortFooterHtml = !showEffortBar
+      ? ''
+      : !activeInCatalog || modelPickerAdjustEffortOpen
+        ? `<div class="vs-model-menu-sep" role="separator"></div>
+           <div class="vs-model-effort-bar" role="group" aria-label="Thinking Level">
+             <span class="vs-model-effort-lbl">Thinking</span>
+             <div class="vs-model-effort-pills">${effortsBarHtml}</div>
+           </div>`
+        : `<div class="vs-model-menu-sep" role="separator"></div>
+           <div class="vs-model-effort-toggle-row">
+             <button type="button" class="vs-effort-adjust-btn" data-toggle-model-effort-bar="1">Thinking: ${esc(modelCfg.effortLabel || 'High')} · Adjust</button>
+           </div>`;
+
     bodyEl.innerHTML = `
       <div class="vs-model-menu-list">${familyGroupsHtml}</div>
-      ${
-        showEffortBar
-          ? `<div class="vs-model-menu-sep" role="separator"></div>
-             <div class="vs-model-effort-bar" role="group" aria-label="Thinking Level">
-               <span class="vs-model-effort-lbl">Thinking</span>
-               <div class="vs-model-effort-pills">${effortsBarHtml}</div>
-             </div>`
-          : ''
-      }
+      ${effortFooterHtml}
     `;
   }
 
   function renderNewSessionLaunchpadHtml(provKey, modelCfg, grpObj) {
     const cleanProv = provKey === 'claude' ? 'claude' : 'antigravity';
-    const provDisplay = cleanProv === 'claude' ? 'Claude Code' : 'Google Antigravity';
-    const lpLimit = inferDefaultContextLimit(cleanProv, modelCfg?.displayLabel || '');
-    const catalog = getEffectiveModelCatalog(cleanProv);
     const rawWorkspaces = Array.isArray(appState?.workspaces) ? appState.workspaces : [];
     const rankedWorkspaces = rankByFreq(
       rawWorkspaces,
@@ -16235,28 +16275,8 @@
     ).slice(0, 5);
     const curScope = String(prefs.composerRepoPrefix || '').trim();
 
-    const modelPills = catalog
-      .map((m) => {
-        const isSel = m.id === modelCfg.modelId;
-        return `<button type="button" class="lp-chip${isSel ? ' active' : ''}" data-select-ai-model="${esc(m.id)}" data-model-prov="${cleanProv}" aria-pressed="${isSel ? 'true' : 'false'}"><span>${esc(m.label)}</span><small>${esc(m.badge)}</small></button>`;
-      })
-      .join('');
-
-    const lpShowEffort = modelCfg?.supportsEffort !== false;
-    const lpEfforts = Array.isArray(modelCfg?.efforts) && modelCfg.efforts.length
-      ? THINKING_EFFORT_LEVELS.filter((e) => modelCfg.efforts.includes(e.id))
-      : THINKING_EFFORT_LEVELS;
-    const effortPills = lpShowEffort
-      ? lpEfforts
-          .map((eff) => {
-            const isSel = eff.id === modelCfg.effort;
-            return `<button type="button" class="lp-effort-btn${isSel ? ' active' : ''}" data-select-ai-effort="${esc(eff.id)}" data-model-prov="${cleanProv}" aria-pressed="${isSel ? 'true' : 'false'}">${esc(eff.label)}</button>`;
-          })
-          .join('')
-      : '<span class="lp-effort-static">Single preset tier</span>';
-
     const scopeChips = [
-      `<button type="button" class="lp-scope-chip${!curScope ? ' active' : ''}" data-launchpad-scope="">All / Default</button>`,
+      `<button type="button" class="lp-scope-chip${!curScope ? ' active' : ''}" data-launchpad-scope="">Default Workspace</button>`,
       ...rankedWorkspaces.map((w) => {
         const name = String(w.name || w.id || '').trim();
         const isSel = curScope.toLowerCase() === name.toLowerCase();
@@ -16265,60 +16285,34 @@
     ].join('');
 
     return `
-      <div class="new-session-launchpad" data-launchpad-prov="${cleanProv}">
+      <div class="new-session-launchpad is-minimal" data-launchpad-prov="${cleanProv}">
         <div class="lp-head">
-          <div class="lp-title-wrap">
-            <span class="prov-glyph lp-glyph">${PROVIDER_ICONS[cleanProv]}</span>
-            <div>
-              <div class="lp-title"><span>${esc(provDisplay)} Workbench${grpObj ? ` · ${esc(grpObj.name)}` : ''}</span>${
-                grpObj
-                  ? `<button type="button" class="lp-group-clear-btn" data-clear-new-session-group="1" data-micro-tip="Open in Ungrouped instead" aria-label="Open in Ungrouped instead of ${esc(grpObj.name)}">× Ungrouped</button>`
-                  : ''
-              }</div>
-              <div class="lp-sub tabular">Clean ${esc(fmtCompact(lpLimit))} context window · Smart IDE &amp; CLI hybrid routing</div>
-            </div>
+          <div class="lp-prov-switch" role="group" aria-label="Select AI Provider">
+            <button type="button" class="lp-prov-btn${cleanProv === 'antigravity' ? ' active' : ''}" data-comp-mode="new-antigravity">
+              <span class="prov-glyph">${PROVIDER_ICONS.antigravity}</span>
+              <span>Antigravity</span>
+            </button>
+            <button type="button" class="lp-prov-btn${cleanProv === 'claude' ? ' active' : ''}" data-comp-mode="new-claude">
+              <span class="prov-glyph">${PROVIDER_ICONS.claude}</span>
+              <span>Claude Code</span>
+            </button>
           </div>
-          <div class="lp-prov-switch" role="group" aria-label="Switch AI Provider">
-            <button type="button" class="lp-prov-btn${cleanProv === 'antigravity' ? ' active' : ''}" data-comp-mode="new-antigravity">Antigravity</button>
-            <button type="button" class="lp-prov-btn${cleanProv === 'claude' ? ' active' : ''}" data-comp-mode="new-claude">Claude</button>
-          </div>
+          ${
+            grpObj
+              ? `<div class="lp-title">
+                   <span class="lp-group-chip">
+                     <span class="lp-group-chip-lbl">${esc(grpObj.name)}</span>
+                     <button type="button" class="lp-group-clear-btn" data-clear-new-session-group="1" data-micro-tip="Open in Ungrouped instead" aria-label="Open in Ungrouped instead of ${esc(grpObj.name)}">× Ungrouped</button>
+                   </span>
+                 </div>`
+              : ''
+          }
         </div>
-
-        <div class="lp-controls-grid">
-          <div class="lp-control-box">
-            <div class="lp-box-label">MODEL</div>
-            <div class="lp-chip-row">${modelPills}</div>
-          </div>
-          <div class="lp-control-box">
-            <div class="lp-box-label">THINKING LEVEL</div>
-            <div class="lp-effort-row" role="group" aria-label="Thinking Level">${effortPills}</div>
-          </div>
-        </div>
-
         ${
           rankedWorkspaces.length > 0
-            ? `<div class="lp-control-box"><div class="lp-box-label">WORKSPACE SCOPE</div><div class="lp-scope-row">${scopeChips}</div></div>`
+            ? `<div class="lp-scope-row" role="group" aria-label="Workspace scope">${scopeChips}</div>`
             : ''
         }
-
-        <div class="lp-starters-grid">
-          <button type="button" class="lp-starter-card" data-insert-prompt="/plan ">
-            <strong>📐 Architecture Plan</strong>
-            <span>Draft a step-by-step implementation &amp; verification plan</span>
-          </button>
-          <button type="button" class="lp-starter-card" data-insert-prompt="/boost ">
-            <strong>🚀 Deep Multi-Axis Boost</strong>
-            <span>Full-depth coding, edge-case audit &amp; E2E verification</span>
-          </button>
-          <button type="button" class="lp-starter-card" data-git-prompt-action="review">
-            <strong>🔍 Review Working Tree</strong>
-            <span>Inspect modified files in git diff for regressions</span>
-          </button>
-          <button type="button" class="lp-starter-card" data-open-lens="agents">
-            <strong>🧪 Studio Checks &amp; Agents</strong>
-            <span>Run verification suites &amp; inspect live background tasks</span>
-          </button>
-        </div>
       </div>
     `;
   }
@@ -16368,44 +16362,19 @@
             }
           : rows[0]);
 
-    const selectEl = $('chat-session-select');
-    if (selectEl && document.activeElement !== selectEl) {
-      const topRows = rankByFreq(
-        rows.slice(0, 80),
-        'threads',
-        (r) => r.id,
-        (r) =>
-          (r.status === 'working' ? 500 : r.status === 'waiting' ? 400 : 0) +
-          Math.max(0, 299 - Math.min(299, Math.floor(Math.max(0, Date.now() - getRowLastWorkedMs(r)) / 3600000)))
-      );
-      if (
-        !isNewDraft &&
-        prefs.selectedThreadId &&
-        activeRow &&
-        !topRows.some((r) => r.id === prefs.selectedThreadId)
-      ) {
-        topRows.unshift(activeRow);
-      }
-      const newOptionsList = [];
-      if (hasSignedInProviderRemote('antigravity')) {
-        newOptionsList.push(
-          `<option value="__new_antigravity__" ${isNewDraft && newProv === 'antigravity' ? 'selected' : ''}>✨ + New Antigravity Session</option>`
-        );
-      }
-      if (hasSignedInProviderRemote('claude')) {
-        newOptionsList.push(
-          `<option value="__new_claude__" ${isNewDraft && newProv === 'claude' ? 'selected' : ''}>✨ + New Claude Code Session</option>`
-        );
-      }
-      const newOptionsHtml = newOptionsList.join('');
-      selectEl.innerHTML =
-        newOptionsHtml +
-        topRows
-          .map(
-            (r) =>
-              `<option value="${esc(r.id)}" ${!isNewDraft && r.id === prefs.selectedThreadId ? 'selected' : ''}>[${r.provider === 'claude' ? 'Claude' : 'AGY'}] ${esc(r.title)} (${timeAgo(getRowLastWorkedMs(r))})</option>`
-          )
-          .join('');
+    const titleEl = $('chat-session-title');
+    const editingHeaderTitle = Boolean(
+      activeIdeRename &&
+        activeIdeRename.kind === 'chat-session' &&
+        activeRow?.id &&
+        activeIdeRename.id === activeRow.id
+    );
+    if (titleEl && !editingHeaderTitle) {
+      titleEl.textContent = String(activeRow?.title || 'New Session');
+    }
+    const renameBtn = $('btn-chat-rename-title');
+    if (renameBtn) {
+      renameBtn.hidden = Boolean(isNewDraft || !activeRow?.id || activeRow.id === '__new__');
     }
 
     const provKey = isNewDraft
@@ -16421,10 +16390,10 @@
     const folderLabel = isNewDraft
       ? prefs.composerRepoPrefix
         ? `Scope: ${prefs.composerRepoPrefix}`
-        : 'BHFIRMS Workspace'
+        : 'Workspace'
       : threadDetail?.folder ||
         activeRow?.folder ||
-        (prefs.composerRepoPrefix ? `Scope: ${prefs.composerRepoPrefix}` : 'BHFIRMS Workspace');
+        (prefs.composerRepoPrefix ? `Scope: ${prefs.composerRepoPrefix}` : 'Workspace');
     const folderEl = $('chat-folder-pill');
     if (folderEl) {
       folderEl.textContent = folderLabel;
@@ -16454,13 +16423,9 @@
         : activeRow;
     const modelCfg = getEffectiveSessionModelConfig(effectiveRowForModel, provKey, isNewDraft);
     const resolvedModelLabel = modelCfg.displayLabel;
-    const modelEl = $('chat-model-pill');
-    if (modelEl) {
-      modelEl.textContent = resolvedModelLabel;
-    }
     const compModelEl = $('composer-model-label');
     if (compModelEl) {
-      compModelEl.textContent = modelCfg.compactLabel;
+      compModelEl.textContent = resolvedModelLabel;
     }
     const chatNeonPill = $('chat-neon-pill');
     if (chatNeonPill) {
@@ -16678,14 +16643,14 @@
       streamEl.innerHTML = `
         <div class="turn-bubble">
           <div class="turn-head">
-            <span class="turn-role">${isSyncingThread ? 'Syncing Transcript…' : 'THEO Remote Bridge'}</span>
+            <span class="turn-role">${isSyncingThread ? 'Syncing Transcript…' : 'THEO Bridge'}</span>
             <span>${isSyncingThread ? 'Cloud Relay' : 'Ready'}</span>
           </div>
           <div class="turn-text">
             ${
               isSyncingThread
                 ? `Requesting live transcript for <strong>${esc(activeRow?.title || 'Session')}</strong> from the PC…`
-                : `Select any session above to view the live transcript from <strong>${esc(activeRow?.title || 'your PC')}</strong>.`
+                : `Select any session from the sidebar or ⌘K to view the live transcript from <strong>${esc(activeRow?.title || 'your PC')}</strong>.`
             }
           </div>
         </div>
@@ -16941,10 +16906,10 @@
             : '';
 
           const liveHeadHtml = isLiveStreamingTurn
-            ? `<div class="stream-live-head"><span data-stream-status-lbl="1">⚡ Live Stream${m.deviceName ? ` · ${esc(m.deviceName)}` : ''}</span></div>`
+            ? `<div class="stream-live-head"><span data-stream-status-lbl="1">Live Stream${m.deviceName ? ` · ${esc(m.deviceName)}` : ''}</span></div>`
             : '';
           const liveToolHtml = isLiveStreamingTurn
-            ? `<div class="live-tool-chip mono" data-stream-tool-slot="1" ${m.activeTool ? '' : 'hidden'}>${m.activeTool ? `⚡ ${esc(m.activeTool)}` : ''}</div>`
+            ? `<div class="live-tool-chip mono" data-stream-tool-slot="1" ${m.activeTool ? '' : 'hidden'}>${m.activeTool ? `${esc(m.activeTool)}` : ''}</div>`
             : '';
           const streamTextHtml = isLiveStreamingTurn
             ? `<div class="turn-text md-rich" data-stream-text-body="1">${cleanedText ? formatTurnMarkdown(cleanedText) : ''}<span class="stream-cursor"></span></div>`
@@ -16999,7 +16964,7 @@
       return `<span class="md-file-chip is-clickable" role="button" tabindex="0" data-open-conv="${esc(convId)}"><span class="md-chip-ico">⇄</span><span>${esc(clean)}</span></span>`;
     }
 
-    let ico = '📄';
+    let ico = 'File';
     let icoCls = '';
     const extProbe = `${clean} ${href.split('?')[0]}`;
     if (/\.md(#|$|\s)/i.test(extProbe)) {
@@ -17438,7 +17403,7 @@
       ? `
       <div class="uw-stalled" id="uw-stalled-section">
         <div class="uw-stalled-head">
-          <span class="eyebrow">STALLED WT/* BRANCHES</span>
+          <span class="eyebrow">Stalled wt/* Branches</span>
           <span class="uw-pc-meta tabular">${stalledItems.length} unshipped · ${Math.round(maxCutoffHours)} h+</span>
         </div>
         <ul class="uw-list">${stalledShown.map(stalledItemHtml).join('')}</ul>
@@ -17454,7 +17419,7 @@
       : '';
     return `
       <div class="uw-head">
-        <span class="eyebrow">UNSAVED WORK</span>
+        <span class="eyebrow">Unsaved Work</span>
         <span class="uw-total tabular">${esc(headTxt)}</span>
       </div>
       <div class="uw-pcs">${pcHtml}</div>${stalledSectionHtml}`;
@@ -17545,7 +17510,7 @@
     detailEl.innerHTML = `
       <div class="section-head">
         <div>
-          <div class="eyebrow">${esc(repo.group || 'BHFIRMS REPOSITORY')}</div>
+          <div class="eyebrow">${esc(repo.group || 'Repository')}</div>
           <h2 class="section-title" style="font-size:18px">${esc(repo.name)} <span class="tag-pill tabular">⎇ ${esc(repo.branch)}</span></h2>
           <div class="meta-timestamp mono">${esc(repo.path || '')}</div>
         </div>
@@ -17556,7 +17521,7 @@
 
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:14px;margin:14px 0">
         <div class="pairing-card">
-          <div class="eyebrow" style="margin-bottom:6px">WORKING TREE (${modFiles.length} MODIFIED)</div>
+          <div class="eyebrow" style="margin-bottom:6px">Working Tree (${modFiles.length} modified)</div>
           ${
             modFiles.length === 0
               ? `<div class="meta-timestamp">Working tree is clean.</div>`
@@ -17570,7 +17535,7 @@
           }
         </div>
         <div class="pairing-card">
-          <div class="eyebrow" style="margin-bottom:6px">RECENT COMMITS</div>
+          <div class="eyebrow" style="margin-bottom:6px">Recent Commits</div>
           ${commits
             .slice(0, 5)
             .map(
@@ -17581,7 +17546,7 @@
         </div>
       </div>
 
-      <div class="eyebrow" style="margin:14px 0 6px">UNIFIED GIT DIFF INSPECTOR</div>
+      <div class="eyebrow" style="margin:14px 0 6px">Git Diff Inspector</div>
       <pre class="diff-viewer mono">${diffHtml || 'No uncommitted diff lines in working tree.'}</pre>
     `;
   }
@@ -17619,13 +17584,13 @@
     if (kpiGrid) {
       kpiGrid.innerHTML = `
         <div class="ledger-panel">
-          <div class="eyebrow">TODAY (5-HOUR / DAILY)</div>
+          <div class="eyebrow">Today (5-Hour / Daily)</div>
           <div class="hero-headline" style="color:var(--brass)">${fmtCompact(summaryObj.today?.tokens)} <span style="font-size:13px;color:var(--text-muted)">tokens</span></div>
           <div class="meta-timestamp">${fmtInt(summaryObj.today?.turns)} turns · ${fmtInt(summaryObj.today?.sessions)} sessions</div>
           <div class="meta-timestamp" style="margin-top:6px">In: ${fmtCompact(summaryObj.today?.input)} · Cache: ${fmtCompact(summaryObj.today?.cached)} · Out: ${fmtCompact(summaryObj.today?.output)}</div>
         </div>
         <div class="ledger-panel">
-          <div class="eyebrow">7-DAY ROLLING LEDGER</div>
+          <div class="eyebrow">7-Day Usage</div>
           <div class="hero-headline" style="color:var(--steel)">${fmtCompact(summaryObj.week?.tokens)} <span style="font-size:13px;color:var(--text-muted)">tokens</span></div>
           <div class="meta-timestamp">${fmtInt(summaryObj.week?.turns)} turns · ${fmtInt(summaryObj.week?.sessions)} active sessions</div>
           <div class="meta-timestamp" style="margin-top:6px">In: ${fmtCompact(summaryObj.week?.input)} · Cache: ${fmtCompact(summaryObj.week?.cached)} · Out: ${fmtCompact(summaryObj.week?.output)}</div>
@@ -17734,13 +17699,13 @@
       const hide3pSettings = isThirdPartyQuotaHidden();
       pairingGrid.innerHTML = `
         <div class="pairing-card claude-fleet-mode-card" id="settings-claude-mode-card">
-          <div class="eyebrow">FLEET CLAUDE PERMISSION MODE</div>
+          <div class="eyebrow">Fleet Claude Permission Mode</div>
           <p class="meta-timestamp" style="margin:6px 0">One tap switches Claude Code across every paired PC, phone CLI run, and open tab through THEO Store on Cloudflare. A PC that is offline picks up the new mode as soon as it reconnects.</p>
           ${renderClaudeModeSelectorHtml('settings')}
         </div>
 
         <div class="pairing-card" id="settings-agy-3p-quota-card">
-          <div class="eyebrow">ANTIGRAVITY QUOTA DISPLAY</div>
+          <div class="eyebrow">Antigravity Quota Display</div>
           <p class="meta-timestamp" style="margin:6px 0">Show Gemini models together with the separate Claude &amp; GPT third-party quota pool, or hide the third-party pool across all THEO views.</p>
           <div class="claude-mode-seg is-wide" role="group" aria-label="Antigravity third-party quota visibility">
             <button type="button" class="claude-mode-seg-btn${!hide3pSettings ? ' is-active' : ''}" data-toggle-3p-quota="show" aria-pressed="${!hide3pSettings ? 'true' : 'false'}">Gemini + Claude &amp; GPT</button>
@@ -17749,7 +17714,7 @@
         </div>
 
         <div class="pairing-card">
-          <div class="eyebrow">MULTI-DEVICE FLEET &amp; ZERO-SECRET PAIRING</div>
+          <div class="eyebrow">Fleet &amp; Device Pairing</div>
           <p class="meta-timestamp" style="margin:6px 0">Zero secrets in git/bundle. Pair iOS Home Screen apps via 6-digit code, browsers via 1-tap hash link, or new PCs via the visual <strong>Set Up This PC</strong> app.</p>
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0">
             ${
@@ -17760,18 +17725,18 @@
                         `<span class="sess-device-badge ${d.online ? 'is-online' : ''}">${d.online ? '●' : '◐'} ${esc(d.name || d.id)}${d.sessionCount ? ` (${d.sessionCount})` : ''}${renderFleetPcSetupPillHtml(d)}${renderFleetStalledWtPillHtml(d)}</span>`
                     )
                     .join('')
-                : `<span class="meta-timestamp">${isPaired ? 'Probing connected hosts…' : 'Not paired yet — enter 6-digit code or paste Pair Link below'}</span>`
+                : `<span class="meta-timestamp">${isPaired ? 'Probing connected hosts…' : 'Not paired yet: enter 6-digit code or paste Pair Link below'}</span>`
             }
           </div>
           ${
             liveCode
-              ? `<div class="pair-code-live-banner mono">🔢 6-Digit Fleet Code: <strong>${esc(liveCode.formatted)}</strong> <span class="meta-timestamp">(10m single-use)</span></div>`
+              ? `<div class="pair-code-live-banner mono">6-Digit Fleet Code: <strong>${esc(liveCode.formatted)}</strong> <span class="meta-timestamp">(10m single-use)</span></div>`
               : ''
           }
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-            <button type="button" class="btn-brass-sm" id="btn-gen-pair-code" aria-label="Generate 6-digit pairing code for iPhone or PC">🔢 6-Digit Pair Code</button>
-            <button type="button" class="btn-ghost-sm" id="btn-download-pc-setup" data-download-pc-setup="1" aria-label="Download double-clickable Windows PC Setup app with single-use 6-digit code">⬇ Download PC Setup</button>
-            <button type="button" class="btn-ghost-sm" id="btn-copy-mobile-pair" aria-label="Copy 1-tap mobile pairing URL">📱 Copy Mobile Pair URL</button>
+            <button type="button" class="btn-brass-sm" id="btn-gen-pair-code" aria-label="Generate 6-digit pairing code for iPhone or PC">6-Digit Pair Code</button>
+            <button type="button" class="btn-ghost-sm" id="btn-download-pc-setup" data-download-pc-setup="1" aria-label="Download double-clickable Windows PC Setup app with single-use 6-digit code">Download PC Setup</button>
+            <button type="button" class="btn-ghost-sm" id="btn-copy-mobile-pair" aria-label="Copy 1-tap mobile pairing URL">Copy Mobile Pair URL</button>
           </div>
           <label style="display:block;font-size:11.5px;margin-top:10px;color:var(--text-muted)">
             Pair via 6-Digit Code (from PC):
@@ -17782,7 +17747,7 @@
           </label>
           <label style="display:block;font-size:11.5px;margin-top:10px;color:var(--text-muted)">
             Or Paste <code>#pair=...</code> URL / Access Key:
-            <input type="text" class="input-field mono pin-masked" id="input-pair-token" value="" placeholder="${isPaired ? '✓ Paired (paste new link to rotate)' : 'Paste #pair=... link or 64-hex key'}" autocomplete="off" spellcheck="false">
+            <input type="text" class="input-field mono pin-masked" id="input-pair-token" value="" placeholder="${isPaired ? 'Paired (paste new link to rotate)' : 'Paste #pair=... link or 64-hex key'}" autocomplete="off" spellcheck="false">
           </label>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
             <button type="button" class="btn-ghost-sm" id="btn-apply-pair-token">Apply Pair Token</button>
@@ -17798,7 +17763,7 @@
         </div>
 
         <div class="pairing-card">
-          <div class="eyebrow">HYBRID BRIDGE ENDPOINTS</div>
+          <div class="eyebrow">Bridge Endpoints</div>
           <p class="meta-timestamp" style="margin:6px 0">Loopback WebSocket (<code>127.0.0.1:4318/ws</code>), Cloudflare Edge WS, and Cloud Relay backstop.</p>
           <div class="mono" style="font-size:11.5px;margin-top:8px">
             <div><strong>Hosted PWA:</strong> ${esc(pwaUrl)}</div>
@@ -17812,7 +17777,7 @@
         </div>
 
         <div class="pairing-card">
-          <div class="eyebrow">SECURITY &amp; CACHE</div>
+          <div class="eyebrow">Security &amp; Cache</div>
           <p class="meta-timestamp" style="margin:6px 0">Protect remote mobile access with a SHA-256 4-digit PIN lock on launch.</p>
           <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
             <button type="button" class="btn-ghost-sm" id="btn-set-pin">${hasPin ? 'Change / Clear 4-Digit PIN' : 'Enable 4-Digit PIN Lock'}</button>
@@ -17869,8 +17834,8 @@
     { id: '/bgtasks', label: '/bgtasks', desc: 'Inspect live background tasks & subagents', kind: 'action', act: 'bgtasks', baseWeight: 68 },
     { id: '/stop', label: '/stop', desc: 'Interrupt the currently running session', kind: 'action', act: 'stop', baseWeight: 64 },
     { id: '/sync', label: '/sync', desc: 'Force immediate Bridge & Cloud Relay sync', kind: 'action', act: 'sync', baseWeight: 60 },
-    { id: '/palette', label: '/palette', desc: 'Switch Studio Palette (Graphite, Velvet, Espresso, Daylight)', kind: 'action', act: 'palette', baseWeight: 56 },
-    { id: '/theme', label: '/theme', desc: 'Toggle between Dark Studio and Studio Daylight', kind: 'action', act: 'theme', baseWeight: 52 }
+    { id: '/palette', label: '/palette', desc: 'Switch Color Palette (Graphite, Velvet, Espresso, Daylight)', kind: 'action', act: 'palette', baseWeight: 56 },
+    { id: '/theme', label: '/theme', desc: 'Toggle between Dark and Daylight themes', kind: 'action', act: 'theme', baseWeight: 52 }
   ];
 
   function closeSlashPopover() {
@@ -18103,7 +18068,7 @@
             id: prefs.selectedThreadId,
             provider: activeRow?.provider || 'antigravity'
           });
-          showToast('⚡ Dispatched /compact to summarize context');
+          showToast('Dispatched /compact to summarize context');
         }
       } else if (item.act === 'new-agy') {
         enterNewSessionMode('antigravity');
@@ -18131,6 +18096,7 @@
         if (pPop) {
           syncPalettePickerUi();
           pPop.hidden = false;
+          positionPalettePopover($('btn-palette-picker'));
         }
       } else if (item.act === 'stop') {
         await stopActiveSession(prefs.selectedThreadId);
@@ -18187,8 +18153,8 @@
           a.kind === 'image' && a.dataUrl
             ? `<img src="${esc(a.dataUrl)}" class="composer-attach-thumb" alt="">`
             : a.kind === 'repo'
-              ? `<span>📁</span>`
-              : `<span>📄</span>`;
+              ? `<span class="composer-attach-kind">Repo</span>`
+              : `<span class="composer-attach-kind">File</span>`;
         return `
           <span class="composer-attach-pill">
             ${iconHtml}
@@ -18280,7 +18246,7 @@
       } catch {}
     }
     renderComposerAttachments();
-    showToast(`📎 Attached ${files.length} file${files.length === 1 ? '' : 's'}`);
+    showToast(`Attached ${files.length} file${files.length === 1 ? '' : 's'}`);
     $('composer-input')?.focus();
   }
 
@@ -18330,7 +18296,7 @@
       const repoItems = [];
       for (const w of appState?.workspaces || []) {
         repoItems.push({
-          title: `📁 [${w.name}] Workspace Root`,
+          title: `[${w.name}] Workspace Root`,
           sub: `${w.group || 'BHFIRMS'} · ⎇ ${w.branch || 'main'}${w.dirtyCount ? ` · ${w.dirtyCount} modified` : ''}`,
           repoLabel: `[${w.name}]`,
           repoPath: w.path || w.name
@@ -18341,7 +18307,7 @@
             const fPath = f.path || f.file || '';
             if (fPath) {
               repoItems.push({
-                title: `📄 [${w.name}] ${fPath}`,
+                title: `[${w.name}] ${fPath}`,
                 sub: `Modified (${f.status || 'M'}) · ⎇ ${w.branch || 'main'}`,
                 repoLabel: `[${w.name}] ${fPath}`,
                 repoPath: `${w.path ? w.path + '/' : ''}${fPath}`
@@ -18373,14 +18339,18 @@
     }
 
     const items = [
-      { title: '📎 Attach File or Photo to Prompt', sub: 'Workbench Composer', act: 'attach-file' },
-      { title: '📁 Attach Workspace / Modified Git File (@Repo)', sub: 'Workbench Composer', act: 'pick-repo-file' },
+      { title: 'Attach File or Photo to Prompt', sub: 'Workbench Composer', act: 'attach-file' },
+      { title: 'Attach Workspace / Modified Git File (@Repo)', sub: 'Workbench Composer', act: 'pick-repo-file' },
       ...(hasSignedInProviderRemote('antigravity')
         ? [{ title: '+ New Google Antigravity Session', sub: 'Action', act: 'new-agy' }]
         : []),
       ...(hasSignedInProviderRemote('claude')
         ? [{ title: '+ New Claude Code Session', sub: 'Action', act: 'new-claude' }]
         : []),
+      { title: 'Open Pulse Overview (Approvals, Accounts & Quotas)', sub: 'View', act: 'tab-pulse' },
+      { title: 'Open All Sessions (Filter, Search & Bulk Archive)', sub: 'View', act: 'tab-sessions' },
+      { title: 'Open Repos & Git Inspector', sub: 'View', act: 'tab-workspaces' },
+      { title: 'Open Settings & Fleet Pairing', sub: 'View', act: 'tab-analytics' },
       ...(() => {
         const curMode = getEffectiveClaudePermissionMode();
         return CLAUDE_PERM_MODES.map((m) => ({
@@ -18393,12 +18363,12 @@
       { title: 'Open THEO Memory Vault (Reports, Notes & Docs)', sub: 'Cloudflare Vault · memory.husseinbdeir.workers.dev', act: 'open-memory-vault' },
       { title: `${isThirdPartyQuotaHidden() ? 'Show' : 'Hide'} Antigravity Claude & GPT Quota Pool`, sub: 'Quota Display', act: 'toggle-3p-quota' },
       { title: 'Toggle Split Inspector (Code, Diff, Side Agents & Outline)', sub: 'Workbench · ⌘I', act: 'inspector' },
-      { title: 'Switch Studio Color Palette (Graphite · Velvet · Espresso · Daylight)', sub: 'Appearance', act: 'palette' },
+      { title: 'Switch Color Palette (Graphite · Velvet · Espresso · Daylight)', sub: 'Appearance', act: 'palette' },
       { title: 'Enable / Test Web Push Notifications', sub: 'Notifications', act: 'push-test' },
       { title: 'Inspect Background Tasks & Subagents', sub: 'Workbench Overview', act: 'bgtasks' },
       { title: 'Run /compact on Active Session', sub: 'Context Window', act: 'compact' },
       { title: 'Pin / Unpin Active Chat in Session List', sub: 'Sessions', act: 'pin-chat' },
-      { title: 'Switch Dark Studio / Studio Daylight Theme', sub: 'Appearance', act: 'theme' }
+      { title: 'Switch Dark / Daylight Theme', sub: 'Appearance', act: 'theme' }
     ];
 
     for (const r of (appState?.rows || []).slice(0, 20)) {
@@ -18928,16 +18898,14 @@
         modPop &&
         !modPop.hidden &&
         !e.target?.closest?.('#model-picker-popover') &&
-        !e.target?.closest?.('#chat-model-picker-btn') &&
         !e.target?.closest?.('#composer-model-btn')
       ) {
         modPop.hidden = true;
-        $('chat-model-picker-btn')?.setAttribute('aria-expanded', 'false');
+        modelPickerAdjustEffortOpen = false;
         $('composer-model-btn')?.setAttribute('aria-expanded', 'false');
       }
 
-      const modTriggerBtn =
-        e.target.closest('#chat-model-picker-btn') || e.target.closest('#composer-model-btn');
+      const modTriggerBtn = e.target.closest('#composer-model-btn');
       if (modTriggerBtn) {
         e.preventDefault();
         e.stopPropagation();
@@ -18947,26 +18915,29 @@
           if (ctxPop) ctxPop.hidden = true;
           const bgPop = $('bg-tasks-popover');
           if (bgPop) bgPop.hidden = true;
+          if (!nextOpen) modelPickerAdjustEffortOpen = false;
+          else if (modPop.hidden) modelPickerAdjustEffortOpen = false;
           renderChatView(false);
           modPop.hidden = !nextOpen;
           if (nextOpen) {
             positionModelPickerPopover(modTriggerBtn);
           }
-          $('chat-model-picker-btn')?.setAttribute(
-            'aria-expanded',
-            nextOpen && modTriggerBtn.id === 'chat-model-picker-btn' ? 'true' : 'false'
-          );
-          $('composer-model-btn')?.setAttribute(
-            'aria-expanded',
-            nextOpen && modTriggerBtn.id === 'composer-model-btn' ? 'true' : 'false'
-          );
+          $('composer-model-btn')?.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
         }
         return;
       }
       if (e.target.closest('#btn-close-model-picker')) {
         if (modPop) modPop.hidden = true;
-        $('chat-model-picker-btn')?.setAttribute('aria-expanded', 'false');
+        modelPickerAdjustEffortOpen = false;
         $('composer-model-btn')?.setAttribute('aria-expanded', 'false');
+        return;
+      }
+      if (e.target.closest('[data-toggle-model-effort-bar]')) {
+        e.preventDefault();
+        e.stopPropagation();
+        modelPickerAdjustEffortOpen = true;
+        renderChatView(false);
+        positionModelPickerPopover($('composer-model-btn'));
         return;
       }
       const neonSwitchBtn = e.target.closest('[data-switch-neon-carbon]');
@@ -19005,8 +18976,8 @@
         const prov = selComboBtn.dataset.modelProv || '';
         if (mId) {
           const cfg = setSessionModelConfig({ modelId: mId, effort: effId, provider: prov });
+          modelPickerAdjustEffortOpen = false;
           if (modPop) modPop.hidden = true;
-          $('chat-model-picker-btn')?.setAttribute('aria-expanded', 'false');
           $('composer-model-btn')?.setAttribute('aria-expanded', 'false');
           showToast(`Model set to ${cfg.displayLabel}`);
         }
@@ -19051,7 +19022,13 @@
         haptic(8);
         const scopeVal = String(lpScopeBtn.dataset.launchpadScope || '').trim();
         prefs.composerRepoPrefix = scopeVal;
-        if (scopeVal) recordFreqUsage('repos', scopeVal);
+        if (scopeVal) {
+          recordFreqUsage('repos', scopeVal);
+          const matchedWs = (appState?.workspaces || []).find(
+            (w) => w && (w.name === scopeVal || w.id === scopeVal)
+          );
+          if (matchedWs?.id) prefs.selectedRepoId = matchedWs.id;
+        }
         saveJson(STORAGE_KEYS.PREFS, prefs);
         renderChatView(false);
         return;
@@ -19065,6 +19042,7 @@
           const nextOpen = palPop.hidden;
           syncPalettePickerUi();
           palPop.hidden = !nextOpen;
+          if (nextOpen) positionPalettePopover($('btn-palette-picker'));
           $('btn-palette-picker')?.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
         }
         return;
@@ -19326,7 +19304,7 @@
             }
           }
           renderChatView(false);
-          showToast('Refreshed Studio Checks & Side Agents');
+          showToast('Refreshed Side Agents & Checks');
         }
         return;
       }
@@ -19836,7 +19814,7 @@
         if (fp) {
           recordFreqUsage('repos', fp);
           attachMentionItemToComposer({ name: fp, repoPath: fp, kind: 'repo', sizeLabel: 'file ref' });
-          showToast(`📎 Mentioned ${fp}`);
+          showToast(`Mentioned ${fp}`);
           $('composer-input')?.focus();
         }
         return;
@@ -19847,6 +19825,41 @@
         e.preventDefault();
         e.stopPropagation();
         await applySlashPopoverSelection(Number(slashPickBtn.dataset.slashPick || 0));
+        return;
+      }
+
+      const sidebarNavBtn = e.target.closest('[data-sidebar-nav]');
+      if (sidebarNavBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        haptic(8);
+        clearPinnedNav();
+        const targetTab = String(sidebarNavBtn.dataset.sidebarNav || '').trim() || 'chat';
+        switchTab(prefs.activeTab === targetTab ? 'chat' : targetTab);
+        return;
+      }
+
+      if (e.target.closest('[data-open-conn-modal]')) {
+        e.preventDefault();
+        e.stopPropagation();
+        openConnModal();
+        syncData().catch(() => {});
+        return;
+      }
+
+      if (e.target.closest('[data-open-cmd-palette]')) {
+        e.preventDefault();
+        e.stopPropagation();
+        openCommandPalette();
+        return;
+      }
+
+      if (e.target.closest('[data-chat-rename-btn]')) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!isNewSessionMode() && cleanTargetThreadId(prefs.selectedThreadId)) {
+          beginIdeInlineRename('chat-session', prefs.selectedThreadId);
+        }
         return;
       }
 
@@ -19863,6 +19876,7 @@
         e.preventDefault();
         e.stopPropagation();
         clearPinnedNav();
+        closeConnModal();
         switchTab(gotoBtn.dataset.gotoTab);
         return;
       }
@@ -20492,7 +20506,7 @@
             group: newId,
             name: cleanName
           });
-          showToast(`📁 Created group "${cleanName}"`);
+          showToast(`Created group "${cleanName}"`);
           return;
         }
         if (act === 'rename' && gId) {
@@ -20714,7 +20728,7 @@
               ids: [id],
               group: matchedGrp.id
             });
-            showToast(`📁 Moved to "${matchedGrp.name}"`);
+            showToast(`Moved to "${matchedGrp.name}"`);
           } else {
             const newId = `grp-${Date.now().toString(36)}`;
             noteGroupOverride(newId, { op: 'create', name: clean });
@@ -20734,7 +20748,7 @@
               group: newId,
               name: clean
             });
-            showToast(`📁 Created "${clean}" & moved session`);
+            showToast(`Created "${clean}" & moved session`);
           }
           return;
         }
@@ -20872,8 +20886,8 @@
         syncComposerRoutingSelectors(null, isNewSessionMode());
         showToast(
           prefs.composerDirectStream
-            ? '⚡ Direct CLI Stream enabled (<25ms live tokens, works without VS Code)'
-            : '🪟 VS Code IDE Tab dispatch enabled'
+            ? 'Direct CLI Stream enabled (<25ms live tokens, works without VS Code)'
+            : 'VS Code IDE Tab dispatch enabled'
         );
         return;
       }
@@ -20981,7 +20995,7 @@
         await saveEdgeRelayConfig(val);
         showToast(
           val
-            ? '⚡ Saved & broadcast Cloudflare Edge WS URL to all hosts'
+            ? 'Saved & broadcast Cloudflare Edge WS URL to all hosts'
             : 'Cleared custom Edge Relay URL'
         );
         return;
@@ -21090,7 +21104,7 @@
         }
         showToast(
           clipText
-            ? 'Clipboard did not contain a #pair= link — paste it below'
+            ? 'Clipboard did not contain a #pair= link: paste it below'
             : 'Paste your #pair= link or 6-digit code below'
         );
         return;
@@ -21134,7 +21148,7 @@
         }
         try {
           await navigator.clipboard.writeText(pairUrl);
-          showToast('📱 Copied 1-Tap Mobile Pairing URL (secret stays in #hash fragment)');
+          showToast('Copied 1-Tap Mobile Pairing URL (secret stays in #hash fragment)');
         } catch {
           prompt('Open this 1-Tap Pairing URL on your phone:', pairUrl);
         }
@@ -21266,7 +21280,7 @@
           });
           renderComposerAttachments();
           switchTab('chat');
-          showToast(`📁 Attached ${label}`);
+          showToast(`Attached ${label}`);
           setTimeout(() => $('composer-input')?.focus(), 40);
         }
         return;
@@ -21333,6 +21347,7 @@
           if (pPop) {
             syncPalettePickerUi();
             pPop.hidden = false;
+            positionPalettePopover($('btn-palette-picker'));
           }
         } else if (act === 'compact') {
           if (isNewSessionMode() || !cleanTargetThreadId(prefs.selectedThreadId)) {
@@ -21343,6 +21358,14 @@
           }
         } else if (act === 'pin-chat') {
           await toggleSessionPin(prefs.selectedThreadId);
+        } else if (act === 'tab-pulse') {
+          switchTab('pulse');
+        } else if (act === 'tab-sessions') {
+          switchTab('sessions');
+        } else if (act === 'tab-workspaces') {
+          switchTab('workspaces');
+        } else if (act === 'tab-analytics') {
+          switchTab('analytics');
         } else if (act === 'theme') {
           applyTheme(prefs.theme === 'dark' ? 'light' : 'dark', true);
         }
@@ -21634,6 +21657,7 @@
     $('btn-sound-toggle')?.addEventListener('click', () => {
       prefs.sound = !prefs.sound;
       saveJson(STORAGE_KEYS.PREFS, prefs);
+      syncPalettePickerUi();
       showToast(prefs.sound ? 'Audio chimes enabled' : 'Audio chimes muted');
     });
     $('btn-sync-now')?.addEventListener('click', () => syncData({ toast: true }));
@@ -21679,7 +21703,7 @@
       if (nextOpen) {
         if (ctxPop) ctxPop.hidden = true;
         if (modPop) modPop.hidden = true;
-        $('chat-model-picker-btn')?.setAttribute('aria-expanded', 'false');
+        modelPickerAdjustEffortOpen = false;
         $('composer-model-btn')?.setAttribute('aria-expanded', 'false');
       }
       renderChatView();
@@ -21775,7 +21799,7 @@
         if (!pop.hidden) {
           if (bgPop) bgPop.hidden = true;
           if (modPop) modPop.hidden = true;
-          $('chat-model-picker-btn')?.setAttribute('aria-expanded', 'false');
+          modelPickerAdjustEffortOpen = false;
           $('composer-model-btn')?.setAttribute('aria-expanded', 'false');
         }
       }
@@ -21848,31 +21872,33 @@
       }
     });
 
-    // Session select change in Chat
-    $('chat-session-select')?.addEventListener('change', (e) => {
-      const val = e.target.value;
-      if (!val) return;
-      if (val === '__new_antigravity__' || val === '__new__') {
-        enterNewSessionMode('antigravity');
-        return;
+    // Inline chat session title rename (header)
+    const chatTitleEl = $('chat-session-title');
+    chatTitleEl?.addEventListener('dblclick', (e) => {
+      if (isPinLocked() || isNewSessionMode()) return;
+      if (activeIdeRename && activeIdeRename.kind === 'chat-session') return;
+      const tid = cleanTargetThreadId(prefs.selectedThreadId);
+      if (!tid) return;
+      e.preventDefault();
+      e.stopPropagation();
+      beginIdeInlineRename('chat-session', tid);
+    });
+    chatTitleEl?.addEventListener('keydown', (e) => {
+      if (!activeIdeRename || activeIdeRename.kind !== 'chat-session') return;
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        finishIdeInlineRename(true);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        finishIdeInlineRename(false);
       }
-      if (val === '__new_claude__') {
-        enterNewSessionMode('claude');
-        return;
+    });
+    chatTitleEl?.addEventListener('focusout', () => {
+      if (activeIdeRename && activeIdeRename.kind === 'chat-session') {
+        finishIdeInlineRename(true);
       }
-      recentResumeUntil = 0;
-      ensureEditorTabOpen(val);
-      recordFreqUsage('threads', val);
-      setPinnedNav({ threadId: val, durationMs: 45000 });
-      prefs.selectedThreadId = val;
-      prefs.lastReplyThreadId = val;
-      prefs.composerMode = 'reply';
-      prefs.newSessionGroupId = '';
-      saveJson(STORAGE_KEYS.PREFS, prefs);
-      markNotificationsCheckedForSession(prefs.selectedThreadId);
-      renderChatView(true);
-      renderIdeSidebar();
-      fetchThreadDetail(prefs.selectedThreadId);
     });
 
     // Search in Sessions & IDE Explorer Sidebar
@@ -22064,6 +22090,20 @@
     $('cmd-input')?.addEventListener('input', (e) => renderCommandPaletteResults(e.target.value));
     window.addEventListener('keydown', (e) => {
       if (isPinLocked()) return;
+      if (activeIdeRename && activeIdeRename.kind === 'chat-session') {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          e.stopPropagation();
+          finishIdeInlineRename(true);
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          finishIdeInlineRename(false);
+          return;
+        }
+      }
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         openCommandPalette();
@@ -22074,6 +22114,35 @@
         e.preventDefault();
         if (prefs.activeTab !== 'chat') switchTab('chat');
         setInspectorOpen(!prefs.inspectorOpen);
+      } else if (
+        e.key === 'F2' &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        prefs.activeTab === 'chat' &&
+        !isNewSessionMode() &&
+        cleanTargetThreadId(prefs.selectedThreadId) &&
+        !e.target?.closest?.('#ide-sidebar-tree')
+      ) {
+        const ae = document.activeElement;
+        const inField = Boolean(
+          ae &&
+            (ae.tagName === 'INPUT' ||
+              ae.tagName === 'TEXTAREA' ||
+              ae.tagName === 'SELECT' ||
+              ae.isContentEditable)
+        );
+        const anyModalOpen = Boolean(
+          ($('cmd-modal') && !$('cmd-modal').hidden) ||
+            ($('conn-modal') && !$('conn-modal').hidden) ||
+            ($('notif-modal') && !$('notif-modal').hidden) ||
+            ($('acct-signin-modal') && !$('acct-signin-modal').hidden) ||
+            ($('acct-details-modal') && !$('acct-details-modal').hidden)
+        );
+        if (!inField && !anyModalOpen) {
+          e.preventDefault();
+          beginIdeInlineRename('chat-session', prefs.selectedThreadId);
+        }
       } else if (
         !e.metaKey &&
         !e.ctrlKey &&
@@ -22252,7 +22321,7 @@
         renderSplitWatchPane();
         return;
       }
-      const targetTab = ev.state?.theoTab || 'pulse';
+      const targetTab = ev.state?.theoTab || (window.innerWidth >= 1025 ? 'chat' : 'pulse');
       if (targetTab && targetTab !== prefs.activeTab) {
         suppressHistoryPush = true;
         try {
@@ -22739,7 +22808,7 @@
           .join(', ')}\n`
       : '';
     const attachDisplayLine = sentAttachments.length
-      ? `\n\n📎 Attached: ${sentAttachments.map((a) => a.name).join(', ')}`
+      ? `\n\nAttached: ${sentAttachments.map((a) => a.name).join(', ')}`
       : '';
     const text = `${contextHeader}${rawText || (fileRefs.length ? `Please inspect the attached file(s): ${fileRefs.map((f) => f.name).join(', ')}` : '')}`.trim();
 
@@ -22984,7 +23053,7 @@
 
     showToast(
       res.mode === 'local_ws' || res.mode === 'edge_ws'
-        ? `⚡ Streaming live from ${provider === 'claude' ? 'Claude Code' : 'Antigravity'} (${res.mode === 'edge_ws' ? 'Edge WS' : 'Direct WS'})`
+        ? `Streaming live from ${provider === 'claude' ? 'Claude Code' : 'Antigravity'} (${res.mode === 'edge_ws' ? 'Edge WS' : 'Direct WS'})`
         : res.mode === 'cloud'
           ? `Dispatched via THEO Cloud Relay`
           : res.mode === 'local'
@@ -23173,7 +23242,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=91', { updateViaCache: 'none' })
+        .register('sw.js?v=92', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
@@ -23270,6 +23339,7 @@
 
   // Bootstrap
   function init() {
+    const storedPrefsSnapshot = loadJson(STORAGE_KEYS.PREFS, null);
     if (isStandalone()) {
       document.documentElement.classList.add('ios-standalone');
     }
@@ -23356,7 +23426,8 @@
     if (threadParam || remParam || tabParam || newParam) {
       try {
         const cleanUrl = location.pathname + (location.hash || '');
-        history.replaceState({ theoTab: tabParam || (newParam ? 'chat' : prefs.activeTab || 'pulse'), overlay: '' }, '', cleanUrl);
+        const defaultTab = window.innerWidth >= 1025 ? 'chat' : 'pulse';
+        history.replaceState({ theoTab: tabParam || (newParam ? 'chat' : prefs.activeTab || defaultTab), overlay: '' }, '', cleanUrl);
       } catch {}
     }
 
@@ -23390,16 +23461,37 @@
       } finally {
         suppressHistoryPush = false;
       }
+      try {
+        history.replaceState({ theoTab: 'chat', overlay: '' }, '');
+      } catch {}
       fetchThreadDetail(pinnedNavThreadId, pinnedNavProvider || '');
     } else {
-      const startTab =
+      const isDesktopBoot = window.innerWidth >= 1025;
+      let startTab =
         tabParam || (prefs.activeTab === 'discipline' ? 'pulse' : prefs.activeTab) || 'pulse';
+      if (isDesktopBoot && !prefs.desktopWorkbenchBootV92) {
+        prefs.desktopWorkbenchBootV92 = true;
+        if (
+          !tabParam &&
+          (!storedPrefsSnapshot ||
+            !storedPrefsSnapshot.activeTab ||
+            startTab === 'pulse' ||
+            startTab === 'sessions')
+        ) {
+          startTab = 'chat';
+        }
+        prefs.activeTab = startTab;
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+      }
       suppressHistoryPush = true;
       try {
         switchTab(startTab);
       } finally {
         suppressHistoryPush = false;
       }
+      try {
+        history.replaceState({ theoTab: prefs.activeTab || startTab, overlay: '' }, '');
+      } catch {}
     }
 
     // Clear boot nav lock after initial settle so normal user interactions work freely

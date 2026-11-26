@@ -807,6 +807,7 @@ async function main() {
                   themeUserSet: true,
                   sound: false,
                   activeTab: 'pulse',
+                  desktopWorkbenchBootV92: true,
                   selectedThreadId: 'sess-alpha',
                   composerMode: 'reply',
                   freqUsage: {
@@ -962,10 +963,13 @@ async function main() {
       const cards = Array.from(document.querySelectorAll('#view-sessions .session-card[data-session-id]')).map(
         (el) => el.dataset.sessionId
       );
-      const chatOpts = Array.from(document.querySelectorAll('#chat-session-select option'))
-        .map((o) => o.value)
-        .filter((v) => v.startsWith('sess-'));
-      return { cards, chatOpts };
+      document.getElementById('open-cmd-palette')?.click();
+      await new Promise((r) => setTimeout(r, 30));
+      const cmdThreads = Array.from(document.querySelectorAll('#cmd-results [data-cmd-thread]'))
+        .map((b) => b.dataset.cmdThread)
+        .filter((v) => String(v || '').startsWith('sess-'));
+      document.getElementById('cmd-close')?.click();
+      return { cards, cmdThreads };
     })()`);
     assert.strictEqual(
       freqCheck.cards[0],
@@ -973,11 +977,11 @@ async function main() {
       `Frequency-first violation in #sess-search-input: expected sess-beta (freq=12) before newer sess-alpha (freq=1), got ${JSON.stringify(freqCheck.cards)}`
     );
     assert.strictEqual(
-      freqCheck.chatOpts[0],
+      freqCheck.cmdThreads[0],
       'sess-beta',
-      `Frequency-first violation in #chat-session-select: expected sess-beta first, got ${JSON.stringify(freqCheck.chatOpts)}`
+      `Frequency-first violation in #cmd-modal: expected sess-beta first, got ${JSON.stringify(freqCheck.cmdThreads)}`
     );
-    console.log('[PASS] Adversarial #1: Frequency-first ranking strictly dominates recency across search & select');
+    console.log('[PASS] Adversarial #1: Frequency-first ranking strictly dominates recency across search & command palette');
 
     // Adversarial Check #2: Legacy v55 plaintext PIN -> v56 SHA-256 migration, Ctrl+K bypass block, & 360px landscape keypad reachability (#17)
     for (const h of [390, 360]) {
@@ -1651,7 +1655,7 @@ async function main() {
 
     // Adversarial Check #9: Desktop Split-Workbench Geometry, Re-Render <details> Persistence, Tab/Nested Keydown Guards & Inline Expand Button
     const workbenchProbe = await evalJs(`(async () => {
-      const actBar = document.querySelector('.ide-activity-bar')?.getBoundingClientRect();
+      const actBarGone = document.querySelector('.ide-activity-bar') === null;
       const sideBar = document.getElementById('ide-explorer-sidebar')?.getBoundingClientRect();
       const tabsBar = document.getElementById('ide-editor-tabs-bar')?.getBoundingClientRect();
       const stream = document.getElementById('chat-stream')?.getBoundingClientRect();
@@ -1715,7 +1719,7 @@ async function main() {
       const selectedAfterCloseNew = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}').selectedThreadId;
 
       return {
-        actW: Math.round(actBar?.width || 0),
+        actBarGone,
         sideW: Math.round(sideBar?.width || 0),
         tabsH: Math.round(tabsBar?.height || 0),
         streamH: Math.round(stream?.height || 0),
@@ -1734,7 +1738,7 @@ async function main() {
       };
     })()`);
 
-    assert.strictEqual(workbenchProbe.actW, 48, `Expected 48px VS Code Activity Bar, got ${workbenchProbe.actW}px`);
+    assert.strictEqual(workbenchProbe.actBarGone, true, 'Far-left .ide-activity-bar must be removed in Phase 3 unified sidebar');
     assert.ok(workbenchProbe.sideW >= 260, `Expected visible Explorer Sidebar (>=260px), got ${workbenchProbe.sideW}px`);
     assert.ok(workbenchProbe.tabsH >= 32, `Expected visible Editor Tabs Bar (>=32px), got ${workbenchProbe.tabsH}px`);
     assert.ok(workbenchProbe.streamH >= 400, `Expected spacious Editor Stream (>=400px), got ${workbenchProbe.streamH}px`);
@@ -2201,7 +2205,7 @@ async function main() {
         await new Promise((r) => setTimeout(r, 40));
       }
 
-      document.querySelector('#rail-nav [data-tab="chat"]')?.click();
+      document.getElementById('btn-sidebar-brand')?.click();
       await new Promise((r) => setTimeout(r, 30));
 
       // 1. Calm Chromatics & De-Duplication checks
@@ -2210,7 +2214,7 @@ async function main() {
       const stopSendBtn = document.getElementById('composer-send-btn');
       stopSendBtn?.classList.add('is-stop');
       const stopBtnBg = stopSendBtn ? getComputedStyle(stopSendBtn).backgroundImage + ' ' + getComputedStyle(stopSendBtn).backgroundColor : '';
-      const sessionsNavBadgeDisp = getComputedStyle(document.getElementById('badge-sessions')).display;
+      const sessionsNavBadgeGone = document.getElementById('badge-sessions') === null;
       const workspacesNavBadgeDisp = getComputedStyle(document.getElementById('badge-workspaces')).display;
 
       const betaTabDots = document.querySelectorAll('#ide-editor-tabs [data-editor-tab-id="sess-beta"] .ide-dot').length;
@@ -2321,7 +2325,7 @@ async function main() {
       return {
         pushBadgeBg,
         stopBtnBg,
-        sessionsNavBadgeDisp,
+        sessionsNavBadgeGone,
         workspacesNavBadgeDisp,
         betaTabDots,
         headerStopHiddenWhenEmptyDraft,
@@ -2370,8 +2374,8 @@ async function main() {
 
     assert.ok(!v60Probe.pushBadgeBg.includes('255, 59, 48'), `Push badge must not use harsh neon #FF3B30, got ${v60Probe.pushBadgeBg}`);
     assert.ok(!v60Probe.stopBtnBg.includes('239, 68, 68'), `Stop button must not use harsh neon #EF4444 gradient, got ${v60Probe.stopBtnBg}`);
-    assert.strictEqual(v60Probe.sessionsNavBadgeDisp, 'none', 'Passive #badge-sessions on Activity Bar must be hidden');
-    assert.strictEqual(v60Probe.workspacesNavBadgeDisp, 'none', 'Passive #badge-workspaces on Activity Bar must be hidden');
+    assert.strictEqual(v60Probe.sessionsNavBadgeGone, true, 'Removed Activity Bar #badge-sessions must not exist');
+    assert.strictEqual(v60Probe.workspacesNavBadgeDisp, 'none', 'Passive #badge-workspaces in sidebar footer must stay hidden');
     assert.strictEqual(v60Probe.betaTabDots, 0, 'Idle/open editor tabs must render 0 colored dots');
     assert.strictEqual(v60Probe.headerStopHiddenWhenEmptyDraft, true, '#btn-chat-stop must hide when composer Stop button is already shown');
     assert.strictEqual(v60Probe.composerStopShownWhenRunning, true, '#composer-send-btn.is-stop must show when session is running');
@@ -2462,26 +2466,30 @@ async function main() {
       const directToggleGone = document.getElementById('composer-direct-toggle') === null;
       const modePillsGone = document.getElementById('composer-mode-pills') === null;
 
-      // 2. Desktop breadcrumb de-duplication (#view-chat .chat-title-row hidden on >=1025px)
+      // 2. Desktop Single-Control header (#chat-session-select & #chat-model-picker-btn removed; visible .chat-title-row + #chat-session-title)
+      const sessionSelectGone = document.getElementById('chat-session-select') === null;
+      const headerModelBtnGone = document.getElementById('chat-model-picker-btn') === null;
       const titleRow = document.querySelector('#view-chat .chat-title-row');
-      const desktopTitleRowHidden = Boolean(titleRow && getComputedStyle(titleRow).display === 'none');
+      const desktopTitleRowVisible = Boolean(titleRow && getComputedStyle(titleRow).display !== 'none');
+      const headerTitleText = document.getElementById('chat-session-title')?.textContent?.trim() || '';
 
       // Negative #1 verification: hostile model/effort sanitized to 'gemini-4-argon' / 'high' and legacy 'Gemini 3.1 Pro' upgraded to 'Gemini 4 Argon (High)'
       const bootPrefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
       const sanitizedModel = bootPrefs.selectedModelByProvider?.antigravity;
       const sanitizedEffort = bootPrefs.selectedThinkingEffort?.antigravity;
       const draftCfgPurgedOnBoot = !('draft-new-123' in (bootPrefs.threadModelConfig || {})) && !('sess-corrupt' in (bootPrefs.threadModelConfig || {}));
-      const initialPillText = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+      const initialPillText = document.getElementById('composer-model-label')?.textContent?.trim() || '';
 
-      // 3. Interactive Model & Thinking Level Selector (switch to Gemini 3.8 Flash + Medium)
-      document.getElementById('chat-model-picker-btn')?.click();
+      // 3. Interactive Model & Thinking Level Selector (switch to Gemini 3.8 Flash + Medium via Adjust)
+      document.getElementById('composer-model-btn')?.click();
       await new Promise((r) => setTimeout(r, 25));
       const modelPopOpen = document.getElementById('model-picker-popover')?.hidden === false;
       document.querySelector('#model-picker-popover [data-select-ai-model="gemini-3.8-flash"]')?.click();
       await new Promise((r) => setTimeout(r, 25));
+      document.querySelector('#model-picker-popover [data-toggle-model-effort-bar="1"]')?.click();
+      await new Promise((r) => setTimeout(r, 25));
       document.querySelector('#model-picker-popover [data-select-ai-effort="medium"]')?.click();
       await new Promise((r) => setTimeout(r, 25));
-      const updatedHeaderPill = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
       const updatedComposerPill = document.getElementById('composer-model-label')?.textContent?.trim() || '';
       // Escape closes #model-picker-popover
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -2494,7 +2502,7 @@ async function main() {
       document.querySelector('#model-picker-popover [data-select-ai-model="gemini-4-argon"]')?.click();
       document.querySelector('#model-picker-popover [data-select-ai-effort="low"]')?.click();
       await new Promise((r) => setTimeout(r, 20));
-      const pillAfterPinBlocked = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+      const pillAfterPinBlocked = document.getElementById('composer-model-label')?.textContent?.trim() || '';
       if (pinOverlay) pinOverlay.hidden = true;
 
       // 4. Sidebar Open-Tab Grey Dot (.ide-dot.open) vs Closed Idle Session (.ide-dot.closed)
@@ -2546,7 +2554,7 @@ async function main() {
         document.querySelectorAll('#ide-sidebar-tree .ide-tree-row[data-ide-open-session]')
       ).map((el) => el.dataset.ideOpenSession);
 
-      // 6. Click + Antigravity -> opens active draft tab + renders .new-session-launchpad (no verbose paragraph)
+      // 6. Click + Antigravity -> opens active draft tab + renders minimal .new-session-launchpad (no starter grid or verbose paragraph)
       document.getElementById('rail-new-agy')?.click();
       await new Promise((r) => setTimeout(r, 35));
       const hasDraftTab = Boolean(document.querySelector('#ide-editor-tabs [data-editor-tab-id="__new__"].active'));
@@ -2554,24 +2562,23 @@ async function main() {
       const hasOldVerboseText = Boolean(
         document.getElementById('chat-stream')?.textContent?.includes('Starting a brand-new, unrelated')
       );
-      document.querySelector('#chat-stream .new-session-launchpad [data-open-lens="agents"]')?.click();
-      await new Promise((r) => setTimeout(r, 30));
-      const launchpadChecksOpenedAgentsLens =
-        document.getElementById('ide-inspector-pane')?.hidden === false &&
-        JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}').inspectorTab === 'agents';
-      document.getElementById('btn-close-inspector')?.click();
+      const duplicateStarterCardsCount = document.querySelectorAll(
+        '#chat-stream .new-session-launchpad .lp-starter-card, #chat-stream .new-session-launchpad [data-open-lens]'
+      ).length;
 
       return {
         directToggleGone,
         modePillsGone,
-        desktopTitleRowHidden,
+        sessionSelectGone,
+        headerModelBtnGone,
+        desktopTitleRowVisible,
+        headerTitleText,
         sanitizedModel,
         sanitizedEffort,
         draftCfgPurgedOnBoot,
         initialPillText,
         modelPopOpen,
         modelPopClosedByEscape,
-        updatedHeaderPill,
         updatedComposerPill,
         pillAfterPinBlocked,
         openTabHasGreyDot,
@@ -2584,24 +2591,26 @@ async function main() {
         hasDraftTab,
         hasLaunchpad,
         hasOldVerboseText,
-        launchpadChecksOpenedAgentsLens,
+        duplicateStarterCardsCount,
         titleAttrsCount: document.querySelectorAll('[title]').length,
         xssTriggered: Boolean(window.__XSS)
       };
     })()`);
 
     assert.strictEqual(v61Probe.xssTriggered, false, 'Negative #1: Hostile model/effort in localStorage must never trigger XSS');
-    assert.strictEqual(v61Probe.directToggleGone, true, '#composer-direct-toggle (⚡ Direct) must be removed from bottom composer');
+    assert.strictEqual(v61Probe.directToggleGone, true, '#composer-direct-toggle must be removed from bottom composer');
     assert.strictEqual(v61Probe.modePillsGone, true, '#composer-mode-pills (Reply | + AGY | + Claude) must be removed from bottom composer');
-    assert.strictEqual(v61Probe.desktopTitleRowHidden, true, 'Duplicate #chat-session-select title row must be hidden on desktop (>=1025px)');
+    assert.strictEqual(v61Probe.sessionSelectGone, true, 'Duplicate #chat-session-select dropdown must be removed in Phase 3');
+    assert.strictEqual(v61Probe.headerModelBtnGone, true, 'Duplicate #chat-model-picker-btn must be removed from header in Phase 3');
+    assert.strictEqual(v61Probe.desktopTitleRowVisible, true, 'Clean .chat-title-row with #chat-session-title must remain visible on desktop (>=1025px)');
+    assert.ok(v61Probe.headerTitleText.length > 0, '#chat-session-title must render active session title');
     assert.strictEqual(v61Probe.sanitizedModel, 'gemini-4-argon', 'Negative #1: Invalid stored model ID must sanitize to gemini-4-argon');
     assert.strictEqual(v61Probe.sanitizedEffort, 'high', 'Negative #1: Invalid stored thinking effort must sanitize to high');
     assert.strictEqual(v61Probe.draftCfgPurgedOnBoot, true, 'Corrupt or draft-new-* threadModelConfig entries must be purged on boot');
     assert.strictEqual(v61Probe.initialPillText, 'Gemini 4 Argon (High)', 'Legacy Gemini 3.1 Pro must upgrade to Gemini 4 Argon (High)');
-    assert.strictEqual(v61Probe.modelPopOpen, true, 'Clicking #chat-model-picker-btn must open #model-picker-popover');
+    assert.strictEqual(v61Probe.modelPopOpen, true, 'Clicking #composer-model-btn must open #model-picker-popover');
     assert.strictEqual(v61Probe.modelPopClosedByEscape, true, 'Escape must close #model-picker-popover');
-    assert.strictEqual(v61Probe.updatedHeaderPill, 'Gemini 3.8 Flash (Medium)', 'Selecting Gemini 3.8 Flash + Medium must update #chat-model-pill');
-    assert.strictEqual(v61Probe.updatedComposerPill, 'Gemini 3.8 Flash · Medium', 'Selecting Gemini 3.8 Flash + Medium must update #composer-model-label');
+    assert.strictEqual(v61Probe.updatedComposerPill, 'Gemini 3.8 Flash (Medium)', 'Selecting Gemini 3.8 Flash + Medium must update #composer-model-label');
     assert.strictEqual(v61Probe.pillAfterPinBlocked, 'Gemini 3.8 Flash (Medium)', 'Negative #2: PIN lock must block model/effort changes');
     assert.strictEqual(v61Probe.openTabHasGreyDot, true, 'Open idle tab in sidebar must display subtle grey dot (.ide-dot.open)');
     assert.strictEqual(v61Probe.closedTabDotHidden, true, 'Closed idle session in sidebar must hide dot (.ide-dot.closed)');
@@ -2611,9 +2620,9 @@ async function main() {
     assert.strictEqual(v61Probe.activeStayedBeta, true, 'Negative #3: Clicking sidebar close-tab button must not open that row');
     assert.strictEqual(v61Probe.orderAfterWork[0], 'sess-beta', `Expected newly worked-on sess-beta to move to #1 in sidebar, got ${JSON.stringify(v61Probe.orderAfterWork)}`);
     assert.strictEqual(v61Probe.hasDraftTab, true, '+ New Session mode must render active draft tab in #ide-editor-tabs');
-    assert.strictEqual(v61Probe.hasLaunchpad, true, '+ New Session mode must render interactive .new-session-launchpad');
+    assert.strictEqual(v61Probe.hasLaunchpad, true, '+ New Session mode must render minimal .new-session-launchpad');
     assert.strictEqual(v61Probe.hasOldVerboseText, false, 'Redundant verbose New Session paragraph must be gone');
-    assert.strictEqual(v61Probe.launchpadChecksOpenedAgentsLens, true, 'Launchpad Studio Checks & Agents card must open the agents Inspector lens');
+    assert.strictEqual(v61Probe.duplicateStarterCardsCount, 0, 'Duplicate Launchpad starter cards must be removed in Phase 3');
     assert.strictEqual(v61Probe.titleAttrsCount, 0, 'Zero [title] attributes allowed anywhere in v61 DOM');
     console.log('[PASS] Adversarial #12: v61 Composer De-clutter, Desktop Tab De-duplication, Interactive Model & Thinking Level Selector, Sidebar Open-Tab Grey Dot, Last-Worked-On Ordering & 3 Negative Guards verified');
 
@@ -2662,7 +2671,7 @@ async function main() {
 
     const v62DesktopResult = await evalJs(`(async () => {
       // 1. Verify MODEL_PLACEHOLDER_M319 normalized to 'Gemini 3.8 Flash (Medium)'
-      const m319HeaderPill = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+      const m319HeaderPill = document.getElementById('composer-model-label')?.textContent?.trim() || '';
 
       // 2. Verify #chat-live-bgtasks is constrained to #composer-box width & left alignment (<= 2px delta)
       const bgBar = document.getElementById('chat-live-bgtasks');
@@ -2684,27 +2693,14 @@ async function main() {
       const connTitleSingleLine = Boolean(connTitleEl && connTitleEl.clientHeight <= 20);
       const connSubHasDaemon = String(connSubEl?.textContent || '').includes('24/7 Daemon');
 
-      // 4. Verify #model-picker-popover is position:fixed, opens below header button without clipping, and above composer button
-      const headerBtn = document.getElementById('chat-model-picker-btn');
-      headerBtn?.click();
-      await new Promise((r) => setTimeout(r, 25));
+      // 4. Verify #model-picker-popover is position:fixed and opens above composer button with 0 clipping
       const pop = document.getElementById('model-picker-popover');
-      const popStyle = pop ? getComputedStyle(pop) : null;
-      const popFixed = popStyle?.position === 'fixed';
-      const popRectHeader = pop?.getBoundingClientRect();
-      const headerRect = headerBtn?.getBoundingClientRect();
-      const anchoredBelowHeader = Boolean(
-        popRectHeader && headerRect &&
-        popRectHeader.top >= headerRect.bottom - 2 &&
-        popRectHeader.bottom <= window.innerHeight - 4 &&
-        pop.scrollHeight <= pop.clientHeight + 2
-      );
-      const comboItemsCount = pop ? pop.querySelectorAll('.vs-model-menu-item[data-select-model-combo]').length : 0;
-
-      // Close and open from bottom #composer-model-btn -> must anchor ABOVE composer pill
       const compBtn = document.getElementById('composer-model-btn');
       compBtn?.click();
       await new Promise((r) => setTimeout(r, 25));
+      const popStyle = pop ? getComputedStyle(pop) : null;
+      const popFixed = popStyle?.position === 'fixed';
+      const comboItemsCount = pop ? pop.querySelectorAll('.vs-model-menu-item[data-select-model-combo]').length : 0;
       const popRectComp = pop?.getBoundingClientRect();
       const compBtnRect = compBtn?.getBoundingClientRect();
       const anchoredAboveComposer = Boolean(
@@ -2717,7 +2713,6 @@ async function main() {
       pop?.querySelector('[data-select-model-combo="gemini-4-argon:low"]')?.click();
       await new Promise((r) => setTimeout(r, 25));
       const autoClosedAfterCombo = pop?.hidden === true;
-      const pillAfterCombo = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
       const compLabelAfterCombo = document.getElementById('composer-model-label')?.textContent?.trim() || '';
 
       // Negative #1: Inject hostile/bogus [data-select-model-combo] and click it -> must NOT mutate state or execute XSS
@@ -2727,18 +2722,18 @@ async function main() {
       bogusCombo.click();
       bogusCombo.remove();
       await new Promise((r) => setTimeout(r, 20));
-      const pillAfterHostileCombo = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+      const pillAfterHostileCombo = document.getElementById('composer-model-label')?.textContent?.trim() || '';
 
       // Negative #2: PIN lock blocks [data-select-model-combo]
       const pinOverlay = document.getElementById('pin-overlay');
       if (pinOverlay) pinOverlay.hidden = false;
       pop?.querySelector('[data-select-model-combo="gemini-3.8-flash:high"]')?.click();
       await new Promise((r) => setTimeout(r, 20));
-      const pillAfterPinCombo = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+      const pillAfterPinCombo = document.getElementById('composer-model-label')?.textContent?.trim() || '';
       if (pinOverlay) pinOverlay.hidden = true;
 
       // Leave popover open for Negative #3 narrow viewport clamping test
-      headerBtn?.click();
+      compBtn?.click();
       await new Promise((r) => setTimeout(r, 20));
       const headDisplay = pop?.querySelector('.vs-model-menu-head')
         ? getComputedStyle(pop.querySelector('.vs-model-menu-head')).display
@@ -2758,11 +2753,9 @@ async function main() {
         connTitleSingleLine,
         connSubHasDaemon,
         popFixed,
-        anchoredBelowHeader,
         comboItemsCount,
         anchoredAboveComposer,
         autoClosedAfterCombo,
-        pillAfterCombo,
         compLabelAfterCombo,
         pillAfterHostileCombo,
         pillAfterPinCombo,
@@ -2800,12 +2793,10 @@ async function main() {
     assert.strictEqual(v62DesktopResult.connTitleSingleLine, true, '#rail-conn-title ("Theo Laptop · WS 1ms") must stay on 1 line without wrapping');
     assert.strictEqual(v62DesktopResult.connSubHasDaemon, true, '#rail-conn-sub must indicate 24/7 Daemon continuity');
     assert.strictEqual(v62DesktopResult.popFixed, true, '#model-picker-popover must use position:fixed so it is never clipped by #view-chat');
-    assert.strictEqual(v62DesktopResult.anchoredBelowHeader, true, 'Model menu opened from header must anchor cleanly below #chat-model-picker-btn with 0 scroll clipping');
     assert.strictEqual(v62DesktopResult.comboItemsCount, 6, 'Antigravity VS Code model menu must list all 6 model+thinking combinations');
     assert.strictEqual(v62DesktopResult.anchoredAboveComposer, true, 'Model menu opened from composer must anchor cleanly above #composer-model-btn');
     assert.strictEqual(v62DesktopResult.autoClosedAfterCombo, true, '1-click [data-select-model-combo] must select and close menu immediately');
-    assert.strictEqual(v62DesktopResult.pillAfterCombo, 'Gemini 4 Argon (Low)', '1-click combo must update #chat-model-pill to Gemini 4 Argon (Low)');
-    assert.strictEqual(v62DesktopResult.compLabelAfterCombo, 'Gemini 4 Argon · Low', '1-click combo must update #composer-model-label to Gemini 4 Argon · Low');
+    assert.strictEqual(v62DesktopResult.compLabelAfterCombo, 'Gemini 4 Argon (Low)', '1-click combo must update #composer-model-label to Gemini 4 Argon (Low)');
     assert.strictEqual(v62DesktopResult.pillAfterHostileCombo, 'Gemini 4 Argon (Low)', 'v62 Negative #1: Bogus/hostile combo must be rejected without mutating selection');
     assert.strictEqual(v62DesktopResult.pillAfterPinCombo, 'Gemini 4 Argon (Low)', 'v62 Negative #2: PIN lock must block [data-select-model-combo] clicks');
     assert.strictEqual(v62DesktopResult.headDisplay, 'flex', '.vs-model-menu-head must render as display:flex');
@@ -4673,7 +4664,7 @@ async function main() {
       return evalJs(`(() => {
         document.getElementById('btn-ctx-window')?.click();
         return {
-          modelPill: document.getElementById('chat-model-pill')?.textContent?.trim() || '',
+          modelPill: document.getElementById('composer-model-label')?.textContent?.trim() || '',
           ctxPill: document.getElementById('ctx-pill-label')?.textContent?.trim() || '',
           summary: document.getElementById('ctx-meter-summary')?.textContent?.replace(/\\s+/g, ' ').trim() || '',
           titleCount: document.querySelectorAll('[title]').length,
@@ -4714,19 +4705,20 @@ async function main() {
 
     // Toggle effort on non-catalog Claude Opus 5.5 must preserve Claude Opus 5.5 (Medium) across reload
     const afterEffortNonCatalog = await evalJs(`(() => {
-      document.getElementById('chat-model-picker-btn')?.click();
+      document.getElementById('composer-model-btn')?.click();
       const activeMenuCount = document.querySelectorAll('#model-picker-body .vs-model-menu-item.active').length;
+      document.querySelector('#model-picker-body [data-toggle-model-effort-bar="1"]')?.click();
       document.querySelector('#model-picker-body [data-select-ai-effort="medium"]')?.click();
       return {
         activeMenuCount,
-        pillAfterEffort: document.getElementById('chat-model-pill')?.textContent?.trim() || ''
+        pillAfterEffort: document.getElementById('composer-model-label')?.textContent?.trim() || ''
       };
     })()`);
     assert.strictEqual(afterEffortNonCatalog.activeMenuCount, 0, 'Non-catalog session must not check a catalog model item');
     assert.strictEqual(afterEffortNonCatalog.pillAfterEffort, 'Claude Opus 5.5 (Medium)');
     await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
     await new Promise((r) => setTimeout(r, 550));
-    const pillAfterReload = await evalJs(`document.getElementById('chat-model-pill')?.textContent?.trim() || ''`);
+    const pillAfterReload = await evalJs(`document.getElementById('composer-model-label')?.textContent?.trim() || ''`);
     assert.strictEqual(pillAfterReload, 'Claude Opus 5.5 (Medium)', 'Non-catalog customModel effort override must survive reload');
 
     // Orchestrator (Argon) must auto-upgrade stale 256k -> 512k, not alias to Gemini 4 Argon, and effort toggle must preserve Orchestrator (Argon)
@@ -4734,9 +4726,10 @@ async function main() {
     assert.strictEqual(chatOrchArgon.modelPill, 'Orchestrator (Argon)');
     assert.strictEqual(chatOrchArgon.ctxPill, '64k / 512k · 13%');
     const orchAfterEffort = await evalJs(`(() => {
-      document.getElementById('chat-model-picker-btn')?.click();
+      document.getElementById('composer-model-btn')?.click();
+      document.querySelector('#model-picker-body [data-toggle-model-effort-bar="1"]')?.click();
       document.querySelector('#model-picker-body [data-select-ai-effort="medium"]')?.click();
-      return document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+      return document.getElementById('composer-model-label')?.textContent?.trim() || '';
     })()`);
     assert.strictEqual(orchAfterEffort, 'Orchestrator (Argon)');
 
@@ -4749,10 +4742,10 @@ async function main() {
     const chatBeforeSwitch = await probeChatContext('sess-ctx-claude1m-switch');
     assert.strictEqual(chatBeforeSwitch.ctxPill, '150k / 1M · 15%');
     const chatAfterSwitch = await evalJs(`(() => {
-      document.getElementById('chat-model-picker-btn')?.click();
+      document.getElementById('composer-model-btn')?.click();
       document.querySelector('#model-picker-body [data-select-model-combo="claude-sonnet-4-6:high"]')?.click();
       return {
-        modelPill: document.getElementById('chat-model-pill')?.textContent?.trim() || '',
+        modelPill: document.getElementById('composer-model-label')?.textContent?.trim() || '',
         ctxPill: document.getElementById('ctx-pill-label')?.textContent?.trim() || ''
       };
     })()`);
@@ -5745,11 +5738,11 @@ async function main() {
 
     // 1. Live GetUserStatus M777 -> 512k resolution, picker entry, and M402 Claude 840k non-downgrade guard
     const v73CatalogCheck = await evalJs(`(() => {
-      document.getElementById('chat-model-picker-btn')?.click();
+      document.getElementById('composer-model-btn')?.click();
       const pickerHtml = document.getElementById('model-picker-body')?.innerHTML || '';
-      document.getElementById('chat-model-picker-btn')?.click();
+      document.getElementById('composer-model-btn')?.click();
       return {
-        modelPill: document.getElementById('chat-model-pill')?.textContent?.trim() || '',
+        modelPill: document.getElementById('composer-model-label')?.textContent?.trim() || '',
         ctxPill: document.getElementById('ctx-pill-label')?.textContent?.trim() || '',
         pickerHasLiveModel: pickerHtml.includes('Gemini 5 Nova'),
         titleCount: document.querySelectorAll('[title]').length,
@@ -5823,7 +5816,7 @@ async function main() {
       const arc = document.getElementById('ctx-ring-overrun-circle');
       const banner = document.getElementById('ctx-overrun-banner');
       const state = {
-        modelPill: document.getElementById('chat-model-pill')?.textContent?.trim() || '',
+        modelPill: document.getElementById('composer-model-label')?.textContent?.trim() || '',
         ctxPill: document.getElementById('ctx-pill-label')?.textContent?.trim() || '',
         isSoftOverrun: Boolean(btn?.classList?.contains('is-soft-overrun')),
         arcHidden: Boolean(arc?.hidden),
@@ -6939,9 +6932,9 @@ async function main() {
           const tipText = tip?.textContent?.trim() || '';
           const hcHidden = hc ? hc.hidden : true;
           const clamped = Boolean(r && r.left >= 6 && r.right <= window.innerWidth - 6);
-          document.getElementById('btn-activity-brand')?.click();
+          document.getElementById('btn-toggle-sidebar')?.click();
           const tipHiddenAfterSidebarToggle = tip ? tip.hidden : true;
-          document.getElementById('btn-activity-brand')?.click();
+          document.getElementById('btn-expand-sidebar-inline')?.click();
           return { tipVisibleBeforeToggle, tipText, hcHidden, clamped, tipHiddenAfterSidebarToggle };
         })()`);
         assert.strictEqual(ideMicroTipCheck.tipVisibleBeforeToggle, true, 'Hovering .ide-row-act.pin-act must open #ide-micro-tip');
@@ -7661,16 +7654,9 @@ async function main() {
           await new Promise((r) => setTimeout(r, 30));
           const prefsAfterTabAdd = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
 
-          // 4. Open grp-sess-1, test #chat-session-select -> __new_antigravity__
+          // 4. Open grp-sess-1 (verified via command palette & rail instead of removed #chat-session-select)
           document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="grp-sess-1"]')?.click();
           await new Promise((r) => setTimeout(r, 30));
-          const sel = document.getElementById('chat-session-select');
-          if (sel) {
-            sel.value = '__new_antigravity__';
-            sel.dispatchEvent(new Event('change', { bubbles: true }));
-          }
-          await new Promise((r) => setTimeout(r, 30));
-          const prefsAfterSelect = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
 
           // 5. Open grp-sess-1, test Ctrl+K new-agy
           document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="grp-sess-1"]')?.click();
@@ -7720,7 +7706,6 @@ async function main() {
             grpExpanded,
             afterSwitch: prefsAfterSwitch.newSessionGroupId,
             afterTabAdd: prefsAfterTabAdd.newSessionGroupId,
-            afterSelect: prefsAfterSelect.newSessionGroupId,
             afterCmd: prefsAfterCmd.newSessionGroupId,
             afterSessBtn: prefsAfterSessBtn.newSessionGroupId,
             afterClearBtn: prefsAfterClearBtn.newSessionGroupId,
@@ -7736,7 +7721,6 @@ async function main() {
         assert.strictEqual(grpInheritCheck.grpExpanded, true, 'Inherited collapsed group must expand in sidebar');
         assert.strictEqual(grpInheritCheck.afterSwitch, 'grp-alpha', 'Switching provider on Launchpad must preserve inherited group');
         assert.strictEqual(grpInheritCheck.afterTabAdd, 'grp-alpha', '.ide-tab-add-btn on Launchpad must preserve inherited group');
-        assert.strictEqual(grpInheritCheck.afterSelect, 'grp-alpha', '#chat-session-select new session must inherit active group');
         assert.strictEqual(grpInheritCheck.afterCmd, 'grp-alpha', 'Command palette new session must inherit active group');
         assert.strictEqual(grpInheritCheck.afterSessBtn, 'grp-alpha', '#btn-sess-new-agy must inherit active group');
         assert.strictEqual(grpInheritCheck.afterClearBtn, '', 'Clicking × Ungrouped chip must clear inherited group');
@@ -7826,16 +7810,16 @@ async function main() {
       assert.strictEqual(vaultCheck.mobTitle, null, '#mobile-vault-btn must have zero [title]');
       assert.strictEqual(vaultCheck.cmdHasVault, true, 'Command Palette must list open-memory-vault');
 
-      // Short desktop viewport (1280x500): .ide-activity-bar scrolls cleanly so bottom footer controls (#btn-sync-now) are reachable
+      // Short desktop viewport (1280x500): #ide-explorer-sidebar scrolls cleanly so #ide-sidebar-footer (#btn-palette-picker) is reachable
       await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 500, deviceScaleFactor: 2, mobile: false }, sessionId);
       await new Promise((r) => setTimeout(r, 80));
       const shortRail = await evalJs(`(() => {
-        const bar = document.querySelector('.ide-activity-bar');
-        const syncBtn = document.getElementById('btn-sync-now');
-        if (!bar || !syncBtn) return { ok: false };
-        const cs = getComputedStyle(bar);
-        syncBtn.scrollIntoView({ block: 'end' });
-        const rect = syncBtn.getBoundingClientRect();
+        const side = document.getElementById('ide-explorer-sidebar');
+        const footBtn = document.getElementById('btn-palette-picker');
+        if (!side || !footBtn) return { ok: false };
+        const cs = getComputedStyle(side);
+        footBtn.scrollIntoView({ block: 'end' });
+        const rect = footBtn.getBoundingClientRect();
         return {
           ok: true,
           overflowY: cs.overflowY,
@@ -7844,7 +7828,7 @@ async function main() {
         };
       })()`);
       assert.strictEqual(shortRail.ok, true);
-      assert.strictEqual(shortRail.overflowY, 'auto', 'Short desktop rail must allow vertical scroll');
+      assert.strictEqual(shortRail.overflowY, 'auto', 'Short desktop sidebar must allow vertical scroll');
       assert.ok(shortRail.bottomAfterScroll <= shortRail.vh + 2, `Bottom footer button must scroll into view at 1280x500 (${shortRail.bottomAfterScroll} <= ${shortRail.vh})`);
 
       // Live PIN-locked Vault click & Ctrl+K negative guard
@@ -8221,8 +8205,8 @@ async function main() {
 
       const v90Probe = await evalJs(`(async () => {
         const bootPrefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
-        const lwwModelPill = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
-        document.getElementById('chat-model-picker-btn')?.click();
+        const lwwModelPill = document.getElementById('composer-model-label')?.textContent?.trim() || '';
+        document.getElementById('composer-model-btn')?.click();
         await new Promise((r) => setTimeout(r, 30));
         const agyPickerHtml = document.getElementById('model-picker-body')?.innerHTML || '';
         const agyOrchButtons = document.querySelectorAll('#model-picker-body [data-select-ai-model="orchestrator-carbon"]').length;
@@ -8231,48 +8215,48 @@ async function main() {
         // Click 0-effort Orchestrator (Carbon) and verify no fake effort bar / no (High) suffix
         document.querySelector('#model-picker-body [data-select-model-combo="orchestrator-carbon:"]')?.click();
         await new Promise((r) => setTimeout(r, 30));
-        const orchSelectedPill = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
-        document.getElementById('chat-model-picker-btn')?.click();
+        const orchSelectedPill = document.getElementById('composer-model-label')?.textContent?.trim() || '';
+        document.getElementById('composer-model-btn')?.click();
         await new Promise((r) => setTimeout(r, 30));
         const effortBarHiddenOnZeroTier = document.querySelector('#model-picker-body .vs-model-effort-bar') === null;
-        document.getElementById('chat-model-picker-btn')?.click();
+        document.getElementById('composer-model-btn')?.click();
 
         // Verify 0-effort non-thinking single-tier model with (Medium) in label hides effort bar
-        document.getElementById('chat-model-picker-btn')?.click();
+        document.getElementById('composer-model-btn')?.click();
         await new Promise((r) => setTimeout(r, 30));
         const fastLiteButtons = document.querySelectorAll('#model-picker-body [data-select-ai-model="fast-lite"]').length;
         document.querySelector('#model-picker-body [data-select-model-combo="fast-lite:"]')?.click();
         await new Promise((r) => setTimeout(r, 30));
-        document.getElementById('chat-model-picker-btn')?.click();
+        document.getElementById('composer-model-btn')?.click();
         await new Promise((r) => setTimeout(r, 30));
         const effortBarHiddenOnNonThinkingSingle = document.querySelector('#model-picker-body .vs-model-effort-bar') === null;
-        document.getElementById('chat-model-picker-btn')?.click();
+        document.getElementById('composer-model-btn')?.click();
 
         // Check Claude session live catalog replacement
         document.querySelector('.ide-tree-row[data-ide-open-session="sess-v90-claude"]')?.click();
         await new Promise((r) => setTimeout(r, 40));
-        document.getElementById('chat-model-picker-btn')?.click();
+        document.getElementById('composer-model-btn')?.click();
         await new Promise((r) => setTimeout(r, 30));
         const claudePickerHtml = document.getElementById('model-picker-body')?.innerHTML || '';
         document.querySelector('#model-picker-body [data-select-model-combo="claude-fable-5-2:xhigh"]')?.click();
         await new Promise((r) => setTimeout(r, 30));
-        const claudeSelectedPill = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+        const claudeSelectedPill = document.getElementById('composer-model-label')?.textContent?.trim() || '';
 
         // Check Neon pill in Sessions cards 1-tap switch + tree + chat header 1-tap switch to Carbon
         const treeNeonPillPresent = Boolean(document.querySelector('.ide-tree-row[data-ide-open-session="sess-v90-neon"] .session-neon-pill'));
-        document.querySelector('.tab-btn[data-tab="sessions"]')?.click();
+        document.querySelector('[data-tab="sessions"]')?.click();
         await new Promise((r) => setTimeout(r, 50));
         const cardNeonBefore = Boolean(document.querySelector('.session-card[data-session-id="sess-v90-neon"] .session-neon-pill'));
         document.querySelector('.session-card[data-session-id="sess-v90-neon"] [data-switch-neon-carbon]')?.click();
         await new Promise((r) => setTimeout(r, 50));
         const cardNeonAfter = Boolean(document.querySelector('.session-card[data-session-id="sess-v90-neon"] .session-neon-pill'));
-        document.querySelector('.tab-btn[data-tab="chat"]')?.click();
+        document.querySelector('[data-tab="chat"]')?.click();
         await new Promise((r) => setTimeout(r, 40));
         // Switch back to chat header test with a second Neon click (restore Neon via picker first on sess-v90-lww, or verify chat header synced)
         document.querySelector('.ide-tree-row[data-ide-open-session="sess-v90-neon"]')?.click();
         await new Promise((r) => setTimeout(r, 40));
         const chatNeonPillHiddenAfter = document.getElementById('chat-neon-pill')?.hidden === true;
-        const postNeonPillText = document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+        const postNeonPillText = document.getElementById('composer-model-label')?.textContent?.trim() || '';
         const outboxAfter = JSON.parse(localStorage.getItem('theo_remote_outbox_v1') || '[]');
         const neonSwitchCmd =
           (window.__theoLastQuarantinedCmd &&
@@ -8341,7 +8325,7 @@ async function main() {
       await new Promise((r) => setTimeout(r, 60));
       const postReloadClaude = await evalJs(`(() => {
         document.querySelector('.ide-tree-row[data-ide-open-session="sess-v90-claude"]')?.click();
-        return document.getElementById('chat-model-pill')?.textContent?.trim() || '';
+        return document.getElementById('composer-model-label')?.textContent?.trim() || '';
       })()`);
       assert.strictEqual(postReloadClaude, 'Fable 5.2 (XHigh)', 'Reload must preserve live dynamic Fable 5.2 (XHigh) selection');
 
@@ -8478,13 +8462,13 @@ async function main() {
 
       const p2Probe = await evalJs(`(async () => {
         const swSrc = await fetch('./sw.js?t=' + Date.now()).then((r) => r.text());
-        const swHasV91 = swSrc.includes("'theo-remote-v91'");
+        const swHasV92 = swSrc.includes("'theo-remote-v92'");
         const titleCount = document.querySelectorAll('[title]').length;
         const ctxPillIdle = document.getElementById('ctx-pill-label')?.textContent?.trim() || '';
         const ctxHas22019 = ctxPillIdle.includes('22019');
 
         // Extension #1: Quota bars inside #model-picker-body
-        document.getElementById('chat-model-picker-btn')?.click();
+        document.getElementById('composer-model-btn')?.click();
         await new Promise((r) => setTimeout(r, 60));
         const pickerEl = document.getElementById('model-picker-body');
         const quotaCount = pickerEl ? pickerEl.querySelectorAll('.vs-model-quota').length : 0;
@@ -8649,7 +8633,7 @@ async function main() {
           document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 
           return {
-            swHasV91,
+            swHasV92,
             titleCount,
             ctxHas22019,
             quotaCount,
@@ -8701,7 +8685,7 @@ async function main() {
         return { error: 'rowBefore missing' };
       })()`);
 
-      assert.strictEqual(p2Probe.swHasV91, true, 'sw.js must advertise theo-remote-v91');
+      assert.strictEqual(p2Probe.swHasV92, true, 'sw.js must advertise theo-remote-v92');
       assert.strictEqual(p2Probe.titleCount, 0, 'Zero native [title] tooltips allowed');
       assert.strictEqual(p2Probe.ctxHas22019, false, 'Context pill must never show hardcoded 22019 fallback');
       assert.ok(p2Probe.quotaCount >= 3, 'Model picker must render per-model quotaRemainingFraction bars');
@@ -8770,6 +8754,369 @@ async function main() {
       assert.ok(mobInputFonts.trayFont >= 16, `Mobile add-account tray input must be >= 16px, got ${mobInputFonts.trayFont}`);
       assert.strictEqual(mobInputFonts.overflowX, 0, '0px horizontal overflow on mobile account edit & tray');
       console.log('[PASS] Adversarial #27: Phase 2 (Accounts, Quota Bars, Reconcile DOM, Pointer Freeze, Inline Rename, Group Menu, Archived/Desktop, Host Health) + Ext #1 verified');
+    }
+
+    // Adversarial Check #28: Phase 3 (v92) Structural De-Clutter, Desktop Workbench Default Boot, Unified Sidebar, Single-Control Rule, Header Inline Rename & Copy Scrub
+    {
+      // 1. Desktop (1440x900) cold boot (no theo_remote_prefs_v1) MUST land in Workbench (chat) + set desktopWorkbenchBootV92
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 2, mobile: false }, sessionId);
+      await evalJs(`(() => {
+        const now = Date.now();
+        localStorage.removeItem('theo_remote_prefs_v1');
+        const snap = {
+          generatedAt: new Date(now).toISOString(),
+          devices: [{ id: 'p3-dev', name: 'Main PC', online: true }],
+          device: { id: 'p3-dev', name: 'Main PC', online: true },
+          rows: [
+            { id: 'v92-s1', key: 'v92-s1', title: 'Phase 3 Primary', provider: 'antigravity', model: 'Gemini 4 Carbon (High)', effort: 'high', at: now - 1000, status: 'idle', deviceId: 'p3-dev' },
+            { id: 'v92-s2', key: 'v92-s2', title: 'Phase 3 Orchestrator', provider: 'antigravity', model: 'Orchestrator (Carbon)', effort: '', at: now - 3000, status: 'idle', deviceId: 'p3-dev' }
+          ],
+          groups: [{ id: 'v92-grp', name: 'Phase 3 Group', collapsed: false }],
+          workspaces: [{ id: 'theo', name: 'theo', branch: 'main', dirtyCount: 0, path: 'C:/Users/hbdei/bhfirms/theo' }],
+          antigravityModelCatalog: {
+            updatedAt: now + 100000,
+            source: 'live-rpc',
+            activeDefaultModelId: 'MODEL_PLACEHOLDER_M427',
+            activeDefaultLabel: 'Gemini 4 Carbon (High)',
+            models: [
+              { modelId: 'MODEL_PLACEHOLDER_M667', slugId: 'orchestrator-carbon', label: 'Orchestrator (Carbon)', baseLabel: 'Orchestrator (Carbon)', isOrchestrator: true, isFirstPartyGemini: true, supportsThinking: false, inClientPicker: true, sortOrder: 0, maxContextTokens: 512000 },
+              { modelId: 'MODEL_PLACEHOLDER_M427', slugId: 'gemini-4-carbon-high', label: 'Gemini 4 Carbon (High)', baseLabel: 'Gemini 4 Carbon', isFirstPartyGemini: true, supportsThinking: true, effortTier: 'high', inClientPicker: true, sortOrder: 1, maxContextTokens: 512000 },
+              { modelId: 'MODEL_PLACEHOLDER_M437', slugId: 'gemini-4-carbon-medium', label: 'Gemini 4 Carbon (Medium)', baseLabel: 'Gemini 4 Carbon', isFirstPartyGemini: true, supportsThinking: true, effortTier: 'medium', inClientPicker: true, sortOrder: 2, maxContextTokens: 512000 }
+            ]
+          },
+          approvals: [],
+          notifications: []
+        };
+        localStorage.setItem('theo_remote_cache_v3', JSON.stringify({
+          state: snap,
+          snapshot: snap,
+          threads: {
+            'v92-s1': { id: 'v92-s1', provider: 'antigravity', model: 'Gemini 4 Carbon (High)', effort: 'high', messages: [{ id: 'm1', role: 'user', text: 'Phase 3 check', createdAt: new Date(now - 2000).toISOString() }] },
+            'v92-s2': { id: 'v92-s2', provider: 'antigravity', model: 'Orchestrator (Carbon)', effort: '', messages: [{ id: 'm2', role: 'user', text: 'Orch check', createdAt: new Date(now - 4000).toISOString() }] }
+          },
+          updatedAt: now
+        }));
+        return true;
+      })()`);
+      await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+      await new Promise((r) => setTimeout(r, 650));
+
+      const desktopColdBoot = await evalJs(`(() => {
+        const p = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+        return {
+          chatActive: Boolean(document.getElementById('view-chat')?.classList.contains('active')),
+          bootFlag: Boolean(p.desktopWorkbenchBootV92)
+        };
+      })()`);
+      assert.strictEqual(desktopColdBoot.chatActive, true, 'Desktop (1440x900) cold boot must open directly into Workbench (#view-chat.active)');
+      assert.strictEqual(desktopColdBoot.bootFlag, true, 'Desktop cold boot must persist desktopWorkbenchBootV92=true');
+
+      // v91 -> v92 upgrade migration: activeTab:'pulse' without desktopWorkbenchBootV92 migrates once to chat; then user switch back to pulse persists across reload
+      await evalJs(`(() => {
+        localStorage.setItem('theo_remote_prefs_v1', JSON.stringify({
+          theme: 'dark',
+          themeUserSet: true,
+          activeTab: 'pulse',
+          selectedThreadId: 'v92-s1',
+          edgeAccessKey: 'e'.repeat(64)
+        }));
+        return true;
+      })()`);
+      await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+      await new Promise((r) => setTimeout(r, 600));
+      const upgradeBootChat = await evalJs(`Boolean(document.getElementById('view-chat')?.classList.contains('active'))`);
+      assert.strictEqual(upgradeBootChat, true, 'v91->v92 upgrade from pulse on desktop must migrate once to chat');
+
+      // Switch to Pulse via visible desktop control (#rail-fleet-btn -> #conn-modal-pulse-btn), then verify sticky Pulse across reload
+      await evalJs(`(async () => {
+        document.getElementById('rail-fleet-btn')?.click();
+        await new Promise((r) => setTimeout(r, 30));
+        document.getElementById('conn-modal-pulse-btn')?.click();
+        return true;
+      })()`);
+      await new Promise((r) => setTimeout(r, 60));
+      await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+      await new Promise((r) => setTimeout(r, 600));
+      const stickyPulseAfterUserSwitch = await evalJs(`Boolean(document.getElementById('view-pulse')?.classList.contains('active'))`);
+      assert.strictEqual(stickyPulseAfterUserSwitch, true, 'After user chooses Pulse via desktop control post-v92, reload must respect Pulse');
+
+      // Verify desktop browser Back (popstate) from Workspaces after clean desktop boot returns to Workbench (chat), NOT Pulse
+      await evalJs(`localStorage.removeItem('theo_remote_prefs_v1')`);
+      await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+      await new Promise((r) => setTimeout(r, 600));
+      const popstateCheck = await evalJs(`(async () => {
+        const bootedInChat = Boolean(document.getElementById('view-chat')?.classList.contains('active'));
+        document.getElementById('rail-workspaces-btn')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+        const wentToWorkspaces = Boolean(document.getElementById('view-workspaces')?.classList.contains('active'));
+        history.back();
+        await new Promise((r) => setTimeout(r, 120));
+        const returnedToChat = Boolean(document.getElementById('view-chat')?.classList.contains('active'));
+        const leakedToPulse = Boolean(document.getElementById('view-pulse')?.classList.contains('active'));
+        return { bootedInChat, wentToWorkspaces, returnedToChat, leakedToPulse };
+      })()`);
+      assert.strictEqual(popstateCheck.bootedInChat && popstateCheck.wentToWorkspaces && popstateCheck.returnedToChat && !popstateCheck.leakedToPulse, true, `Desktop popstate must return to Workbench (chat) rather than Pulse: ${JSON.stringify(popstateCheck)}`);
+
+      // Verify desktop Command Palette (⌘K) exposes Pulse & Sessions routes on desktop
+      const cmdViewRoutes = await evalJs(`(async () => {
+        document.getElementById('open-cmd-palette')?.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const hasPulseCmd = Boolean(document.querySelector('#cmd-results [data-cmd-act="tab-pulse"]'));
+        const hasSessCmd = Boolean(document.querySelector('#cmd-results [data-cmd-act="tab-sessions"]'));
+        document.querySelector('#cmd-results [data-cmd-act="tab-sessions"]')?.click();
+        await new Promise((r) => setTimeout(r, 35));
+        const switchedToSessions = Boolean(document.getElementById('view-sessions')?.classList.contains('active'));
+        document.getElementById('btn-sidebar-brand')?.click();
+        await new Promise((r) => setTimeout(r, 35));
+        return { hasPulseCmd, hasSessCmd, switchedToSessions };
+      })()`);
+      assert.strictEqual(cmdViewRoutes.hasPulseCmd && cmdViewRoutes.hasSessCmd && cmdViewRoutes.switchedToSessions, true, `Desktop ⌘K must expose & route Pulse and Sessions: ${JSON.stringify(cmdViewRoutes)}`);
+
+      // 2. Unified 1-Sidebar Shell + Single-Control Rule + Header Rename + Palette & Model Effort Dedup
+      await evalJs(`document.getElementById('btn-sidebar-brand')?.click();`);
+      await new Promise((r) => setTimeout(r, 80));
+
+      const shellAndRename = await evalJs(`(async () => {
+        const swSrc = await fetch('./sw.js?t=' + Date.now()).then((r) => r.text());
+        const swHasV92 = swSrc.includes("'theo-remote-v92'");
+        const actBarGone = document.querySelector('.ide-activity-bar') === null;
+        const brandTxt = document.getElementById('btn-sidebar-brand')?.textContent?.trim() || '';
+        const footerIds = ['rail-vault-btn', 'rail-workspaces-btn', 'rail-fleet-btn', 'rail-push-btn', 'open-cmd-palette', 'btn-palette-picker'];
+        const footerVisibleCount = footerIds.filter((id) => {
+          const el = document.getElementById(id);
+          return el && !el.hidden && getComputedStyle(el).display !== 'none';
+        }).length;
+
+        // #rail-workspaces-btn toggles workspaces <-> chat
+        document.getElementById('rail-workspaces-btn')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+        const wsOpened = Boolean(document.getElementById('view-workspaces')?.classList.contains('active'));
+        // Ctrl+B collapses sidebar cleanly on secondary view & shows .inline-view-expand
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }));
+        await new Promise((r) => setTimeout(r, 40));
+        const inlineExpandVisibleOnWs = (() => {
+          const b = document.querySelector('#view-workspaces .inline-view-expand');
+          return Boolean(b && getComputedStyle(b).display !== 'none');
+        })();
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }));
+        await new Promise((r) => setTimeout(r, 40));
+        document.getElementById('rail-workspaces-btn')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+        const toggledBackToChat = Boolean(document.getElementById('view-chat')?.classList.contains('active'));
+
+        // #rail-fleet-btn -> #conn-modal -> [data-goto-tab="analytics"] closes #conn-modal & opens analytics
+        document.getElementById('rail-fleet-btn')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+        const connOpened = document.getElementById('conn-modal')?.hidden === false;
+        document.querySelector('#conn-modal [data-goto-tab="analytics"]')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+        const connClosedAfterGoto = document.getElementById('conn-modal')?.hidden === true;
+        const analyticsOpened = Boolean(document.getElementById('view-analytics')?.classList.contains('active'));
+        document.getElementById('btn-sidebar-brand')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+
+        // #btn-palette-picker opens clamped #theme-palette-popover with working theme & sound buttons
+        const palBtn = document.getElementById('btn-palette-picker');
+        const palPop = document.getElementById('theme-palette-popover');
+        palBtn?.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const palRect = palPop?.getBoundingClientRect();
+        const palOpenAndClamped = Boolean(
+          palPop && !palPop.hidden && palRect && palRect.left >= 0 && palRect.top >= 0 &&
+          palRect.right <= window.innerWidth && palRect.bottom <= window.innerHeight
+        );
+        const soundBefore = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}').sound !== false;
+        document.getElementById('btn-sound-toggle')?.click();
+        const soundAfter = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}').sound !== false;
+        document.getElementById('btn-close-palette')?.click();
+
+        // Single-Control header checks
+        const selGone = document.getElementById('chat-session-select') === null;
+        const hdrModelGone = document.getElementById('chat-model-picker-btn') === null;
+        const metaRowGone = document.querySelector('.chat-meta-row') === null;
+        document.getElementById('btn-chat-quick-switch')?.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const quickSwitchOpenedCmd = document.getElementById('cmd-modal')?.hidden === false;
+        document.getElementById('cmd-close')?.click();
+
+        // Header inline rename (#btn-chat-rename-title & F2, Enter/Escape/whitespace + PIN lock guard)
+        window.__theoLastQuarantinedCmd = null;
+        const origTitle = document.getElementById('chat-session-title')?.textContent?.trim() || '';
+        document.getElementById('btn-chat-rename-title')?.click();
+        await new Promise((r) => setTimeout(r, 25));
+        const titleEl = document.getElementById('chat-session-title');
+        const editStartedBtn = Boolean(titleEl && titleEl.isContentEditable);
+        if (titleEl) titleEl.textContent = 'Phase 3 Renamed Stream';
+        titleEl?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+        await new Promise((r) => setTimeout(r, 35));
+        const renamedHeaderTitle = document.getElementById('chat-session-title')?.textContent?.trim() || '';
+        const renamedSidebarTitle = document.querySelector('.ide-tree-row[data-ide-open-session="v92-s1"] .ide-tree-title')?.textContent?.trim() || '';
+        const renameCmd = window.__theoLastQuarantinedCmd || null;
+
+        // F2 rename + Escape cancel
+        document.activeElement?.blur?.();
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true, cancelable: true }));
+        await new Promise((r) => setTimeout(r, 25));
+        const editStartedF2 = Boolean(titleEl && titleEl.isContentEditable);
+        if (titleEl) titleEl.textContent = 'Should Revert On Escape';
+        titleEl?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        await new Promise((r) => setTimeout(r, 25));
+        const afterEscapeTitle = document.getElementById('chat-session-title')?.textContent?.trim() || '';
+
+        // Whitespace-only rename rejects
+        document.getElementById('btn-chat-rename-title')?.click();
+        await new Promise((r) => setTimeout(r, 20));
+        if (titleEl) titleEl.textContent = '   ';
+        titleEl?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+        await new Promise((r) => setTimeout(r, 25));
+        const afterWhitespaceTitle = document.getElementById('chat-session-title')?.textContent?.trim() || '';
+
+        // Long session title ellipsis truncation on desktop (#chat-session-title scrollWidth > clientWidth, no overlap with rename/⌘K buttons)
+        document.getElementById('btn-chat-rename-title')?.click();
+        await new Promise((r) => setTimeout(r, 20));
+        if (titleEl) titleEl.textContent = 'Very Long Phase 3 Session Title Used To Verify Desktop Header Ellipsis Truncation Without Overlap Across Viewport';
+        titleEl?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+        await new Promise((r) => setTimeout(r, 30));
+        const tRect = titleEl?.getBoundingClientRect();
+        const rRect = document.getElementById('btn-chat-rename-title')?.getBoundingClientRect();
+        const qRect = document.getElementById('btn-chat-quick-switch')?.getBoundingClientRect();
+        const longTitleTruncated = Boolean(
+          titleEl && tRect && rRect && qRect &&
+          getComputedStyle(titleEl).overflow === 'hidden' &&
+          getComputedStyle(titleEl).textOverflow === 'ellipsis' &&
+          titleEl.scrollWidth > titleEl.clientWidth &&
+          tRect.right <= rRect.left + 1 &&
+          rRect.right <= qRect.left + 1
+        );
+        // Restore concise title for remaining assertions
+        document.getElementById('btn-chat-rename-title')?.click();
+        await new Promise((r) => setTimeout(r, 20));
+        if (titleEl) titleEl.textContent = 'Phase 3 Renamed Stream';
+        titleEl?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+        await new Promise((r) => setTimeout(r, 25));
+
+        // PIN lock blocks rename button, dblclick, and F2
+        const pinOv = document.getElementById('pin-overlay');
+        if (pinOv) pinOv.hidden = false;
+        document.getElementById('btn-chat-rename-title')?.click();
+        const pinBlockedBtn = Boolean(titleEl && titleEl.isContentEditable);
+        titleEl?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+        const pinBlockedDbl = Boolean(titleEl && titleEl.isContentEditable);
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true, cancelable: true }));
+        const pinBlockedF2 = Boolean(titleEl && titleEl.isContentEditable);
+        if (pinOv) pinOv.hidden = true;
+
+        // Model picker Adjust effort deduplication
+        document.getElementById('composer-model-btn')?.click();
+        await new Promise((r) => setTimeout(r, 25));
+        const effortHiddenInit = document.querySelector('#model-picker-body .vs-model-effort-bar') === null;
+        const adjustBtnPresent = Boolean(document.querySelector('#model-picker-body [data-toggle-model-effort-bar="1"]'));
+        document.querySelector('#model-picker-body [data-toggle-model-effort-bar="1"]')?.click();
+        await new Promise((r) => setTimeout(r, 25));
+        const effortVisibleAfterAdjust = document.querySelector('#model-picker-body .vs-model-effort-bar') !== null;
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        await new Promise((r) => setTimeout(r, 20));
+        document.getElementById('composer-model-btn')?.click();
+        await new Promise((r) => setTimeout(r, 25));
+        const effortResetAfterClose = document.querySelector('#model-picker-body .vs-model-effort-bar') === null;
+        document.querySelector('#model-picker-body [data-select-model-combo="orchestrator-carbon:"]')?.click();
+        await new Promise((r) => setTimeout(r, 25));
+        document.getElementById('composer-model-btn')?.click();
+        await new Promise((r) => setTimeout(r, 25));
+        const zeroEffortClean =
+          document.querySelector('#model-picker-body .vs-model-effort-bar') === null &&
+          document.querySelector('#model-picker-body [data-toggle-model-effort-bar]') === null;
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+        // Copy & zero-overflow check on desktop
+        const bodyText = document.body.innerText || '';
+        const hasBannedBrandCopy = /THEO\s*(STUDIO|REMOTE)/i.test(bodyText);
+        const titleAttrCount = document.querySelectorAll('[title]').length;
+        const overflowDesktop = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+
+        return {
+          swHasV92,
+          actBarGone,
+          brandTxt,
+          footerVisibleCount,
+          wsOpened,
+          inlineExpandVisibleOnWs,
+          toggledBackToChat,
+          connOpened,
+          connClosedAfterGoto,
+          analyticsOpened,
+          palOpenAndClamped,
+          soundToggled: soundBefore !== soundAfter,
+          selGone,
+          hdrModelGone,
+          metaRowGone,
+          quickSwitchOpenedCmd,
+          origTitle,
+          editStartedBtn,
+          renamedHeaderTitle,
+          renamedSidebarTitle,
+          renameCmdSubAction: renameCmd?.subAction || '',
+          renameCmdName: renameCmd?.name || '',
+          editStartedF2,
+          afterEscapeTitle,
+          afterWhitespaceTitle,
+          longTitleTruncated,
+          pinBlockedAny: pinBlockedBtn || pinBlockedDbl || pinBlockedF2,
+          effortHiddenInit,
+          adjustBtnPresent,
+          effortVisibleAfterAdjust,
+          effortResetAfterClose,
+          zeroEffortClean,
+          hasBannedBrandCopy,
+          titleAttrCount,
+          overflowDesktop
+        };
+      })()`);
+
+      assert.strictEqual(shellAndRename.swHasV92, true, 'Phase 3 sw.js must serve theo-remote-v92');
+      assert.strictEqual(shellAndRename.actBarGone, true, '.ide-activity-bar must not exist in Phase 3');
+      assert.strictEqual(shellAndRename.brandTxt, 'THEO', 'Sidebar brand button must read "THEO"');
+      assert.strictEqual(shellAndRename.footerVisibleCount, 6, 'Sidebar footer must display all 6 actions');
+      assert.strictEqual(shellAndRename.wsOpened && shellAndRename.toggledBackToChat, true, '#rail-workspaces-btn must toggle Workspaces <-> Workbench');
+      assert.strictEqual(shellAndRename.inlineExpandVisibleOnWs, true, 'Collapsing sidebar on Workspaces must reveal inline expand button');
+      assert.strictEqual(shellAndRename.connOpened && shellAndRename.connClosedAfterGoto && shellAndRename.analyticsOpened, true, '#rail-fleet-btn -> #conn-modal -> [data-goto-tab="analytics"] must close modal and switch view');
+      assert.strictEqual(shellAndRename.palOpenAndClamped, true, '#theme-palette-popover must open clamped inside viewport');
+      assert.strictEqual(shellAndRename.soundToggled, true, '#btn-sound-toggle inside palette popover must toggle sound pref');
+      assert.strictEqual(shellAndRename.selGone && shellAndRename.hdrModelGone && shellAndRename.metaRowGone, true, 'Duplicate header controls must be removed');
+      assert.strictEqual(shellAndRename.quickSwitchOpenedCmd, true, '#btn-chat-quick-switch must open #cmd-modal');
+      assert.strictEqual(shellAndRename.editStartedBtn, true, '#btn-chat-rename-title must start inline rename');
+      assert.strictEqual(shellAndRename.renamedHeaderTitle, 'Phase 3 Renamed Stream');
+      assert.strictEqual(shellAndRename.renamedSidebarTitle, 'Phase 3 Renamed Stream');
+      assert.strictEqual(shellAndRename.renameCmdSubAction, 'rename');
+      assert.strictEqual(shellAndRename.renameCmdName, 'Phase 3 Renamed Stream');
+      assert.strictEqual(shellAndRename.editStartedF2, true, 'F2 must start inline rename on #chat-session-title');
+      assert.strictEqual(shellAndRename.afterEscapeTitle, 'Phase 3 Renamed Stream', 'Escape must cancel inline rename');
+      assert.strictEqual(shellAndRename.afterWhitespaceTitle, 'Phase 3 Renamed Stream', 'Whitespace-only title must cancel rename');
+      assert.strictEqual(shellAndRename.longTitleTruncated, true, 'Long session title must truncate with ellipsis cleanly without overlapping rename or ⌘K buttons');
+      assert.strictEqual(shellAndRename.pinBlockedAny, false, 'PIN lock must block rename button, dblclick, and F2');
+      assert.strictEqual(shellAndRename.effortHiddenInit && shellAndRename.adjustBtnPresent && shellAndRename.effortVisibleAfterAdjust && shellAndRename.effortResetAfterClose, true, `Model picker effort bar must stay collapsed behind Adjust and reset on close: ${JSON.stringify({ init: shellAndRename.effortHiddenInit, adj: shellAndRename.adjustBtnPresent, vis: shellAndRename.effortVisibleAfterAdjust, rst: shellAndRename.effortResetAfterClose })}`);
+      assert.strictEqual(shellAndRename.zeroEffortClean, true, '0-effort model must render neither effort bar nor Adjust button');
+      assert.strictEqual(shellAndRename.hasBannedBrandCopy, false, 'Rendered UI must contain zero THEO STUDIO or THEO REMOTE copy');
+      assert.strictEqual(shellAndRename.titleAttrCount, 0, 'Zero native [title] attributes allowed');
+      assert.strictEqual(shellAndRename.overflowDesktop, 0, '0px horizontal overflow on desktop');
+
+      // 3. Mobile (390x844) cold boot lands on Pulse + 5th dock tab labeled Settings + 0px overflow
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true }, sessionId);
+      await evalJs(`localStorage.removeItem('theo_remote_prefs_v1')`);
+      await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+      await new Promise((r) => setTimeout(r, 600));
+      const mobileColdBoot = await evalJs(`(() => {
+        const dockAnalyticsLbl = document.querySelector('#mobile-bottom-dock [data-tab="analytics"]')?.textContent?.trim() || '';
+        return {
+          pulseActive: Boolean(document.getElementById('view-pulse')?.classList.contains('active')),
+          dockAnalyticsLbl,
+          overflowMobile: Math.max(0, document.documentElement.scrollWidth - window.innerWidth)
+        };
+      })()`);
+      assert.strictEqual(mobileColdBoot.pulseActive, true, 'Mobile (390x844) cold boot must open #view-pulse.active');
+      assert.ok(mobileColdBoot.dockAnalyticsLbl.includes('Settings'), `5th mobile dock tab must read Settings, got "${mobileColdBoot.dockAnalyticsLbl}"`);
+      assert.strictEqual(mobileColdBoot.overflowMobile, 0, '0px horizontal overflow on mobile cold boot');
+      console.log('[PASS] Adversarial #28: Phase 3 (v92) Desktop Workbench Default, 1-Sidebar Shell, Single-Control Rule, Header Inline Rename & Copy Scrub verified');
     }
 
     // Final error & network quarantine assertions (#21)

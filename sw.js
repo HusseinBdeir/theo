@@ -1,7 +1,7 @@
-/* THEO Studio & Remote PWA Service Worker, v91 (2026-11-27).
+/* THEO PWA Service Worker, v92 (2026-11-27).
    App shell: network-first (cache: no-cache) for HTML/JS/CSS, cache-first for static assets.
    Web Push: RFC 8291 aes128gcm push listener + synchronous in-memory & serialized push deduplication + W3C Badging API (navigator.setAppBadge) + durable Cache Storage & postMessage notificationclick handoff. */
-const CACHE_NAME = 'theo-remote-v91';
+const CACHE_NAME = 'theo-remote-v92';
 const NAV_CACHE = 'theo-nav-handoff-v1';
 const PENDING_NAV_URL = './__theo_pending_nav.json';
 const LAST_PUSH_NAV_URL = './__theo_last_push_nav.json';
@@ -50,17 +50,17 @@ function checkAndMarkInMemoryNotif(tag, title) {
 const CORE_SHELL = [
   './',
   './index.html',
-  './css/theo.css?v=91',
-  './js/endpoints.js?v=91',
-  './js/app.js?v=91',
-  './manifest.json?v=91'
+  './css/theo.css?v=92',
+  './js/endpoints.js?v=92',
+  './js/app.js?v=92',
+  './manifest.json?v=92'
 ];
 
 const OPTIONAL_SHELL = [
-  './icon.svg?v=91',
-  './icon-180.png?v=91',
-  './icon-192.png?v=91',
-  './icon-512.png?v=91',
+  './icon.svg?v=92',
+  './icon-180.png?v=92',
+  './icon-192.png?v=92',
+  './icon-512.png?v=92',
   './brand/theo-wordmark-dark.svg',
   './brand/theo-wordmark-light.svg',
   './brand/theo-mark-on-dark.svg'
@@ -206,7 +206,7 @@ async function upsertSwUnreadNotif(d, nav) {
   const entry = {
     id,
     tag,
-    title: String(d.title || 'THEO Workbench'),
+    title: String(d.title || 'THEO'),
     body: String(d.body || ''),
     tab: nav.tab || 'pulse',
     threadId,
@@ -281,7 +281,7 @@ function isTheoRemoteClientUrl(rawUrl) {
 function buildNotifOptions(d, isRepeat = false) {
   const nav = buildNavTarget(d, false);
   return {
-    body: d.body || 'Tap to open THEO Remote Workbench.',
+    body: d.body || 'Tap to open THEO.',
     icon: './icon-192.png',
     badge: './icon-192.png',
     tag: nav.tag,
@@ -325,7 +325,7 @@ self.addEventListener('push', (event) => {
       d = event.data.json();
     } catch {
       try {
-        d = { title: 'THEO Workbench', body: event.data.text() };
+        d = { title: 'THEO', body: event.data.text() };
       } catch {}
     }
   }
@@ -348,15 +348,15 @@ self.addEventListener('push', (event) => {
   // Never return without calling showNotification() — iOS webpushd penalizes silent pushes on userVisibleOnly subscriptions
   const effectivePayload = isPlannerDomainNotif
     ? {
-        title: 'THEO Workbench ⚡',
-        body: 'Remote workbench connected & synced.',
+        title: 'THEO',
+        body: 'Connected and synced.',
         tag: 'theo-sync-pulse',
         tab: 'pulse',
         url: './?tab=pulse'
       }
     : d;
 
-  const title = effectivePayload.title || 'THEO Workbench';
+  const title = effectivePayload.title || 'THEO';
   const memCheck = checkAndMarkInMemoryNotif(effectivePayload.tag, title);
   if (memCheck.canonicalTag) {
     effectivePayload.tag = memCheck.canonicalTag;
@@ -458,7 +458,7 @@ self.addEventListener('message', (event) => {
   }
   if (m.type === 'show-notification') {
     const d = m.payload || {};
-    const title = d.title || 'THEO Workbench';
+    const title = d.title || 'THEO';
     const memCheck = checkAndMarkInMemoryNotif(d.tag, title);
     if (memCheck.canonicalTag) {
       d.tag = memCheck.canonicalTag;
