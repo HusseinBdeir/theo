@@ -47,7 +47,8 @@ html[data-theme="light"] {
 /* Default Dark Palette: VS Code Modern Graphite (Low-glare matte charcoal & champagne depth).
    --steel, --agy, --claude and --emerald are the THEO Hub extension's own accents
    (theo-hub/resources/hub.css: --status-pending, --progress-agy, --progress-claude, --status-busy),
-   so quota bars, status dots and selection read the same in the PWA and in VS Code. */
+   so quota bars, status dots and selection read the same in the PWA and in VS Code.
+   Velvet and Espresso keep their own calmer accents and pin them in their blocks. */
 html[data-theme="dark"] {
   --bg-obsidian: #1C1C20;
   --bg-plate: #161619;
@@ -108,6 +109,13 @@ html[data-theme="dark"][data-palette="velvet"] {
   --chip-hover-bg: #232736;
   --brass: #CFA968;
   --steel: #86AAFA;
+  --steel-deep: #5D79A6;
+  --agy: #6E95C8;
+  --agy-soft: rgba(110, 149, 200, 0.13);
+  --claude: #C97A5E;
+  --claude-soft: rgba(201, 122, 94, 0.14);
+  --emerald: #6E9E82;
+  --emerald-soft: rgba(110, 158, 130, 0.14);
 }
 
 /* Preset 3: Warm Espresso (Zero-blue-light nocturnal umber & parchment) */
@@ -129,7 +137,13 @@ html[data-theme="dark"][data-palette="espresso"] {
   --chip-hover-bg: #332D29;
   --brass: #D4A359;
   --steel: #8FB4D8;
+  --steel-deep: #5D79A6;
+  --agy: #6E95C8;
+  --agy-soft: rgba(110, 149, 200, 0.13);
+  --claude: #C97A5E;
+  --claude-soft: rgba(201, 122, 94, 0.14);
   --emerald: #7EC896;
+  --emerald-soft: rgba(110, 158, 130, 0.14);
 }
 
 /* @scales:start */
@@ -11937,13 +11951,14 @@ html[data-theme="light"] .sb-q-btn.primary {
    Part 4 is the title bar of the installed desktop app (window controls overlay).
    ============================================================================ */
 
-/* 1. Keyboard focus: one ring for every control, drawn inside so a scroll edge never clips it */
-:where(button, a[href], summary, select, [role="button"], [role="tab"], [role="menuitem"], [role="menuitemcheckbox"], [tabindex="0"]):focus-visible {
+/* 1. Keyboard focus: one ring for every control, drawn inside so a scroll edge never clips it.
+   Both rules weigh nothing (:where), so a control that sets its own focus style keeps it. */
+:where(button, a[href], summary, select, [role="button"], [role="tab"], [role="menuitem"], [role="menuitemcheckbox"], [tabindex="0"]):where(:focus-visible) {
   outline: 1px solid var(--focus);
   outline-offset: -1px;
 }
 
-:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea):focus-visible {
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea):where(:focus-visible) {
   outline: 1px solid var(--focus);
   outline-offset: -1px;
 }
@@ -11952,7 +11967,7 @@ html[data-theme="light"] .sb-q-btn.primary {
   border-color: var(--focus);
 }
 
-#view-chat .composer-box:focus-within {
+#view-chat .composer-box:focus-within:not(.is-dragover) {
   border-color: var(--focus);
   box-shadow: var(--shadow-sm);
 }
@@ -11980,6 +11995,12 @@ html[data-theme="dark"] .btn-approve {
      column once its sections outgrow the window, so the session list never shrinks to nothing. */
   .ide-explorer-sidebar {
     width: 300px;
+  }
+
+  /* With the sidebar collapsed the workbench takes the whole window (it used to stay in the
+     sidebar's content-sized column and leave the right side empty). */
+  html.sidebar-collapsed .app-shell {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .ide-sidebar-top {
@@ -12152,6 +12173,10 @@ html[data-theme="dark"] .btn-approve {
     line-height: 16px;
     background: var(--steel);
     color: var(--on-accent);
+  }
+
+  html[data-theme="dark"] .ide-group-pill {
+    color: var(--on-accent-ink);
   }
 
   .ide-tree-row {
@@ -12407,5 +12432,22 @@ html[data-theme="dark"] .btn-approve {
     font-family: var(--font-ui);
     font-size: var(--fs-2xs);
     color: var(--text-muted);
+  }
+
+  /* Layers that float over the title bar stay clickable there (a drag region swallows clicks
+     even under a painted layer), and toasts start below the window buttons. */
+  .toast-stack {
+    top: calc(var(--titlebar-h) + 14px);
+  }
+
+  .toast-stack,
+  .cmd-modal,
+  .pin-overlay,
+  .ide-context-menu,
+  .ide-hover-card,
+  .theme-palette-popover,
+  .vs-model-menu-popover {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
   }
 }

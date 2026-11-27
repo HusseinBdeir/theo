@@ -1,4 +1,4 @@
-/* THEO PWA Service Worker, v96 (2026-11-27).
+/* THEO PWA Service Worker, v97 (2026-11-27).
    App shell: network-first (cache: no-cache) for HTML/JS/CSS, cache-first for static assets.
    Web Push: RFC 8291 aes128gcm push listener + synchronous in-memory & serialized push deduplication + W3C Badging API (navigator.setAppBadge) + durable Cache Storage & postMessage notificationclick handoff. */
 const CACHE_NAME = 'theo-remote-v97';

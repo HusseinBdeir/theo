@@ -10216,7 +10216,13 @@ async function main() {
           location.reload();
           return true;
         })(${JSON.stringify(JSON.stringify(state32))}, ${JSON.stringify(JSON.stringify(threads32))})`);
-        await new Promise((r) => setTimeout(r, 900));
+        // Wait for the reloaded page to draw all four account cards (no fixed sleep: the PC may be busy).
+        let cards32Ready = false;
+        for (let i = 0; i < 80 && !cards32Ready; i++) {
+          await new Promise((r) => setTimeout(r, 100));
+          cards32Ready = await evalJs(`document.readyState === 'complete' && document.querySelectorAll('#ide-sidebar-accounts .ide-acct-card').length === 4 && Boolean(document.querySelector('#ide-sidebar-tree .ide-tree-row'))`).catch(() => false);
+        }
+        assert.strictEqual(cards32Ready, true, 'Phase 7 probe page must draw 4 account cards and the session tree within 8 s');
         await evalJs('window.__THEO_ALLOW_PROBE_MOCK_FETCH = true; true');
 
         const p32 = await evalJs(`(() => {
@@ -10284,6 +10290,7 @@ async function main() {
             codeBorder: code ? getComputedStyle(code).borderTopStyle : 'missing',
             workingDotBg: workingDot ? getComputedStyle(workingDot).backgroundColor : 'missing',
             groupPillBg: groupPill ? getComputedStyle(groupPill).backgroundColor : 'missing',
+            groupPillFg: groupPill ? getComputedStyle(groupPill).color : 'missing',
             titlebarDisplay: titlebar ? getComputedStyle(titlebar).display : 'missing',
             titlebarOpensPalette: Boolean(titlebar && titlebar.querySelector('[data-open-cmd-palette]')),
             shellRows: getComputedStyle(document.getElementById('app-shell')).gridTemplateRows
@@ -10298,6 +10305,7 @@ async function main() {
         assert.strictEqual(p32.metaTheme, p32.plate, '#meta-theme-color must equal the palette --bg-plate');
         assert.strictEqual(p32.workingDotBg, 'rgb(137, 209, 133)', `A running session dot must be solid extension green (got ${p32.workingDotBg})`);
         assert.strictEqual(p32.groupPillBg, 'rgb(59, 130, 246)', `Group count badges must be filled with the selection blue (got ${p32.groupPillBg})`);
+        assert.strictEqual(p32.groupPillFg, 'rgb(17, 17, 20)', `Group count badges must use dark ink on the blue fill in dark palettes (got ${p32.groupPillFg})`);
 
         // (b) Sidebar headers stay on one line and inside the sidebar
         assert.strictEqual(p32.sideWidth, 300, 'Desktop sidebar must be 300px wide');
@@ -10385,6 +10393,8 @@ async function main() {
             const root = getComputedStyle(document.documentElement);
             out[pal] = {
               applied: document.documentElement.getAttribute('data-palette'),
+              agy: root.getPropertyValue('--agy').trim().toUpperCase(),
+              emerald: root.getPropertyValue('--emerald').trim().toUpperCase(),
               plate: root.getPropertyValue('--bg-plate').trim().toUpperCase(),
               meta: (document.getElementById('meta-theme-color')?.getAttribute('content') || '').toUpperCase()
             };
@@ -10396,6 +10406,53 @@ async function main() {
           assert.ok(/^#[0-9A-F]{6}$/.test(pal32[pal].plate), `${pal}: --bg-plate must be a 6-digit hex (got "${pal32[pal].plate}")`);
           assert.strictEqual(pal32[pal].meta, pal32[pal].plate, `${pal}: #meta-theme-color must equal --bg-plate`);
         }
+        assert.strictEqual(pal32.velvet.agy, '#6E95C8', 'Velvet keeps its own calm --agy (the extension accents are graphite only)');
+        assert.strictEqual(pal32.velvet.emerald, '#6E9E82', 'Velvet keeps its own calm --emerald');
+        assert.strictEqual(pal32.espresso.agy, '#6E95C8', 'Espresso keeps its own calm --agy (no vivid blue in the zero-blue-light palette)');
+        assert.strictEqual(pal32.graphite.agy, '#3186FF', 'Graphite returns to the extension --agy after the palette round trip');
+
+        // (j) The two hard-coded title-bar colour maps (pre-paint script, applyTheme fallback) equal each palette's --bg-plate in the CSS
+        const header32 = css32.slice(0, css32.indexOf('/* @scales:start */'));
+        const plateOf = (selector) => {
+          const at = header32.indexOf(selector + ' {');
+          assert.ok(at >= 0, `Token header block "${selector}" not found`);
+          const m = header32.slice(at, header32.indexOf('}', at)).match(/--bg-plate:\s*(#[0-9A-Fa-f]{6});/);
+          assert.ok(m, `--bg-plate not found in "${selector}"`);
+          return m[1].toUpperCase();
+        };
+        const cssPlates = {
+          light: plateOf(':root,\nhtml[data-theme="light"]'),
+          graphite: plateOf('html[data-theme="dark"]'),
+          velvet: plateOf('html[data-theme="dark"][data-palette="velvet"]'),
+          espresso: plateOf('html[data-theme="dark"][data-palette="espresso"]')
+        };
+        const mapOf = (src, label) => {
+          const m = src.match(/'light'\s*\?\s*'(#[0-9A-Fa-f]{6})'\s*:\s*[a-zA-Z.]+\s*===\s*'velvet'\s*\?\s*'(#[0-9A-Fa-f]{6})'\s*:\s*[a-zA-Z.]+\s*===\s*'espresso'\s*\?\s*'(#[0-9A-Fa-f]{6})'\s*:\s*'(#[0-9A-Fa-f]{6})'/);
+          assert.ok(m, `${label}: title-bar colour map not found`);
+          return { light: m[1].toUpperCase(), velvet: m[2].toUpperCase(), espresso: m[3].toUpperCase(), graphite: m[4].toUpperCase() };
+        };
+        const indexSrc32 = fs.readFileSync(path.join(REPO_ROOT, 'index.html'), 'utf8');
+        const appSrc32 = fs.readFileSync(path.join(REPO_ROOT, 'js', 'app.js'), 'utf8');
+        assert.deepStrictEqual(mapOf(indexSrc32, 'index.html pre-paint script'), cssPlates, 'index.html pre-paint title-bar colours must equal each palette --bg-plate');
+        assert.deepStrictEqual(mapOf(appSrc32, 'js/app.js applyTheme fallback'), cssPlates, 'applyTheme fallback title-bar colours must equal each palette --bg-plate');
+        assert.ok(new RegExp(`<meta name="theme-color" content="${cssPlates.graphite}"`, 'i').test(indexSrc32), 'index.html static theme-color must equal the graphite --bg-plate');
+
+        // (k) Collapsing the sidebar hands the whole window to the workbench
+        const collapse32 = await evalJs(`(async () => {
+          document.getElementById('btn-toggle-sidebar')?.click();
+          await new Promise((r) => setTimeout(r, 120));
+          const collapsed = document.documentElement.classList.contains('sidebar-collapsed');
+          const r = document.querySelector('.main-stage').getBoundingClientRect();
+          const out = { collapsed, left: Math.round(r.left), right: Math.round(r.right), vw: window.innerWidth };
+          document.getElementById('btn-expand-sidebar-inline')?.click();
+          await new Promise((r2) => setTimeout(r2, 120));
+          out.restored = !document.documentElement.classList.contains('sidebar-collapsed');
+          return out;
+        })()`);
+        assert.strictEqual(collapse32.collapsed, true, 'Sidebar must collapse from its toggle');
+        assert.strictEqual(collapse32.left, 0, 'Collapsed: workbench must start at the left edge');
+        assert.strictEqual(collapse32.right, collapse32.vw, `Collapsed: workbench must reach the right edge (${collapse32.right} of ${collapse32.vw})`);
+        assert.strictEqual(collapse32.restored, true, 'Sidebar must expand again');
         console.log('[PASS] Adversarial #32: Phase 7 (v97) one-line sidebar headers, untruncated account names, unclipped filter chips, session-list floor, 26px header controls, extension accents, keyboard focus ring & installed-window title bar verified');
       } finally {
         srv.mockStatePayload = null;
