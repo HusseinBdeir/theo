@@ -2183,7 +2183,7 @@ async function main() {
     })()`);
 
     assert.strictEqual(v59InteractiveProbe.xssTriggered, false, 'Hostile HTML in thoughtBlocks, subagents, questions & palettes must never execute');
-    assert.strictEqual(v59InteractiveProbe.inlineCodeColor, 'rgb(223, 201, 163)', `Expected warm sand inline code rgb(223, 201, 163), got ${v59InteractiveProbe.inlineCodeColor}`);
+    assert.strictEqual(v59InteractiveProbe.inlineCodeColor, 'rgb(237, 237, 237)', `Expected neutral Graphite inline code rgb(237, 237, 237), got ${v59InteractiveProbe.inlineCodeColor}`);
     assert.strictEqual(v59InteractiveProbe.secQuestionsVisible, true, 'Sidebar #ide-sec-questions must be visible when questions are pending');
     assert.strictEqual(v59InteractiveProbe.secBgVisible, true, 'Sidebar #ide-sec-bgtasks must be visible when Side Agents / tasks exist');
     assert.strictEqual(v59InteractiveProbe.dockVisibleDesktop, true, '#chat-question-dock must be visible above composer on desktop');
@@ -10597,6 +10597,173 @@ async function main() {
       }
     }
 
+    // Adversarial #33: v101 Full VS Code Extension Parity (1.3px SVGs, 1-row filters + Hide Desktop in SESSIONS header,
+    // default-collapsed idle multi-accounts + 1-click expand, stacked reorder arrows, provider bar, search clear, 6 labeled footer icons, md-h2>md-h3>md-h4)
+    {
+      try {
+        const now33 = Date.now();
+        const mkLimits33 = (p) => [{ label: 'Gemini 4 Carbon', usedPercent: p, pct: p, reset: now33 + 3600000, known: true }];
+        const p33Payload = {
+          generatedAt: now33,
+          device: { id: 'host-33', name: 'Workstation', role: 'primary' },
+          devices: [{ id: 'host-33', name: 'Workstation', online: true, lastSeenAt: now33 }],
+          providers: {
+            antigravity: {
+              active: true,
+              usage: { limits: mkLimits33(15) },
+              account: { available: true, email: 'p33-a@example.com', plan: 'Google AI Ultra' },
+              accounts: [
+                { id: 'antigravity:p33-a@example.com', provider: 'antigravity', active: true, nickname: 'Main', account: { available: true, email: 'p33-a@example.com', plan: 'Google AI Ultra' }, usage: { limits: mkLimits33(15) } },
+                { id: 'antigravity:p33-b@example.com', provider: 'antigravity', active: false, nickname: 'Second', account: { available: true, email: 'p33-b@example.com', plan: 'Google AI Pro' }, usage: { limits: mkLimits33(50) } }
+              ]
+            },
+            claude: {
+              active: true,
+              usage: { limits: mkLimits33(20) },
+              account: { available: true, email: 'p33-c@example.com', plan: 'Claude Max' },
+              accounts: [
+                { id: 'claude:p33-c@example.com', provider: 'claude', active: true, nickname: 'ClaudeMain', account: { available: true, email: 'p33-c@example.com', plan: 'Claude Max' }, usage: { limits: mkLimits33(20) } }
+              ]
+            }
+          },
+          rows: [
+            { id: 's33-agy', provider: 'antigravity', title: 'Agy Running Parity', status: 'working', open: true, at: now33 - 1000, model: 'Gemini 4 Argon' },
+            { id: 's33-claude', provider: 'claude', title: 'Claude Unread Thread', status: 'idle', unread: true, at: now33 - 2000, model: 'Claude Opus 4.7' },
+            { id: 's33-closed', provider: 'antigravity', title: 'Closed Read Thread', status: 'idle', unread: false, open: false, at: now33 - 50000 },
+            { id: 's33-desk', provider: 'claude', title: 'Desktop Session 33', status: 'idle', claudeDesktop: true, origin: 'claude_desktop', at: now33 - 60000 }
+          ],
+          groups: [{ id: 'grp-33', name: 'Team', collapsed: false }]
+        };
+        srv.mockStatePayload = p33Payload;
+        const threads33 = {
+          's33-agy': {
+            id: 's33-agy',
+            title: 'Agy Running Parity',
+            provider: 'antigravity',
+            messages: [
+              { role: 'user', text: 'Render headings', createdAt: new Date(now33 - 5000).toISOString() },
+              { role: 'assistant', text: '## Top\n\n### Mid\n\n#### Small', createdAt: new Date(now33 - 2000).toISOString() }
+            ]
+          }
+        };
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 2, mobile: false }, sessionId);
+        await evalJs(`((snapJson, threadsJson, originUrl) => {
+          const snap = JSON.parse(snapJson);
+          const threads = JSON.parse(threadsJson);
+          const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+          prefs.theme = 'dark';
+          prefs.themeUserSet = true;
+          prefs.palette = 'graphite';
+          prefs.activeTab = 'chat';
+          prefs.desktopWorkbenchBootV92 = true;
+          prefs.collapsedQuotaCards = {};
+          prefs.sidebarFilter = 'all';
+          prefs.sidebarProvider = 'all';
+          prefs.selectedThreadId = 's33-agy';
+          prefs.customBridgeUrl = originUrl;
+          prefs.openEditorTabs = ['s33-agy'];
+          localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+          localStorage.setItem('theo_remote_cache_v3', JSON.stringify({ state: snap, snapshot: snap, threads, updatedAt: Date.now() }));
+          window.__p9OldPage = true;
+          location.reload();
+          return true;
+        })(${JSON.stringify(JSON.stringify(p33Payload))}, ${JSON.stringify(JSON.stringify(threads33))}, ${JSON.stringify(baseUrl)})`);
+        let cards33Ready = false;
+        for (let i = 0; i < 80 && !cards33Ready; i++) {
+          await new Promise((r) => setTimeout(r, 100));
+          cards33Ready = await evalJs(`!window.__p9OldPage && document.readyState === 'complete' && document.querySelectorAll('#ide-sidebar-accounts .ide-acct-card').length === 3 && Boolean(document.querySelector('#ide-sidebar-tree .ide-tree-row')) && Boolean(document.querySelector('#chat-stream .md-h2'))`).catch(() => false);
+        }
+        assert.strictEqual(cards33Ready, true, 'Adversarial #33 reload must draw 3 account cards, session tree, and markdown headings');
+
+        const r33 = await evalJs(`(async () => {
+          const idleCard = document.querySelector('#ide-sidebar-accounts .ide-acct-card:not(.is-active)');
+          const idleCollapsedInit = Boolean(idleCard && idleCard.classList.contains('collapsed'));
+          const idleBtn = idleCard?.querySelector('[data-quota-collapse]');
+          idleBtn?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          const idleAfter1Click = document.querySelector('#ide-sidebar-accounts .ide-acct-card:not(.is-active)')?.classList.contains('collapsed');
+
+          const chips = [...document.querySelectorAll('#ide-sidebar-filters .ide-fchip')].filter((c) => getComputedStyle(c).display !== 'none');
+          const chipTops = chips.map((c) => Math.round(c.getBoundingClientRect().top));
+          const oneRowFilters = chipTops.length === 6 && Math.max(...chipTops) - Math.min(...chipTops) <= 2;
+          const hideDeskBtn = document.querySelector('.ide-side-sessions > .ide-side-summary #ide-hide-desktop-chip');
+          const hideDeskInHeader = Boolean(hideDeskBtn && !hideDeskBtn.hidden && getComputedStyle(hideDeskBtn).display !== 'none');
+          const hideDeskIdleBg = hideDeskBtn ? getComputedStyle(hideDeskBtn).backgroundColor : '';
+          hideDeskBtn?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          const deskHiddenOnToggle = !document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="s33-desk"]');
+          const hideDeskActiveBg = hideDeskBtn ? getComputedStyle(hideDeskBtn).backgroundColor : '';
+          const hideDeskHasActive = Boolean(hideDeskBtn && hideDeskBtn.classList.contains('active'));
+          hideDeskBtn?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          const deskRestoredOnReversal = Boolean(document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="s33-desk"]'));
+
+          const footLabels = [...document.querySelectorAll('#ide-sidebar-footer .ide-foot-lbl')].map((l) => ({
+            text: l.textContent.trim(),
+            shown: getComputedStyle(l).display !== 'none'
+          }));
+
+          const unreadDot = document.querySelector('#ide-sidebar-tree .ide-dot.unread');
+          const closedDot = document.querySelector('#ide-sidebar-tree .ide-dot.closed');
+          const unreadDotShown = Boolean(unreadDot && getComputedStyle(unreadDot).display !== 'none');
+          const closedDotHidden = Boolean(closedDot && getComputedStyle(closedDot).display === 'none');
+
+          document.querySelector('#ide-provider-bar [data-side-prov="claude"]')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          const claudeRows = [...document.querySelectorAll('#ide-sidebar-tree .ide-tree-row')].map((n) => n.dataset.sessionProv);
+          document.querySelector('#ide-provider-bar [data-side-prov="all"]')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+
+          const searchInp = document.getElementById('ide-sidebar-search');
+          searchInp.value = 'Claude';
+          searchInp.dispatchEvent(new Event('input', { bubbles: true }));
+          await new Promise((r) => setTimeout(r, 40));
+          const hasQueryClass = searchInp.closest('.ide-search-wrap')?.classList.contains('has-query');
+          document.getElementById('ide-sidebar-search-clear')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          const clearedVal = searchInp.value;
+
+          const stream = document.getElementById('chat-stream');
+          const mdSizes = ['.md-h2', '.md-h3', '.md-h4'].map((s) => parseFloat(getComputedStyle(stream.querySelector(s)).fontSize));
+
+          return { idleCollapsedInit, idleAfter1Click, oneRowFilters, hideDeskInHeader, hideDeskHasActive, hideDeskIdleBg, hideDeskActiveBg, deskHiddenOnToggle, deskRestoredOnReversal, footLabels, unreadDotShown, closedDotHidden, claudeRows, hasQueryClass, clearedVal, mdSizes };
+        })()`);
+
+        assert.strictEqual(r33.idleCollapsedInit, true, 'Idle multi-account card must default to collapsed on fresh prefs');
+        assert.strictEqual(r33.idleAfter1Click, false, 'One click on default-collapsed idle card must expand it immediately');
+        assert.strictEqual(r33.oneRowFilters, true, 'All 6 filter chips must stay on a single row');
+        assert.strictEqual(r33.hideDeskInHeader, true, '#ide-hide-desktop-chip must be visible inside SESSIONS header');
+        assert.strictEqual(r33.hideDeskHasActive, true, 'Clicking #ide-hide-desktop-chip must set .active class');
+        assert.notStrictEqual(r33.hideDeskActiveBg, r33.hideDeskIdleBg, 'Active #ide-hide-desktop-chip must render distinct active background');
+        assert.strictEqual(r33.deskHiddenOnToggle, true, 'Clicking #ide-hide-desktop-chip must hide Desktop sessions');
+        assert.strictEqual(r33.deskRestoredOnReversal, true, 'Clicking #ide-hide-desktop-chip again must restore Desktop sessions');
+        assert.deepStrictEqual(r33.footLabels.map((f) => f.text), ['Vault', 'Repos', 'Fleet', 'Alerts', 'Search', 'Theme']);
+        assert.ok(r33.footLabels.every((f) => f.shown), 'All 6 sidebar footer labels must be visible on desktop');
+        assert.strictEqual(r33.unreadDotShown, true, 'Unread session dot must render on unread sessions');
+        assert.strictEqual(r33.closedDotHidden, true, 'Closed read idle session dot must stay hidden');
+        assert.ok(r33.claudeRows.length >= 1 && r33.claudeRows.every((p) => p === 'claude'), 'Provider bar Claude tab must filter tree rows');
+        assert.strictEqual(r33.hasQueryClass, true, 'Typing search must toggle .has-query');
+        assert.strictEqual(r33.clearedVal, '', 'Clicking search clear button must empty search box');
+        assert.ok(r33.mdSizes[0] > r33.mdSizes[1] && r33.mdSizes[1] > r33.mdSizes[2], `Heading sizes must descend h2 > h3 > h4 (got ${JSON.stringify(r33.mdSizes)})`);
+
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true }, sessionId);
+        const mobFootHidden = await evalJs(`[...document.querySelectorAll('#ide-sidebar-footer .ide-foot-lbl')].every((l) => getComputedStyle(l).display === 'none')`);
+        assert.strictEqual(mobFootHidden, true, 'Footer text labels must stay hidden below 1025px');
+        console.log('[PASS] Adversarial #33: v101 Full VS Code Extension Parity (1-row filters, default idle collapse + 1-click expand, provider bar, search clear, 6 labeled footer icons, unread/closed dots, h2>h3>h4) verified');
+      } finally {
+        srv.mockStatePayload = null;
+        await evalJs(`(() => {
+          const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+          prefs.customBridgeUrl = '';
+          prefs.collapsedQuotaCards = {};
+          prefs.sidebarFilter = 'all';
+          prefs.sidebarProvider = 'all';
+          localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+          return true;
+        })()`).catch(() => {});
+      }
+    }
+
     // Static & Chromium isolation check: iOS 26/27 standalone top-edge progressive blur mitigation present
     {
       const theoHtmlSrc = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
@@ -10604,7 +10771,7 @@ async function main() {
       const theoManSrc = fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8');
       const theoSwSrc = fs.readFileSync(path.join(__dirname, '..', 'sw.js'), 'utf8');
       const swVerMatch = theoSwSrc.match(/CACHE_NAME\s*=\s*['"]theo-remote-v(\d+)['"]/);
-      assert.ok(swVerMatch && Number(swVerMatch[1]) >= 100, 'sw.js must declare CACHE_NAME = theo-remote-v100+');
+      assert.ok(swVerMatch && Number(swVerMatch[1]) >= 101, 'sw.js must declare CACHE_NAME = theo-remote-v101+');
       assert.ok(theoHtmlSrc.includes('class="pwa-status-bar-surface"'), 'index.html must include .pwa-status-bar-surface element');
       assert.ok(theoCssSrc.includes('--ios-pwa-top-clear') && theoCssSrc.includes('@supports (-webkit-touch-callout: none)'), 'css/theo.css must guard --ios-pwa-top-clear under @supports');
       assert.ok(theoManSrc.includes(`?v=${swVerMatch[1]}`), `manifest.json must be bumped to v${swVerMatch[1]}`);

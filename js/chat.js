@@ -2571,8 +2571,8 @@
       if (hMatch) {
         flushPara();
         const lvl = hMatch[1].length;
-        const cls = lvl <= 3 ? 'md-h3' : 'md-h4';
-        const tag = lvl <= 3 ? 'h3' : 'h4';
+        const cls = lvl <= 2 ? 'md-h2' : lvl === 3 ? 'md-h3' : 'md-h4';
+        const tag = lvl <= 2 ? 'h2' : lvl === 3 ? 'h3' : 'h4';
         out.push(`<${tag} class="${cls}">${formatInline(hMatch[2])}</${tag}>`);
         continue;
       }

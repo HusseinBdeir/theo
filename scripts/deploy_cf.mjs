@@ -223,6 +223,13 @@ const copied = buildDist();
 const parity = verifyAtomicShellParity(REPO_ROOT, DIST_DIR);
 // Design-token gate: no raw font sizes, radii or colours reach live (exits non-zero on a failure).
 execFileSync(process.execPath, [path.join(__dirname, 'verify_design_tokens.cjs'), '--root', REPO_ROOT], { stdio: 'inherit' });
+// VS Code Hub parity gate: extension sidebar and PWA sidebar render without geometric, colour or control-icon drift.
+if (!process.argv.includes('--skip-vscode-parity')) {
+  const parityScript = path.join(__dirname, 'verify_vscode_parity.cjs');
+  if (fs.existsSync(parityScript)) {
+    execFileSync(process.execPath, [parityScript], { stdio: 'inherit' });
+  }
+}
 console.log(
   `[deploy_cf:theo] Staged ${copied.length} allowlisted public files into ${path.relative(REPO_ROOT, DIST_DIR) || '.cf-dist'} (atomic parity PASS: v${parity.expectedVer}, ${parity.jsCount} JS modules):`
 );

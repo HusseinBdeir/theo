@@ -9,11 +9,11 @@
   <meta name="apple-mobile-web-app-title" content="THEO">
   <meta name="description" content="THEO workbench for Google Antigravity and Claude Code.">
   <title>THEO</title>
-  <link rel="manifest" href="manifest.json?v=100">
-  <link rel="icon" type="image/svg+xml" href="icon.svg?v=100">
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=100">
-  <link rel="apple-touch-icon" href="icon-180.png?v=100">
-  <link rel="stylesheet" href="css/theo.css?v=100">
+  <link rel="manifest" href="manifest.json?v=101">
+  <link rel="icon" type="image/svg+xml" href="icon.svg?v=101">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=101">
+  <link rel="apple-touch-icon" href="icon-180.png?v=101">
+  <link rel="stylesheet" href="css/theo.css?v=101">
   <script id="pre">
     (() => {
       try {
@@ -53,7 +53,7 @@
   <div id="pin-overlay" class="pin-overlay" hidden>
     <div class="pin-card">
       <div class="pin-brand">
-        <img src="icon.svg?v=100" alt="THEO" class="pin-logo">
+        <img src="icon.svg?v=101" alt="THEO" class="pin-logo">
         <div class="pin-title">THEO</div>
         <div class="brass-double-rule"></div>
       </div>
@@ -81,7 +81,7 @@
   <div class="app-shell" id="app-shell">
     <!-- Title bar of the installed desktop app; shown only when the window controls overlay is on -->
     <header class="wco-titlebar" id="wco-titlebar" aria-label="THEO window title bar">
-      <img src="icon.svg?v=100" alt="" class="wco-titlebar-icon">
+      <img src="icon.svg?v=101" alt="" class="wco-titlebar-icon">
       <button type="button" class="wco-titlebar-search" id="wco-titlebar-search" data-open-cmd-palette="1" aria-label="Search sessions and commands (⌘K)">
         <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         <span>Search sessions and commands</span>
@@ -94,7 +94,7 @@
       <div class="ide-explorer-sidebar" id="ide-explorer-sidebar">
         <div class="ide-sidebar-top">
           <button type="button" class="ide-brand-home-btn" id="btn-sidebar-brand" data-tab="chat" data-micro-tip="Workbench" aria-label="Open THEO Workbench">
-            <img src="icon.svg?v=100" alt="" class="ide-brand-icon">
+            <img src="icon.svg?v=101" alt="" class="ide-brand-icon">
             <span class="ide-sidebar-heading">THEO</span>
           </button>
           <div class="ide-sidebar-top-actions">
@@ -121,7 +121,7 @@
         <details class="ide-side-section" id="ide-sec-accounts" open>
           <summary class="ide-side-summary">
             <span class="ide-side-summary-left">
-              <span class="ide-chevron" aria-hidden="true"><svg class="ui-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6L8 9.5L11.5 6"/></svg></span>
+              <span class="ide-chevron" aria-hidden="true"><svg class="ui-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6L8 9.5L11.5 6"/></svg></span>
               <span>ACCOUNT &amp; USAGE</span>
               <span class="ide-side-count tabular" id="ide-accounts-count" hidden>0</span>
             </span>
@@ -146,7 +146,7 @@
         <details class="ide-side-section ide-sec-questions" id="ide-sec-questions" open hidden>
           <summary class="ide-side-summary">
             <span class="ide-side-summary-left">
-              <span class="ide-chevron" aria-hidden="true"><svg class="ui-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6L8 9.5L11.5 6"/></svg></span>
+              <span class="ide-chevron" aria-hidden="true"><svg class="ui-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6L8 9.5L11.5 6"/></svg></span>
               <span>QUESTIONS</span>
               <span class="ide-side-count amber tabular" id="ide-questions-count">0</span>
             </span>
@@ -158,13 +158,13 @@
         <details class="ide-side-section ide-sec-bgtasks" id="ide-sec-bgtasks" open hidden>
           <summary class="ide-side-summary">
             <span class="ide-side-summary-left">
-              <span class="ide-chevron" aria-hidden="true"><svg class="ui-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6L8 9.5L11.5 6"/></svg></span>
+              <span class="ide-chevron" aria-hidden="true"><svg class="ui-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6L8 9.5L11.5 6"/></svg></span>
               <span id="ide-bgtasks-heading">SIDE AGENTS &amp; TASKS</span>
               <span class="ide-side-count emerald tabular" id="ide-bgtasks-count">0</span>
             </span>
             <span class="ide-side-summary-right">
               <span class="ide-link-pill" id="ide-bgtasks-unpin" role="button" tabindex="0" data-bg-side-act="unpin" hidden>All</span>
-              <span class="ide-link-pill danger" id="ide-bgtasks-stop-all" role="button" tabindex="0" data-bg-side-act="stop-all" hidden>■ Stop</span>
+              <span class="ide-link-pill danger" id="ide-bgtasks-stop-all" role="button" tabindex="0" data-bg-side-act="stop-all" hidden><svg class="ui-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.6"/></svg><span>Stop</span></span>
             </span>
           </summary>
           <div class="ide-bgtasks-body" id="ide-sidebar-bgtasks"></div>
@@ -174,9 +174,13 @@
         <div class="ide-side-sessions">
           <div class="ide-side-summary static">
             <span class="ide-side-summary-left">
-              <span class="ide-chevron" aria-hidden="true"><svg class="ui-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6L8 9.5L11.5 6"/></svg></span>
+              <span class="ide-chevron" aria-hidden="true"><svg class="ui-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6L8 9.5L11.5 6"/></svg></span>
               <span>SESSIONS</span>
               <span class="ide-side-count tabular" id="ide-sidebar-count">0</span>
+            </span>
+            <span class="ide-side-summary-right">
+              <button type="button" class="ide-link-pill ide-hide-desktop-chip" id="ide-hide-desktop-chip" data-toggle-hide-desktop="1" hidden>Hide Desktop</button>
+              <button type="button" class="ide-link-pill icon-only" data-group-act="create" data-micro-tip="New Group" aria-label="New Session Group"><svg class="ui-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg></button>
             </span>
           </div>
 
@@ -187,13 +191,31 @@
             </button>
             <button type="button" class="launch-btn claude" id="rail-new-claude" data-quick-new="claude">
               <span class="prov-glyph" data-prov-icon="claude"></span>
-              <span>+ Claude</span>
+              <span>+ Claude Code</span>
+            </button>
+          </div>
+
+          <div class="ide-provider-bar" id="ide-provider-bar" role="tablist" aria-label="Filter sessions by provider">
+            <button type="button" class="ide-provider-tab active" data-side-prov="all" role="tab" aria-selected="true">
+              <span>All</span>
+              <span class="ide-prov-count tabular" id="ide-prov-count-all">0</span>
+            </button>
+            <button type="button" class="ide-provider-tab agy" data-side-prov="antigravity" role="tab" aria-selected="false">
+              <span class="prov-glyph" data-prov-icon="antigravity"></span>
+              <span>Antigravity</span>
+              <span class="ide-prov-count tabular" id="ide-prov-count-agy">0</span>
+            </button>
+            <button type="button" class="ide-provider-tab claude" data-side-prov="claude" role="tab" aria-selected="false">
+              <span class="prov-glyph" data-prov-icon="claude"></span>
+              <span>Claude</span>
+              <span class="ide-prov-count tabular" id="ide-prov-count-claude">0</span>
             </button>
           </div>
 
           <div class="ide-search-wrap">
-            <svg class="ide-search-ico" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            <svg class="ide-search-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L13.8 13.8"/></svg>
             <input type="search" id="ide-sidebar-search" placeholder="Search sessions…" autocomplete="off" aria-label="Filter sidebar sessions">
+            <button type="button" class="ide-search-clear" id="ide-sidebar-search-clear" aria-label="Clear session search"><svg class="ui-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
           </div>
 
           <div class="ide-filter-strip" id="ide-sidebar-filters">
@@ -203,7 +225,6 @@
             <button type="button" class="ide-fchip" data-side-filter="unread">Unread</button>
             <button type="button" class="ide-fchip" data-side-filter="open">Open</button>
             <button type="button" class="ide-fchip" data-side-filter="archived">Archived</button>
-            <button type="button" class="ide-fchip" id="ide-hide-desktop-chip" data-toggle-hide-desktop="1" hidden>Hide Desktop</button>
           </div>
 
           <div class="ide-session-tree" id="ide-sidebar-tree"></div>
@@ -211,25 +232,31 @@
 
         <footer class="ide-sidebar-footer" id="ide-sidebar-footer" aria-label="Sidebar Quick Actions">
           <a class="icon-btn ide-foot-btn" id="rail-vault-btn" href="https://memory.husseinbdeir.workers.dev/" target="_blank" rel="noopener external" data-micro-tip="Memory Vault" aria-label="Open THEO Memory Vault" style="text-decoration:none">
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5A1.5 1.5 0 0 1 4.5 4H8l1.6 1.5h5.9A1.5 1.5 0 0 1 17 7v7.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z"/><path d="M7 10.5h6M7 13h4"/></svg>
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5A1.5 1.5 0 0 1 4.5 4H8l1.6 1.5h5.9A1.5 1.5 0 0 1 17 7v7.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z"/><path d="M7 10.5h6M7 13h4"/></svg>
+            <span class="ide-foot-lbl">Vault</span>
           </a>
           <button type="button" class="icon-btn ide-foot-btn" id="rail-workspaces-btn" data-sidebar-nav="workspaces" data-micro-tip="Repos &amp; Git" aria-label="Repos and Git">
-            <svg viewBox="0 0 20 20"><circle cx="6" cy="5.5" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="6" cy="14.5" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="14" cy="10" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6 7.5v5M8 5.5h3a3 3 0 0 1 3 2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            <svg viewBox="0 0 20 20"><circle cx="6" cy="5.5" r="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="6" cy="14.5" r="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="14" cy="10" r="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 7.5v5M8 5.5h3a3 3 0 0 1 3 2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
             <span class="nav-badge steel tabular" id="badge-workspaces" hidden>0</span>
+            <span class="ide-foot-lbl">Repos</span>
           </button>
           <button type="button" class="icon-btn ide-foot-btn" id="rail-fleet-btn" data-open-conn-modal="1" data-micro-tip="Fleet &amp; Pairing" aria-label="Fleet and Device Pairing">
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="10" height="7.5" rx="1.4"/><path d="M5 14.5h5"/><rect x="13.5" y="7" width="4.2" height="8.5" rx="1"/></svg>
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="10" height="7.5" rx="1.4"/><path d="M5 14.5h5"/><rect x="13.5" y="7" width="4.2" height="8.5" rx="1"/></svg>
+            <span class="ide-foot-lbl">Fleet</span>
           </button>
           <button type="button" class="icon-btn ide-foot-btn" id="rail-push-btn" data-push-act="header-bell" data-micro-tip="Notifications" aria-label="Notifications and Web Push Alerts" style="position:relative">
-            <svg viewBox="0 0 20 20"><path d="M10 3a4.5 4.5 0 0 0-4.5 4.5v2.8c0 .7-.25 1.38-.7 1.9L3.8 13.4h12.4l-1-1.2a3 3 0 0 1-.7-1.9V7.5A4.5 4.5 0 0 0 10 3zm-1.8 12.2a1.8 1.8 0 0 0 3.6 0" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <svg viewBox="0 0 20 20"><path d="M10 3a4.5 4.5 0 0 0-4.5 4.5v2.8c0 .7-.25 1.38-.7 1.9L3.8 13.4h12.4l-1-1.2a3 3 0 0 1-.7-1.9V7.5A4.5 4.5 0 0 0 10 3zm-1.8 12.2a1.8 1.8 0 0 0 3.6 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
             <span class="conn-dot" id="rail-push-dot" style="position:absolute;top:4px;right:4px;width:6px;height:6px;box-shadow:none"></span>
             <span class="push-count-badge tabular" id="rail-push-badge" hidden>0</span>
+            <span class="ide-foot-lbl">Alerts</span>
           </button>
           <button type="button" class="icon-btn ide-foot-btn" id="open-cmd-palette" data-micro-tip="Command Palette (⌘K)" aria-label="Open Command Palette">
-            <svg viewBox="0 0 20 20"><circle cx="8.5" cy="8.5" r="5" fill="none" stroke="currentColor" stroke-width="1.65"/><path d="M12.5 12.5L16.5 16.5" stroke="currentColor" stroke-width="1.65" stroke-linecap="round"/></svg>
+            <svg viewBox="0 0 20 20"><circle cx="8.5" cy="8.5" r="5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12.5 12.5L16.5 16.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            <span class="ide-foot-lbl">Search</span>
           </button>
           <button type="button" class="icon-btn ide-foot-btn" id="btn-palette-picker" data-palette-open="1" data-micro-tip="Theme &amp; Palette" aria-label="Choose Appearance Theme and Palette" aria-expanded="false">
-            <svg viewBox="0 0 20 20"><path d="M10 2.8a7.2 7.2 0 1 0 0 14.4 1.6 1.6 0 0 0 1.6-1.6c0-.4-.15-.78-.4-1.06a1.5 1.5 0 0 1 1.12-2.54h1.28a3.6 3.6 0 0 0 3.6-3.6C17.2 5.2 13.98 2.8 10 2.8z" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linejoin="round"/><circle cx="6.8" cy="8.2" r="1" fill="currentColor"/><circle cx="9.8" cy="6.4" r="1" fill="currentColor"/><circle cx="13" cy="8.2" r="1" fill="currentColor"/></svg>
+            <svg viewBox="0 0 20 20"><path d="M10 2.8a7.2 7.2 0 1 0 0 14.4 1.6 1.6 0 0 0 1.6-1.6c0-.4-.15-.78-.4-1.06a1.5 1.5 0 0 1 1.12-2.54h1.28a3.6 3.6 0 0 0 3.6-3.6C17.2 5.2 13.98 2.8 10 2.8z" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linejoin="round"/><circle cx="6.8" cy="8.2" r="1" fill="currentColor"/><circle cx="9.8" cy="6.4" r="1" fill="currentColor"/><circle cx="13" cy="8.2" r="1" fill="currentColor"/></svg>
+            <span class="ide-foot-lbl">Theme</span>
           </button>
         </footer>
       </div>
@@ -240,7 +267,7 @@
       <!-- Mobile & Compact Top Header -->
       <header class="mobile-topbar">
         <div class="mobile-brand">
-          <img src="icon.svg?v=100" alt="THEO" class="mobile-badge">
+          <img src="icon.svg?v=101" alt="THEO" class="mobile-badge">
           <div class="mobile-brand-copy">
             <div class="mobile-title-row">
               <div class="mobile-wordmark-stack">
@@ -432,7 +459,7 @@
             </button>
             <div class="ide-editor-tabs-scroll" id="ide-editor-tabs" role="tablist" aria-label="Open Session Tabs"></div>
             <div class="ide-editor-tabs-actions">
-              <button type="button" class="ide-tab-add-btn" data-quick-new="antigravity" aria-label="New Antigravity Session Tab">+</button>
+              <button type="button" class="ide-tab-add-btn" data-quick-new="antigravity" aria-label="New Antigravity Session Tab"><svg class="ui-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg></button>
             </div>
           </div>
 
@@ -487,7 +514,7 @@
                 <span class="insp-pill-badge" id="inspector-pill-count" hidden>0</span>
               </button>
               <div class="chat-more-wrap" id="chat-more-wrap">
-                <button type="button" class="ide-mini-icon-btn chat-more-btn" id="btn-chat-more" data-micro-tip="More session actions" aria-label="More session actions" aria-haspopup="menu" aria-expanded="false">⋯</button>
+                <button type="button" class="ide-mini-icon-btn chat-more-btn" id="btn-chat-more" data-micro-tip="More session actions" aria-label="More session actions" aria-haspopup="menu" aria-expanded="false"><svg class="ui-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.1"/><circle cx="8" cy="8" r="1.1"/><circle cx="12.5" cy="8" r="1.1"/></svg></button>
                 <div class="chat-more-menu" id="chat-more-menu" role="menu" aria-label="Session actions" hidden>
                   <button type="button" class="ctx-menu-item split-watch-btn" id="btn-split-watch" role="menuitemcheckbox" aria-checked="false" aria-pressed="false">
                     <span>Parallel Split-Watch</span>
@@ -510,7 +537,7 @@
           <div class="vs-model-menu-popover model-picker-popover" id="model-picker-popover" role="menu" aria-label="Model and Thinking Level Selector" hidden>
             <div class="vs-model-menu-head">
               <span class="vs-model-menu-title" id="model-popover-title">Model Selection</span>
-              <button type="button" class="vs-model-close-btn" id="btn-close-model-picker" aria-label="Close Model Selector">✕</button>
+              <button type="button" class="vs-model-close-btn" id="btn-close-model-picker" aria-label="Close Model Selector"><svg class="ui-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
             </div>
             <div class="model-picker-body" id="model-picker-body"></div>
           </div>
@@ -523,8 +550,8 @@
               </div>
               <div class="bg-popover-head-btns">
                 <button type="button" class="btn-ghost-sm" id="btn-refresh-bgtasks" aria-label="Refresh live task &amp; subagent logs">↻ Refresh</button>
-                <button type="button" class="btn-ghost-sm bg-stop-all-btn" id="btn-stop-all-bgtasks" hidden>■ Stop All</button>
-                <button type="button" class="icon-btn-sm" id="btn-close-bgtasks" aria-label="Close Background Tasks">✕</button>
+                <button type="button" class="btn-ghost-sm bg-stop-all-btn" id="btn-stop-all-bgtasks" hidden><svg class="ui-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.6"/></svg><span>Stop All</span></button>
+                <button type="button" class="icon-btn-sm" id="btn-close-bgtasks" aria-label="Close Background Tasks"><svg class="ui-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
               </div>
             </div>
             <div class="bg-popover-list" id="bg-tasks-popover-list"></div>
@@ -536,7 +563,7 @@
               <div>
                 <h3 id="ctx-popover-title">Context Window</h3>
               </div>
-              <button type="button" class="icon-btn-sm" id="btn-close-ctx">✕</button>
+              <button type="button" class="icon-btn-sm" id="btn-close-ctx"><svg class="ui-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
             </div>
             <div class="ctx-meter-summary tabular" id="ctx-meter-summary"></div>
             <div class="ctx-overrun-banner tabular" id="ctx-overrun-banner" hidden></div>
@@ -582,11 +609,11 @@
                       <button type="button" class="composer-icon-pill" id="btn-composer-mention" aria-label="Mention workspace or file">@</button>
                       <button type="button" class="composer-icon-pill" id="btn-composer-slash" aria-label="Run slash action">/</button>
                       <button type="button" class="composer-route-toggle-pill" id="btn-toggle-composer-route" aria-label="Toggle target host and workspace routing" aria-expanded="false">
-                        <span>⇄ Route</span>
+                        <svg class="ui-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="4.5" r="1.5"/><circle cx="12" cy="11.5" r="1.5"/><path d="M5.5 4.5h3a2 2 0 0 1 2 2v3.5"/></svg><span>Route</span>
                       </button>
                       <button type="button" class="composer-model-pill tabular" id="composer-model-btn" aria-haspopup="menu" aria-expanded="false" aria-label="Change Model and Thinking Level">
                         <span id="composer-model-label">Gemini 4 Argon · High</span>
-                        <span class="model-pill-chev" aria-hidden="true"><svg class="ui-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6L8 9.5L11.5 6"/></svg></span>
+                        <span class="model-pill-chev" aria-hidden="true"><svg class="ui-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6L8 9.5L11.5 6"/></svg></span>
                       </button>
 
                       <div class="composer-routing-row" id="composer-routing-row">
@@ -636,7 +663,7 @@
                     <span class="ide-insp-badge tabular" id="insp-agents-badge" hidden>0</span>
                   </button>
                 </div>
-                <button type="button" class="icon-btn-sm" id="btn-close-inspector" aria-label="Close Split Inspector">✕</button>
+                <button type="button" class="icon-btn-sm" id="btn-close-inspector" aria-label="Close Split Inspector"><svg class="ui-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
               </div>
               <div class="ide-inspector-subbar" id="ide-inspector-subbar" hidden></div>
               <div class="ide-inspector-body" id="ide-inspector-body"></div>
@@ -882,13 +909,13 @@
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=100"></script>
-  <script src="js/models.js?v=100"></script>
-  <script src="js/transport.js?v=100"></script>
-  <script src="js/sidebar.js?v=100"></script>
-  <script src="js/inspector.js?v=100"></script>
-  <script src="js/chat.js?v=100"></script>
-  <script src="js/views.js?v=100"></script>
-  <script src="js/app.js?v=100"></script>
+  <script src="js/endpoints.js?v=101"></script>
+  <script src="js/models.js?v=101"></script>
+  <script src="js/transport.js?v=101"></script>
+  <script src="js/sidebar.js?v=101"></script>
+  <script src="js/inspector.js?v=101"></script>
+  <script src="js/chat.js?v=101"></script>
+  <script src="js/views.js?v=101"></script>
+  <script src="js/app.js?v=101"></script>
 </body>
 </html>

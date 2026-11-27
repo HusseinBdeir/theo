@@ -186,6 +186,7 @@
     lastDarkPalette: 'graphite',
     sidebarCollapsed: false,
     sidebarFilter: 'all',
+    sidebarProvider: 'all',
     openEditorTabs: [],
     inspectorOpen: false,
     inspectorTab: 'files',
@@ -224,6 +225,41 @@
     notif: { ...DEFAULT_NOTIF }
   };
 
+  const uiIcon = (paths, cls = 'ui-icon') =>
+    `<svg class="${cls}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+  const UI_ICONS = {
+    more: uiIcon('<circle cx="3.5" cy="8" r="1.1" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none"/><circle cx="12.5" cy="8" r="1.1" fill="currentColor" stroke="none"/>'),
+    swap: uiIcon('<path d="M2.5 5.5h10.5M10 3l3 2.5-3 2.5M13.5 10.5H3M6 8l-3 2.5L6 13"/>'),
+    stop: uiIcon('<rect x="4" y="4" width="8" height="8" rx="1.6" fill="currentColor" stroke="none"/>'),
+    arrowUp: uiIcon('<path d="M8 12.5v-9M4.5 7L8 3.5 11.5 7"/>'),
+    arrowDown: uiIcon('<path d="M8 3.5v9M4.5 9L8 12.5 11.5 9"/>'),
+    close: uiIcon('<path d="M4 4l8 8M12 4l-8 8"/>'),
+    pencil: uiIcon('<path d="M3 13l.6-2.6 7-7a1.2 1.2 0 0 1 1.7 0l.3.3a1.2 1.2 0 0 1 0 1.7l-7 7z"/>'),
+    restore: uiIcon('<rect x="2.5" y="3" width="11" height="3" rx=".8"/><path d="M3.5 6v6a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V6M8 11.5v-3M6.5 9.8L8 8.3l1.5 1.5"/>'),
+    archive: uiIcon('<rect x="2.5" y="3" width="11" height="3" rx=".8"/><path d="M3.5 6v6a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V6M6.5 9h3"/>'),
+    plus: uiIcon('<path d="M8 3.5v9M3.5 8h9"/>'),
+    search: uiIcon('<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L13.8 13.8"/>'),
+    terminal: uiIcon('<rect x="2" y="2.8" width="12" height="10.4" rx="1.6"/><path d="M4.8 6.3L7 8l-2.2 1.7M8.3 10h2.8"/>'),
+    subagent: uiIcon('<circle cx="8" cy="4.2" r="1.8"/><circle cx="4.2" cy="11.8" r="1.7"/><circle cx="11.8" cy="11.8" r="1.7"/><path d="M7 5.8L5 10.2M9 5.8l2 4.4"/>'),
+    timer: uiIcon('<circle cx="8" cy="8.5" r="5.2"/><path d="M8 5.8v2.9l2 1.3M6.3 2h3.4"/>'),
+    question: uiIcon('<circle cx="8" cy="8" r="6"/><path d="M6.4 6.3a1.7 1.7 0 1 1 2.4 1.5c-.6.3-.8.6-.8 1.2M8 11.4h.01"/>'),
+    route: uiIcon('<circle cx="4" cy="4.5" r="1.5"/><circle cx="12" cy="11.5" r="1.5"/><path d="M5.5 4.5h3a2 2 0 0 1 2 2v3.5"/>'),
+    trash: uiIcon('<path d="M3 4.5h10M6 4.5V3h4v1.5M5 4.5l.6 8a1 1 0 0 0 1 .9h2.8a1 1 0 0 0 1-.9l.6-8"/>'),
+    check: uiIcon('<path d="M3.5 8.5l3 3 6-7"/>')
+  };
+
+  function isQuotaCardCollapsed(collapseKey, acctId, multi, isActive) {
+    const map =
+      prefs.collapsedQuotaCards && typeof prefs.collapsedQuotaCards === 'object'
+        ? prefs.collapsedQuotaCards
+        : null;
+    if (map) {
+      if (Object.prototype.hasOwnProperty.call(map, collapseKey)) return Boolean(map[collapseKey]);
+      if (acctId && Object.prototype.hasOwnProperty.call(map, acctId)) return Boolean(map[acctId]);
+    }
+    return Boolean(multi && !isActive);
+  }
+
   Object.assign(S, {
     $,
     DEFAULT_NOTIF,
@@ -234,11 +270,13 @@
     PROVIDER_ICONS,
     RETIRED_WORKSPACE_IDS,
     STORAGE_KEYS,
+    UI_ICONS,
     compareRowsPinnedFirst,
     esc,
     fmtCompact,
     fmtInt,
     isHeadlessBrowser,
+    isQuotaCardCollapsed,
     isRowPinned,
     loadJson,
     normalizeInspectorTab,
@@ -308,8 +346,11 @@
   prefs.composerRouteExpanded = Boolean(prefs.composerRouteExpanded);
   prefs.pinnedBgSessionId =
     typeof prefs.pinnedBgSessionId === 'string' ? prefs.pinnedBgSessionId.trim() : '';
-  if (!['all', 'working', 'needs_input', 'unread', 'open'].includes(prefs.sidebarFilter)) {
+  if (!['all', 'working', 'needs_input', 'unread', 'open', 'archived'].includes(prefs.sidebarFilter)) {
     prefs.sidebarFilter = 'all';
+  }
+  if (!['all', 'antigravity', 'claude'].includes(prefs.sidebarProvider)) {
+    prefs.sidebarProvider = 'all';
   }
   const rawStoredModelExplicit =
     rawStoredPrefs?.modelSelectionExplicit &&
@@ -4875,6 +4916,27 @@
         return;
       }
 
+      const sideProvBtn = e.target.closest('[data-side-prov]');
+      if (sideProvBtn) {
+        prefs.sidebarProvider = sideProvBtn.dataset.sideProv || 'all';
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        S.renderIdeSidebar();
+        return;
+      }
+
+      const searchClearBtn = e.target.closest('#ide-sidebar-search-clear');
+      if (searchClearBtn) {
+        e.stopPropagation();
+        const inp = $('ide-sidebar-search');
+        if (inp) {
+          inp.value = '';
+          inp.closest('.ide-search-wrap')?.classList.remove('has-query');
+          inp.focus();
+        }
+        S.renderIdeSidebar();
+        return;
+      }
+
       const closeTabBtn = e.target.closest('[data-close-editor-tab]');
       if (closeTabBtn) {
         e.stopPropagation();
@@ -4907,11 +4969,18 @@
         return;
       }
 
+      const sessInlineRenBtn = e.target.closest('[data-sess-inline-rename]');
+      if (sessInlineRenBtn && sessInlineRenBtn.dataset.id) {
+        e.stopPropagation();
+        S.beginIdeInlineRename('session', sessInlineRenBtn.dataset.id);
+        return;
+      }
+
       const ideOpenRow = e.target.closest('[data-ide-open-session]');
       if (
         ideOpenRow &&
         ideOpenRow.dataset.ideOpenSession &&
-        !e.target.closest('[data-sess-act], [data-sess-ctx-menu], [data-approve-act], [data-close-editor-tab], [data-switch-neon-carbon], [contenteditable="true"]')
+        !e.target.closest('[data-sess-act], [data-sess-inline-rename], [data-sess-ctx-menu], [data-approve-act], [data-close-editor-tab], [data-switch-neon-carbon], [contenteditable="true"]')
       ) {
         const sid = ideOpenRow.dataset.ideOpenSession;
         const prov = ideOpenRow.dataset.sessionProv || '';
@@ -5101,7 +5170,8 @@
         if (!prefs.collapsedQuotaCards || typeof prefs.collapsedQuotaCards !== 'object') {
           prefs.collapsedQuotaCards = {};
         }
-        prefs.collapsedQuotaCards[provKey] = !prefs.collapsedQuotaCards[provKey];
+        const wasExpanded = quotaToggle.getAttribute('aria-expanded') === 'true';
+        prefs.collapsedQuotaCards[provKey] = wasExpanded;
         saveJson(STORAGE_KEYS.PREFS, prefs);
         S.renderPulseView();
         S.renderIdeSidebar();
@@ -7096,7 +7166,11 @@
 
     // Search in Sessions & IDE Explorer Sidebar
     $('sess-search-input')?.addEventListener('input', () => S.renderSessionsView());
-    $('ide-sidebar-search')?.addEventListener('input', () => S.renderIdeSidebar());
+    $('ide-sidebar-search')?.addEventListener('input', (e) => {
+      const inp = e.currentTarget;
+      inp.closest('.ide-search-wrap')?.classList.toggle('has-query', Boolean(inp.value && inp.value.trim()));
+      S.renderIdeSidebar();
+    });
 
     // Middle-click to close open editor tab (VS Code parity)
     $('ide-editor-tabs')?.addEventListener('auxclick', (e) => {
@@ -7629,6 +7703,13 @@
           prefs.collapsedQuotaCards = {};
         }
         prefs.collapsedQuotaCards[nav.provider] = false;
+        if (nav.accountId) prefs.collapsedQuotaCards[nav.accountId] = false;
+        const provAccounts = appState?.providers?.[nav.provider]?.accounts;
+        if (Array.isArray(provAccounts)) {
+          for (const acct of provAccounts) {
+            if (acct?.id) prefs.collapsedQuotaCards[acct.id] = false;
+          }
+        }
       }
       prefs.activeTab = tab;
       saveJson(STORAGE_KEYS.PREFS, prefs);
@@ -7745,7 +7826,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=100', { updateViaCache: 'none' })
+        .register('sw.js?v=101', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

@@ -138,17 +138,19 @@
           ? 'working'
           : r.status === 'waiting' || qCnt > 0
             ? 'waiting'
-            : '';
+            : r.unread
+              ? 'unread'
+              : '';
         const rawTitle = String(r.title || S.threadsCache[id]?.title || 'Untitled Session').trim();
-        const bgBadge = r.bgTask?.state === 'running' ? getSessionRunningBgBadge(r) : '';
+        const bgInfo = r.bgTask?.state === 'running' ? getSessionRunningBgInfo(r) : null;
         return `
           <div class="ide-editor-tab${isActive ? ' active' : ''}${r.unread ? ' is-unread' : ''}" role="tab" tabindex="0" aria-selected="${isActive}" data-editor-tab-id="${S.esc(id)}" data-session-prov="${provKey}">
             ${stCls ? `<span class="ide-dot ${stCls}"></span>` : ''}
             <span class="prov-glyph">${S.PROVIDER_ICONS[provKey]}</span>
             <span class="ide-tab-title">${S.esc(rawTitle)}</span>
-            ${qCnt > 0 ? `<span class="ide-row-pill q-pill tabular">?${qCnt}</span>` : ''}
-            ${bgBadge ? `<span class="ide-row-pill bg-pill tabular">${S.esc(bgBadge)}</span>` : ''}
-            <button type="button" class="ide-tab-close" data-close-editor-tab="${S.esc(id)}" aria-label="Close ${S.esc(rawTitle)}">×</button>
+            ${qCnt > 0 ? `<span class="ide-row-pill q-pill tabular">${S.UI_ICONS.question}<span>${qCnt}</span></span>` : ''}
+            ${bgInfo ? `<span class="ide-row-pill bg-pill tabular">${bgInfo.isAgent ? S.UI_ICONS.subagent : S.UI_ICONS.terminal}<span>${bgInfo.count}</span></span>` : ''}
+            <button type="button" class="ide-tab-close" data-close-editor-tab="${S.esc(id)}" aria-label="Close ${S.esc(rawTitle)}">${S.UI_ICONS.close}</button>
           </div>
         `;
       })
@@ -160,7 +162,7 @@
         <div class="ide-editor-tab active is-draft" role="tab" tabindex="0" aria-selected="true" data-editor-tab-id="__new__" data-session-prov="${newDraftProv}">
           <span class="prov-glyph">${S.PROVIDER_ICONS[newDraftProv]}</span>
           <span class="ide-tab-title">New ${newDraftProv === 'claude' ? 'Claude' : 'Antigravity'} Session</span>
-          <button type="button" class="ide-tab-close" data-close-editor-tab="__new__" aria-label="Close new session draft">×</button>
+          <button type="button" class="ide-tab-close" data-close-editor-tab="__new__" aria-label="Close new session draft">${S.UI_ICONS.close}</button>
         </div>
       `
       : '';
@@ -250,13 +252,19 @@
     return meta ? meta.questions.length : 0;
   }
 
-  function getSessionRunningBgBadge(r) {
-    if (!r?.id) return '';
+  function getSessionRunningBgInfo(r) {
+    if (!r?.id) return null;
     const { runningTasks, runningCount } = S.getSessionBackgroundTasks(r, S.threadsCache[r.id]);
-    if (runningCount <= 0) return '';
-    const hasAgent = runningTasks.some((t) => t.kind === 'subagent');
-    if (hasAgent) return runningCount > 1 ? `${runningCount} Agents` : 'Agent';
-    return runningCount > 1 ? `${runningCount} Tasks` : 'Task';
+    if (runningCount <= 0) return null;
+    const isAgent = runningTasks.some((t) => t.kind === 'subagent');
+    return { count: runningCount, isAgent };
+  }
+
+  function getSessionRunningBgBadge(r) {
+    const info = getSessionRunningBgInfo(r);
+    if (!info) return '';
+    if (info.isAgent) return info.count > 1 ? `${info.count} Agents` : 'Agent';
+    return info.count > 1 ? `${info.count} Tasks` : 'Task';
   }
 
   // Phase 2 State: Inline Account Edit, Add Account Tray, Details Modal, Host Health & Tree Reconciler
@@ -831,25 +839,25 @@
     menuEl.innerHTML = `
       ${
         !isActive
-          ? `<button type="button" class="ctx-menu-item" data-acct-menu-act="switch" data-account-id="${S.esc(accountId)}" data-account-prov="${prov}"><span>⇄ Set Active Account</span></button>`
+          ? `<button type="button" class="ctx-menu-item" data-acct-menu-act="switch" data-account-id="${S.esc(accountId)}" data-account-prov="${prov}"><span class="ctx-menu-label"><span class="ctx-menu-ico">${S.UI_ICONS.swap}</span><span>Set Active Account</span></span></button>`
           : ''
       }
       <button type="button" class="ctx-menu-item" data-acct-menu-act="new-session" data-account-id="${S.esc(accountId)}" data-account-prov="${prov}">
-        <span>+ New Session with Account</span>
+        <span class="ctx-menu-label"><span class="ctx-menu-ico">${S.UI_ICONS.plus}</span><span>New Session with Account</span></span>
       </button>
       <button type="button" class="ctx-menu-item" data-acct-menu-act="label" data-account-id="${S.esc(accountId)}" data-account-prov="${prov}" data-account-nick="${S.esc(nick)}">
-        <span>✎ Edit Label…</span>
+        <span class="ctx-menu-label"><span class="ctx-menu-ico">${S.UI_ICONS.pencil}</span><span>Edit Label…</span></span>
       </button>
-      ${canUp ? `<button type="button" class="ctx-menu-item" data-account-move="up" data-account-id="${S.esc(accountId)}" data-account-prov="${prov}"><span>↑ Move Up</span></button>` : ''}
-      ${canDown ? `<button type="button" class="ctx-menu-item" data-account-move="down" data-account-id="${S.esc(accountId)}" data-account-prov="${prov}"><span>↓ Move Down</span></button>` : ''}
+      ${canUp ? `<button type="button" class="ctx-menu-item" data-account-move="up" data-account-id="${S.esc(accountId)}" data-account-prov="${prov}"><span class="ctx-menu-label"><span class="ctx-menu-ico">${S.UI_ICONS.arrowUp}</span><span>Move Up</span></span></button>` : ''}
+      ${canDown ? `<button type="button" class="ctx-menu-item" data-account-move="down" data-account-id="${S.esc(accountId)}" data-account-prov="${prov}"><span class="ctx-menu-label"><span class="ctx-menu-ico">${S.UI_ICONS.arrowDown}</span><span>Move Down</span></span></button>` : ''}
       <button type="button" class="ctx-menu-item" data-acct-menu-act="refresh" data-account-id="${S.esc(accountId)}" data-account-prov="${prov}">
-        <span>↻ Refresh Quotas</span>
+        <span>Refresh Quotas</span>
       </button>
       <button type="button" class="ctx-menu-item" data-acct-menu-act="details" data-account-id="${S.esc(accountId)}" data-account-prov="${prov}">
         <span>Details &amp; Storage…</span>
       </button>
       <button type="button" class="ctx-menu-item danger" data-account-remove="${S.esc(accountId)}" data-account-prov="${prov}" data-account-email="${S.esc(email)}">
-        <span>${signedInCount <= 1 ? 'Sign Out Account' : 'Disconnect Account'}</span>
+        <span class="ctx-menu-label"><span class="ctx-menu-ico">${S.UI_ICONS.trash}</span><span>${signedInCount <= 1 ? 'Sign Out Account' : 'Disconnect Account'}</span></span>
       </button>
     `;
     menuEl.hidden = false;
@@ -872,13 +880,13 @@
     ideMenuPinFreeze = true;
     menuEl.innerHTML = `
       <button type="button" class="ctx-menu-item" data-group-act="new-in-group" data-group-id="${S.esc(grp.id)}">
-        <span>+ New Session in Group</span>
+        <span class="ctx-menu-label"><span class="ctx-menu-ico">${S.UI_ICONS.plus}</span><span>New Session in Group</span></span>
       </button>
       <button type="button" class="ctx-menu-item" data-group-act="rename" data-group-id="${S.esc(grp.id)}" data-group-name="${S.esc(grp.name || '')}">
-        <span>✎ Rename Group</span><span class="meta-timestamp">F2</span>
+        <span class="ctx-menu-label"><span class="ctx-menu-ico">${S.UI_ICONS.pencil}</span><span>Rename Group</span></span><span class="meta-timestamp">F2</span>
       </button>
       <button type="button" class="ctx-menu-item danger" data-group-act="delete" data-group-id="${S.esc(grp.id)}" data-group-name="${S.esc(grp.name || '')}">
-        <span>✕ Delete Group</span>
+        <span class="ctx-menu-label"><span class="ctx-menu-ico">${S.UI_ICONS.trash}</span><span>Delete Group</span></span>
       </button>
     `;
     menuEl.hidden = false;
@@ -912,7 +920,7 @@
         <span>Open in Workbench</span><span class="meta-timestamp">↵</span>
       </button>
       <button type="button" class="ctx-menu-item" data-ctx-menu-act="rename" data-id="${S.esc(r.id)}" data-prov="${provKey}">
-        <span>✎ Rename Session</span><span class="meta-timestamp">F2</span>
+        <span class="ctx-menu-label"><span class="ctx-menu-ico">${S.UI_ICONS.pencil}</span><span>Rename Session</span></span><span class="meta-timestamp">F2</span>
       </button>
       <button type="button" class="ctx-menu-item" data-ctx-menu-act="inspect-outline" data-id="${S.esc(r.id)}" data-prov="${provKey}">
         <span>Inspect Outline &amp; Files</span><span class="meta-timestamp">${S.MOD_KEY}I</span>
@@ -943,11 +951,11 @@
       </button>
       ${
         isRunning
-          ? `<button type="button" class="ctx-menu-item danger" data-sess-act="stop" data-id="${S.esc(r.id)}"><span>■ Stop Running Session</span></button>`
+          ? `<button type="button" class="ctx-menu-item danger" data-sess-act="stop" data-id="${S.esc(r.id)}"><span class="ctx-menu-label"><span class="ctx-menu-ico">${S.UI_ICONS.stop}</span><span>Stop Running Session</span></span></button>`
           : ''
       }
       <button type="button" class="ctx-menu-item${r.archived ? '' : ' danger'}" data-sess-act="archive" data-id="${S.esc(r.id)}" data-val="${r.archived ? 'false' : 'true'}">
-        <span>${r.archived ? 'Restore Session' : 'Archive Session'}</span>
+        <span class="ctx-menu-label"><span class="ctx-menu-ico">${r.archived ? S.UI_ICONS.restore : S.UI_ICONS.archive}</span><span>${r.archived ? 'Restore Session' : 'Archive Session'}</span></span>
       </button>
     `;
     menuEl.hidden = false;
@@ -1050,7 +1058,7 @@
     return ordered;
   }
 
-  function buildIdeTreeRowInnerHtml(r, provKey, dotCls, isPinnedRow, qCnt, bgBadge, age, isOpenTab) {
+  function buildIdeTreeRowInnerHtml(r, provKey, dotCls, isPinnedRow, qCnt, bgInfo, age, isOpenTab) {
     const isArc = Boolean(r.archived);
     const isDesktop = S.isClaudeDesktopRow(r);
     return `
@@ -1072,18 +1080,18 @@
           ? `<button type="button" class="session-neon-pill" data-switch-neon-carbon="${S.esc(r.id)}" data-micro-tip="Switch session from Neon to Carbon" aria-label="Neon model active — switch to Carbon">Neon</button>`
           : ''
       }
-      ${qCnt > 0 ? `<span class="ide-row-pill q-pill tabular">?${qCnt}</span>` : ''}
-      ${bgBadge ? `<span class="ide-row-pill bg-pill tabular">${S.esc(bgBadge)}</span>` : ''}
+      ${qCnt > 0 ? `<span class="ide-row-pill q-pill tabular">${S.UI_ICONS.question}<span>${qCnt}</span></span>` : ''}
+      ${bgInfo ? `<span class="ide-row-pill bg-pill tabular">${bgInfo.isAgent ? S.UI_ICONS.subagent : S.UI_ICONS.terminal}<span>${bgInfo.count}</span></span>` : ''}
       <span class="ide-tree-age tabular">${S.esc(age)}</span>
       <span class="ide-tree-acts">
         ${
           dotCls === 'working'
-            ? `<button type="button" class="ide-row-act stop" data-sess-act="stop" data-id="${S.esc(r.id)}" data-micro-tip="Stop session" aria-label="Stop session">■</button>`
+            ? `<button type="button" class="ide-row-act stop" data-sess-act="stop" data-id="${S.esc(r.id)}" data-micro-tip="Stop session" aria-label="Stop session">${S.UI_ICONS.stop}</button>`
             : ''
         }
         ${
           isOpenTab
-            ? `<button type="button" class="ide-row-act close-tab" data-close-editor-tab="${S.esc(r.id)}" data-micro-tip="Close open tab" aria-label="Close open tab">×</button>`
+            ? `<button type="button" class="ide-row-act close-tab" data-close-editor-tab="${S.esc(r.id)}" data-micro-tip="Close open tab" aria-label="Close open tab">${S.UI_ICONS.close}</button>`
             : ''
         }
         ${
@@ -1091,8 +1099,9 @@
             ? `<button type="button" class="ide-row-act pin-act${isPinnedRow ? ' active' : ''}" data-sess-act="pin" data-id="${S.esc(r.id)}" data-val="${isPinnedRow ? 'false' : 'true'}" data-micro-tip="${isPinnedRow ? 'Unpin chat' : 'Pin chat'}" aria-pressed="${isPinnedRow}" aria-label="${isPinnedRow ? 'Unpin chat' : 'Pin chat'}">${isPinnedRow ? S.PIN_FILLED_SVG : S.PIN_OUTLINE_SVG}</button>`
             : ''
         }
-        <button type="button" class="ide-row-act" data-sess-ctx-menu="${S.esc(r.id)}" data-micro-tip="Session actions" aria-label="Session actions">⋯</button>
-        <button type="button" class="ide-row-act" data-sess-act="archive" data-id="${S.esc(r.id)}" data-val="${isArc ? 'false' : 'true'}" data-micro-tip="${isArc ? 'Restore session' : 'Archive session'}" aria-label="${isArc ? 'Restore session' : 'Archive session'}">${isArc ? '↩' : '✕'}</button>
+        <button type="button" class="ide-row-act" data-sess-inline-rename="1" data-id="${S.esc(r.id)}" data-micro-tip="Rename session (F2)" aria-label="Rename session">${S.UI_ICONS.pencil}</button>
+        <button type="button" class="ide-row-act" data-sess-ctx-menu="${S.esc(r.id)}" data-micro-tip="Session actions" aria-label="Session actions">${S.UI_ICONS.more}</button>
+        <button type="button" class="ide-row-act" data-sess-act="archive" data-id="${S.esc(r.id)}" data-val="${isArc ? 'false' : 'true'}" data-micro-tip="${isArc ? 'Restore session' : 'Archive session'}" aria-label="${isArc ? 'Restore session' : 'Archive session'}">${isArc ? S.UI_ICONS.restore : S.UI_ICONS.archive}</button>
       </span>
     `;
   }
@@ -1108,11 +1117,14 @@
       ? 'working'
       : r.status === 'waiting' || qCnt > 0
         ? 'waiting'
-        : isOpenTab
-          ? 'open'
-          : 'closed';
+        : r.unread
+          ? 'unread'
+          : isOpenTab
+            ? 'open'
+            : 'closed';
     const age = shortSidebarAge(getRowLastWorkedMs(r));
-    const bgBadge = r.bgTask?.state === 'running' ? getSessionRunningBgBadge(r) : '';
+    const bgInfo = r.bgTask?.state === 'running' ? getSessionRunningBgInfo(r) : null;
+    const bgSig = bgInfo ? `${bgInfo.count}:${bgInfo.isAgent ? 1 : 0}` : '';
     const isArc = Boolean(r.archived);
     const desiredClass = `ide-tree-row${isSelected ? ' active' : ''}${isPinnedRow ? ' is-pinned' : ''}${isOpenTab ? ' is-open-tab' : ''}${r.unread ? ' is-unread' : ''}${isArc ? ' is-archived' : ''}`;
     if (rowEl.className !== desiredClass) rowEl.className = desiredClass;
@@ -1129,7 +1141,7 @@
       !isArc && provKey === 'antigravity' && (r.neonWarning || /neon/i.test(String(r.model || '')))
     );
     const desk = S.isClaudeDesktopRow(r);
-    const sig = `${provKey}|${dotCls}|${isPinnedRow ? 1 : 0}|${r.title || ''}|${desk ? 1 : 0}|${neon ? 1 : 0}|${qCnt}|${bgBadge}|${age}|${isOpenTab ? 1 : 0}|${isArc ? 1 : 0}`;
+    const sig = `${provKey}|${dotCls}|${isPinnedRow ? 1 : 0}|${r.title || ''}|${desk ? 1 : 0}|${neon ? 1 : 0}|${qCnt}|${bgSig}|${age}|${isOpenTab ? 1 : 0}|${isArc ? 1 : 0}|${r.unread ? 1 : 0}`;
     if (rowEl.dataset.rowRenderSig !== sig) {
       rowEl.dataset.rowRenderSig = sig;
       rowEl.innerHTML = buildIdeTreeRowInnerHtml(
@@ -1138,7 +1150,7 @@
         dotCls,
         isPinnedRow,
         qCnt,
-        bgBadge,
+        bgInfo,
         age,
         isOpenTab
       );
@@ -1224,9 +1236,9 @@
               <span class="ide-chevron-sm"></span>
               <span class="ide-tree-group-name"></span>
               <span class="ide-group-pin-slot"></span>
-              <span class="ide-group-pill tabular"></span>
             </button>
             <div class="ide-tree-group-acts"></div>
+            <span class="ide-group-pill tabular"></span>
           </div>
           <div class="ide-tree-group-items"></div>
         `;
@@ -1259,10 +1271,10 @@
           pinSlot.dataset.pinSig = wantPinHtml;
           pinSlot.innerHTML = wantPinHtml;
         }
-        const pillEl = hdrBtn.querySelector('.ide-group-pill');
-        const countTxt = String(spec.items.length);
-        if (pillEl && pillEl.textContent !== countTxt) pillEl.textContent = countTxt;
       }
+      const pillEl = grpEl.querySelector(':scope > .ide-tree-group-hdr > .ide-group-pill');
+      const countTxt = String(spec.items.length);
+      if (pillEl && pillEl.textContent !== countTxt) pillEl.textContent = countTxt;
 
       const actsEl = grpEl.querySelector(':scope > .ide-tree-group-hdr > .ide-tree-group-acts');
       if (actsEl) {
@@ -1360,10 +1372,7 @@
             const isActive = acct?.active !== false;
             const multi = (sameProvCounts[provKey] || 1) > 1;
             const collapseKey = multi ? acctId : provKey;
-            const isCollapsed = Boolean(
-              S.prefs.collapsedQuotaCards &&
-                (S.prefs.collapsedQuotaCards[collapseKey] ?? S.prefs.collapsedQuotaCards[acctId])
-            );
+            const isCollapsed = S.isQuotaCardCollapsed(collapseKey, acctId, multi, isActive);
             const email = String(acct?.account?.email || acct?.email || '').trim();
             const shortEmail = email.includes('@') ? email.split('@')[0] : email;
             const plan = String(
@@ -1434,12 +1443,15 @@
             const canMoveDown = canReorderSide && cardIdx < ordered.length - 1;
             const moveBtnsHtml =
               canReorderSide && (canMoveUp || canMoveDown)
-                ? (canMoveUp
-                    ? `<button type="button" class="ide-acct-icon-btn ide-acct-move-btn" data-account-move="up" data-account-id="${S.esc(acctId)}" data-account-prov="${provKey}" data-micro-tip="Move up" aria-label="Move account up">↑</button>`
-                    : '') +
-                  (canMoveDown
-                    ? `<button type="button" class="ide-acct-icon-btn ide-acct-move-btn" data-account-move="down" data-account-id="${S.esc(acctId)}" data-account-prov="${provKey}" data-micro-tip="Move down" aria-label="Move account down">↓</button>`
-                    : '')
+                ? `<span class="ide-acct-move-group${canMoveUp && canMoveDown ? ' dual' : ''}">${
+                    canMoveUp
+                      ? `<button type="button" class="ide-acct-icon-btn ide-acct-move-btn" data-account-move="up" data-account-id="${S.esc(acctId)}" data-account-prov="${provKey}" data-micro-tip="Move up" aria-label="Move account up">${S.UI_ICONS.arrowUp}</button>`
+                      : ''
+                  }${
+                    canMoveDown
+                      ? `<button type="button" class="ide-acct-icon-btn ide-acct-move-btn" data-account-move="down" data-account-id="${S.esc(acctId)}" data-account-prov="${provKey}" data-micro-tip="Move down" aria-label="Move account down">${S.UI_ICONS.arrowDown}</button>`
+                      : ''
+                  }</span>`
                 : '';
             const isEditingLabel = Boolean(
               activeInlineAcctEdit &&
@@ -1461,12 +1473,12 @@
                   <div class="ide-acct-actions">
                     ${
                       !isActive
-                        ? `<button type="button" class="ide-acct-use-btn" data-account-switch="${S.esc(acctId)}" data-account-prov="${provKey}">⇄ Use</button>`
-                        : `<span class="ide-acct-live-pill">● Active</span>`
+                        ? `<button type="button" class="ide-acct-use-btn" data-account-switch="${S.esc(acctId)}" data-account-prov="${provKey}">${S.UI_ICONS.swap}<span>Use</span></button>`
+                        : `<span class="ide-acct-live-pill"><span class="ide-acct-active-dot"></span><span>Active</span></span>`
                     }
                     ${moveBtnsHtml}
-                    <button type="button" class="ide-acct-icon-btn" data-account-label="${S.esc(acctId)}" data-account-prov="${provKey}" data-account-nick="${S.esc(nick)}" data-account-surface="sidebar" data-micro-tip="Edit account label" aria-label="Edit account label">✎</button>
-                    <button type="button" class="ide-acct-icon-btn" data-acct-ctx-menu="${S.esc(acctId)}" data-acct-prov="${provKey}" data-micro-tip="Account actions" aria-label="Account actions">⋯</button>
+                    <button type="button" class="ide-acct-icon-btn" data-account-label="${S.esc(acctId)}" data-account-prov="${provKey}" data-account-nick="${S.esc(nick)}" data-account-surface="sidebar" data-micro-tip="Edit account label" aria-label="Edit account label">${S.UI_ICONS.pencil}</button>
+                    <button type="button" class="ide-acct-icon-btn" data-acct-ctx-menu="${S.esc(acctId)}" data-acct-prov="${provKey}" data-micro-tip="Account actions" aria-label="Account actions">${S.UI_ICONS.more}</button>
                   </div>
                 </div>
                 ${
@@ -1677,7 +1689,8 @@
       if (bgUnpinBtn) bgUnpinBtn.hidden = !pinnedRow;
       if (bgStopAllBtn) bgStopAllBtn.hidden = runningBgCount === 0;
       if (bgCountEl) {
-        bgCountEl.textContent = String(runningBgCount > 0 ? runningBgCount : bgEntries.length);
+        bgCountEl.textContent = runningBgCount > 0 ? `${runningBgCount} live` : String(bgEntries.length);
+        bgCountEl.classList.toggle('is-live', runningBgCount > 0);
       }
 
       if (!pinnedRow && bgEntries.length === 0) {
@@ -1693,12 +1706,19 @@
             .map(({ row, task }) => {
               const provKey = row.provider === 'claude' ? 'claude' : 'antigravity';
               const isRun = task.state === 'running';
+              const bgIcon =
+                task.kind === 'subagent'
+                  ? S.UI_ICONS.subagent
+                  : task.kind === 'timer' || task.kind === 'cron'
+                    ? S.UI_ICONS.timer
+                    : S.UI_ICONS.terminal;
               const titleTxt = task.subagentRole || task.summary || task.command || task.id || 'Side Agent';
               const subTxt = `${S.getBgKindLabel(task.kind)} · ${row.title || 'Session'}`;
               const ageStr = task.startedAt ? shortSidebarAge(task.startedAt) : isRun ? 'live' : 'done';
               return `
                 <div class="ide-bg-row${isRun ? ' is-running' : ''}" role="button" tabindex="0" data-insp-open-agent="${S.esc(task.id)}" data-sess-id="${S.esc(row.id)}" data-session-prov="${provKey}">
-                  <span class="ide-bg-ico">${isRun ? '●' : task.kind === 'subagent' ? '◈' : '▪'}</span>
+                  <span class="ide-bg-ico${isRun ? ' is-running' : ''}">${bgIcon}</span>
+                  <span class="prov-glyph">${S.PROVIDER_ICONS[provKey]}</span>
                   <span class="ide-bg-copy">
                     <span class="ide-bg-title">${S.esc(titleTxt)}</span>
                     <span class="ide-bg-sub">${S.esc(subTxt)}</span>
@@ -1707,7 +1727,7 @@
                     <span class="ide-bg-age">${S.esc(ageStr)}</span>
                     ${
                       isRun
-                        ? `<button type="button" class="ide-bg-stop" data-bg-act="stop-task" data-sess-id="${S.esc(row.id)}" data-task-id="${S.esc(task.fullId || task.id)}" data-prov="${provKey}" aria-label="Stop ${S.esc(titleTxt)}">■</button>`
+                        ? `<button type="button" class="ide-bg-stop" data-bg-act="stop-task" data-sess-id="${S.esc(row.id)}" data-task-id="${S.esc(task.fullId || task.id)}" data-prov="${provKey}" aria-label="Stop ${S.esc(titleTxt)}">${S.UI_ICONS.stop}</button>`
                         : ''
                     }
                   </span>
@@ -1723,12 +1743,35 @@
       btn.classList.toggle('active', btn.dataset.sideFilter === S.prefs.sidebarFilter);
     });
 
+    let provScope = ['all', 'antigravity', 'claude'].includes(S.prefs.sidebarProvider)
+      ? S.prefs.sidebarProvider
+      : 'all';
+    const filterSourceRows = S.prefs.sidebarFilter === 'archived' ? archivedRows : allRows;
+    const provCountAll = filterSourceRows.length;
+    const provCountAgy = filterSourceRows.filter((r) => (r.provider === 'claude' ? 'claude' : 'antigravity') === 'antigravity').length;
+    const provCountClaude = filterSourceRows.filter((r) => r.provider === 'claude').length;
+    if (provScope === 'antigravity' && provCountAgy === 0) provScope = 'all';
+    if (provScope === 'claude' && provCountClaude === 0) provScope = 'all';
+    const provBarEl = S.$('ide-provider-bar');
+    if (provBarEl) provBarEl.hidden = provCountAgy === 0 || provCountClaude === 0;
+    if (S.$('ide-prov-count-all')) S.$('ide-prov-count-all').textContent = String(provCountAll);
+    if (S.$('ide-prov-count-agy')) S.$('ide-prov-count-agy').textContent = String(provCountAgy);
+    if (S.$('ide-prov-count-claude')) S.$('ide-prov-count-claude').textContent = String(provCountClaude);
+    document.querySelectorAll('#ide-provider-bar .ide-provider-tab[data-side-prov]').forEach((btn) => {
+      const on = btn.dataset.sideProv === provScope;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+
     const groups = Array.isArray(S.appState?.groups) ? S.appState.groups : [];
     const groupIds = new Set(groups.map((g) => g.id));
-    const q = (S.$('ide-sidebar-search')?.value || '').trim().toLowerCase();
+    const searchEl = S.$('ide-sidebar-search');
+    const q = (searchEl?.value || '').trim().toLowerCase();
+    searchEl?.closest('.ide-search-wrap')?.classList.toggle('has-query', Boolean(q));
 
-    const filterSourceRows = S.prefs.sidebarFilter === 'archived' ? archivedRows : allRows;
     const rawFiltered = filterSourceRows.filter((r) => {
+      const rowProv = r.provider === 'claude' ? 'claude' : 'antigravity';
+      if (provScope !== 'all' && rowProv !== provScope) return false;
       if (S.prefs.sidebarFilter === 'working' && r.status !== 'working') return false;
       if (S.prefs.sidebarFilter === 'needs_input' && r.status !== 'waiting') return false;
       if (S.prefs.sidebarFilter === 'unread' && !r.unread) return false;
@@ -1791,8 +1834,8 @@
           items: gItems,
           alwaysShowActions: false,
           actionsHtml: `
-            <button type="button" class="ide-group-act-btn" data-group-act="new-in-group" data-group-id="${S.esc(g.id)}" data-micro-tip="New session in group" aria-label="New session in ${S.esc(g.name || 'group')}">+</button>
-            <button type="button" class="ide-group-act-btn" data-group-ctx-menu="${S.esc(g.id)}" data-micro-tip="Group actions" aria-label="Group actions for ${S.esc(g.name || 'group')}">⋯</button>
+            <button type="button" class="ide-group-act-btn" data-group-act="new-in-group" data-group-id="${S.esc(g.id)}" data-micro-tip="New session in group" aria-label="New session in ${S.esc(g.name || 'group')}">${S.UI_ICONS.plus}</button>
+            <button type="button" class="ide-group-act-btn" data-group-ctx-menu="${S.esc(g.id)}" data-micro-tip="Group actions" aria-label="Group actions for ${S.esc(g.name || 'group')}">${S.UI_ICONS.more}</button>
           `
         });
       }
@@ -1819,10 +1862,10 @@
           name: 'Ungrouped',
           collapsed: ugCollapsed,
           items: ungrouped,
-          alwaysShowActions: archivableCount > 0,
+          alwaysShowActions: false,
           actionsHtml:
             archivableCount > 0
-              ? `<button type="button" class="ide-group-act-btn" data-group-act="archive-closed" data-micro-tip="Archive ${archivableCount} closed idle sessions" aria-label="Archive closed sessions">Archive closed</button>`
+              ? `<button type="button" class="ide-group-act-btn" data-group-act="archive-closed" data-micro-tip="Archive ${archivableCount} closed idle sessions" aria-label="Archive closed sessions">${S.UI_ICONS.archive}</button>`
               : ''
         });
       }
@@ -1834,8 +1877,8 @@
           name: 'Archived sessions',
           collapsed: arcCollapsed,
           items: arcSorted,
-          alwaysShowActions: !arcCollapsed,
-          actionsHtml: `<button type="button" class="ide-group-act-btn" data-group-act="unarchive-all" data-micro-tip="Restore all archived sessions" aria-label="Unarchive all sessions">Unarchive all</button>`
+          alwaysShowActions: false,
+          actionsHtml: `<button type="button" class="ide-group-act-btn" data-group-act="unarchive-all" data-micro-tip="Restore all archived sessions" aria-label="Unarchive all sessions">${S.UI_ICONS.restore}</button>`
         });
       }
       reconcileIdeTreeDOM(treeEl, groupSpecs, null, curSelected);

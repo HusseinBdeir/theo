@@ -1,7 +1,7 @@
-/* THEO PWA Service Worker, v100 (2026-11-27).
+/* THEO PWA Service Worker, v101 (2026-11-28).
    App shell: network-first (cache: no-cache) for HTML/JS/CSS, cache-first for static assets.
    Web Push: RFC 8291 aes128gcm push listener + synchronous in-memory & serialized push deduplication + W3C Badging API (navigator.setAppBadge) + durable Cache Storage & postMessage notificationclick handoff. */
-const CACHE_NAME = 'theo-remote-v100';
+const CACHE_NAME = 'theo-remote-v101';
 const NAV_CACHE = 'theo-nav-handoff-v1';
 const PENDING_NAV_URL = './__theo_pending_nav.json';
 const LAST_PUSH_NAV_URL = './__theo_last_push_nav.json';
@@ -50,23 +50,23 @@ function checkAndMarkInMemoryNotif(tag, title) {
 const CORE_SHELL = [
   './',
   './index.html',
-  './css/theo.css?v=100',
-  './js/endpoints.js?v=100',
-  './js/models.js?v=100',
-  './js/transport.js?v=100',
-  './js/sidebar.js?v=100',
-  './js/inspector.js?v=100',
-  './js/chat.js?v=100',
-  './js/views.js?v=100',
-  './js/app.js?v=100',
-  './manifest.json?v=100'
+  './css/theo.css?v=101',
+  './js/endpoints.js?v=101',
+  './js/models.js?v=101',
+  './js/transport.js?v=101',
+  './js/sidebar.js?v=101',
+  './js/inspector.js?v=101',
+  './js/chat.js?v=101',
+  './js/views.js?v=101',
+  './js/app.js?v=101',
+  './manifest.json?v=101'
 ];
 
 const OPTIONAL_SHELL = [
-  './icon.svg?v=100',
-  './icon-180.png?v=100',
-  './icon-192.png?v=100',
-  './icon-512.png?v=100',
+  './icon.svg?v=101',
+  './icon-180.png?v=101',
+  './icon-192.png?v=101',
+  './icon-512.png?v=101',
   './brand/theo-wordmark-dark.svg',
   './brand/theo-wordmark-light.svg',
   './brand/theo-mark-on-dark.svg'

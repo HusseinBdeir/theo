@@ -1233,10 +1233,7 @@
     const isActive = provInfo?.active !== false;
     const multi = sameProvCount > 1;
     const collapseKey = multi ? acctId : key;
-    const isCollapsed = Boolean(
-      S.prefs.collapsedQuotaCards &&
-        (S.prefs.collapsedQuotaCards[collapseKey] ?? S.prefs.collapsedQuotaCards[acctId])
-    );
+    const isCollapsed = S.isQuotaCardCollapsed(collapseKey, acctId, multi, isActive);
     const cardIndex = typeof orderCtx?.index === 'number' ? orderCtx.index : 0;
     const totalCards = typeof orderCtx?.totalCards === 'number' ? orderCtx.totalCards : sameProvCount;
     const canReorder = totalCards > 1;
@@ -1302,14 +1299,17 @@
         : '';
 
     const statusControlHtml = !isActive
-      ? `<button type="button" class="quota-switch-btn" data-account-switch="${S.esc(acctId)}" data-account-prov="${key}" aria-label="Switch active ${S.esc(label)} account to ${S.esc(email || label)} (keeps other accounts signed in)">⇄ Use</button>`
+      ? `<button type="button" class="quota-switch-btn" data-account-switch="${S.esc(acctId)}" data-account-prov="${key}" aria-label="Switch active ${S.esc(label)} account to ${S.esc(email || label)} (keeps other accounts signed in)">${S.UI_ICONS.swap}<span>Use</span></button>`
       : multi
         ? `<span class="quota-active-pill" aria-label="Currently active for new ${S.esc(label)} sessions"><span class="quota-active-dot"></span>Active</span>`
         : '';
 
     const moveBtnsHtml = canReorder && (canMoveUp || canMoveDown)
-      ? (canMoveUp ? `<button type="button" class="quota-nick-btn" data-account-move="up" data-account-id="${S.esc(acctId)}" data-account-prov="${key}" aria-label="Move account up">↑</button>` : '') +
-        (canMoveDown ? `<button type="button" class="quota-nick-btn" data-account-move="down" data-account-id="${S.esc(acctId)}" data-account-prov="${key}" aria-label="Move account down">↓</button>` : '')
+      ? `<span class="ide-acct-move-group${canMoveUp && canMoveDown ? ' dual' : ''}">${
+          canMoveUp ? `<button type="button" class="quota-nick-btn ide-acct-move-btn" data-account-move="up" data-account-id="${S.esc(acctId)}" data-account-prov="${key}" aria-label="Move account up">${S.UI_ICONS.arrowUp}</button>` : ''
+        }${
+          canMoveDown ? `<button type="button" class="quota-nick-btn ide-acct-move-btn" data-account-move="down" data-account-id="${S.esc(acctId)}" data-account-prov="${key}" aria-label="Move account down">${S.UI_ICONS.arrowDown}</button>` : ''
+        }</span>`
       : '';
 
     return `
@@ -1317,7 +1317,7 @@
         <div class="quota-card-head">
           <button type="button" class="quota-card-toggle" data-quota-collapse="${S.esc(collapseKey)}" aria-expanded="${!isCollapsed}" aria-label="${isCollapsed ? 'Show' : 'Hide'} ${S.esc(email || label)} usage">
             <div class="quota-prov-title">
-              <svg class="quota-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg>
+              <svg class="quota-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg>
               <span class="prov-glyph">${S.PROVIDER_ICONS[key]}</span>
               <div class="quota-title-stack">
                 <div class="quota-title-line"><span class="quota-title-name">${S.esc(label)}</span>${headerNickHtml}</div>
@@ -1328,8 +1328,8 @@
             ${statusControlHtml}
             ${isCollapsed && !multi ? `<span class="plan-pill">${S.esc(shortPlan)}</span>` : ''}
             ${moveBtnsHtml}
-            <button type="button" class="quota-nick-btn" data-account-label="${S.esc(acctId)}" data-account-prov="${key}" data-account-nick="${S.esc(nick)}" aria-label="${nick ? 'Edit account label' : 'Set account label (e.g. Friend, Work)'}">✎</button>
-            <button type="button" class="quota-nick-btn" data-account-remove="${S.esc(acctId)}" data-account-prov="${key}" data-account-email="${S.esc(email)}" aria-label="${multi ? 'Disconnect account' : 'Sign out account'}">✕</button>
+            <button type="button" class="quota-nick-btn" data-account-label="${S.esc(acctId)}" data-account-prov="${key}" data-account-nick="${S.esc(nick)}" aria-label="${nick ? 'Edit account label' : 'Set account label (e.g. Friend, Work)'}">${S.UI_ICONS.pencil}</button>
+            <button type="button" class="quota-nick-btn" data-account-remove="${S.esc(acctId)}" data-account-prov="${key}" data-account-email="${S.esc(email)}" aria-label="${multi ? 'Disconnect account' : 'Sign out account'}">${S.UI_ICONS.close}</button>
           </div>
         </div>
         ${
