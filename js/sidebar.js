@@ -1294,6 +1294,7 @@
   }
 
   function renderIdeSidebar() {
+    return S.runViewBoundary('sidebar', 'Explorer Sidebar', { elId: 'ide-sidebar-tree', mode: 'replace' }, () => {
     const accountsEl = S.$('ide-sidebar-accounts');
     const acctsCountEl = S.$('ide-accounts-count');
     const approvalsEl = S.$('ide-sidebar-approvals');
@@ -1845,6 +1846,7 @@
     const flatList = applyFrozenIdeOrder('__flat__', filtered.slice(0, 120), Boolean(q));
     reconcileIdeTreeDOM(treeEl, null, flatList, curSelected);
     S.reconcileIdeMicroTip();
+    });
   }
 
   function isNewSessionMode() {

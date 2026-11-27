@@ -870,7 +870,7 @@
       checks: [
         { id: 'git:status', label: 'Git Status & Branch', category: 'git', commandPreview: 'git status --short --branch' },
         { id: 'git:diff-stat', label: 'Git Diff Summary', category: 'git', commandPreview: 'git diff --stat' },
-        { id: 'syntax:js/app.js', label: 'Syntax Check · js/app.js', category: 'lint', commandPreview: 'node --check js/app.js' }
+        { id: 'syntax:js-all', label: 'Syntax Check · All JS', category: 'lint', commandPreview: 'node --check js/*.js' }
       ],
       ports: [],
       fallbackOnly: true
@@ -1032,6 +1032,16 @@
   }
 
   function renderSplitWatchPane() {
+    return S.runViewBoundary(
+      'split-watch',
+      'Split-Watch',
+      {
+        elId: 'chat-split-watch-pane',
+        hideElId: 'chat-split-watch-pane',
+        mode: 'replace',
+        whenVisibleOnly: () => Boolean(S.prefs.splitWatchOpen)
+      },
+      () => {
     const paneEl = S.$('chat-split-watch-pane');
     const btnEl = S.$('btn-split-watch');
     if (btnEl) {
@@ -1115,6 +1125,8 @@
       </div>
       <div class="split-watch-body">${turnsHtml}</div>
     `;
+      }
+    );
   }
 
   function setInspectorOpen(openBool, tab = '', opts = {}) {
@@ -1221,6 +1233,17 @@
   }
 
   function renderSplitInspector(activeRow, threadDetail, messages, provKey, isNewDraft, skipAutoFetch = false) {
+    return S.runViewBoundary(
+      'inspector',
+      'Inspector',
+      {
+        elId: 'ide-inspector-body',
+        hideElId: 'ide-inspector-pane',
+        backdropElId: 'ide-inspector-backdrop',
+        mode: 'replace',
+        whenVisibleOnly: () => Boolean(S.prefs.inspectorOpen)
+      },
+      () => {
     const paneEl = S.$('ide-inspector-pane');
     const backdropEl = S.$('ide-inspector-backdrop');
     const toggleBtn = S.$('btn-toggle-inspector');
@@ -1890,6 +1913,8 @@
         ${checksHtml}
       </div>
     `;
+      }
+    );
   }
 
   Object.assign(S, {

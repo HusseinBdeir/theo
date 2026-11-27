@@ -11875,3 +11875,51 @@ html[data-theme="light"] .sb-q-btn.primary {
   background: color-mix(in srgb, var(--amber) 8%, transparent);
   border: 1px solid var(--amber-line);
 }
+
+/* ==========================================================================
+   v95 — Per-View Isolated Render Error Boundary Cards
+   ========================================================================== */
+
+.render-boundary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  margin: 10px 0;
+  border-radius: var(--r-lg);
+  background: var(--bg-card);
+  border: 1px solid var(--amber-line);
+  box-shadow: var(--shadow-sm);
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.render-boundary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.render-boundary-title {
+  font-size: var(--fs-md);
+  font-weight: 700;
+  color: var(--text-heading);
+}
+
+.render-boundary-msg {
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.render-boundary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}

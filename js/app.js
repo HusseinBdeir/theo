@@ -243,17 +243,20 @@
   });
   factories.models(S);
 
-  const cachedStore = loadJson(STORAGE_KEYS.CACHE, {
-    state: null,
-    threads: {},
-    workspacesDetail: {},
-    updatedAt: 0
-  });
-  if (cachedStore?.state?.antigravityModelCatalog) {
-    S.ingestLiveAntigravityCatalog(cachedStore.state.antigravityModelCatalog);
-  }
-  if (cachedStore?.state?.claudeModelCatalog) {
-    S.ingestLiveClaudeCatalog(cachedStore.state.claudeModelCatalog);
+  const rawCachedStore = loadJson(STORAGE_KEYS.CACHE, null);
+  const cachedStore =
+    rawCachedStore && typeof rawCachedStore === 'object' && !Array.isArray(rawCachedStore)
+      ? rawCachedStore
+      : { state: null, threads: {}, workspacesDetail: {}, updatedAt: 0 };
+  try {
+    if (cachedStore?.state?.antigravityModelCatalog) {
+      S.ingestLiveAntigravityCatalog(cachedStore.state.antigravityModelCatalog);
+    }
+    if (cachedStore?.state?.claudeModelCatalog) {
+      S.ingestLiveClaudeCatalog(cachedStore.state.claudeModelCatalog);
+    }
+  } catch (err) {
+    console.warn('[THEO] Cached model catalog ignored:', err?.message || err);
   }
   const rawStoredPrefs = loadJson(STORAGE_KEYS.PREFS, null);
   const prefs = Object.assign(
@@ -848,9 +851,20 @@
       .map((x) => x.item);
   }
 
-  let appState = cachedStore.state || null;
-  let threadsCache = cachedStore.threads || {};
-  let workspacesDetailCache = cachedStore.workspacesDetail || {};
+  let appState =
+    cachedStore.state && typeof cachedStore.state === 'object' && !Array.isArray(cachedStore.state)
+      ? cachedStore.state
+      : null;
+  let threadsCache =
+    cachedStore.threads && typeof cachedStore.threads === 'object' && !Array.isArray(cachedStore.threads)
+      ? cachedStore.threads
+      : {};
+  let workspacesDetailCache =
+    cachedStore.workspacesDetail &&
+    typeof cachedStore.workspacesDetail === 'object' &&
+    !Array.isArray(cachedStore.workspacesDetail)
+      ? cachedStore.workspacesDetail
+      : {};
   let outbox = loadJson(STORAGE_KEYS.OUTBOX, []);
   // Command types the hub no longer accepts. A copy queued offline by an older app version is dropped at boot:
   // the hub answers it "Unknown command type", so it would be re-sent on every sync and hold the queued badge.
@@ -3512,6 +3526,107 @@
     } catch {}
   }
 
+  const lastBoundaryErrors = new Map();
+  const boundaryGenBySurface = new Map();
+  const testRenderFaults = new Map();
+
+  function clearCachedSnapshotOnly() {
+    try {
+      localStorage.removeItem(STORAGE_KEYS.CACHE);
+      localStorage.removeItem('theo_remote_cache_v2');
+      localStorage.removeItem('theo_remote_cache_v1');
+    } catch {}
+  }
+
+  function formatBoundaryErrorDetail(err, label) {
+    const raw = String(err?.message || err || `${label || 'View'} render error`).trim();
+    const scrubbed = raw
+      .replace(/[A-Za-z]:\\Users\\[^\\\s]+(?:\\[^\s"']+)*/gi, (m) => m.split(/[\\/]/).pop() || 'host-file')
+      .replace(/\/(?:Users|home)\/[^/\s]+(?:\/[^\s"']+)*/g, (m) => m.split('/').pop() || 'host-file')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return (scrubbed || `${label || 'View'} render error`).slice(0, 200);
+  }
+
+  function runViewBoundary(surfaceId, label, mountCfg = {}, renderFn) {
+    const cfg = mountCfg && typeof mountCfg === 'object' ? mountCfg : {};
+    const allowFault = isHeadlessBrowser || (typeof window !== 'undefined' && window.__THEO_ALLOW_PROBE_MOCK_FETCH);
+    const gen = (boundaryGenBySurface.get(surfaceId) || 0) + 1;
+    boundaryGenBySurface.set(surfaceId, gen);
+
+    const clearBoundaryDom = () => {
+      lastBoundaryErrors.delete(surfaceId);
+      if (cfg.elId) {
+        const target = $(cfg.elId);
+        if (target) {
+          target.querySelectorAll(`[data-render-boundary="${surfaceId}"]`).forEach((node) => node.remove());
+        }
+      }
+    };
+
+    const handleErr = (err) => {
+      if (boundaryGenBySurface.get(surfaceId) !== gen) return;
+      const detail = formatBoundaryErrorDetail(err, label);
+      lastBoundaryErrors.set(surfaceId, { surface: surfaceId, label, detail, at: Date.now() });
+      console.warn(`[THEO] Render boundary (${surfaceId}): ${detail}`);
+      const isVisible = typeof cfg.whenVisibleOnly === 'function' ? Boolean(cfg.whenVisibleOnly()) : true;
+      if (!isVisible) {
+        if (cfg.hideElId) {
+          const hideEl = $(cfg.hideElId);
+          if (hideEl) hideEl.hidden = true;
+        }
+        if (cfg.backdropElId) {
+          const bdEl = $(cfg.backdropElId);
+          if (bdEl) bdEl.hidden = true;
+        }
+        return;
+      }
+      if (cfg.hideElId) {
+        const showEl = $(cfg.hideElId);
+        if (showEl) showEl.hidden = false;
+      }
+      const target = cfg.elId ? $(cfg.elId) : null;
+      if (!target) return;
+      const cardHtml = `
+        <div class="render-boundary-card" data-render-boundary="${esc(surfaceId)}" role="alert">
+          <div class="render-boundary-head">
+            <strong class="render-boundary-title">${esc(label)} unavailable</strong>
+            <span class="pill-count amber">Isolated</span>
+          </div>
+          <div class="render-boundary-msg mono">${esc(detail)}</div>
+          <div class="render-boundary-actions">
+            <a href="reset.html" class="btn-brass-sm" data-reset-theo-cache="1" style="text-decoration:none;display:inline-flex;align-items:center">Reset Cache</a>
+            <button type="button" class="btn-ghost-sm" data-retry-render-boundary="${esc(surfaceId)}">Retry</button>
+            ${surfaceId === 'split-watch' ? '<button type="button" class="btn-ghost-sm" data-split-watch-close="1">Close</button>' : ''}
+          </div>
+        </div>
+      `;
+      if (cfg.mode === 'prepend') {
+        target.querySelectorAll(`[data-render-boundary="${surfaceId}"]`).forEach((node) => node.remove());
+        target.insertAdjacentHTML('afterbegin', cardHtml);
+      } else {
+        target.innerHTML = cardHtml;
+      }
+    };
+
+    try {
+      if (allowFault && testRenderFaults.has(surfaceId)) {
+        throw new Error(testRenderFaults.get(surfaceId));
+      }
+      clearBoundaryDom();
+      const out = renderFn();
+      if (out && typeof out.catch === 'function') {
+        return out.catch((err) => {
+          handleErr(err);
+        });
+      }
+      return out;
+    } catch (err) {
+      handleErr(err);
+      return undefined;
+    }
+  }
+
   Object.assign(S, {
     CLAUDE_PERM_MODES,
     THEO_CF_MIGRATE_URL,
@@ -3521,6 +3636,7 @@
     bytesToB64,
     callCloudPush,
     checkLiveStateNotifications,
+    clearCachedSnapshotOnly,
     clearPinnedNav,
     computeTheoUnreadBadgeCount,
     decodePairTokenString,
@@ -3556,6 +3672,7 @@
     reconcileIdeMicroTip,
     recordFreqUsage,
     renderClaudeModeSelectorHtml,
+    runViewBoundary,
     saveTheoMigrationMeta,
     schedulePushSync,
     seedUncheckedTheoNotifications,
@@ -3621,7 +3738,11 @@
       btn.classList.toggle('active', btn.dataset.tab === target);
     });
 
-    if (target === 'chat') {
+    if (target === 'pulse') {
+      S.renderPulseView();
+    } else if (target === 'sessions') {
+      S.renderSessionsView();
+    } else if (target === 'chat') {
       S.ensureSelectedThread();
       S.renderChatView(true);
       if (
@@ -3640,14 +3761,34 @@
   }
 
   function renderAll() {
-    seedUncheckedTheoNotifications();
-    updateAppBadgeCount(false);
-    S.updateConnectionBanner();
-    S.renderOutboxBadge();
+    try {
+      seedUncheckedTheoNotifications();
+    } catch (err) {
+      console.warn('[THEO] Notification seed error:', err?.message || err);
+    }
+    try {
+      updateAppBadgeCount(false);
+    } catch (err) {
+      console.warn('[THEO] App badge update error:', err?.message || err);
+    }
+    try {
+      S.updateConnectionBanner();
+    } catch (err) {
+      console.warn('[THEO] Connection banner error:', err?.message || err);
+    }
+    try {
+      S.renderOutboxBadge();
+    } catch (err) {
+      console.warn('[THEO] Outbox badge error:', err?.message || err);
+    }
     S.renderPulseView();
     S.renderSessionsView();
     S.renderIdeSidebar();
-    S.syncAndRenderEditorTabs();
+    try {
+      S.syncAndRenderEditorTabs();
+    } catch (err) {
+      console.warn('[THEO] Editor tabs render error:', err?.message || err);
+    }
     if (prefs.activeTab === 'chat') S.renderChatView();
     if (prefs.activeTab === 'workspaces') S.renderWorkspacesView();
     if (prefs.activeTab === 'analytics') S.renderAnalyticsView();
@@ -3867,6 +4008,41 @@
     document.addEventListener('click', async (e) => {
       if (isPinLocked() && !e.target?.closest?.('#pin-overlay')) {
         e.preventDefault();
+        return;
+      }
+      const resetCacheEl = e.target.closest('[data-reset-theo-cache]');
+      if (resetCacheEl) {
+        if (isPinLocked()) {
+          e.preventDefault();
+          return;
+        }
+        clearCachedSnapshotOnly();
+        if (
+          (isHeadlessBrowser || (typeof window !== 'undefined' && window.__THEO_ALLOW_PROBE_MOCK_FETCH)) &&
+          window.__THEO_INTERCEPT_CACHE_RESET
+        ) {
+          e.preventDefault();
+          window.__theoCacheResetCount = Number(window.__theoCacheResetCount || 0) + 1;
+          return;
+        }
+        if (resetCacheEl.tagName !== 'A') {
+          e.preventDefault();
+          window.location.assign('./reset.html');
+        }
+        return;
+      }
+      const retryBoundaryBtn = e.target.closest('[data-retry-render-boundary]');
+      if (retryBoundaryBtn) {
+        e.preventDefault();
+        const surface = String(retryBoundaryBtn.dataset.retryRenderBoundary || '').trim();
+        if (surface === 'pulse') S.renderPulseView();
+        else if (surface === 'sessions') S.renderSessionsView();
+        else if (surface === 'workspaces') S.renderWorkspacesView();
+        else if (surface === 'analytics') S.renderAnalyticsView();
+        else if (surface === 'sidebar') S.renderIdeSidebar();
+        else if (surface === 'inspector' || surface === 'split-watch' || surface === 'chat') {
+          S.renderChatView(false);
+        }
         return;
       }
       const claudeModeBtn = e.target.closest('[data-set-claude-mode]');
@@ -7555,7 +7731,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=94', { updateViaCache: 'none' })
+        .register('sw.js?v=96', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
@@ -7714,14 +7890,6 @@
       if (prefs.activeTab === 'chat') S.renderChatView(false);
     });
 
-    if (appState && typeof appState === 'object') {
-      S.storeHostSnapshotEntry(appState, appState?.device?.id || '');
-    }
-    if (localBootInfo?.device?.id) {
-      S.localWsDevice = localBootInfo.device;
-      S.updateFleetDevices([{ ...localBootInfo.device, online: true, local: true, lastSeen: Date.now() }]);
-    }
-
     const urlParams = new URLSearchParams(location.search);
     const tabParam = urlParams.get('tab');
     const threadParam = urlParams.get('thread') || urlParams.get('session');
@@ -7730,102 +7898,116 @@
     const newParam = urlParams.get('new');
     hasExplicitBootUrlNav = Boolean(threadParam || remParam || tabParam || newParam);
 
-    if (!hasExplicitBootUrlNav) {
-      restorePinnedNavFromSession();
-    } else {
-      clearPinnedNav();
-    }
-
-    if (newParam === 'antigravity' || newParam === 'claude') {
-      prefs.composerMode = `new-${newParam}`;
-      prefs.selectedThreadId = '__new__';
-      prefs.activeTab = 'chat';
-      saveJson(STORAGE_KEYS.PREFS, prefs);
-      S.updateComposerModePills();
-    }
-
-    if (threadParam || remParam || tabParam || newParam) {
-      try {
-        const cleanUrl = location.pathname + (location.hash || '');
-        const defaultTab = window.innerWidth >= 1025 ? 'chat' : 'pulse';
-        history.replaceState({ theoTab: tabParam || (newParam ? 'chat' : prefs.activeTab || defaultTab), overlay: '' }, '', cleanUrl);
-      } catch {}
-    }
-
-    if (threadParam) {
-      applyNotificationNav({
-        tab: 'chat',
-        threadId: threadParam,
-        provider: provParam || '',
-        clicked: true
-      });
-    } else if (remParam || tabParam === 'discipline') {
+    if (!threadParam && (remParam || tabParam === 'discipline')) {
       window.location.replace(
         `https://planner.husseinbdeir.workers.dev/${remParam ? `?tab=tasks&taskId=${encodeURIComponent(remParam)}` : ''}`
       );
       return;
-    } else if (newParam === 'antigravity' || newParam === 'claude') {
-      suppressHistoryPush = true;
-      try {
-        switchTab('chat');
-      } finally {
-        suppressHistoryPush = false;
+    }
+
+    try {
+      if (appState && typeof appState === 'object') {
+        S.storeHostSnapshotEntry(appState, appState?.device?.id || '');
       }
-    } else if (!hasExplicitBootUrlNav && pinnedNavThreadId && Date.now() < pinnedNavUntil) {
-      prefs.selectedThreadId = pinnedNavThreadId;
-      prefs.composerMode = 'reply';
-      prefs.activeTab = 'chat';
-      saveJson(STORAGE_KEYS.PREFS, prefs);
-      suppressHistoryPush = true;
-      try {
-        switchTab('chat');
-      } finally {
-        suppressHistoryPush = false;
+      if (localBootInfo?.device?.id) {
+        S.localWsDevice = localBootInfo.device;
+        S.updateFleetDevices([{ ...localBootInfo.device, online: true, local: true, lastSeen: Date.now() }]);
       }
-      try {
-        history.replaceState({ theoTab: 'chat', overlay: '' }, '');
-      } catch {}
-      S.fetchThreadDetail(pinnedNavThreadId, pinnedNavProvider || '');
-    } else {
-      const isDesktopBoot = window.innerWidth >= 1025;
-      let startTab =
-        tabParam || (prefs.activeTab === 'discipline' ? 'pulse' : prefs.activeTab) || 'pulse';
-      if (isDesktopBoot && !prefs.desktopWorkbenchBootV92) {
-        prefs.desktopWorkbenchBootV92 = true;
-        if (
-          !tabParam &&
-          (!storedPrefsSnapshot ||
-            !storedPrefsSnapshot.activeTab ||
-            startTab === 'pulse' ||
-            startTab === 'sessions')
-        ) {
-          startTab = 'chat';
-        }
-        prefs.activeTab = startTab;
+
+      if (!hasExplicitBootUrlNav) {
+        restorePinnedNavFromSession();
+      } else {
+        clearPinnedNav();
+      }
+
+      if (newParam === 'antigravity' || newParam === 'claude') {
+        prefs.composerMode = `new-${newParam}`;
+        prefs.selectedThreadId = '__new__';
+        prefs.activeTab = 'chat';
         saveJson(STORAGE_KEYS.PREFS, prefs);
+        S.updateComposerModePills();
       }
-      suppressHistoryPush = true;
-      try {
-        switchTab(startTab);
-      } finally {
-        suppressHistoryPush = false;
+
+      if (threadParam || remParam || tabParam || newParam) {
+        try {
+          const cleanUrl = location.pathname + (location.hash || '');
+          const defaultTab = window.innerWidth >= 1025 ? 'chat' : 'pulse';
+          history.replaceState({ theoTab: tabParam || (newParam ? 'chat' : prefs.activeTab || defaultTab), overlay: '' }, '', cleanUrl);
+        } catch {}
       }
-      try {
-        history.replaceState({ theoTab: prefs.activeTab || startTab, overlay: '' }, '');
-      } catch {}
-    }
 
-    // Clear boot nav lock after initial settle so normal user interactions work freely
-    if (hasExplicitBootUrlNav) {
-      setTimeout(() => {
-        hasExplicitBootUrlNav = false;
-      }, 8000);
-    }
+      if (threadParam) {
+        applyNotificationNav({
+          tab: 'chat',
+          threadId: threadParam,
+          provider: provParam || '',
+          clicked: true
+        });
+      } else if (newParam === 'antigravity' || newParam === 'claude') {
+        suppressHistoryPush = true;
+        try {
+          switchTab('chat');
+        } finally {
+          suppressHistoryPush = false;
+        }
+      } else if (!hasExplicitBootUrlNav && pinnedNavThreadId && Date.now() < pinnedNavUntil) {
+        prefs.selectedThreadId = pinnedNavThreadId;
+        prefs.composerMode = 'reply';
+        prefs.activeTab = 'chat';
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+        suppressHistoryPush = true;
+        try {
+          switchTab('chat');
+        } finally {
+          suppressHistoryPush = false;
+        }
+        try {
+          history.replaceState({ theoTab: 'chat', overlay: '' }, '');
+        } catch {}
+        S.fetchThreadDetail(pinnedNavThreadId, pinnedNavProvider || '');
+      } else {
+        const isDesktopBoot = window.innerWidth >= 1025;
+        let startTab =
+          tabParam || (prefs.activeTab === 'discipline' ? 'pulse' : prefs.activeTab) || 'pulse';
+        if (isDesktopBoot && !prefs.desktopWorkbenchBootV92) {
+          prefs.desktopWorkbenchBootV92 = true;
+          if (
+            !tabParam &&
+            (!storedPrefsSnapshot ||
+              !storedPrefsSnapshot.activeTab ||
+              startTab === 'pulse' ||
+              startTab === 'sessions')
+          ) {
+            startTab = 'chat';
+          }
+          prefs.activeTab = startTab;
+          saveJson(STORAGE_KEYS.PREFS, prefs);
+        }
+        suppressHistoryPush = true;
+        try {
+          switchTab(startTab);
+        } finally {
+          suppressHistoryPush = false;
+        }
+        try {
+          history.replaceState({ theoTab: prefs.activeTab || startTab, overlay: '' }, '');
+        } catch {}
+      }
 
-    if (appState) {
-      S.applyAnsweredQuestionOverrides(appState);
+      // Clear boot nav lock after initial settle so normal user interactions work freely
+      if (hasExplicitBootUrlNav) {
+        setTimeout(() => {
+          hasExplicitBootUrlNav = false;
+        }, 8000);
+      }
+
+      if (appState) {
+        S.applyAnsweredQuestionOverrides(appState);
+      }
+      renderAll();
+    } catch (bootErr) {
+      console.warn('[THEO] Boot hydration recovered:', bootErr?.message || bootErr);
     }
-    renderAll();
     if (!hasExplicitBootUrlNav && !isHeadlessBrowser) {
       consumePendingNotificationNav({ allowUnseenPush: true });
     }
@@ -7885,7 +8067,15 @@
 
   window.__theoTestWs = {
     ...((isHeadlessBrowser || (typeof window !== 'undefined' && window.__THEO_ALLOW_PROBE_MOCK_FETCH))
-      ? { buildMigrationUrl: () => S.buildTheoMigrationUrl(), renderSidebar: () => S.renderIdeSidebar() }
+      ? {
+          buildMigrationUrl: () => S.buildTheoMigrationUrl(),
+          renderSidebar: () => S.renderIdeSidebar(),
+          setRenderFault: (surface, msg) => {
+            if (msg) testRenderFaults.set(String(surface), String(msg));
+            else testRenderFaults.delete(String(surface));
+          },
+          getBoundaryErrors: () => Object.fromEntries(lastBoundaryErrors)
+        }
       : {}),
     connectLocalWs: S.connectLocalWs,
     connectEdgeWs: S.connectEdgeWs,

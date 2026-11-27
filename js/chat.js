@@ -1712,6 +1712,7 @@
 
   // VIEW 3: Render Live Chat Workbench
   function renderChatView(forceScroll = false) {
+    return S.runViewBoundary('chat', 'Chat Workbench', { elId: 'chat-stream', mode: 'replace' }, () => {
     S.ensureSelectedThread();
     S.syncAndRenderEditorTabs();
     updateComposerModePills();
@@ -1945,8 +1946,16 @@
       }
     }
 
-    renderContextPopover(ctx);
-    S.renderChatBgTasks(activeRow, threadDetail, provKey, isNewDraft);
+    try {
+      renderContextPopover(ctx);
+    } catch (err) {
+      console.warn('[THEO] Context popover render error:', err?.message || err);
+    }
+    try {
+      S.renderChatBgTasks(activeRow, threadDetail, provKey, isNewDraft);
+    } catch (err) {
+      console.warn('[THEO] Chat bg tasks render error:', err?.message || err);
+    }
 
     const messages = isNewDraft ? [] : coalesceThreadMessages(threadDetail?.messages || []);
     const sessionApprovals = isNewDraft
@@ -1961,7 +1970,11 @@
         (Array.isArray(a.options) && a.options.length > 0)
     );
 
-    renderChatQuestionDock(activeRow, messages, matchingQuestionApproval, provKey, isNewDraft);
+    try {
+      renderChatQuestionDock(activeRow, messages, matchingQuestionApproval, provKey, isNewDraft);
+    } catch (err) {
+      console.warn('[THEO] Question dock render error:', err?.message || err);
+    }
     S.renderSplitWatchPane();
     S.renderSplitInspector(activeRow, threadDetail, messages, provKey, isNewDraft);
 
@@ -2355,6 +2368,7 @@
       lastRenderedMsgCount = messages.length;
     }
     updateComposerActionButton();
+    });
   }
 
   function renderFileChipHtml(rawLabel, rawTargetHref = '') {

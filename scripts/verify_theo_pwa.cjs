@@ -185,7 +185,7 @@ function startStaticServer(rootDir) {
               parsed = JSON.parse(bodyRaw || '{}');
             } catch {}
             const chkId = String(parsed.checkId || '');
-            const allowed = ['git:status', 'syntax:js/app.js'];
+            const allowed = ['git:status', 'syntax:js/app.js', 'syntax:js-all'];
             if (!allowed.includes(chkId)) {
               res.writeHead(403, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ ok: false, status: 403, error: 'Check ID is not in workspace allowlist' }));
@@ -9850,6 +9850,301 @@ async function main() {
         console.log('[PASS] Adversarial #30: Phase 5 (v94) 7-Module Architecture, Atomic deploy_cf.mjs Gate, Zero-Global Bootstrap & Desktop/iOS Parity verified');
       } finally {
         srv.mockStatePayload = null;
+      }
+    }
+
+    // ---- Adversarial #31: v95 Inactive Pulse/Sessions DOM Skip, Per-View Render Boundaries, Safe Reset Cache & Boot Resilience ----
+    {
+      try {
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 860, deviceScaleFactor: 1, mobile: false }, sessionId);
+        const now31 = Date.now();
+        const makeState31 = (waitingCount, dirtyWorkspaces) => ({
+          seq: waitingCount + 100,
+          generatedAt: now31,
+          device: { id: 'host-v95', name: 'Host95', online: true },
+          providers: {
+            antigravity: {
+              id: 'antigravity',
+              accounts: [{ id: 'antigravity:v95@example.com', available: true, active: true, account: { email: 'v95@example.com', plan: 'Google AI Ultra' }, usage: { limits: [{ label: 'Session (5hr)', pct: 12 }] } }]
+            },
+            claude: {
+              id: 'claude',
+              accounts: [{ id: 'claude:v95@example.com', available: true, active: true, account: { email: 'v95@example.com', plan: 'Claude Max' }, usage: { limits: [] } }]
+            }
+          },
+          groups: [{ id: 'grp-v95', name: 'V95', color: 'blue', collapsed: false }],
+          workspaces: Array.from({ length: dirtyWorkspaces }, (_, idx) => ({
+            id: `ws-${idx}`,
+            name: `Repo-${idx}`,
+            branch: 'main',
+            dirtyCount: idx === 0 ? 3 : 1
+          })),
+          approvals: Array.from({ length: waitingCount }, (_, idx) => ({
+            id: `app-31-${idx}`,
+            approvalId: `app-31-${idx}`,
+            sessionId: 'sess-31-a',
+            provider: 'antigravity',
+            title: 'Session 31 A',
+            toolName: 'Run command',
+            detail: 'echo ok'
+          })),
+          rows: [
+            { id: 'sess-31-a', title: 'Session 31 A', provider: 'antigravity', group: 'grp-v95', status: waitingCount > 0 ? 'waiting' : 'idle', folder: 'theo', branch: 'main', model: 'Gemini 4 Carbon', at: now31 - 1000 },
+            { id: 'sess-31-b', title: 'Session 31 B', provider: 'claude', group: 'grp-v95', status: 'idle', folder: 'theo-hub', branch: 'main', model: 'Claude Opus 5.5', at: now31 - 2000 }
+          ]
+        });
+
+        srv.mockStatePayload = makeState31(0, 1);
+        const threads31 = {
+          'sess-31-a': {
+            id: 'sess-31-a',
+            title: 'Session 31 A',
+            provider: 'antigravity',
+            messages: [
+              { role: 'user', text: 'Check render boundaries', createdAt: new Date(now31 - 5000).toISOString() },
+              { role: 'assistant', text: 'Core chat stream stays alive.', createdAt: new Date(now31 - 4000).toISOString() }
+            ]
+          },
+          'sess-31-b': {
+            id: 'sess-31-b',
+            title: 'Session 31 B',
+            provider: 'claude',
+            messages: [{ role: 'user', text: 'Secondary watch', createdAt: new Date(now31 - 3000).toISOString() }]
+          }
+        };
+
+        await evalJs(`((snapJson, threadsJson) => {
+          const snap = JSON.parse(snapJson);
+          const threads = JSON.parse(threadsJson);
+          const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+          prefs.activeTab = 'chat';
+          prefs.desktopWorkbenchBootV92 = true;
+          prefs.selectedThreadId = 'sess-31-a';
+          prefs.splitWatchThreadId = 'sess-31-b';
+          prefs.inspectorOpen = false;
+          prefs.splitWatchOpen = false;
+          prefs.customBridgeUrl = location.origin;
+          localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+          localStorage.setItem('theo_remote_cache_v3', JSON.stringify({
+            state: snap,
+            snapshot: snap,
+            threads,
+            updatedAt: Date.now()
+          }));
+          location.reload();
+          return true;
+        })(${JSON.stringify(JSON.stringify(srv.mockStatePayload))}, ${JSON.stringify(JSON.stringify(threads31))})`);
+        await new Promise((r) => setTimeout(r, 700));
+        await evalJs('window.__THEO_ALLOW_PROBE_MOCK_FETCH = true; true');
+
+        // (a) Inactive Pulse/Sessions DOM skip + live badge/provider parity
+        await evalJs(`(() => {
+          window.__v95MutCounts = { pulse: 0, sessions: 0 };
+          const pGrid = document.getElementById('pulse-quota-grid');
+          const sList = document.getElementById('sessions-full-list');
+          window.__v95ObsPulse = new MutationObserver(() => { window.__v95MutCounts.pulse += 1; });
+          window.__v95ObsSessions = new MutationObserver(() => { window.__v95MutCounts.sessions += 1; });
+          if (pGrid) window.__v95ObsPulse.observe(pGrid, { childList: true, subtree: true });
+          if (sList) window.__v95ObsSessions.observe(sList, { childList: true, subtree: true });
+          return true;
+        })()`);
+        srv.mockStatePayload = makeState31(2, 3);
+        await evalJs(`(async () => {
+          await window.__theoTestWs.getState();
+          // Trigger live sync via #rail-conn-btn or syncData path by switching offline/online or clicking refresh if needed, or fetch /api/state directly via UI sync button
+          document.getElementById('mobile-sync-btn')?.click();
+          await new Promise((r) => setTimeout(r, 120));
+          return true;
+        })()`);
+        const skipProbe = await evalJs(`(async () => {
+          const mutsWhileChat = { ...window.__v95MutCounts };
+          const dockPulseHidden = document.getElementById('dock-badge-pulse')?.hidden;
+          const dockSessText = document.getElementById('dock-badge-sessions')?.textContent?.trim();
+          const wsBadgeText = document.getElementById('badge-workspaces')?.textContent?.trim();
+          const hasAgyLauncher = !document.getElementById('rail-new-agy')?.hidden;
+          const hasClaudeLauncher = !document.getElementById('rail-new-claude')?.hidden;
+          document.querySelector('[data-tab="pulse"]')?.click();
+          await new Promise((r) => setTimeout(r, 50));
+          const pulseRenderedNow = document.querySelectorAll('#pulse-quota-grid .quota-card').length >= 1 &&
+            (document.getElementById('approvals-count-pill')?.textContent || '').includes('2 Pending');
+          document.querySelector('[data-tab="sessions"]')?.click();
+          await new Promise((r) => setTimeout(r, 50));
+          const sessionsRenderedNow = document.querySelectorAll('#sessions-full-list .session-card').length >= 2;
+          document.querySelector('[data-tab="chat"]')?.click();
+          await new Promise((r) => setTimeout(r, 50));
+          window.__v95ObsPulse?.disconnect();
+          window.__v95ObsSessions?.disconnect();
+          return { mutsWhileChat, dockPulseHidden, dockSessText, wsBadgeText, hasAgyLauncher, hasClaudeLauncher, pulseRenderedNow, sessionsRenderedNow };
+        })()`);
+        assert.strictEqual(skipProbe.mutsWhileChat.pulse, 0, 'Hidden Pulse DOM must receive 0 mutations while on Chat');
+        assert.strictEqual(skipProbe.mutsWhileChat.sessions, 0, 'Hidden Sessions DOM must receive 0 mutations while on Chat');
+        assert.strictEqual(skipProbe.dockPulseHidden, false, '#dock-badge-pulse must update live even when Pulse DOM skipped');
+        assert.strictEqual(skipProbe.dockSessText, '2', '#dock-badge-sessions must update live even when Pulse DOM skipped');
+        assert.strictEqual(skipProbe.wsBadgeText, '3', '#badge-workspaces must update live even when Pulse DOM skipped');
+        assert.strictEqual(skipProbe.hasAgyLauncher && skipProbe.hasClaudeLauncher, true, 'Provider launchers must stay synced when Sessions DOM skipped');
+        assert.strictEqual(skipProbe.pulseRenderedNow && skipProbe.sessionsRenderedNow, true, 'Switching to Pulse or Sessions must render immediately');
+
+        // (b) Isolated error boundaries across Pulse, Inspector, and Split-Watch + 390x844 overflow check
+        const boundaryProbe = await evalJs(`(async () => {
+          window.__theoTestWs.setRenderFault('pulse', 'Synthetic Pulse crash at C:\\\\Users\\\\hbdei\\\\bad.js');
+          window.__theoTestWs.setRenderFault('inspector', 'Synthetic Inspector diff crash');
+          window.__theoTestWs.setRenderFault('split-watch', 'Synthetic Split-Watch crash');
+
+          // Closed Inspector & Split-Watch must remain hidden even when faulted
+          document.getElementById('mobile-sync-btn')?.click();
+          await new Promise((r) => setTimeout(r, 80));
+          const closedInspHidden = document.getElementById('ide-inspector-pane')?.hidden === true;
+          const closedSplitHidden = document.getElementById('chat-split-watch-pane')?.hidden === true;
+          const chatIntact = (document.getElementById('chat-stream')?.textContent || '').includes('Core chat stream stays alive.');
+
+          // Open Inspector & Split-Watch -> recovery cards appear without breaking #chat-stream
+          document.getElementById('btn-toggle-inspector')?.click();
+          document.getElementById('btn-chat-more')?.click();
+          document.getElementById('btn-split-watch')?.click();
+          await new Promise((r) => setTimeout(r, 60));
+          const inspCard = document.querySelector('#ide-inspector-body [data-render-boundary="inspector"]');
+          const splitCard = document.querySelector('#chat-split-watch-pane [data-render-boundary="split-watch"]');
+          const chatStillIntact = (document.getElementById('chat-stream')?.textContent || '').includes('Core chat stream stays alive.');
+
+          // Switch to Pulse -> Pulse boundary card renders with sanitized path and Retry recovers
+          document.querySelector('[data-tab="pulse"]')?.click();
+          await new Promise((r) => setTimeout(r, 50));
+          const pulseCard = document.querySelector('#view-pulse [data-render-boundary="pulse"]');
+          const pulseSanitized = pulseCard ? (!pulseCard.textContent.includes('C:\\\\Users') && pulseCard.textContent.includes('bad.js')) : false;
+          const pulseBoundaryTitleAttrs = pulseCard ? pulseCard.querySelectorAll('[title]').length : -1;
+          window.__theoTestWs.setRenderFault('pulse', '');
+          pulseCard?.querySelector('[data-retry-render-boundary="pulse"]')?.click();
+          await new Promise((r) => setTimeout(r, 50));
+          const pulseRecovered = !document.querySelector('#view-pulse [data-render-boundary="pulse"]') &&
+            document.querySelectorAll('#pulse-quota-grid .quota-card').length >= 1;
+
+          // Clear Inspector & Split-Watch faults and verify Retry/Close
+          window.__theoTestWs.setRenderFault('inspector', '');
+          window.__theoTestWs.setRenderFault('split-watch', '');
+          document.querySelector('[data-tab="chat"]')?.click();
+          await new Promise((r) => setTimeout(r, 50));
+          const inspRecovered = !document.querySelector('#ide-inspector-body [data-render-boundary="inspector"]');
+          const splitRecovered = !document.querySelector('#chat-split-watch-pane [data-render-boundary="split-watch"]');
+          document.getElementById('btn-close-inspector')?.click();
+          document.getElementById('btn-split-watch-close')?.click();
+          return {
+            closedInspHidden,
+            closedSplitHidden,
+            chatIntact,
+            hasInspCard: Boolean(inspCard),
+            hasSplitCard: Boolean(splitCard),
+            chatStillIntact,
+            hasPulseCard: Boolean(pulseCard),
+            pulseSanitized,
+            pulseBoundaryTitleAttrs,
+            pulseRecovered,
+            inspRecovered,
+            splitRecovered
+          };
+        })()`);
+        assert.strictEqual(boundaryProbe.closedInspHidden && boundaryProbe.closedSplitHidden, true, 'Closed Inspector/Split-Watch must remain hidden on boundary error');
+        assert.strictEqual(boundaryProbe.chatIntact && boundaryProbe.chatStillIntact, true, 'Primary Chat stream must stay intact when Inspector/Split-Watch/Pulse fail');
+        assert.strictEqual(boundaryProbe.hasInspCard && boundaryProbe.hasSplitCard && boundaryProbe.hasPulseCard, true, 'Boundary recovery cards must mount inside failing surfaces');
+        assert.strictEqual(boundaryProbe.pulseSanitized, true, 'Boundary card error message must scrub host home paths');
+        assert.strictEqual(boundaryProbe.pulseBoundaryTitleAttrs, 0, 'Boundary card must contain zero native [title] attributes');
+        assert.strictEqual(boundaryProbe.pulseRecovered && boundaryProbe.inspRecovered && boundaryProbe.splitRecovered, true, 'Boundary Retry / re-render must recover cleanly once fault clears');
+
+        // 390x844 layout check for boundary card
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true }, sessionId);
+        const mobBoundaryOverflow = await evalJs(`(async () => {
+          window.__theoTestWs.setRenderFault('pulse', 'Mobile layout boundary check error string without spaces: ' + 'x'.repeat(80));
+          document.querySelector('.mobile-bottom-dock [data-tab="pulse"]')?.click();
+          await new Promise((r) => setTimeout(r, 50));
+          const card = document.querySelector('#view-pulse [data-render-boundary="pulse"]');
+          const rect = card ? card.getBoundingClientRect() : null;
+          const ov = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+          window.__theoTestWs.setRenderFault('pulse', '');
+          card?.querySelector('[data-retry-render-boundary="pulse"]')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          return { hasCard: Boolean(card), left: rect ? rect.left : -1, right: rect ? rect.right : 999, ov };
+        })()`);
+        assert.strictEqual(mobBoundaryOverflow.hasCard, true, 'Mobile Pulse must render boundary card');
+        assert.strictEqual(mobBoundaryOverflow.ov, 0, 'Boundary card must cause 0px horizontal overflow at 390x844');
+        assert.ok(mobBoundaryOverflow.left >= 0 && mobBoundaryOverflow.right <= 390, 'Boundary card must fit inside 390px mobile viewport');
+
+        // (c) Safe Reset Cache (theo_remote_cache_v3 clear + credential preservation + PIN-lock guard) & reset.html check
+        const resetProbe = await evalJs(`(async () => {
+          localStorage.setItem('theo_remote_cache_v3', JSON.stringify({ state: { rows: [] }, updatedAt: Date.now() }));
+          localStorage.setItem('theo_remote_outbox_v1', JSON.stringify([{ id: 'keep-outbox' }]));
+          localStorage.setItem('theo_personal_ledger_v1', JSON.stringify({ reminders: [{ id: 'keep-rem' }] }));
+          const beforePrefs = localStorage.getItem('theo_remote_prefs_v1');
+          const beforeOutbox = localStorage.getItem('theo_remote_outbox_v1');
+          const beforePersonal = localStorage.getItem('theo_personal_ledger_v1');
+
+          window.__theoTestWs.setRenderFault('pulse', 'Reset cache guard check');
+          document.querySelector('.mobile-bottom-dock [data-tab="pulse"]')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          window.__THEO_INTERCEPT_CACHE_RESET = true;
+          window.__theoCacheResetCount = 0;
+
+          const pinOverlay = document.getElementById('pin-overlay');
+          if (pinOverlay) pinOverlay.hidden = false;
+          document.querySelector('#view-pulse [data-render-boundary="pulse"] [data-reset-theo-cache]')?.click();
+          await new Promise((r) => setTimeout(r, 25));
+          const blockedWhenLocked = window.__theoCacheResetCount === 0 && localStorage.getItem('theo_remote_cache_v3') !== null;
+
+          if (pinOverlay) pinOverlay.hidden = true;
+          document.querySelector('#view-pulse [data-render-boundary="pulse"] [data-reset-theo-cache]')?.click();
+          await new Promise((r) => setTimeout(r, 25));
+          const clearedWhenUnlocked = window.__theoCacheResetCount === 1 && localStorage.getItem('theo_remote_cache_v3') === null;
+          const preservedOtherKeys =
+            localStorage.getItem('theo_remote_prefs_v1') === beforePrefs &&
+            localStorage.getItem('theo_remote_outbox_v1') === beforeOutbox &&
+            localStorage.getItem('theo_personal_ledger_v1') === beforePersonal;
+
+          window.__THEO_INTERCEPT_CACHE_RESET = false;
+          window.__theoTestWs.setRenderFault('pulse', '');
+          const resetHtmlRes = await fetch('./reset.html');
+          const resetHtmlTxt = await resetHtmlRes.text();
+          return {
+            blockedWhenLocked,
+            clearedWhenUnlocked,
+            preservedOtherKeys,
+            resetClearsV3: resetHtmlTxt.includes('theo_remote_cache_v3'),
+            resetTouchesPrefs: resetHtmlTxt.includes('theo_remote_prefs_v1')
+          };
+        })()`);
+        assert.strictEqual(resetProbe.blockedWhenLocked, true, 'PIN-locked overlay must block Reset Cache action');
+        assert.strictEqual(resetProbe.clearedWhenUnlocked, true, 'Unlocked Reset Cache must clear theo_remote_cache_v3');
+        assert.strictEqual(resetProbe.preservedOtherKeys, true, 'Reset Cache must preserve pairing prefs, outbox, and personal ledger');
+        assert.strictEqual(resetProbe.resetClearsV3 && !resetProbe.resetTouchesPrefs, true, 'reset.html must evict theo_remote_cache_v3 while leaving pairing prefs intact');
+
+        // Poisoned theo_remote_cache_v3 cold-boot safety
+        await evalJs(`(() => {
+          window.__THEO_ALLOW_PROBE_MOCK_FETCH = false;
+          window.__THEO_INTERCEPT_CACHE_RESET = false;
+          const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+          prefs.customBridgeUrl = '';
+          localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+          localStorage.setItem('theo_remote_cache_v3', JSON.stringify({
+            state: {
+              antigravityModelCatalog: { models: [null, 42] },
+              rows: [null, { id: 'bad-row', title: { nested: 1 } }],
+              approvals: [null]
+            }
+          }));
+          location.reload();
+          return true;
+        })()`);
+        await new Promise((r) => setTimeout(r, 700));
+        const bootRecovered = await evalJs(`Boolean(document.getElementById('app-shell') && window.__theoTestWs && typeof window.__theoTestWs.getState === 'function')`);
+        assert.strictEqual(bootRecovered, true, 'Cold boot with poisoned theo_remote_cache_v3 must still finish init() without throwing');
+        console.log('[PASS] Adversarial #31: Inactive Pulse/Sessions DOM skip, isolated per-view boundaries, safe Reset Cache & poisoned-cache boot safety verified');
+      } finally {
+        srv.mockStatePayload = null;
+        await evalJs(`(() => {
+          window.__THEO_ALLOW_PROBE_MOCK_FETCH = false;
+          window.__THEO_INTERCEPT_CACHE_RESET = false;
+          const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+          prefs.customBridgeUrl = '';
+          localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+          return true;
+        })()`).catch(() => {});
       }
     }
 
