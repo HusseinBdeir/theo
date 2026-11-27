@@ -915,7 +915,7 @@
         <span>✎ Rename Session</span><span class="meta-timestamp">F2</span>
       </button>
       <button type="button" class="ctx-menu-item" data-ctx-menu-act="inspect-outline" data-id="${S.esc(r.id)}" data-prov="${provKey}">
-        <span>Inspect Outline &amp; Files</span><span class="meta-timestamp">⌘I</span>
+        <span>Inspect Outline &amp; Files</span><span class="meta-timestamp">${S.MOD_KEY}I</span>
       </button>
       <button type="button" class="ctx-menu-item" data-ctx-menu-act="pin-bg" data-id="${S.esc(r.id)}">
         <span>${isPinnedBg ? 'Unpin Side Agents' : 'Pin Side Agents in Sidebar'}</span>
@@ -1450,7 +1450,7 @@
               ? `<form class="ide-acct-edit-row" data-acct-label-form="${S.esc(acctId)}" data-acct-prov="${provKey}"><input type="text" class="ide-acct-inline-edit" value="${S.esc(activeInlineAcctEdit.value ?? nick)}" placeholder="Label (e.g. Work, Personal)" maxlength="32" autocomplete="off"><button type="submit" class="ide-link-pill">Save</button><button type="button" class="ide-link-pill" data-acct-label-cancel="1">Cancel</button></form>`
               : '';
             return `
-              <div class="ide-acct-card${isActive ? ' is-active' : ''}${isCollapsed ? ' collapsed' : ''}" data-quota-card-id="${S.esc(acctId)}" data-account-prov="${provKey}"${canReorderSide ? ' draggable="true"' : ''}>
+              <div class="ide-acct-card${isActive ? ' is-active' : ''}${multi ? ' is-multi' : ''}${isCollapsed ? ' collapsed' : ''}" data-quota-card-id="${S.esc(acctId)}" data-account-prov="${provKey}"${canReorderSide ? ' draggable="true"' : ''}>
                 <div class="ide-acct-head">
                   <button type="button" class="ide-acct-toggle" data-quota-collapse="${S.esc(collapseKey)}" aria-expanded="${!isCollapsed}">
                     <span class="ide-chevron-sm">${isCollapsed ? S.CHEVRON_RIGHT_SVG : S.CHEVRON_DOWN_SVG}</span>

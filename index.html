@@ -3,17 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-  <meta name="theme-color" content="#161619" id="meta-theme-color">
+  <meta name="theme-color" content="#191A1B" id="meta-theme-color">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="THEO">
   <meta name="description" content="THEO workbench for Google Antigravity and Claude Code.">
   <title>THEO</title>
-  <link rel="manifest" href="manifest.json?v=99">
-  <link rel="icon" type="image/svg+xml" href="icon.svg?v=99">
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=99">
-  <link rel="apple-touch-icon" href="icon-180.png?v=99">
-  <link rel="stylesheet" href="css/theo.css?v=99">
+  <link rel="manifest" href="manifest.json?v=100">
+  <link rel="icon" type="image/svg+xml" href="icon.svg?v=100">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=100">
+  <link rel="apple-touch-icon" href="icon-180.png?v=100">
+  <link rel="stylesheet" href="css/theo.css?v=100">
   <script id="pre">
     (() => {
       try {
@@ -31,7 +31,7 @@
         if (m) {
           m.setAttribute(
             'content',
-            t === 'light' ? '#F3F1EC' : pal === 'velvet' ? '#0C0E13' : pal === 'espresso' ? '#151311' : '#161619'
+            t === 'light' ? '#F3F1EC' : pal === 'velvet' ? '#0C0E13' : pal === 'espresso' ? '#151311' : '#191A1B'
           );
         }
         if (p && p.sidebarCollapsed) {
@@ -53,7 +53,7 @@
   <div id="pin-overlay" class="pin-overlay" hidden>
     <div class="pin-card">
       <div class="pin-brand">
-        <img src="icon.svg?v=99" alt="THEO" class="pin-logo">
+        <img src="icon.svg?v=100" alt="THEO" class="pin-logo">
         <div class="pin-title">THEO</div>
         <div class="brass-double-rule"></div>
       </div>
@@ -81,7 +81,7 @@
   <div class="app-shell" id="app-shell">
     <!-- Title bar of the installed desktop app; shown only when the window controls overlay is on -->
     <header class="wco-titlebar" id="wco-titlebar" aria-label="THEO window title bar">
-      <img src="icon.svg?v=99" alt="" class="wco-titlebar-icon">
+      <img src="icon.svg?v=100" alt="" class="wco-titlebar-icon">
       <button type="button" class="wco-titlebar-search" id="wco-titlebar-search" data-open-cmd-palette="1" aria-label="Search sessions and commands (⌘K)">
         <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         <span>Search sessions and commands</span>
@@ -94,7 +94,7 @@
       <div class="ide-explorer-sidebar" id="ide-explorer-sidebar">
         <div class="ide-sidebar-top">
           <button type="button" class="ide-brand-home-btn" id="btn-sidebar-brand" data-tab="chat" data-micro-tip="Workbench" aria-label="Open THEO Workbench">
-            <img src="icon.svg?v=99" alt="" class="ide-brand-icon">
+            <img src="icon.svg?v=100" alt="" class="ide-brand-icon">
             <span class="ide-sidebar-heading">THEO</span>
           </button>
           <div class="ide-sidebar-top-actions">
@@ -240,7 +240,7 @@
       <!-- Mobile & Compact Top Header -->
       <header class="mobile-topbar">
         <div class="mobile-brand">
-          <img src="icon.svg?v=99" alt="THEO" class="mobile-badge">
+          <img src="icon.svg?v=100" alt="THEO" class="mobile-badge">
           <div class="mobile-brand-copy">
             <div class="mobile-title-row">
               <div class="mobile-wordmark-stack">
@@ -445,7 +445,7 @@
                 <span class="chat-crumb-sep chat-title-sep">/</span>
                 <div class="chat-title-row">
                   <span class="chat-session-title" id="chat-session-title" data-chat-title-inline="1" data-micro-tip="Double-click or press F2 to rename">New Session</span>
-                  <button type="button" class="ide-mini-icon-btn chat-rename-btn" id="btn-chat-rename-title" data-chat-rename-btn="1" data-micro-tip="Rename session (F2)" aria-label="Rename active session" hidden>✎</button>
+                  <button type="button" class="ide-mini-icon-btn chat-rename-btn" id="btn-chat-rename-title" data-chat-rename-btn="1" data-micro-tip="Rename session (F2)" aria-label="Rename active session" hidden><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.6 2.9l2.5 2.5-7.4 7.4-3 .5.5-3z"/><path d="M9.2 4.3l2.5 2.5"/></svg></button>
                   <button type="button" class="chat-quick-switch-pill tabular" id="btn-chat-quick-switch" data-open-cmd-palette="1" data-micro-tip="Switch session (⌘K)" aria-label="Switch session (⌘K)">⌘K</button>
                 </div>
                 <button type="button" class="session-neon-pill" id="chat-neon-pill" hidden data-switch-neon-carbon="" data-micro-tip="Switch session from Neon to Carbon" aria-label="Neon model active — switch to Carbon">Neon</button>
@@ -478,7 +478,7 @@
                 <span id="ctx-pill-label">0 / 512k · 0%</span>
                 <span class="ctx-overrun-pill" id="ctx-overrun-pill" hidden></span>
               </button>
-              <button type="button" class="inspector-toggle-pill tabular" id="btn-toggle-inspector" aria-label="Toggle Split Inspector (Ctrl+I)" aria-expanded="false" aria-controls="ide-inspector-pane">
+              <button type="button" class="inspector-toggle-pill tabular" id="btn-toggle-inspector" aria-label="Toggle Split Inspector (⌘I)" aria-expanded="false" aria-controls="ide-inspector-pane">
                 <svg class="insp-pill-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <rect x="1.5" y="2.5" width="13" height="11" rx="1.6"/>
                   <path d="M9.8 2.5v11"/>
@@ -882,13 +882,13 @@
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=99"></script>
-  <script src="js/models.js?v=99"></script>
-  <script src="js/transport.js?v=99"></script>
-  <script src="js/sidebar.js?v=99"></script>
-  <script src="js/inspector.js?v=99"></script>
-  <script src="js/chat.js?v=99"></script>
-  <script src="js/views.js?v=99"></script>
-  <script src="js/app.js?v=99"></script>
+  <script src="js/endpoints.js?v=100"></script>
+  <script src="js/models.js?v=100"></script>
+  <script src="js/transport.js?v=100"></script>
+  <script src="js/sidebar.js?v=100"></script>
+  <script src="js/inspector.js?v=100"></script>
+  <script src="js/chat.js?v=100"></script>
+  <script src="js/views.js?v=100"></script>
+  <script src="js/app.js?v=100"></script>
 </body>
 </html>

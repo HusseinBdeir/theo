@@ -1,6 +1,14 @@
 (() => {
   'use strict';
   const S = Object.create(null);
+  // Shortcut hints name the key on the viewer's keyboard: the command key on Apple devices, Ctrl on
+  // other computers. Touch-first devices (phones, tablets) have no such key and keep the hint as it was.
+  const KEEPS_COMMAND_GLYPH =
+    /Mac|iPhone|iPad|iPod/i.test(
+      (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || ''
+    ) ||
+    (typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches);
+  S.MOD_KEY = KEEPS_COMMAND_GLYPH ? '⌘' : 'Ctrl+';
   const registeredModules = typeof window.__theoConsumeModules === 'function' ? window.__theoConsumeModules() : [];
   const expectedOrder = ['models', 'transport', 'sidebar', 'inspector', 'chat', 'views'];
   if (registeredModules.length !== expectedOrder.length || expectedOrder.some((name, idx) => registeredModules[idx]?.[0] !== name)) {
@@ -3481,7 +3489,7 @@
             ? '#0C0E13'
             : prefs.palette === 'espresso'
               ? '#151311'
-              : '#161619';
+              : '#191A1B';
       let plateHex = '';
       try {
         plateHex = getComputedStyle(document.documentElement).getPropertyValue('--bg-plate').trim();
@@ -7737,7 +7745,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=99', { updateViaCache: 'none' })
+        .register('sw.js?v=100', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
@@ -7833,6 +7841,43 @@
   }
 
   // Bootstrap
+  // The static markup writes shortcuts with the command key; on other keyboards show Ctrl instead.
+  function applyPlatformShortcutLabels() {
+    if (KEEPS_COMMAND_GLYPH) return;
+    const swap = (txt) => String(txt).replace(/⌘/g, 'Ctrl+');
+    document.querySelectorAll('[data-micro-tip], [aria-label]').forEach((el) => {
+      for (const attr of ['data-micro-tip', 'aria-label']) {
+        const val = el.getAttribute(attr);
+        if (val && val.includes('⌘')) el.setAttribute(attr, swap(val));
+      }
+    });
+    document.querySelectorAll('kbd, #btn-chat-quick-switch').forEach((el) => {
+      if (el.childElementCount === 0 && el.textContent.includes('⌘')) el.textContent = swap(el.textContent);
+    });
+  }
+
+  // The sidebar's Account and Tasks sections stay collapsed or open the way the viewer left them,
+  // as they do in the VS Code sidebar. Questions always opens: it only appears when one is waiting.
+  function restoreSidebarSections() {
+    const readMap = () =>
+      prefs.sideSectionsClosed && typeof prefs.sideSectionsClosed === 'object' && !Array.isArray(prefs.sideSectionsClosed)
+        ? prefs.sideSectionsClosed
+        : {};
+    for (const id of ['ide-sec-accounts', 'ide-sec-bgtasks']) {
+      const el = $(id);
+      if (!el) continue;
+      if (readMap()[id] === true) el.open = false;
+      el.addEventListener('toggle', () => {
+        const map = readMap();
+        if (el.open === (map[id] !== true)) return;
+        if (el.open) delete map[id];
+        else map[id] = true;
+        prefs.sideSectionsClosed = map;
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+      });
+    }
+  }
+
   function init() {
     const storedPrefsSnapshot = loadJson(STORAGE_KEYS.PREFS, null);
     if (isStandalone()) {
@@ -7856,6 +7901,8 @@
     } catch {}
     applyTheme(prefs.theme);
     hydrateStaticIcons();
+    applyPlatformShortcutLabels();
+    restoreSidebarSections();
     initPinLock();
     loadPersonalLedgerFromLocal();
     bindEvents();

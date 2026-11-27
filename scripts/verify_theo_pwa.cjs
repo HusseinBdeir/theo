@@ -2028,7 +2028,7 @@ async function main() {
     assert.strictEqual(v59DesktopProbe.palAfterHostile, 'daylight', 'Hostile palette string must be rejected by strict allowlist without mutating current palette');
     assert.strictEqual(v59DesktopProbe.palGraphite, 'graphite', 'Clicking graphite preset must apply graphite');
     assert.strictEqual(v59DesktopProbe.themeGraphite, 'dark', 'Graphite must set dark theme');
-    assert.strictEqual(v59DesktopProbe.metaThemeGraphite, '#161619', 'Graphite #meta-theme-color must be #161619 (the palette --bg-plate, so the installed title bar matches the top strip)');
+    assert.strictEqual(v59DesktopProbe.metaThemeGraphite, '#191A1B', 'Graphite #meta-theme-color must be #191A1B (the palette --bg-plate, so the installed title bar matches the top strip)');
 
     // Navigate fresh after seeding sess-v59
     await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
@@ -10293,7 +10293,52 @@ async function main() {
             groupPillFg: groupPill ? getComputedStyle(groupPill).color : 'missing',
             titlebarDisplay: titlebar ? getComputedStyle(titlebar).display : 'missing',
             titlebarOpensPalette: Boolean(titlebar && titlebar.querySelector('[data-open-cmd-palette]')),
-            shellRows: getComputedStyle(document.getElementById('app-shell')).gridTemplateRows
+            shellRows: getComputedStyle(document.getElementById('app-shell')).gridTemplateRows,
+            p8: (() => {
+              const lum = (h) => { const c = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4))); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
+              const cast = (h) => { const c = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)); return Math.max(...c) - Math.min(...c); };
+              const ratio = (a, b) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+              const colourOf = (v) => { const s = document.createElement('span'); s.style.color = v; document.body.appendChild(s); const c = getComputedStyle(s).color; s.remove(); return c; };
+              const obs = tok('--bg-obsidian'), ink = tok('--bg-ink'), muted = tok('--text-muted'), plate = tok('--bg-plate');
+              const sec = document.getElementById('ide-sec-bgtasks');
+              const body = document.getElementById('ide-sidebar-bgtasks');
+              const wasHidden = sec.hidden, wasOpen = sec.open, prevHtml = body.innerHTML;
+              sec.hidden = false; sec.open = true;
+              body.innerHTML = Array.from({ length: 8 }, (_, i) => '<div class="ide-bg-row is-running" role="button" tabindex="0"><span class="ide-bg-ico">●</span><span class="ide-bg-copy"><span class="ide-bg-title">Probe task ' + i + '</span><span class="ide-bg-sub">Task · Session 32 A</span></span><span class="ide-bg-right tabular"><span class="ide-bg-age">1m</span></span></div>').join('');
+              const row = body.querySelector('.ide-bg-row');
+              const rcs = getComputedStyle(row);
+              const task = {
+                rowHeight: Math.round(rect(row).height),
+                borderLeft: rcs.borderLeftWidth,
+                borderTop: rcs.borderTopWidth,
+                bodyHeight: Math.round(rect(body).height),
+                sameLine: Math.abs(rect(row.querySelector('.ide-bg-title')).top - rect(row.querySelector('.ide-bg-sub')).top) <= 3
+              };
+              body.innerHTML = prevHtml; sec.hidden = wasHidden; sec.open = wasOpen;
+              const sub = document.querySelector('#ide-sidebar-accounts .ide-acct-sub');
+              const qlbl = document.querySelector('#ide-sidebar-accounts .ide-qlbl');
+              const activeMulti = document.querySelector('#ide-sidebar-accounts .ide-acct-card.is-active.is-multi');
+              const idleCard = document.querySelector('#ide-sidebar-accounts .ide-acct-card:not(.is-active)');
+              const idleRow = document.querySelector('#ide-sidebar-tree .ide-tree-row:not(.active)');
+              return {
+                obs, plate, ink,
+                casts: [cast(obs), cast(plate), cast(ink)],
+                order: lum(obs) < lum(plate) && lum(plate) < lum(ink),
+                mutedOnInk: ratio(muted, ink),
+                subFont: sub ? parseFloat(getComputedStyle(sub).fontSize) : 0,
+                qlblFont: qlbl ? parseFloat(getComputedStyle(qlbl).fontSize) : 0,
+                qmetaFont: parseFloat(getComputedStyle(document.querySelector('#ide-sidebar-accounts .ide-qmeta')).fontSize),
+                planFont: parseFloat(getComputedStyle(document.querySelector('#ide-sidebar-accounts .ide-plan-tag')).fontSize),
+                activeBorder: activeMulti ? getComputedStyle(activeMulti).borderTopColor : 'missing',
+                idleBorder: idleCard ? getComputedStyle(idleCard).borderTopColor : 'missing',
+                idleRowColour: idleRow ? getComputedStyle(idleRow).color : 'missing',
+                primaryColour: colourOf('var(--text-primary)'),
+                connHeight: Math.round(rect(document.getElementById('rail-conn-btn')).height),
+                quickSwitch: (document.getElementById('btn-chat-quick-switch')?.textContent || '').trim(),
+                appleKeyboard: /Mac|iPhone|iPad|iPod/i.test((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '') || matchMedia('(pointer: coarse)').matches,
+                task
+              };
+            })()
           };
         })()`);
 
@@ -10376,7 +10421,7 @@ async function main() {
         const manifest32 = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'manifest.json'), 'utf8'));
         assert.deepStrictEqual(manifest32.display_override, ['window-controls-overlay', 'standalone'], 'manifest.json must opt into the window controls overlay and fall back to standalone');
         assert.strictEqual(manifest32.display, 'standalone', 'manifest.json display must stay standalone');
-        assert.strictEqual(String(manifest32.theme_color).toUpperCase(), '#161619', 'manifest.json theme_color must be the graphite --bg-plate');
+        assert.strictEqual(String(manifest32.theme_color).toUpperCase(), '#191A1B', 'manifest.json theme_color must be the graphite --bg-plate');
         const css32 = fs.readFileSync(path.join(REPO_ROOT, 'css', 'theo.css'), 'utf8');
         const wcoAt = css32.indexOf('@media (display-mode: window-controls-overlay)');
         assert.ok(wcoAt > 0, 'css/theo.css must carry the window-controls-overlay rules');
@@ -10396,6 +10441,15 @@ async function main() {
               agy: root.getPropertyValue('--agy').trim().toUpperCase(),
               emerald: root.getPropertyValue('--emerald').trim().toUpperCase(),
               plate: root.getPropertyValue('--bg-plate').trim().toUpperCase(),
+              selection: (() => {
+                // Read the settled colour, not a frame of the row's 0.1s background transition
+                const row = document.querySelector('#ide-sidebar-tree .ide-tree-row.active');
+                if (!row) return 'missing';
+                row.style.transition = 'none';
+                const colour = getComputedStyle(row).backgroundColor;
+                row.style.transition = '';
+                return colour;
+              })(),
               meta: (document.getElementById('meta-theme-color')?.getAttribute('content') || '').toUpperCase()
             };
           }
@@ -10410,6 +10464,11 @@ async function main() {
         assert.strictEqual(pal32.velvet.emerald, '#6E9E82', 'Velvet keeps its own calm --emerald');
         assert.strictEqual(pal32.espresso.agy, '#6E95C8', 'Espresso keeps its own calm --agy (no vivid blue in the zero-blue-light palette)');
         assert.strictEqual(pal32.graphite.agy, '#3186FF', 'Graphite returns to the extension --agy after the palette round trip');
+        const spread32 = (c) => { const v = (String(c).match(/-?\d*\.?\d+/g) || []).slice(0, 3).map(Number); return v.length === 3 ? Math.max(...v) - Math.min(...v) : -1; };
+        assert.strictEqual(spread32(pal32.graphite.selection), 0, `Graphite selects a session in neutral grey (got ${pal32.graphite.selection})`);
+        for (const pal of ['velvet', 'espresso', 'daylight']) {
+          assert.ok(spread32(pal32[pal].selection) > 0.1, `${pal} keeps its own blue session selection (got ${pal32[pal].selection})`);
+        }
 
         // (j) The two hard-coded title-bar colour maps (pre-paint script, applyTheme fallback) equal each palette's --bg-plate in the CSS
         const header32 = css32.slice(0, css32.indexOf('/* @scales:start */'));
@@ -10453,13 +10512,85 @@ async function main() {
         assert.strictEqual(collapse32.left, 0, 'Collapsed: workbench must start at the left edge');
         assert.strictEqual(collapse32.right, collapse32.vw, `Collapsed: workbench must reach the right edge (${collapse32.right} of ${collapse32.vw})`);
         assert.strictEqual(collapse32.restored, true, 'Sidebar must expand again');
-        console.log('[PASS] Adversarial #32: Phase 7 (v97) one-line sidebar headers, untruncated account names, unclipped filter chips, session-list floor, 26px header controls, extension accents, keyboard focus ring & installed-window title bar verified');
+
+        // (l) v100 (Phase 8): Graphite is VS Code's neutral dark, and the sidebar gives the session list the room
+        const p8 = p32.p8;
+        assert.ok(p8.casts.every((c) => c <= 3), `Graphite surfaces must carry no colour cast (channel spread ${p8.casts} for ${p8.obs} ${p8.plate} ${p8.ink})`);
+        assert.strictEqual(p8.order, true, `Graphite planes must run reading area < sidebar < cards in lightness (${p8.obs} ${p8.plate} ${p8.ink})`);
+        assert.ok(p8.mutedOnInk >= 4.4, `--text-muted must stay readable on a card (contrast ${p8.mutedOnInk.toFixed(2)}, need 4.4)`);
+        assert.ok(Math.min(p8.subFont, p8.qlblFont, p8.qmetaFont, p8.planFont) >= 11, `Account detail text must be 11px or larger (email ${p8.subFont}px, quota label ${p8.qlblFont}px, reset and percent ${p8.qmetaFont}px, plan ${p8.planFont}px)`);
+        assert.notStrictEqual(p8.activeBorder, p8.idleBorder, 'The account in use must be outlined differently from the others when a provider has several');
+        assert.strictEqual(p8.idleRowColour, p8.primaryColour, `Session titles must use the primary text colour (got ${p8.idleRowColour})`);
+        assert.ok(p8.connHeight <= 28, `Connection status must be one line (got ${p8.connHeight}px)`);
+        assert.strictEqual(p8.task.rowHeight, 26, `A side task must be one 26px row (got ${p8.task.rowHeight}px)`);
+        assert.strictEqual(p8.task.borderLeft, '0px', 'A running side task must carry no side stripe');
+        assert.strictEqual(p8.task.borderTop, '0px', 'A side task must not be a bordered card');
+        assert.strictEqual(p8.task.sameLine, true, 'A side task title and its session must share one line');
+        assert.ok(p8.task.bodyHeight <= 142, `Eight side tasks must scroll inside 142px (got ${p8.task.bodyHeight}px)`);
+        assert.ok(p32.sessionsHeight >= 450, `Session list must keep at least half of a 900px window (got ${p32.sessionsHeight})`);
+        assert.strictEqual(p8.quickSwitch, p8.appleKeyboard ? '⌘K' : 'Ctrl+K', `The switch-session hint must name this keyboard's key (got "${p8.quickSwitch}")`);
+
+        // (m) A sidebar section the viewer collapses is remembered, and forgotten again once reopened
+        const sec32 = await evalJs(`(async () => {
+          const read = () => (JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}').sideSectionsClosed || {})['ide-sec-accounts'];
+          const el = document.getElementById('ide-sec-accounts');
+          el.open = false;
+          await new Promise((r) => setTimeout(r, 120));
+          const closed = read();
+          el.open = true;
+          await new Promise((r) => setTimeout(r, 120));
+          return { closed, reopened: read() };
+        })()`);
+        assert.strictEqual(sec32.closed, true, 'Collapsing Account & Usage must be saved in the prefs');
+        assert.strictEqual(sec32.reopened, undefined, 'Reopening Account & Usage must clear the saved state');
+
+        // (n) A collapsed section comes back collapsed after a reload; a malformed or hostile stored value is ignored
+        const reload32 = async (seedJson) => {
+          await evalJs(`((seed) => {
+            const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+            if (seed === '__delete__') delete prefs.sideSectionsClosed;
+            else prefs.sideSectionsClosed = JSON.parse(seed);
+            localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+            window.__p8OldPage = true;
+            location.reload();
+            return true;
+          })(${JSON.stringify(seedJson)})`).catch(() => {});
+          let ready = false;
+          for (let i = 0; i < 80 && !ready; i++) {
+            await new Promise((r) => setTimeout(r, 100));
+            // !window.__p8OldPage: only the reloaded page counts, never the one that asked for the reload
+            ready = await evalJs(`!window.__p8OldPage && document.readyState === 'complete' && document.querySelectorAll('#ide-sidebar-accounts .ide-acct-card').length === 4 && Boolean(document.querySelector('#ide-sidebar-tree .ide-tree-row'))`).catch(() => false);
+          }
+          assert.strictEqual(ready, true, `Page must redraw after a reload with sideSectionsClosed = ${seedJson}`);
+          return evalJs(`(() => {
+            const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+            return {
+              accounts: document.getElementById('ide-sec-accounts').open,
+              tasks: document.getElementById('ide-sec-bgtasks').open,
+              questions: document.getElementById('ide-sec-questions').open,
+              palette: prefs.palette,
+              selected: prefs.selectedThreadId
+            };
+          })()`);
+        };
+        const kept32 = await reload32('{"ide-sec-accounts":true}');
+        assert.deepStrictEqual([kept32.accounts, kept32.tasks, kept32.questions], [false, true, true], `A saved collapse must restore Account & Usage closed and leave the others open (got ${JSON.stringify(kept32)})`);
+        for (const seed of ['"x"', '[true]', 'null', '{"ide-sec-accounts":"true"}', '{"__proto__":{"ide-sec-accounts":true}}', '{"ide-sec-questions":true}']) {
+          const got = await reload32(seed);
+          assert.deepStrictEqual([got.accounts, got.tasks, got.questions], [true, true, true], `sideSectionsClosed = ${seed} must leave every section open (got ${JSON.stringify(got)})`);
+          assert.strictEqual(got.palette, 'graphite', `sideSectionsClosed = ${seed} must not disturb the palette pref`);
+          assert.strictEqual(got.selected, 'sess-32-a', `sideSectionsClosed = ${seed} must not disturb the selected session`);
+        }
+        await reload32('__delete__');
+        await evalJs('window.__THEO_ALLOW_PROBE_MOCK_FETCH = true; true');
+        console.log('[PASS] Adversarial #32: Phase 7 (v97) one-line sidebar headers, untruncated account names, unclipped filter chips, session-list floor, 26px header controls, extension accents, keyboard focus ring & installed-window title bar, and Phase 8 (v100) neutral Graphite, readable account text, one-line side tasks & session-list room verified');
       } finally {
         srv.mockStatePayload = null;
         await evalJs(`(() => {
           window.__THEO_ALLOW_PROBE_MOCK_FETCH = false;
           const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
           prefs.customBridgeUrl = '';
+          delete prefs.sideSectionsClosed;
           localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
           return true;
         })()`).catch(() => {});
@@ -10473,7 +10604,7 @@ async function main() {
       const theoManSrc = fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8');
       const theoSwSrc = fs.readFileSync(path.join(__dirname, '..', 'sw.js'), 'utf8');
       const swVerMatch = theoSwSrc.match(/CACHE_NAME\s*=\s*['"]theo-remote-v(\d+)['"]/);
-      assert.ok(swVerMatch && Number(swVerMatch[1]) >= 99, 'sw.js must declare CACHE_NAME = theo-remote-v99+');
+      assert.ok(swVerMatch && Number(swVerMatch[1]) >= 100, 'sw.js must declare CACHE_NAME = theo-remote-v100+');
       assert.ok(theoHtmlSrc.includes('class="pwa-status-bar-surface"'), 'index.html must include .pwa-status-bar-surface element');
       assert.ok(theoCssSrc.includes('--ios-pwa-top-clear') && theoCssSrc.includes('@supports (-webkit-touch-callout: none)'), 'css/theo.css must guard --ios-pwa-top-clear under @supports');
       assert.ok(theoManSrc.includes(`?v=${swVerMatch[1]}`), `manifest.json must be bumped to v${swVerMatch[1]}`);

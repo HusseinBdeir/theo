@@ -45,34 +45,38 @@ html[data-theme="light"] {
   --shadow-sm: 0 1px 3px rgba(18, 19, 23, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
-/* Default Dark Palette: VS Code Modern Graphite (Low-glare matte charcoal & champagne depth).
+/* Default Dark Palette: Graphite, the neutral greys of VS Code's own dark theme (v100).
+   Surfaces carry no colour cast and sit in VS Code's order: the reading area is the darkest
+   plane (--bg-obsidian, the editor), the sidebar and tab strip one step up (--bg-plate),
+   cards and inputs one more (--bg-ink). --text-muted is 4.5:1 on a card (--bg-ink), up from 3.1:1.
    --steel, --agy, --claude and --emerald are the THEO Hub extension's own accents
    (theo-hub/resources/hub.css: --status-pending, --progress-agy, --progress-claude, --status-busy),
    so quota bars, status dots and selection read the same in the PWA and in VS Code.
-   Velvet and Espresso keep their own calmer accents and pin them in their blocks. */
+   Velvet and Espresso keep their own surfaces, text and calmer accents, pinned in their blocks. */
 html[data-theme="dark"] {
-  --bg-obsidian: #1C1C20;
-  --bg-plate: #161619;
-  --bg-activity: #111114;
-  --bg-ink: #232329;
-  --bg-elevated: #2B2B33;
-  --bg-card: #202026;
-  --bg-card-hover: #26262E;
-  --bg-glass: rgba(22, 22, 25, 0.92);
+  --bg-obsidian: #121314;
+  --bg-plate: #191A1B;
+  --bg-activity: #191A1B;
+  --bg-ink: #1F2021;
+  --bg-elevated: #2A2B2C;
+  --bg-card: #1C1D1E;
+  --bg-card-hover: #232425;
+  --bg-glass: rgba(25, 26, 27, 0.92);
   --border-subtle: rgba(255, 255, 255, 0.075);
   --border-hairline: rgba(255, 255, 255, 0.042);
   --border-strong: rgba(200, 162, 90, 0.38);
   --surface-bevel: inset 0 1px 0 rgba(255, 255, 255, 0.045);
-  --text-heading: #EFEFF2;
-  --text-primary: #D4D4D9;
-  --text-secondary: #9A9AA5;
-  --text-muted: #6E6E79;
+  --text-heading: #EDEDED;
+  --text-primary: #CCCCCC;
+  --text-secondary: #9D9D9D;
+  --text-muted: #868686;
+  --tint: #FFFFFF;
   --code-inline-bg: rgba(255, 255, 255, 0.055);
   --code-inline-border: rgba(255, 255, 255, 0.085);
   --code-inline-fg: #DFC9A3;
-  --chip-bg: #25252C;
+  --chip-bg: #232324;
   --chip-border: rgba(255, 255, 255, 0.105);
-  --chip-hover-bg: #2F2F38;
+  --chip-hover-bg: #2C2D2E;
   --brass: #C8A25A;
   --brass-deep: #AD8740;
   --brass-glow: rgba(200, 162, 90, 0.14);
@@ -105,6 +109,11 @@ html[data-theme="dark"][data-palette="velvet"] {
   --bg-card: #151821;
   --bg-card-hover: #1B1F2B;
   --bg-glass: rgba(12, 14, 19, 0.92);
+  --text-heading: #EFEFF2;
+  --text-primary: #D4D4D9;
+  --text-secondary: #9A9AA5;
+  --text-muted: #6E6E79;
+  --tint: #94A3B8;
   --code-inline-fg: #D5C8AE;
   --chip-bg: #1B1E29;
   --chip-hover-bg: #232736;
@@ -133,6 +142,7 @@ html[data-theme="dark"][data-palette="espresso"] {
   --text-primary: #DDD5CC;
   --text-secondary: #A69D94;
   --text-muted: #7A7169;
+  --tint: #94A3B8;
   --code-inline-fg: #E6C896;
   --chip-bg: #282320;
   --chip-hover-bg: #332D29;
@@ -215,7 +225,7 @@ html[data-theme="dark"] {
   --on-emerald: #111114;
 }
 /* @scales:end */
-/* @tokens-sha256: ef5108ffa34aa5d6b21a4a8c93edc6d553e8bf1a755eeaf130f63869be043a03 */
+/* @tokens-sha256: 7b4163ec38afe7a2cac0a4c88c9523b446af00cd00f3336bcc4ae93eaf78b37d */
 /* END GENERATED DESIGN TOKENS */
 
 *, *::before, *::after {
@@ -9190,8 +9200,8 @@ html[data-theme="light"] .sb-q-btn.primary {
   border-radius: var(--r-pill);
 }
 
-.sw-graphite { background: #1C1C20; }
-.sw-graphite i { background: #141417; }
+.sw-graphite { background: #121314; }
+.sw-graphite i { background: #191A1B; }
 .sw-graphite b { background: #C8A25A; }
 
 .sw-velvet { background: #111319; }
@@ -12094,6 +12104,12 @@ html[data-theme="dark"] .btn-approve {
     border-color: var(--border-subtle);
   }
 
+  /* Where a provider has several accounts, the one in use carries the extension's green outline */
+  .ide-acct-card.is-active.is-multi {
+    border-color: var(--emerald-line);
+    background: color-mix(in srgb, var(--emerald) 4%, var(--bg-ink));
+  }
+
   .ide-acct-head {
     gap: 6px;
     min-height: 20px;
@@ -12334,6 +12350,205 @@ html[data-theme="dark"] .btn-approve {
   #view-chat .composer-route-toggle-pill:hover {
     background: var(--tint-1);
   }
+
+  /* 3j. v100 (Phase 8): the sidebar reads like the THEO sidebar in VS Code. The session list is
+     the main content; status, accounts and tasks above it stay compact and never box it in. */
+
+  /* Connection status: one quiet line instead of a card */
+  .ide-explorer-sidebar .rail-conn-card {
+    margin: 4px 6px 2px;
+    width: calc(100% - 12px);
+    min-height: 26px;
+    padding: 2px 8px;
+    background: transparent;
+    border-color: transparent;
+  }
+
+  .ide-explorer-sidebar .rail-conn-card:hover {
+    background: var(--tint-1);
+    border-color: transparent;
+  }
+
+  .ide-explorer-sidebar .conn-meta {
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: flex-start;
+    gap: 8px;
+  }
+
+  .ide-explorer-sidebar .conn-title {
+    flex: 0 0 auto;
+    max-width: 60%;
+    font-size: var(--fs-sm);
+  }
+
+  .ide-explorer-sidebar .conn-sub {
+    flex: 1 1 0;
+    min-width: 0;
+    font-size: var(--fs-xs);
+    color: var(--text-secondary);
+  }
+
+  /* Section headers: readable labels; the one action that adds something is a pill */
+  .ide-side-summary {
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  .ide-side-summary #ide-acct-add-btn {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: var(--r-pill);
+    background: var(--agy-soft);
+    color: var(--steel);
+    font-weight: 600;
+  }
+
+  /* Room for the pill: with all three actions showing, the header label still fits uncut */
+  .ide-side-summary-right {
+    gap: 7px;
+  }
+
+  .ide-side-summary #ide-acct-add-btn:hover {
+    background: color-mix(in srgb, var(--agy) 22%, transparent);
+    color: var(--text-heading);
+    text-decoration: none;
+  }
+
+  .ide-side-summary #ide-acct-details-btn {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  /* Account cards: 11px detail text in the secondary colour (was 10px in the muted one) */
+  .ide-acct-sub {
+    font-size: var(--fs-xs);
+    color: var(--text-secondary);
+  }
+
+  .ide-qlabels,
+  .ide-qmeta,
+  .ide-plan-tag {
+    font-size: var(--fs-xs);
+  }
+
+  .ide-qlbl {
+    color: var(--text-primary);
+  }
+
+  .ide-qmeta strong {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  .ide-acct-role,
+  .ide-acct-role.primary {
+    background: var(--agy-soft);
+    color: var(--steel);
+  }
+
+  .ide-acct-card[data-account-prov="claude"] .ide-acct-role {
+    background: var(--claude-soft);
+    color: var(--claude);
+  }
+
+  /* Side agents and tasks: one 26px line each, as the extension lists them, five before scrolling */
+  .ide-bgtasks-body {
+    gap: 1px;
+    padding: 2px 6px 6px;
+    max-height: 142px;
+  }
+
+  .ide-bg-row,
+  .ide-bg-row.is-running {
+    min-height: 26px;
+    padding: 0 7px;
+    border: none;
+    border-radius: var(--r-sm);
+    background: transparent;
+  }
+
+  .ide-bg-row:hover {
+    background: var(--tint-1);
+  }
+
+  .ide-bg-copy {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 7px;
+  }
+
+  .ide-bg-title {
+    flex: 0 1 auto;
+    min-width: 0;
+    font-size: var(--fs-sm);
+    font-weight: 400;
+    color: var(--text-primary);
+  }
+
+  .ide-bg-sub {
+    flex: 1 1 0;
+    min-width: 0;
+    font-size: var(--fs-xs);
+  }
+
+  /* New-session buttons: one flat split row */
+  .ide-side-sessions .rail-launchers {
+    gap: 0;
+    padding: 0;
+    border-top: 1px solid var(--border-hairline);
+    border-bottom: 1px solid var(--border-hairline);
+    margin-bottom: 6px;
+  }
+
+  .ide-side-sessions .launch-btn,
+  .ide-side-sessions .launch-btn:hover {
+    height: 32px;
+    padding: 0 8px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+
+  .ide-side-sessions .launch-btn:not([hidden]) + .launch-btn {
+    box-shadow: inset 1px 0 0 var(--border-hairline);
+  }
+
+  .ide-side-sessions .launch-btn:hover {
+    background: var(--tint-1);
+    color: var(--text-heading);
+  }
+
+  /* Session rows: full-strength titles. Graphite selects in VS Code's neutral grey; Velvet,
+     Espresso and Daylight keep their own blue selection (3e). */
+  .ide-tree-row {
+    min-height: 28px;
+    color: var(--text-primary);
+  }
+
+  html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) .ide-tree-row.active,
+  html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) .ide-tree-row.is-selected {
+    background: var(--tint-2);
+    color: var(--text-heading);
+  }
+
+  .ide-tree-row.active .ide-tree-title,
+  .ide-tree-row.is-selected .ide-tree-title {
+    font-weight: 600;
+  }
+
+  /* Unread stays a step brighter than a read title now that read titles use the primary colour */
+  .ide-tree-row.is-unread .ide-tree-title {
+    color: var(--text-heading);
+  }
+
+  .ide-sidebar-footer .ide-foot-btn {
+    color: var(--text-secondary);
+  }
 }
 
 @media (min-width: 1025px) and (min-height: 641px) {
@@ -12343,9 +12558,11 @@ html[data-theme="dark"] .btn-approve {
     scrollbar-width: thin;
   }
 
+  /* The session list keeps more than half the window however much sits above it; the sidebar
+     scrolls as one column for the rest (264px used to leave room for four rows). */
   .ide-explorer-sidebar .ide-side-sessions {
     flex: 1 1 0;
-    min-height: 264px;
+    min-height: max(264px, 56vh);
   }
 }
 

@@ -2069,7 +2069,7 @@
             ${
               isSyncingThread
                 ? `Requesting live transcript for <strong>${S.esc(activeRow?.title || 'Session')}</strong> from the PC…`
-                : `Select any session from the sidebar or ⌘K to view the live transcript from <strong>${S.esc(activeRow?.title || 'your PC')}</strong>.`
+                : `Select any session from the sidebar or ${S.MOD_KEY}K to view the live transcript from <strong>${S.esc(activeRow?.title || 'your PC')}</strong>.`
             }
           </div>
         </div>

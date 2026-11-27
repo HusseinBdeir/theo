@@ -2398,7 +2398,7 @@
       { title: 'Sync with the PC & Cloud Relay Now', sub: 'Connectivity', act: 'sync' },
       { title: 'Open THEO Memory Vault (Reports, Notes & Docs)', sub: 'Cloudflare Vault · memory.husseinbdeir.workers.dev', act: 'open-memory-vault' },
       { title: `${S.isThirdPartyQuotaHidden() ? 'Show' : 'Hide'} Antigravity Claude & GPT Quota Pool`, sub: 'Quota Display', act: 'toggle-3p-quota' },
-      { title: 'Toggle Split Inspector (Files & Preview, Git, Tasks & Outline)', sub: 'Workbench · ⌘I', act: 'inspector' },
+      { title: 'Toggle Split Inspector (Files & Preview, Git, Tasks & Outline)', sub: `Workbench · ${S.MOD_KEY}I`, act: 'inspector' },
       { title: 'Switch Color Palette (Graphite · Velvet · Espresso · Daylight)', sub: 'Appearance', act: 'palette' },
       { title: 'Enable / Test Web Push Notifications', sub: 'Notifications', act: 'push-test' },
       { title: 'Inspect Background Tasks & Subagents', sub: 'Workbench Overview', act: 'bgtasks' },
