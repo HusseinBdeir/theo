@@ -99,11 +99,15 @@ const b64u = (objOrStr) =>
   Buffer.from(typeof objOrStr === 'string' ? objOrStr : JSON.stringify(objOrStr), 'utf8').toString('base64url');
 
 async function main() {
-  // 1. Static checks: v87 lockstep, SW origin-aware workers.dev check, Cloudflare URLs, signed AEA1 shortcut
+  // 1. Static checks: atomic shell lockstep across all js/*.js modules, SW origin-aware workers.dev check, Cloudflare URLs, signed AEA1 shortcut
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
-  const appJs = fs.readFileSync(path.join(ROOT, 'js', 'app.js'), 'utf8');
+  const jsDir = path.join(ROOT, 'js');
+  const jsFiles = fs.readdirSync(jsDir).filter((f) => f.endsWith('.js')).sort();
+  const jsByFile = Object.fromEntries(jsFiles.map((f) => [f, fs.readFileSync(path.join(jsDir, f), 'utf8')]));
+  const appJs = jsByFile['app.js'] || '';
+  const allJsSrc = jsFiles.map((f) => jsByFile[f]).join('\n');
   const installPs1 = fs.readFileSync(path.join(ROOT, 'install.ps1'), 'utf8');
   const cmdHtml = fs.readFileSync(path.join(ROOT, 'command', 'index.html'), 'utf8');
   const plnHtml = fs.readFileSync(path.join(ROOT, 'planner', 'index.html'), 'utf8');
@@ -113,12 +117,16 @@ async function main() {
   assert.ok(swVerMatch && Number(swVerMatch[1]) >= 88, 'sw.js must be >= v88');
   const swVer = swVerMatch[1];
   assert.ok(html.includes(`css/theo.css?v=${swVer}`) && html.includes(`js/app.js?v=${swVer}`), 'index.html must match sw.js version');
+  for (const f of jsFiles) {
+    assert.ok(html.includes(`js/${f}?v=${swVer}`), `index.html must include js/${f}?v=${swVer}`);
+    assert.ok(sw.includes(`./js/${f}?v=${swVer}`), `sw.js CORE_SHELL must include ./js/${f}?v=${swVer}`);
+  }
   assert.ok(manifest.icons.every((ic) => String(ic.src || '').includes(`?v=${swVer}`)), 'manifest.json icons must match sw.js version');
   assert.ok(appJs.includes(`register('sw.js?v=${swVer}'`), 'js/app.js SW registration must match sw.js version');
   assert.ok(sw.includes('url.origin !== self.location.origin && url.hostname.includes(\'workers.dev\')'), 'SW must cache same-origin theo.husseinbdeir.workers.dev assets');
   assert.ok(sw.includes("plannerRedirect = 'https://planner.husseinbdeir.workers.dev/'"), 'SW command redirect must point to Cloudflare Planner');
-  assert.ok(!appJs.includes('https://husseinbdeir.github.io/'), 'no github.io URLs left in js/app.js (hostname check only)');
-  assert.ok(!appJs.includes('https://raw.githubusercontent.com/HusseinBdeir/theo/main/install.ps1'), 'app.js install.ps1 URLs must use Cloudflare');
+  assert.ok(!allJsSrc.includes('https://husseinbdeir.github.io/'), 'no github.io URLs left in js/*.js (hostname check only)');
+  assert.ok(!allJsSrc.includes('https://raw.githubusercontent.com/HusseinBdeir/theo/main/install.ps1'), 'js/*.js install.ps1 URLs must use Cloudflare');
   assert.ok(installPs1.includes('https://theo.husseinbdeir.workers.dev/theo-hub-bundle.zip'), 'install.ps1 must fetch bundle from Cloudflare first');
   assert.ok(cmdHtml.includes('https://planner.husseinbdeir.workers.dev/') && plnHtml.includes('https://planner.husseinbdeir.workers.dev/'));
   const scBuf = fs.readFileSync(path.join(ROOT, 'assets', 'Sync-Apple-Health.shortcut'));

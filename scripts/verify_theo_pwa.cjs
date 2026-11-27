@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('assert');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const fs = require('fs');
 const http = require('http');
 const net = require('net');
@@ -521,42 +521,55 @@ function buildSeedCachePayload() {
 }
 
 async function main() {
-  // Static Lockstep Cache-Version Check (PWA.md §3.1 / Red-Team M-2):
-  // index.html (?v=N), sw.js (CACHE_NAME + CORE_SHELL ?v=N), manifest.json (?v=N), and js/app.js (register('sw.js?v=N')) MUST match.
+  // Static Lockstep Cache-Version & Module Parity Check (PWA.md §3.1 / Phase 5):
+  // index.html (?v=N), sw.js (CACHE_NAME + CORE_SHELL ?v=N), manifest.json (?v=N), js/*.js on disk, and js/app.js (register('sw.js?v=N')) MUST match.
   const indexSrc = fs.readFileSync(path.join(REPO_ROOT, 'index.html'), 'utf8');
   const swSrc = fs.readFileSync(path.join(REPO_ROOT, 'sw.js'), 'utf8');
   const manifestSrc = fs.readFileSync(path.join(REPO_ROOT, 'manifest.json'), 'utf8');
-  const appJsSrc = fs.readFileSync(path.join(REPO_ROOT, 'js', 'app.js'), 'utf8');
+  const jsDir = path.join(REPO_ROOT, 'js');
+  const allJsFiles = fs.readdirSync(jsDir).filter((f) => f.endsWith('.js')).sort();
+  const jsByFile = Object.fromEntries(allJsFiles.map((f) => [f, fs.readFileSync(path.join(jsDir, f), 'utf8')]));
+  const appJsSrc = jsByFile['app.js'] || '';
+  const transportJsSrc = jsByFile['transport.js'] || '';
+  const inspectorJsSrc = jsByFile['inspector.js'] || '';
+  const allJsCombinedSrc = allJsFiles.map((f) => jsByFile[f]).join('\n');
 
   const swCacheMatch = swSrc.match(/CACHE_NAME\s*=\s*['"]theo-remote-v(\d+)['"]/);
   assert.ok(swCacheMatch, 'sw.js must define CACHE_NAME = theo-remote-vN');
   const expectedVer = swCacheMatch[1];
-  for (const [label, src, regex] of [
+  for (const reqMod of ['endpoints.js', 'models.js', 'transport.js', 'sidebar.js', 'inspector.js', 'chat.js', 'views.js', 'app.js']) {
+    assert.ok(allJsFiles.includes(reqMod), `Missing expected module js/${reqMod}`);
+  }
+  const checksList = [
     ['index.html css', indexSrc, /css\/theo\.css\?v=(\d+)/g],
-    ['index.html endpoints.js', indexSrc, /js\/endpoints\.js\?v=(\d+)/g],
-    ['index.html app.js', indexSrc, /js\/app\.js\?v=(\d+)/g],
     ['index.html manifest', indexSrc, /manifest\.json\?v=(\d+)/g],
     ['index.html icon.svg', indexSrc, /icon\.svg\?v=(\d+)/g],
     ['sw.js shell assets', swSrc, /\?v=(\d+)/g],
     ['manifest.json icons', manifestSrc, /\?v=(\d+)/g],
     ['js/app.js registerServiceWorker', appJsSrc, /serviceWorker\s*\.register\(\s*['"]sw\.js\?v=(\d+)['"]/g]
-  ]) {
+  ];
+  for (const modFile of allJsFiles) {
+    const escaped = modFile.replace('.', '\\.');
+    checksList.push([`index.html ${modFile}`, indexSrc, new RegExp(`js\\/${escaped}\\?v=(\\d+)`, 'g')]);
+    checksList.push([`sw.js ${modFile}`, swSrc, new RegExp(`\\.\\/js\\/${escaped}\\?v=(\\d+)`, 'g')]);
+  }
+  for (const [label, src, regex] of checksList) {
     const matches = [...src.matchAll(regex)];
     assert.ok(matches.length > 0, `${label} must include ?v=${expectedVer}`);
     for (const m of matches) {
       assert.strictEqual(m[1], expectedVer, `Lockstep ?v= mismatch in ${label}: found v=${m[1]}, expected v=${expectedVer}`);
     }
   }
-  console.log(`[PASS] Lockstep SW/Shell version parity verified (v${expectedVer})`);
+  console.log(`[PASS] Lockstep SW/Shell version & ${allJsFiles.length}-module parity verified (v${expectedVer})`);
 
   // Static Equal-Hosts Check (v65): the app knows no PC by name or folder. A session belongs to the host that
   // published it (the `deviceId` stamped on the row), and every direct command carries its command id so that a
   // host can recognise the queued copy of a command it has already run.
   {
     for (const banned of [/users[\\/]+husseinbdeir/i, /users[\\/]+hbdei\b/i, /main-workstation/i, /theo-laptop/i, /Main Workstation/, /Hussein-Laptop/i]) {
-      assert.strictEqual(banned.test(appJsSrc), false, `js/app.js must not contain ${banned} (no PC is special)`);
+      assert.strictEqual(banned.test(allJsCombinedSrc), false, `js/*.js must not contain ${banned} (no PC is special)`);
     }
-    const directPayloads = appJsSrc.match(/\.\.\.cmd,\s*(?:attachments: \w+,\s*)?cmdId: cmd\.id,\s*id: cmd\.newSession \? '' : targetThreadId,/g) || [];
+    const directPayloads = transportJsSrc.match(/\.\.\.cmd,\s*(?:attachments: \w+,\s*)?cmdId: cmd\.id,\s*id: cmd\.newSession \? '' : (?:S\.)?targetThreadId,/g) || [];
     assert.strictEqual(directPayloads.length, 3, 'local WS, edge WS and local HTTP command payloads must each carry cmdId');
     console.log('[PASS] Static: no PC named in the app, and all 3 direct command paths carry the command id');
   }
@@ -568,11 +581,11 @@ async function main() {
     const nodeCrypto = require('crypto');
     const vm = require('vm');
     const pick = (name, endToken) => {
-      const start = appJsSrc.indexOf(`  function ${name}(`);
-      assert.ok(start >= 0, `js/app.js must define ${name}`);
-      const end = appJsSrc.indexOf(endToken, start);
+      const start = transportJsSrc.indexOf(`  function ${name}(`);
+      assert.ok(start >= 0, `js/transport.js must define ${name}`);
+      const end = transportJsSrc.indexOf(endToken, start);
       assert.ok(end > start, `could not find the end of ${name}`);
-      return appJsSrc.slice(start, end + endToken.length);
+      return transportJsSrc.slice(start, end + endToken.length);
     };
     const src = [
       pick('sha256HexSync', '\n  }\n'),
@@ -597,6 +610,7 @@ async function main() {
       window: { THEO_CLOUD_CFG: { u: '', k: '', port: 4318, edgeRelayUrl: 'https://theo-edge-relay.husseinbdeir.workers.dev/ws' } },
       deriveEdgeAuthTokenHex: async () => ''
     };
+    sandbox.S = sandbox;
     vm.runInNewContext(src, sandbox, { filename: 'app-edge-store-extract.js' });
     const ref = (s) => nodeCrypto.createHash('sha256').update(s, 'utf8').digest('hex');
     for (const s of ['', 'abc', 'a'.repeat(55), 'a'.repeat(56), 'a'.repeat(64), 'a'.repeat(119), 'a'.repeat(120), '😀 ملاحظة résumé']) {
@@ -627,7 +641,7 @@ async function main() {
   // Static/VM deliverable checks: multi-device bridge isolation, WS chunk continuation & :line parsing
   {
     const vm = require('vm');
-    const appText = fs.readFileSync(path.join(REPO_ROOT, 'js', 'app.js'), 'utf8');
+    const appText = inspectorJsSrc;
     const fnStart = appText.indexOf('function revokeActiveDeliverableBlobs()');
     const fnEnd = appText.indexOf('function getThreadOpenDetailsMap(');
     const fnStart2 = appText.indexOf('function parsePreviewTargetClient(');
@@ -708,6 +722,7 @@ async function main() {
       },
       blobMap
     };
+    vmBox.S = vmBox;
     vm.runInNewContext(dlvSlice, vmBox, { filename: 'app-deliverable-extract.js' });
     const api = vmBox.__dlvApi;
 
@@ -747,10 +762,10 @@ async function main() {
   // Static Attachment Transport & Chunk-Failure Block Verification (Phase 4 Red-Team Guard)
   {
     const vm = require('vm');
-    const appSrc = fs.readFileSync(path.join(REPO_ROOT, 'js', 'app.js'), 'utf8');
+    const appSrc = transportJsSrc;
     const attStart = appSrc.indexOf('  const MAX_LIVE_WS_ATTACHMENT_BYTES = 8 * 1024 * 1024;');
-    const attEnd = appSrc.indexOf('\n  }\n\n  async function flushOutbox()');
-    assert.ok(attStart > 0 && attEnd > attStart, 'Attachment transport slice must locate inside js/app.js');
+    const attEnd = appSrc.indexOf('\n  }\n\n  async function flushOutbox(');
+    assert.ok(attStart > 0 && attEnd > attStart, 'Attachment transport slice must locate inside js/transport.js');
     const attSlice =
       appSrc.slice(attStart, attEnd + 4) +
       '\n__attApi = { calcAttachmentsPayloadChars, compactAttachmentsForCloudFallback, uploadLargeAttachmentsOverWs, dispatchRemoteCommand, getOutbox: () => outbox };';
@@ -790,6 +805,7 @@ async function main() {
         return { ok: true, json: async () => ({}) };
       }
     };
+    attBox.S = attBox;
     vm.runInNewContext(attSlice, attBox, { filename: 'app-attachment-extract.js' });
     const attApi = attBox.__attApi;
 
@@ -6185,7 +6201,8 @@ async function main() {
       const pathPin = require('path');
       const rootPin = pathPin.join(__dirname, '..');
       const pinRe = /pinnedConstraint|setPinnedConstraint|chat-pin|pin-constraints|PinStrip|composer-pin-btn|act === 'pin'/;
-      for (const rel of ['js/app.js', 'index.html', 'css/theo.css', 'sw.js']) {
+      const diskModules = fsPin.readdirSync(pathPin.join(rootPin, 'js')).filter((f) => f.endsWith('.js')).map((f) => `js/${f}`);
+      for (const rel of [...diskModules, 'index.html', 'css/theo.css', 'sw.js']) {
         // The one allowed mention: the boot clean-up that names the retired command type in order to drop it.
         const src = fsPin
           .readFileSync(pathPin.join(rootPin, rel), 'utf8')
@@ -6732,8 +6749,9 @@ async function main() {
           'Adversarial #23 initial pin state loaded'
         );
 
-        const appJsSrc23 = fs.readFileSync(path.join(REPO_ROOT, 'js', 'app.js'), 'utf8');
-        assert.ok(!appJsSrc23.includes('M9.8 2.4l3.8 3.8'), 'Legacy crooked pin polygon must stay replaced in js/app.js');
+        for (const f of allJsFiles) {
+          assert.ok(!jsByFile[f].includes('M9.8 2.4l3.8 3.8'), `Legacy crooked pin polygon must stay replaced in js/${f}`);
+        }
 
         // 1. Desktop IDE sidebar: pinned-first sort inside group & Ungrouped, pin indicator, hover click & contextmenu close
         const ideDesktopCheck = await evalJs(`(() => {
@@ -8543,7 +8561,7 @@ async function main() {
 
       const p2Probe = await evalJs(`(async () => {
         const swSrc = await fetch('./sw.js?t=' + Date.now()).then((r) => r.text());
-        const swHasV93 = swSrc.includes("'theo-remote-v93'");
+        const swHasV93 = swSrc.includes("'theo-remote-v${expectedVer}'");
         const titleCount = document.querySelectorAll('[title]').length;
         const ctxPillIdle = document.getElementById('ctx-pill-label')?.textContent?.trim() || '';
         const ctxHas22019 = ctxPillIdle.includes('22019');
@@ -8959,7 +8977,7 @@ async function main() {
 
       const shellAndRename = await evalJs(`(async () => {
         const swSrc = await fetch('./sw.js?t=' + Date.now()).then((r) => r.text());
-        const swHasV93 = swSrc.includes("'theo-remote-v93'");
+        const swHasV93 = swSrc.includes("'theo-remote-v${expectedVer}'");
         const actBarGone = document.querySelector('.ide-activity-bar') === null;
         const brandTxt = document.getElementById('btn-sidebar-brand')?.textContent?.trim() || '';
         const footerIds = ['rail-vault-btn', 'rail-workspaces-btn', 'rail-fleet-btn', 'rail-push-btn', 'open-cmd-palette', 'btn-palette-picker'];
@@ -9596,6 +9614,242 @@ async function main() {
       } finally {
         srv.mockStatePayload = null;
         await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }, sessionId).catch(() => {});
+      }
+    }
+
+    // Adversarial Check #30: Phase 5 (v94) 7-Module Architecture, Atomic deploy_cf.mjs Gate, Zero-Global Bootstrap & Desktop/iOS Live Parity
+    {
+      const runDeployDry = (args = []) =>
+        new Promise((resolve) => {
+          execFile(
+            process.execPath,
+            [path.join(REPO_ROOT, 'scripts', 'deploy_cf.mjs'), '--dry', ...args],
+            { cwd: REPO_ROOT, timeout: 15000, windowsHide: true },
+            (err, stdout, stderr) => {
+              resolve({ code: err ? err.code || 1 : 0, stdout: String(stdout || ''), stderr: String(stderr || '') });
+            }
+          );
+        });
+
+      const appLineCount = jsByFile['app.js'].split(/\r?\n/).length;
+      assert.ok(appLineCount < 9000, `Modularized js/app.js must stay < 9000 lines, got ${appLineCount}`);
+
+      // Positive deploy_cf.mjs --dry parity check (async execFile so srv event loop never blocks)
+      const tmpLiveDist = fs.mkdtempSync(path.join(os.tmpdir(), 'theo-p5-dist-'));
+      try {
+        const okDeploy = await runDeployDry(['--dist', tmpLiveDist]);
+        assert.strictEqual(okDeploy.code, 0, `deploy_cf.mjs --dry must pass on clean repo: ${okDeploy.stderr}`);
+        assert.ok(okDeploy.stdout.includes('atomic parity PASS'), 'deploy_cf.mjs --dry must log atomic parity PASS');
+      } finally {
+        fs.rmSync(tmpLiveDist, { recursive: true, force: true });
+      }
+
+      // Negative deploy_cf.mjs --dry fixtures: 5 failure modes must all abort non-zero
+      const copyTree = (srcDir, dstDir) => {
+        fs.mkdirSync(dstDir, { recursive: true });
+        for (const ent of fs.readdirSync(srcDir, { withFileTypes: true })) {
+          if (ent.name === '.git' || ent.name === '.cf-dist' || ent.name === '.wrangler' || ent.name === 'node_modules') continue;
+          const s = path.join(srcDir, ent.name);
+          const d = path.join(dstDir, ent.name);
+          if (ent.isDirectory()) copyTree(s, d);
+          else if (ent.isFile()) fs.copyFileSync(s, d);
+        }
+      };
+      const negFixtures = [
+        ['index.html ?v= mismatch', (r) => {
+          const p = path.join(r, 'index.html');
+          fs.writeFileSync(p, fs.readFileSync(p, 'utf8').replace(`js/app.js?v=${expectedVer}`, 'js/app.js?v=999'));
+        }],
+        ['manifest.json ?v= mismatch', (r) => {
+          const p = path.join(r, 'manifest.json');
+          fs.writeFileSync(p, fs.readFileSync(p, 'utf8').replace(`icon.svg?v=${expectedVer}`, 'icon.svg?v=999'));
+        }],
+        ['js/app.js registerServiceWorker mismatch', (r) => {
+          const p = path.join(r, 'js', 'app.js');
+          fs.writeFileSync(p, fs.readFileSync(p, 'utf8').replace(`sw.js?v=${expectedVer}`, 'sw.js?v=999'));
+        }],
+        ['unreferenced js module on disk', (r) => {
+          fs.writeFileSync(path.join(r, 'js', 'orphan.js'), '(() => {})();\n');
+        }],
+        ['missing CORE_SHELL asset', (r) => {
+          const p = path.join(r, 'sw.js');
+          fs.writeFileSync(p, fs.readFileSync(p, 'utf8').replace("'./index.html',", "'./missing-shell-file.html',"));
+        }]
+      ];
+      for (const [label, mutate] of negFixtures) {
+        const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'theo-p5-neg-'));
+        const tmpNegDist = path.join(tmpRepo, '.cf-dist-test');
+        try {
+          copyTree(REPO_ROOT, tmpRepo);
+          mutate(tmpRepo);
+          const failRes = await runDeployDry(['--root', tmpRepo, '--dist', tmpNegDist]);
+          assert.notStrictEqual(failRes.code, 0, `deploy_cf.mjs --dry must fail on ${label}`);
+        } finally {
+          fs.rmSync(tmpRepo, { recursive: true, force: true });
+        }
+      }
+
+      // Runtime CDP check: zero global module bootstrap leaks + Desktop & 390x844 iOS standalone Phase 5 parity
+      const nowP5 = Date.now();
+      const p5Snap = {
+        type: 'state',
+        generatedAt: nowP5,
+        loading: false,
+        device: { id: 'p5-host', name: 'P5 Host', role: 'host', capabilities: ['antigravity', 'claude'] },
+        antigravityModelCatalog: {
+          provider: 'antigravity',
+          updatedAt: nowP5,
+          activeDefaultModelId: 'MODEL_PLACEHOLDER_M667',
+          activeDefaultLabel: 'Gemini 4 Carbon',
+          models: [
+            { modelId: 'MODEL_PLACEHOLDER_M667', slugId: 'gemini-4-carbon', label: 'Gemini 4 Carbon', displayName: 'Gemini 4 Carbon', isOrchestrator: true, isDefault: true, inClientPicker: true, supportsThinking: false, contextLimit: 512000, quotaRemainingFraction: 0.85, sortOrder: 0 },
+            { modelId: 'MODEL_PLACEHOLDER_M440', slugId: 'gemini-4-legacy', label: 'Gemini 4 Legacy', displayName: 'Gemini 4 Legacy', isOrchestrator: false, tagTitle: 'Leaving Soon', inClientPicker: true, supportsThinking: true, effortTier: 'high', contextLimit: 512000, quotaRemainingFraction: 0.42, sortOrder: 1 },
+            { modelId: 'MODEL_PLACEHOLDER_M901', slugId: 'gemini-4-neon', label: 'Gemini 4 Neon', displayName: 'Gemini 4 Neon', isOrchestrator: false, isNeon: true, inClientPicker: true, supportsThinking: true, effortTier: 'high', contextLimit: 512000, quotaRemainingFraction: 0.9, sortOrder: 2 }
+          ]
+        },
+        claudeModelCatalog: {
+          provider: 'claude',
+          updatedAt: nowP5,
+          activeDefaultModelId: 'claude-opus-5-5',
+          activeDefaultLabel: 'Claude Opus 5.5',
+          models: [
+            { modelId: 'claude-opus-5-5', slugId: 'claude-opus-5-5', family: 'opus', label: 'Claude Opus 5.5', displayName: 'Claude Opus 5.5', defaultEffort: 'high', efforts: ['low', 'medium', 'high', 'xhigh'], supportsThinking: true, supportsXHigh: true, contextLimit: 1000000, inClientPicker: true, isDefault: true },
+            { modelId: 'claude-sonnet-5-5', slugId: 'claude-sonnet-5-5', family: 'sonnet', label: 'Claude Sonnet 5.5', displayName: 'Claude Sonnet 5.5', defaultEffort: 'high', efforts: ['low', 'medium', 'high'], supportsThinking: true, contextLimit: 200000, inClientPicker: true }
+          ]
+        },
+        providers: {
+          antigravity: {
+            id: 'antigravity',
+            label: 'Antigravity',
+            account: { available: true, email: 'p5-agy@example.com', plan: 'Google AI Ultra' },
+            usage: { limits: [{ label: 'Session (5hr)', pct: 12, reset: nowP5 + 3600000 }] },
+            accounts: [{ id: 'antigravity:p5-agy@example.com', provider: 'antigravity', label: 'Antigravity', nickname: '', active: true, account: { available: true, email: 'p5-agy@example.com', plan: 'Google AI Ultra' }, usage: { limits: [{ label: 'Session (5hr)', pct: 12, reset: nowP5 + 3600000 }] } }]
+          },
+          claude: {
+            id: 'claude',
+            label: 'Claude Code',
+            account: { available: true, email: 'p5-claude@example.com', plan: 'Claude Max' },
+            usage: null,
+            accounts: [{ id: 'claude:p5-claude@example.com', provider: 'claude', label: 'Claude Code', nickname: '', active: true, account: { available: true, email: 'p5-claude@example.com', plan: 'Claude Max' }, usage: null }]
+          }
+        },
+        accountOrder: ['antigravity:p5-agy@example.com', 'claude:p5-claude@example.com'],
+        groups: [],
+        rows: [
+          { id: 'p5-agy-neon', key: 'p5-agy-neon', title: 'Neon Zero Tok', provider: 'antigravity', model: 'Gemini 4 Neon', neonWarning: true, usedTokens: 0, limitTokens: 512000, at: nowP5 - 1000, status: 'idle', deviceId: 'p5-host', open: true },
+          { id: 'p5-claude-55', key: 'p5-claude-55', title: 'Claude 5.5 Row', provider: 'claude', model: 'Claude Opus 5.5', usedTokens: 0, limitTokens: 1000000, at: nowP5 - 2000, status: 'idle', deviceId: 'p5-host', open: true }
+        ],
+        approvals: [],
+        workspaces: [{ id: 'theo', name: 'theo', branch: 'main', dirtyCount: 0, ahead: 0, behind: 0, changedFiles: [], recentCommits: [] }],
+        devices: [{ id: 'p5-host', name: 'P5 Host', online: true, lastSeen: nowP5 }],
+        deviceStates: { 'p5-host': { hostHealth: { vscodeOpen: false } } }
+      };
+      srv.mockStatePayload = p5Snap;
+
+      try {
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 860, deviceScaleFactor: 1, mobile: false }, sessionId);
+        await evalJs(`((snapJson) => {
+          const snap = JSON.parse(snapJson);
+          const now = Date.now();
+          try { sessionStorage.removeItem('theo_pinned_nav_v1'); } catch {}
+          localStorage.setItem('theo_remote_prefs_v1', JSON.stringify({
+            theme: 'dark',
+            themeUserSet: true,
+            activeTab: 'chat',
+            desktopWorkbenchBootV92: true,
+            selectedThreadId: 'p5-agy-neon',
+            composerMode: 'reply',
+            sidebarFilter: 'all',
+            customBridgeUrl: '',
+            edgeRelayUrl: '',
+            cloudUrl: ''
+          }));
+          localStorage.setItem('theo_remote_cache_v3', JSON.stringify({
+            state: snap,
+            snapshot: snap,
+            threads: {
+              'p5-agy-neon': { id: 'p5-agy-neon', provider: 'antigravity', model: 'Gemini 4 Neon', usedTokens: 0, limitTokens: 512000, messages: [{ id: 'p5-u1', role: 'user', text: 'Check Neon', createdAt: new Date(now - 1000).toISOString() }] },
+              'p5-claude-55': { id: 'p5-claude-55', provider: 'claude', model: 'Claude Opus 5.5', usedTokens: 0, limitTokens: 1000000, messages: [{ id: 'p5-u2', role: 'user', text: 'Check Claude 5.5', createdAt: new Date(now - 2000).toISOString() }] }
+            },
+            updatedAt: now
+          }));
+          return true;
+        })(${JSON.stringify(JSON.stringify(p5Snap))})`);
+        await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
+        await new Promise((r) => setTimeout(r, 700));
+
+        const p5Desktop = await evalJs(`(async () => {
+          const hasReg = '__theoRegisterModule' in window;
+          const hasConsume = '__theoConsumeModules' in window;
+          const hasSecretGlobal = 'S' in window || 'edgeAccessKey' in window || 'cloudCfg' in window;
+          document.querySelector('[data-tab="chat"]')?.click();
+          await new Promise((r) => setTimeout(r, 60));
+
+          // Check Antigravity model picker + Leaving Soon + Neon
+          document.querySelector('.ide-tree-row[data-ide-open-session="p5-agy-neon"]')?.click();
+          await new Promise((r) => setTimeout(r, 50));
+          document.getElementById('composer-model-btn')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          const agyPickerHtml = document.getElementById('model-picker-body')?.innerHTML || '';
+          document.getElementById('composer-model-btn')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+
+          // Check Claude 5.5 picker
+          document.querySelector('.ide-tree-row[data-ide-open-session="p5-claude-55"]')?.click();
+          await new Promise((r) => setTimeout(r, 50));
+          document.getElementById('composer-model-btn')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          const claudePickerHtml = document.getElementById('model-picker-body')?.innerHTML || '';
+          document.getElementById('composer-model-btn')?.click();
+
+          const acctHtml = document.getElementById('ide-sidebar-accounts')?.innerHTML || '';
+          const roleTexts = [...document.querySelectorAll('#ide-sidebar-accounts .ide-acct-role')].map((el) => el.textContent.trim());
+          const hasDuplicateBadge = roleTexts.includes('Antigravity') || roleTexts.includes('Claude Code');
+          const noFake250M = !acctHtml.includes('Fable limit') && !acctHtml.includes('250M');
+          const neonPillCount = document.querySelectorAll('#ide-sidebar-tree .session-neon-pill').length;
+          const ctxLabelText = document.getElementById('ctx-pill-label')?.textContent?.trim() || '';
+          const overflowDesktop = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+          return {
+            hasReg,
+            hasConsume,
+            hasSecretGlobal,
+            hasLeavingSoon: agyPickerHtml.includes('Leaving Soon'),
+            hasNeonInPicker: agyPickerHtml.includes('Gemini 4 Neon'),
+            hasClaudeOpus55: claudePickerHtml.includes('Claude Opus 5.5'),
+            hasClaudeSonnet55: claudePickerHtml.includes('Claude Sonnet 5.5'),
+            hasDuplicateBadge,
+            noFake250M,
+            neonPillCount,
+            ctxLabelText,
+            ctxZeroHonest: ctxLabelText.startsWith('0 / 1M') || ctxLabelText.startsWith('0 /'),
+            overflowDesktop
+          };
+        })()`);
+
+        assert.strictEqual(p5Desktop.hasReg || p5Desktop.hasConsume || p5Desktop.hasSecretGlobal, false, 'Module registration hooks & closure state S must not stay on window');
+        assert.strictEqual(p5Desktop.hasLeavingSoon, true, 'Live GetUserStatus Leaving Soon tag must render after module split');
+        assert.strictEqual(p5Desktop.hasNeonInPicker, true, 'Live Neon model must render in picker');
+        assert.strictEqual(p5Desktop.hasClaudeOpus55 && p5Desktop.hasClaudeSonnet55, true, 'Claude 5.5 models must render in picker');
+        assert.strictEqual(p5Desktop.hasDuplicateBadge, false, 'Sidebar accounts must have zero duplicate role badges');
+        assert.strictEqual(p5Desktop.noFake250M, true, 'Empty Claude limits must never fabricate 250M or Fable limit');
+        assert.ok(p5Desktop.neonPillCount >= 1, 'Neon pill must render on Neon session row');
+        assert.strictEqual(p5Desktop.ctxZeroHonest, true, `0-token session must report 0 / ... honestly, got "${p5Desktop.ctxLabelText}"`);
+        assert.strictEqual(p5Desktop.overflowDesktop, 0, '0px horizontal overflow on 1280x860 desktop');
+
+        // 390x844 iOS standalone overflow check
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true }, sessionId);
+        const p5IosOverflow = await evalJs(`(async () => {
+          document.documentElement.classList.add('ios-standalone');
+          document.querySelector('.mobile-bottom-dock [data-tab="chat"]')?.click();
+          await new Promise((r) => setTimeout(r, 60));
+          const ov = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+          document.documentElement.classList.remove('ios-standalone');
+          return ov;
+        })()`);
+        assert.strictEqual(p5IosOverflow, 0, '0px horizontal overflow on 390x844 iOS standalone');
+        console.log('[PASS] Adversarial #30: Phase 5 (v94) 7-Module Architecture, Atomic deploy_cf.mjs Gate, Zero-Global Bootstrap & Desktop/iOS Parity verified');
+      } finally {
+        srv.mockStatePayload = null;
       }
     }
 

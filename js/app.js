@@ -1,5 +1,13 @@
 (() => {
   'use strict';
+  const S = Object.create(null);
+  const registeredModules = typeof window.__theoConsumeModules === 'function' ? window.__theoConsumeModules() : [];
+  const expectedOrder = ['models', 'transport', 'sidebar', 'inspector', 'chat', 'views'];
+  if (registeredModules.length !== expectedOrder.length || expectedOrder.some((name, idx) => registeredModules[idx]?.[0] !== name)) {
+    throw new Error('THEO module load order mismatch');
+  }
+  const factories = Object.fromEntries(registeredModules);
+
 
   const STORAGE_KEYS = {
     CACHE: 'theo_remote_cache_v3',
@@ -90,917 +98,6 @@
     return String(Math.round(num));
   };
   const fmtInt = (n) => new Intl.NumberFormat('en-US').format(Math.round(Number(n || 0)));
-
-  const MODEL_CATALOG = {
-    antigravity: [
-      {
-        id: 'gemini-4-argon',
-        label: 'Gemini 4 Argon',
-        shortLabel: 'Gemini 4 Argon',
-        badge: 'Deep Reasoning',
-        desc: 'Primary frontier coding & architecture model with configurable thinking depth',
-        cliModel: 'gemini-4-argon',
-        supportsEffort: true
-      },
-      {
-        id: 'gemini-3.8-flash',
-        label: 'Gemini 3.8 Flash',
-        shortLabel: 'Gemini 3.8 Flash',
-        badge: 'Ultra-Fast',
-        desc: 'High-speed, low-latency model with configurable thinking depth',
-        cliModel: 'gemini-3.8-flash',
-        supportsEffort: true
-      }
-    ],
-    claude: [
-      {
-        id: 'claude-opus-4-7',
-        label: 'Claude Opus 4.7 (1M)',
-        shortLabel: 'Claude Opus 4.7',
-        badge: '1M Context',
-        desc: 'Deep reasoning across 1M-token context window',
-        cliModel: 'claude-opus-4-7',
-        supportsEffort: true
-      },
-      {
-        id: 'claude-sonnet-4-6',
-        label: 'Claude Sonnet 4.6',
-        shortLabel: 'Claude Sonnet 4.6',
-        badge: 'Balanced',
-        desc: 'Fast multi-file coding & verification',
-        cliModel: 'claude-sonnet-4-6',
-        supportsEffort: true
-      },
-      {
-        id: 'fable-5-1',
-        label: 'Fable 5.1',
-        shortLabel: 'Fable 5.1',
-        badge: 'Frontier',
-        desc: 'Frontier autonomous synthesis & verification',
-        cliModel: 'fable-5-1',
-        supportsEffort: true
-      }
-    ]
-  };
-
-  const THINKING_EFFORT_LEVELS = [
-    { id: 'low', label: 'Low', desc: 'Fastest turnaround · concise reasoning' },
-    { id: 'medium', label: 'Medium', desc: 'Balanced speed & multi-step verification' },
-    { id: 'high', label: 'High', desc: 'Deep thinking & edge-case rigor' },
-    { id: 'xhigh', label: 'XHigh', desc: 'Maximum extended reasoning budget' }
-  ];
-
-  const CHEVRON_DOWN_SVG = `<svg class="ui-chev" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6L8 9.5L11.5 6"/></svg>`;
-  const CHEVRON_RIGHT_SVG = `<svg class="ui-chev" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4.5L9.5 8L6 11.5"/></svg>`;
-  const CHECK_MARK_SVG = `<svg class="vs-model-check-ico" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-6.5"/></svg>`;
-
-  let liveAntigravityCatalog = {
-    updatedAt: 0,
-    source: '',
-    activeDefaultModelId: '',
-    activeDefaultLabel: '',
-    orchestratorPlannerModelId: '',
-    clientModelSorts: [],
-    families: [],
-    models: [],
-    byAlias: new Map()
-  };
-
-  let liveClaudeCatalog = {
-    updatedAt: 0,
-    sourceKind: '',
-    sourceVersion: '',
-    activeDefaultModelId: '',
-    activeDefaultLabel: '',
-    latestPerFamily: {},
-    models: [],
-    byAlias: new Map()
-  };
-
-  function normalizeCatalogLookupKey(raw = '') {
-    return String(raw || '').trim().toLowerCase().replace(/\s+/g, ' ');
-  }
-
-  function stripEffortSuffixForCatalog(raw = '') {
-    return String(raw || '')
-      .replace(/\s*[\(\[]\s*(?:low|medium|high|xhigh|1m|thinking)\s*[\)\]]\s*/gi, ' ')
-      .replace(/\s*[·\-]\s*(?:low|medium|high|xhigh)\s*$/i, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-
-  function slugCatalogModelId(label = '') {
-    return String(label || '')
-      .trim()
-      .toLowerCase()
-      .replace(/\s*\((low|medium|high|xhigh)\)\s*$/i, '')
-      .replace(/[^a-z0-9.]+/g, '-')
-      .replace(/^-+|-+$/g, '');
-  }
-
-  function formatEffortWord(effId = '') {
-    const low = String(effId || '').trim().toLowerCase();
-    if (low === 'xhigh') return 'XHigh';
-    if (low === 'low') return 'Low';
-    if (low === 'medium') return 'Medium';
-    if (low === 'high') return 'High';
-    return '';
-  }
-
-  function ingestLiveAntigravityCatalog(catObj) {
-    if (!catObj || typeof catObj !== 'object' || !Array.isArray(catObj.models)) return;
-    const nextAt = Number(catObj.updatedAt || 0);
-    if (
-      nextAt > 0 &&
-      liveAntigravityCatalog.updatedAt > 0 &&
-      nextAt < liveAntigravityCatalog.updatedAt &&
-      liveAntigravityCatalog.models.length > 0
-    ) {
-      return;
-    }
-    const cleanModels = [];
-    const byAlias = new Map();
-    const pendingEntries = [];
-    for (const rawEntry of catObj.models) {
-      if (!rawEntry || typeof rawEntry !== 'object') continue;
-      const modelId = String(rawEntry.modelId || '').trim();
-      const label = String(rawEntry.label || '').trim();
-      const baseLabel = String(rawEntry.baseLabel || stripEffortSuffixForCatalog(label) || label).trim();
-      if (!modelId && !label && !baseLabel) continue;
-      const isOwnOrchestrator = Boolean(
-        rawEntry.isOrchestrator ||
-          /orchestrator|model_placeholder_m66[79]|model_placeholder_m681|model_placeholder_m537/i.test(
-            `${modelId} ${label}`
-          )
-      );
-      const filteredAliases = Array.isArray(rawEntry.aliases)
-        ? rawEntry.aliases
-            .map((a) => String(a || '').trim())
-            .filter((a) => a && (isOwnOrchestrator || !/^\s*orchestrator\s*\((?:carbon|argon|neon)\)\s*$/i.test(a)))
-        : [];
-      const entry = {
-        modelId,
-        slugId: String(rawEntry.slugId || '').trim(),
-        label: label || baseLabel,
-        baseLabel: baseLabel || label,
-        aliases: filteredAliases,
-        isFirstPartyGemini: Boolean(rawEntry.isFirstPartyGemini),
-        isClaudeLike: Boolean(rawEntry.isClaudeLike),
-        isOrchestrator: isOwnOrchestrator,
-        isNeon: Boolean(rawEntry.isNeon || /neon|model_placeholder_m53[2-57]/i.test(`${modelId} ${label}`)),
-        supportsThinking: rawEntry.supportsThinking === true || (!isOwnOrchestrator && rawEntry.supportsThinking !== false),
-        isRecommended: Boolean(rawEntry.isRecommended),
-        inClientPicker: rawEntry.inClientPicker !== false,
-        sortOrder: Number.isFinite(Number(rawEntry.sortOrder)) ? Number(rawEntry.sortOrder) : cleanModels.length,
-        tagTitle: String(rawEntry.tagTitle || '').trim(),
-        tagDescription: String(rawEntry.tagDescription || '').trim(),
-        quotaRemainingFraction:
-          typeof rawEntry.quotaRemainingFraction === 'number' && Number.isFinite(rawEntry.quotaRemainingFraction)
-            ? rawEntry.quotaRemainingFraction
-            : null,
-        effortTier: String(rawEntry.effortTier || '').trim().toLowerCase(),
-        maxContextTokens: Number(rawEntry.maxContextTokens || 0),
-        softCompactionTargetTokens: Number(rawEntry.softCompactionTargetTokens || 0),
-        hardMaxTokens: Number(rawEntry.hardMaxTokens || 0)
-      };
-      cleanModels.push(entry);
-      pendingEntries.push(entry);
-    }
-    // Pass 1: secondary aliases; Pass 2: primary baseLabel -> label -> slugId -> modelId always win
-    for (const entry of pendingEntries) {
-      for (const k of entry.aliases) {
-        const nk = normalizeCatalogLookupKey(k);
-        if (nk && !byAlias.has(nk)) byAlias.set(nk, entry);
-        const sk = normalizeCatalogLookupKey(stripEffortSuffixForCatalog(k));
-        if (sk && !byAlias.has(sk)) byAlias.set(sk, entry);
-      }
-    }
-    for (const entry of pendingEntries) {
-      const bk = normalizeCatalogLookupKey(entry.baseLabel);
-      if (bk) byAlias.set(bk, entry);
-      const sbk = normalizeCatalogLookupKey(stripEffortSuffixForCatalog(entry.baseLabel));
-      if (sbk && !byAlias.has(sbk)) byAlias.set(sbk, entry);
-    }
-    for (const entry of pendingEntries) {
-      const lk = normalizeCatalogLookupKey(entry.label);
-      if (lk) byAlias.set(lk, entry);
-      const sk = normalizeCatalogLookupKey(entry.slugId);
-      if (sk) byAlias.set(sk, entry);
-      const mk = normalizeCatalogLookupKey(entry.modelId);
-      if (mk) byAlias.set(mk, entry);
-    }
-    liveAntigravityCatalog = {
-      updatedAt: nextAt || Date.now(),
-      source: String(catObj.source || ''),
-      activeDefaultModelId: String(catObj.activeDefaultModelId || '').trim(),
-      activeDefaultLabel: String(catObj.activeDefaultLabel || '').trim(),
-      orchestratorPlannerModelId: String(catObj.orchestratorPlannerModelId || '').trim(),
-      clientModelSorts: Array.isArray(catObj.clientModelSorts) ? catObj.clientModelSorts : [],
-      families: Array.isArray(catObj.families) ? catObj.families : [],
-      models: cleanModels,
-      byAlias
-    };
-  }
-
-  function ingestLiveClaudeCatalog(catObj) {
-    if (!catObj || typeof catObj !== 'object' || !Array.isArray(catObj.models)) return;
-    const nextAt = Number(catObj.updatedAt || 0);
-    if (
-      nextAt > 0 &&
-      liveClaudeCatalog.updatedAt > 0 &&
-      nextAt < liveClaudeCatalog.updatedAt &&
-      liveClaudeCatalog.models.length > 0
-    ) {
-      return;
-    }
-    const cleanModels = [];
-    const byAlias = new Map();
-    for (const rawEntry of catObj.models) {
-      if (!rawEntry || typeof rawEntry !== 'object') continue;
-      const modelId = String(rawEntry.modelId || rawEntry.slugId || '').trim();
-      const label = String(rawEntry.label || rawEntry.displayName || modelId).trim();
-      if (!modelId && !label) continue;
-      const effs = Array.isArray(rawEntry.efforts)
-        ? rawEntry.efforts.map((e) => String(e || '').trim().toLowerCase()).filter(Boolean)
-        : [];
-      const entry = {
-        modelId,
-        slugId: String(rawEntry.slugId || modelId).trim(),
-        family: String(rawEntry.family || '').trim().toLowerCase(),
-        label,
-        displayName: String(rawEntry.displayName || label).trim(),
-        defaultEffort: String(rawEntry.defaultEffort || '').trim().toLowerCase(),
-        efforts: effs,
-        supportsThinking: rawEntry.supportsThinking !== false,
-        supportsXHigh: Boolean(rawEntry.supportsXHigh || effs.includes('xhigh')),
-        supports1m: Boolean(rawEntry.supports1m || Number(rawEntry.contextLimit || 0) >= 1000000),
-        contextLimit: Number(rawEntry.contextLimit || (rawEntry.supports1m ? 1000000 : 200000)),
-        inClientPicker: rawEntry.inClientPicker !== false,
-        isLatest: Boolean(rawEntry.isLatest),
-        tagTitle: String(rawEntry.tagTitle || '').trim(),
-        tagDescription: String(rawEntry.tagDescription || '').trim(),
-        cliValue: String(rawEntry.cliValue || modelId).trim()
-      };
-      cleanModels.push(entry);
-      for (const k of [
-        entry.modelId,
-        entry.slugId,
-        entry.displayName,
-        entry.label,
-        entry.cliValue,
-        slugCatalogModelId(entry.label)
-      ]) {
-        const nk = normalizeCatalogLookupKey(k);
-        if (nk) byAlias.set(nk, entry);
-      }
-    }
-    liveClaudeCatalog = {
-      updatedAt: nextAt || Date.now(),
-      sourceKind: String(catObj.sourceKind || ''),
-      sourceVersion: String(catObj.sourceVersion || ''),
-      activeDefaultModelId: String(catObj.activeDefaultModelId || '').trim(),
-      activeDefaultLabel: String(catObj.activeDefaultLabel || '').trim(),
-      latestPerFamily:
-        catObj.latestPerFamily && typeof catObj.latestPerFamily === 'object' ? catObj.latestPerFamily : {},
-      models: cleanModels,
-      byAlias
-    };
-  }
-
-  function lookupPwaLiveCatalogModel(rawModel = '') {
-    const exact = normalizeCatalogLookupKey(rawModel);
-    if (!exact || !(liveAntigravityCatalog.byAlias instanceof Map) || liveAntigravityCatalog.byAlias.size === 0) {
-      return null;
-    }
-    const hit = liveAntigravityCatalog.byAlias.get(exact);
-    if (hit) return hit;
-    const stripped = normalizeCatalogLookupKey(stripEffortSuffixForCatalog(rawModel));
-    return stripped ? liveAntigravityCatalog.byAlias.get(stripped) || null : null;
-  }
-
-  function lookupPwaClaudeCatalogModel(rawModel = '') {
-    const exact = normalizeCatalogLookupKey(rawModel);
-    if (!exact || !(liveClaudeCatalog.byAlias instanceof Map) || liveClaudeCatalog.byAlias.size === 0) {
-      return null;
-    }
-    const hit = liveClaudeCatalog.byAlias.get(exact);
-    if (hit) return hit;
-    const stripped = normalizeCatalogLookupKey(stripEffortSuffixForCatalog(rawModel).replace(/\[1m\]$/i, ''));
-    return stripped ? liveClaudeCatalog.byAlias.get(stripped) || null : null;
-  }
-
-  function getEffectiveModelCatalog(provKey = 'antigravity') {
-    const cleanProv = provKey === 'claude' ? 'claude' : 'antigravity';
-    const base = MODEL_CATALOG[cleanProv] || MODEL_CATALOG.antigravity;
-    if (cleanProv === 'claude') {
-      if (!liveClaudeCatalog.models.length) {
-        return base;
-      }
-      const rawPicker = liveClaudeCatalog.models.filter((m) => m && m.inClientPicker !== false);
-      const sourceList = rawPicker.length ? rawPicker : liveClaudeCatalog.models;
-      const mapped = sourceList.map((m) => {
-        const effList = m.supportsThinking === false
-          ? []
-          : Array.isArray(m.efforts) && m.efforts.length
-            ? m.efforts
-            : ['low', 'medium', 'high'];
-        return {
-          id: m.modelId,
-          label: m.label,
-          shortLabel: m.displayName || m.label,
-          badge: m.tagTitle || (m.supports1m ? '1M' : m.isLatest ? 'Latest' : 'Claude'),
-          tagTitle: m.tagTitle || '',
-          tagDescription: m.tagDescription || '',
-          desc: m.tagDescription || (m.supports1m ? '1M-token context window' : 'Claude Code model'),
-          cliModel: m.cliValue || m.modelId,
-          supportsEffort: effList.length > 0,
-          efforts: effList,
-          contextLimit: Number(m.contextLimit || 200000),
-          isDefault: Boolean(liveClaudeCatalog.activeDefaultModelId && m.modelId === liveClaudeCatalog.activeDefaultModelId),
-          liveCatalogEntry: m
-        };
-      });
-      return mapped.length ? mapped : base;
-    }
-
-    if (!liveAntigravityCatalog.models.length) {
-      return base;
-    }
-    const pickerEntries = liveAntigravityCatalog.models.filter((e) => e && e.inClientPicker !== false);
-    const ordered = (pickerEntries.length ? pickerEntries : liveAntigravityCatalog.models)
-      .slice()
-      .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
-
-    const groups = [];
-    const groupByKey = new Map();
-    for (const entry of ordered) {
-      const cleanBase = String(stripEffortSuffixForCatalog(entry.baseLabel || entry.label) || entry.label).trim();
-      if (!cleanBase) continue;
-      const isOrch = Boolean(entry.isOrchestrator || /orchestrator/i.test(cleanBase));
-      const key = isOrch ? cleanBase.toLowerCase() : stripEffortSuffixForCatalog(cleanBase).toLowerCase();
-      let grp = groupByKey.get(key);
-      if (!grp) {
-        grp = { key, cleanBase, entries: [] };
-        groupByKey.set(key, grp);
-        groups.push(grp);
-      }
-      grp.entries.push(entry);
-    }
-
-    const activeDefId = String(liveAntigravityCatalog.activeDefaultModelId || '').toLowerCase();
-    const out = [];
-    const seenIds = new Set();
-    for (const grp of groups) {
-      const first = grp.entries[0];
-      const isOrch = grp.entries.some((e) => e.isOrchestrator || /orchestrator/i.test(`${e.label} ${e.modelId}`));
-      const isGptOss = grp.entries.length === 1 && /gpt[-_\s]*oss/i.test(grp.cleanBase);
-      const isSingleNonThinking = grp.entries.length === 1 && first.supportsThinking === false;
-      const isFixedSingleTier = isOrch || isGptOss || isSingleNonThinking;
-      const isNeon = grp.entries.some((e) => e.isNeon || /neon/i.test(`${e.label} ${e.modelId}`));
-      const effortModelIds = {};
-      const effortsSet = new Set();
-      for (const e of grp.entries) {
-        if (isFixedSingleTier) continue;
-        const tier =
-          e.effortTier ||
-          inferEffortIdFromRaw(`${e.modelId || ''} ${e.label || ''}`, '');
-        if (tier && ['low', 'medium', 'high', 'xhigh'].includes(tier)) {
-          effortsSet.add(tier);
-          if (e.modelId && !effortModelIds[tier]) {
-            effortModelIds[tier] = e.modelId;
-          }
-        }
-      }
-      const efforts = ['low', 'medium', 'high', 'xhigh'].filter((t) => effortsSet.has(t));
-      const supportsEffort = !isFixedSingleTier && efforts.length > 0;
-      const displayLabel = supportsEffort ? grp.cleanBase : first.label || grp.cleanBase;
-      const baseSlug = slugCatalogModelId(isFixedSingleTier ? displayLabel : grp.cleanBase);
-      if (!baseSlug || seenIds.has(baseSlug)) continue;
-      seenIds.add(baseSlug);
-
-      const tagTitle = (grp.entries.find((e) => e.tagTitle)?.tagTitle || '').trim();
-      const tagDescription = (grp.entries.find((e) => e.tagDescription)?.tagDescription || '').trim();
-      const qEntry = grp.entries.find((e) => typeof e.quotaRemainingFraction === 'number');
-      const quotaRemainingFraction = qEntry ? qEntry.quotaRemainingFraction : null;
-      const isDefault = Boolean(
-        activeDefId && grp.entries.some((e) => String(e.modelId || '').toLowerCase() === activeDefId)
-      );
-      const defaultCliModel = supportsEffort
-        ? effortModelIds.high || effortModelIds.xhigh || effortModelIds.medium || effortModelIds.low || first.modelId
-        : first.modelId || displayLabel;
-
-      out.push({
-        id: baseSlug,
-        label: displayLabel,
-        shortLabel: displayLabel,
-        badge:
-          tagTitle ||
-          (isNeon
-            ? 'Neon'
-            : isOrch
-              ? 'Auto'
-              : efforts.includes('xhigh')
-                ? 'XHigh'
-                : first.isRecommended
-                  ? 'Recommended'
-                  : 'Live'),
-        tagTitle,
-        tagDescription,
-        quotaRemainingFraction,
-        desc: tagDescription || (isOrch ? 'Antigravity multi-step Orchestrator' : 'Live Antigravity model'),
-        cliModel: defaultCliModel,
-        supportsEffort,
-        efforts,
-        isOrchestrator: isOrch,
-        isNeon,
-        isDefault,
-        liveCatalogEntry: first,
-        effortModelIds
-      });
-    }
-    return out.length ? out : base;
-  }
-
-  function inferEffortIdFromRaw(rawModel = '', effortHint = '') {
-    const eff = String(effortHint || '').trim().toLowerCase();
-    if (eff === 'low' || eff === 'medium' || eff === 'high' || eff === 'xhigh') return eff;
-    const low = String(rawModel || '').toLowerCase();
-    if (
-      low === 'model_placeholder_m528' ||
-      low === 'model_placeholder_m535' ||
-      low.includes('(xhigh)') ||
-      low.endsWith('-xhigh') ||
-      low.includes('· xhigh') ||
-      /\sxhigh$/i.test(low)
-    ) {
-      return 'xhigh';
-    }
-    if (
-      low === 'model_placeholder_m419' ||
-      low === 'model_placeholder_m438' ||
-      low === 'model_placeholder_m527' ||
-      low === 'model_placeholder_m320' ||
-      low === 'model_placeholder_m400' ||
-      low === 'model_placeholder_m403' ||
-      low.includes('(low)') ||
-      low.endsWith('-low') ||
-      low.includes('· low')
-    ) {
-      return 'low';
-    }
-    if (
-      low === 'model_placeholder_m418' ||
-      low === 'model_placeholder_m437' ||
-      low === 'model_placeholder_m526' ||
-      low === 'model_placeholder_m319' ||
-      low === 'model_placeholder_m401' ||
-      low === 'model_placeholder_m404' ||
-      low.includes('(medium)') ||
-      low.endsWith('-medium') ||
-      low.includes('· medium')
-    ) {
-      return 'medium';
-    }
-    if (
-      low === 'model_placeholder_m417' ||
-      low === 'model_placeholder_m427' ||
-      low === 'model_placeholder_m525' ||
-      low === 'model_placeholder_m318' ||
-      low === 'model_placeholder_m322' ||
-      low === 'model_placeholder_m402' ||
-      low === 'model_placeholder_m405' ||
-      low.includes('(high)') ||
-      low.endsWith('-high') ||
-      low.includes('· high')
-    ) {
-      return 'high';
-    }
-    return '';
-  }
-
-  function inferModelIdFromRaw(rawModel = '', provider = 'antigravity') {
-    const provKey = provider === 'claude' ? 'claude' : 'antigravity';
-    const low = String(rawModel || '').trim().toLowerCase();
-    const effCatalog = getEffectiveModelCatalog(provKey);
-
-    if (provKey === 'claude') {
-      const liveClaudeHit = lookupPwaClaudeCatalogModel(rawModel);
-      if (liveClaudeHit && effCatalog.some((m) => m.id === liveClaudeHit.modelId)) {
-        return liveClaudeHit.modelId;
-      }
-      const cleanLow = low.replace(/\[1m\]/gi, '').replace(/\s*\((low|medium|high|xhigh|1m)\)\s*/gi, '').trim();
-      const slugMatch = effCatalog.find(
-        (m) =>
-          m.id.toLowerCase() === cleanLow ||
-          String(m.label || '').toLowerCase() === cleanLow ||
-          String(m.shortLabel || '').toLowerCase() === cleanLow
-      );
-      if (slugMatch) return slugMatch.id;
-      if (low.includes('fable')) {
-        return effCatalog.find((m) => m.id.includes('fable'))?.id || 'fable-5-1';
-      }
-      if (low.includes('haiku')) {
-        return effCatalog.find((m) => m.id.includes('haiku'))?.id || '';
-      }
-      if (low.includes('sonnet')) {
-        return effCatalog.find((m) => m.id.includes('sonnet'))?.id || 'claude-sonnet-4-6';
-      }
-      if (low.includes('opus')) {
-        return effCatalog.find((m) => m.id.includes('opus'))?.id || 'claude-opus-4-7';
-      }
-      return '';
-    }
-
-    const liveMatch = lookupPwaLiveCatalogModel(rawModel);
-    if (liveMatch) {
-      const isOrch = Boolean(liveMatch.isOrchestrator || /orchestrator/i.test(`${liveMatch.modelId} ${liveMatch.label}`));
-      const isGptOss = /gpt[-_\s]*oss/i.test(`${liveMatch.modelId} ${liveMatch.label}`);
-      const candId = slugCatalogModelId(
-        isOrch || isGptOss ? liveMatch.label || liveMatch.baseLabel : stripEffortSuffixForCatalog(liveMatch.baseLabel || liveMatch.label)
-      );
-      if (candId && effCatalog.some((m) => m.id === candId)) {
-        return candId;
-      }
-    }
-    if (effCatalog.length) {
-      if (
-        low === 'model_placeholder_m667' ||
-        low === 'model_placeholder_m669' ||
-        low === 'gemini-pro-orchestrator' ||
-        low === 'gemini-flash-worker-agy' ||
-        (low.includes('orchestrator') && low.includes('carbon'))
-      ) {
-        const hit = effCatalog.find((m) => m.id === 'orchestrator-carbon');
-        if (hit) return hit.id;
-      }
-      if (low === 'model_placeholder_m681' || (low.includes('orchestrator') && low.includes('argon'))) {
-        const hit = effCatalog.find((m) => m.id === 'orchestrator-argon');
-        if (hit) return hit.id;
-      }
-      if (low === 'model_placeholder_m537' || (low.includes('orchestrator') && low.includes('neon'))) {
-        const hit = effCatalog.find((m) => m.id === 'orchestrator-neon');
-        if (hit) return hit.id;
-      }
-      const exactCatHit = effCatalog.find((m) => {
-        if (m.id.toLowerCase() === low || String(m.label || '').toLowerCase() === low) return true;
-        if (String(m.cliModel || '').toLowerCase() === low) return true;
-        if (m.effortModelIds && Object.values(m.effortModelIds).some((v) => String(v || '').toLowerCase() === low)) {
-          return true;
-        }
-        return false;
-      });
-      if (exactCatHit) return exactCatHit.id;
-    }
-    if (
-      low === 'model_placeholder_m318' ||
-      low === 'model_placeholder_m319' ||
-      low === 'model_placeholder_m320' ||
-      low === 'model_placeholder_m322' ||
-      low.includes('3.8') ||
-      low.includes('flash')
-    ) {
-      return effCatalog.find((m) => m.id.includes('flash'))?.id || 'gemini-3.8-flash';
-    }
-    if (
-      low === 'model_placeholder_m417' ||
-      low === 'model_placeholder_m418' ||
-      low === 'model_placeholder_m419' ||
-      (low.includes('argon') &&
-        !low.includes('orchestrator') &&
-        !low.includes('carbon') &&
-        !low.includes('hydrogen'))
-    ) {
-      return effCatalog.find((m) => m.id.includes('argon') && !m.isOrchestrator)?.id || 'gemini-4-argon';
-    }
-    if (
-      low === 'model_placeholder_m427' ||
-      low === 'model_placeholder_m437' ||
-      low === 'model_placeholder_m438' ||
-      (low.includes('carbon') && !low.includes('orchestrator'))
-    ) {
-      return effCatalog.find((m) => m.id.includes('carbon') && !m.isOrchestrator)?.id || '';
-    }
-    if (
-      low === 'model_placeholder_m525' ||
-      low === 'model_placeholder_m526' ||
-      low === 'model_placeholder_m527' ||
-      low === 'model_placeholder_m528' ||
-      low.includes('hydrogen')
-    ) {
-      return effCatalog.find((m) => m.id.includes('hydrogen'))?.id || '';
-    }
-    if (
-      low === 'model_placeholder_m532' ||
-      low === 'model_placeholder_m533' ||
-      low === 'model_placeholder_m534' ||
-      low === 'model_placeholder_m535' ||
-      (low.includes('neon') && !low.includes('orchestrator'))
-    ) {
-      return effCatalog.find((m) => m.id.includes('neon') && !m.isOrchestrator)?.id || '';
-    }
-    if (
-      low === 'model_placeholder_m400' ||
-      low === 'model_placeholder_m401' ||
-      low === 'model_placeholder_m402' ||
-      low.includes('opus-5-5') ||
-      low.includes('opus 5.5')
-    ) {
-      return effCatalog.find((m) => m.id.includes('opus'))?.id || '';
-    }
-    if (
-      low === 'model_placeholder_m403' ||
-      low === 'model_placeholder_m404' ||
-      low === 'model_placeholder_m405' ||
-      low.includes('sonnet-5-5') ||
-      low.includes('sonnet 5.5')
-    ) {
-      return effCatalog.find((m) => m.id.includes('sonnet'))?.id || '';
-    }
-    if (low === 'model_openai_gpt_oss_120b_medium' || low.includes('gpt-oss-120b')) {
-      return effCatalog.find((m) => m.id.includes('gpt-oss'))?.id || '';
-    }
-    return '';
-  }
-
-  function normalizeDisplayModel(rawModel, provider = 'antigravity', effortHint = '') {
-    const provKey = provider === 'claude' ? 'claude' : 'antigravity';
-    const s = String(rawModel || '').trim();
-    const low = s.toLowerCase();
-    const effId = inferEffortIdFromRaw(s, effortHint) || 'high';
-    const effCap = formatEffortWord(effId) || 'High';
-    if (provKey === 'antigravity') {
-      if (low === 'model_placeholder_m537' || (low.includes('orchestrator') && low.includes('neon'))) {
-        return 'Orchestrator (Neon)';
-      }
-      if (
-        low === 'model_placeholder_m667' ||
-        low === 'model_placeholder_m669' ||
-        low === 'gemini-pro-orchestrator' ||
-        low === 'gemini-flash-worker-agy' ||
-        (low.includes('orchestrator') && low.includes('carbon'))
-      ) {
-        return 'Orchestrator (Carbon)';
-      }
-      if (low === 'model_placeholder_m681' || (low.includes('orchestrator') && low.includes('argon'))) {
-        return 'Orchestrator (Argon)';
-      }
-      if (low.includes('orchestrator')) {
-        return s;
-      }
-      if (
-        low === 'model_placeholder_m400' ||
-        low === 'model_placeholder_m401' ||
-        low === 'model_placeholder_m402' ||
-        low.includes('opus-5-5') ||
-        low.includes('opus 5.5')
-      ) {
-        return `Claude Opus 5.5 (${effCap})`;
-      }
-      if (
-        low === 'model_placeholder_m403' ||
-        low === 'model_placeholder_m404' ||
-        low === 'model_placeholder_m405' ||
-        low.includes('sonnet-5-5') ||
-        low.includes('sonnet 5.5')
-      ) {
-        return `Claude Sonnet 5.5 (${effCap})`;
-      }
-      if (low === 'model_openai_gpt_oss_120b_medium' || low.includes('gpt-oss-120b')) {
-        return 'GPT-OSS 120B (Medium)';
-      }
-      if (low === 'model_placeholder_m535' || (low.includes('neon') && low.includes('xhigh'))) {
-        return 'Gemini 4 Neon (XHigh)';
-      }
-      if (
-        low === 'model_placeholder_m532' ||
-        low === 'model_placeholder_m533' ||
-        low === 'model_placeholder_m534' ||
-        low.includes('neon')
-      ) {
-        return `Gemini 4 Neon (${effCap})`;
-      }
-      if (
-        low === 'model_placeholder_m427' ||
-        low === 'model_placeholder_m437' ||
-        low === 'model_placeholder_m438' ||
-        low.includes('carbon')
-      ) {
-        return `Gemini 4 Carbon (${effCap})`;
-      }
-      if (low === 'model_placeholder_m528' || (low.includes('hydrogen') && low.includes('xhigh'))) {
-        return 'Gemini 4 Hydrogen (XHigh)';
-      }
-      if (
-        low === 'model_placeholder_m525' ||
-        low === 'model_placeholder_m526' ||
-        low === 'model_placeholder_m527' ||
-        low.includes('hydrogen')
-      ) {
-        return `Gemini 4 Hydrogen (${effCap})`;
-      }
-      if (
-        low === 'model_placeholder_m318' ||
-        low === 'model_placeholder_m319' ||
-        low === 'model_placeholder_m320' ||
-        low === 'model_placeholder_m322' ||
-        low.includes('3.8') ||
-        low.includes('flash')
-      ) {
-        return `Gemini 3.8 Flash (${effCap})`;
-      }
-      if (
-        !s ||
-        low === 'gemini' ||
-        low === 'antigravity' ||
-        low.includes('3.1') ||
-        low === 'model_placeholder_m417' ||
-        low === 'model_placeholder_m418' ||
-        low === 'model_placeholder_m419' ||
-        low.includes('argon')
-      ) {
-        return `Gemini 4 Argon (${effCap})`;
-      }
-      const liveMatch = lookupPwaLiveCatalogModel(s);
-      if (liveMatch) {
-        const cleanBase = String(stripEffortSuffixForCatalog(liveMatch.baseLabel || liveMatch.label) || s).trim();
-        if (liveMatch.supportsThinking === false || liveMatch.isOrchestrator || /orchestrator/i.test(cleanBase)) {
-          return liveMatch.label || cleanBase;
-        }
-        return `${cleanBase} (${effCap})`;
-      }
-      return s;
-    }
-    const explicitEff = inferEffortIdFromRaw(s, effortHint);
-    const explicitWord = formatEffortWord(explicitEff);
-    const claudeSuffix = explicitWord ? ` (${explicitWord})` : '';
-    const liveClaudeMatch = lookupPwaClaudeCatalogModel(s);
-    if (liveClaudeMatch && liveClaudeMatch.label) {
-      return `${liveClaudeMatch.label}${claudeSuffix}`;
-    }
-    if (low.includes('opus-5-5') || low.includes('opus 5.5')) return `Claude Opus 5.5${claudeSuffix}`;
-    if (low.includes('sonnet-5-5') || low.includes('sonnet 5.5')) return `Claude Sonnet 5.5${claudeSuffix}`;
-    if (low.includes('haiku-5-5') || low.includes('haiku 5.5')) return `Claude Haiku 5.5${claudeSuffix}`;
-    if (low.includes('fable-5-2') || low.includes('fable 5.2')) return `Fable 5.2${claudeSuffix}`;
-    if (low.includes('sonnet-4-6') || low.includes('sonnet 4.6') || low.includes('sonnet')) {
-      return `Claude Sonnet 4.6${claudeSuffix}`;
-    }
-    if (low.includes('fable')) {
-      return `Fable 5.1${claudeSuffix}`;
-    }
-    if (!s || low === 'claude' || low.includes('opus-4-7') || low.includes('opus 4.7') || low.includes('opus')) {
-      return `Claude Opus 4.7 (1M)${claudeSuffix}`;
-    }
-    if (low.includes('haiku')) return `Claude Haiku 4.5${claudeSuffix}`;
-    return s;
-  }
-
-  function inferDefaultContextLimit(provider, modelLabel = '') {
-    const low = String(modelLabel || '').trim().toLowerCase();
-    if (provider === 'claude') {
-      const liveClaude = lookupPwaClaudeCatalogModel(modelLabel);
-      if (liveClaude && Number(liveClaude.contextLimit || 0) > 0) {
-        return Number(liveClaude.contextLimit);
-      }
-      if (
-        low.includes('[1m]') ||
-        low.includes('1m') ||
-        low.includes('fable') ||
-        low.includes('mythos') ||
-        low.includes('opus-4-7') ||
-        low.includes('opus 4.7') ||
-        low.includes('opus-4-8') ||
-        low.includes('opus 4.8') ||
-        low.includes('sonnet-5') ||
-        low.includes('sonnet 5') ||
-        low.includes('opus-5') ||
-        low.includes('opus 5') ||
-        /\b5\.[0-9]/.test(low)
-      ) {
-        return 1000000;
-      }
-      if (
-        low.includes('4.5') ||
-        low.includes('4-5') ||
-        low.includes('4.6') ||
-        low.includes('4-6') ||
-        low.includes('haiku')
-      ) {
-        return 200000;
-      }
-      return 1000000;
-    }
-    if (!low) return 512000;
-    const isExplicit200k = /(?:^|[^a-z0-9])200k(?:[^a-z0-9]|$)/.test(low);
-    const isClaudeLike = !isExplicit200k && /(?:^|[^a-z0-9])(model_placeholder_m40[0-5]|claude|opus|sonnet)(?:[^a-z0-9]|$)/.test(low);
-    if (isExplicit200k) return 200000;
-    const liveEntry = lookupPwaLiveCatalogModel(modelLabel);
-    const liveSoft = liveEntry ? Number(liveEntry.softCompactionTargetTokens || liveEntry.maxContextTokens || 0) : 0;
-    if (liveSoft > 0) {
-      const combined = `${low} ${String(liveEntry?.label || '')} ${String(liveEntry?.modelId || '')}`.toLowerCase();
-      const isExplicit200kEntry =
-        (isClaudeLike || liveEntry?.isClaudeLike) && /(?:^|[^a-z0-9])200k(?:[^a-z0-9]|$)/.test(combined);
-      const isUnqualifiedHardware1M =
-        !isClaudeLike &&
-        !liveEntry?.isClaudeLike &&
-        Boolean(liveEntry?.isFirstPartyGemini) &&
-        (liveSoft === 1000000 || liveSoft === 1048576) &&
-        !/(?:^|[^a-z0-9])(1m|2m)(?:[^a-z0-9]|$)/.test(combined);
-      if (isExplicit200kEntry) {
-        return liveSoft <= 200000 ? liveSoft : 200000;
-      }
-      if (isClaudeLike || liveEntry?.isClaudeLike) {
-        return isUnqualifiedHardware1M ? 840000 : Math.max(840000, liveSoft);
-      }
-      if (
-        !isUnqualifiedHardware1M &&
-        Boolean(liveEntry?.isFirstPartyGemini) &&
-        liveSoft === 256000 &&
-        !/(?:^|[^a-z0-9])(128k|200k|256k)(?:[^a-z0-9]|$)/.test(combined)
-      ) {
-        return 512000;
-      }
-      if (!isUnqualifiedHardware1M) {
-        return liveSoft;
-      }
-    }
-    if (/(?:^|[^a-z0-9])1m(?:[^a-z0-9]|$)/.test(low)) return 1000000;
-    if (/(?:^|[^a-z0-9])2m(?:[^a-z0-9]|$)/.test(low)) return 2000000;
-    if (/(?:^|[^a-z0-9])900k(?:[^a-z0-9]|$)/.test(low)) return 900000;
-    if (/(?:^|[^a-z0-9])840k(?:[^a-z0-9]|$)/.test(low)) return 840000;
-    if (/(?:^|[^a-z0-9])512k(?:[^a-z0-9]|$)/.test(low)) return 512000;
-    if (/(?:^|[^a-z0-9])256k(?:[^a-z0-9]|$)/.test(low)) return 256000;
-    if (/(?:^|[^a-z0-9])128k(?:[^a-z0-9]|$)/.test(low) || /gpt[-_\s]*oss[-_\s]*120b|model_openai_gpt_oss_120b/.test(low)) return 128000;
-    if (isClaudeLike) return 840000;
-    return 512000;
-  }
-
-  function resolveDisplayContextMetrics(provKey, modelLabel, rawUsed, rawLimit, isNewDraft = false, rawHardMax = 0) {
-    const defaultLim = inferDefaultContextLimit(provKey, modelLabel);
-    const liveEntry = provKey === 'antigravity' ? lookupPwaLiveCatalogModel(modelLabel) : null;
-    const parsedLim = Number(rawLimit);
-    const numLim = Number.isFinite(parsedLim) ? parsedLim : 0;
-    const upgradeClaude1M = provKey === 'claude' && numLim === 200000 && defaultLim === 1000000;
-    const upgradeAgyHigher = provKey === 'antigravity' && numLim === 256000 && defaultLim > 256000;
-    const limitTokens =
-      upgradeClaude1M || upgradeAgyHigher
-        ? defaultLim
-        : numLim > 0
-          ? numLim
-          : defaultLim;
-    const lowModel = String(modelLabel || '').trim().toLowerCase();
-    const isClaudeLike = /(?:^|[^a-z0-9])(model_placeholder_m40[0-5]|claude|opus|sonnet)(?:[^a-z0-9]|$)/.test(lowModel);
-    const isThirdParty = /(?:^|[^a-z0-9])(gpt|openai|o1|o3|o4|deepseek|llama|qwen|mistral|grok|kimi|glm|command|nemotron)(?:[^a-z0-9]|$)/.test(lowModel);
-    const isFirstPartyGemini =
-      provKey === 'antigravity' &&
-      !isClaudeLike &&
-      !isThirdParty &&
-      (liveEntry
-        ? Boolean(liveEntry.isFirstPartyGemini)
-        : !lowModel ||
-          /(?:^|[^a-z0-9])(gemini|orchestrator|carbon|hydrogen|argon|flash)(?:[^a-z0-9]|$)/.test(lowModel) ||
-          /^model_placeholder_m\d+$/.test(lowModel));
-    const hardMaxTokens = Math.max(
-      limitTokens,
-      Number(rawHardMax || 0) ||
-        Number(liveEntry?.hardMaxTokens || liveEntry?.maxContextTokens || 0) ||
-        (isFirstPartyGemini && limitTokens <= 512000 ? 1000000 : limitTokens)
-    );
-    const parsedUsed = Number(rawUsed);
-    const safeUsed = Number.isFinite(parsedUsed) ? parsedUsed : 0;
-    const usedTokens = isNewDraft ? 0 : Math.max(0, Math.round(safeUsed));
-    const pct =
-      !isNewDraft && usedTokens > 0
-        ? Math.min(100, Math.max(1, Math.round((usedTokens / Math.max(1, limitTokens)) * 100)))
-        : 0;
-    const remainingTokens = Math.max(0, limitTokens - usedTokens);
-    const overrunTokens = Math.max(0, usedTokens - limitTokens);
-    const isSoftOverrun = Boolean(
-      !isNewDraft &&
-        provKey === 'antigravity' &&
-        overrunTokens > 0 &&
-        hardMaxTokens > limitTokens &&
-        usedTokens < Math.round(hardMaxTokens * 0.95)
-    );
-    const overrunArcPct = isSoftOverrun
-      ? Math.min(
-          100,
-          Math.max(
-            6,
-            Math.round((overrunTokens / Math.max(1, hardMaxTokens - limitTokens)) * 100)
-          )
-        )
-      : 0;
-    return {
-      usedTokens,
-      limitTokens,
-      hardMaxTokens,
-      pct,
-      remainingTokens,
-      overrunTokens,
-      isSoftOverrun,
-      overrunArcPct
-    };
-  }
 
   function timeAgo(tsMs) {
     if (!tsMs) return '—';
@@ -1118,6 +215,34 @@
     hideClaudeDesktop: false,
     notif: { ...DEFAULT_NOTIF }
   };
+
+  Object.assign(S, {
+    $,
+    DEFAULT_NOTIF,
+    LAST_PUSH_NAV_CACHE_URL,
+    NAV_HANDOFF_CACHE,
+    PIN_FILLED_SVG,
+    PIN_OUTLINE_SVG,
+    PROVIDER_ICONS,
+    RETIRED_WORKSPACE_IDS,
+    STORAGE_KEYS,
+    compareRowsPinnedFirst,
+    esc,
+    fmtCompact,
+    fmtInt,
+    isHeadlessBrowser,
+    isRowPinned,
+    loadJson,
+    normalizeInspectorTab,
+    rankSearchMatchesWithPinnedFirst,
+    saveJson,
+    timeAgo
+  });
+  Object.defineProperties(S, {
+    localBootInfo: { get: () => localBootInfo, set: (v) => { localBootInfo = v; }, enumerable: true, configurable: true }
+  });
+  factories.models(S);
+
   const cachedStore = loadJson(STORAGE_KEYS.CACHE, {
     state: null,
     threads: {},
@@ -1125,10 +250,10 @@
     updatedAt: 0
   });
   if (cachedStore?.state?.antigravityModelCatalog) {
-    ingestLiveAntigravityCatalog(cachedStore.state.antigravityModelCatalog);
+    S.ingestLiveAntigravityCatalog(cachedStore.state.antigravityModelCatalog);
   }
   if (cachedStore?.state?.claudeModelCatalog) {
-    ingestLiveClaudeCatalog(cachedStore.state.claudeModelCatalog);
+    S.ingestLiveClaudeCatalog(cachedStore.state.claudeModelCatalog);
   }
   const rawStoredPrefs = loadJson(STORAGE_KEYS.PREFS, null);
   const prefs = Object.assign(
@@ -1206,8 +331,8 @@
           )
     };
   }
-  const effAgyCat = getEffectiveModelCatalog('antigravity');
-  const effClaudeCat = getEffectiveModelCatalog('claude');
+  const effAgyCat = S.getEffectiveModelCatalog('antigravity');
+  const effClaudeCat = S.getEffectiveModelCatalog('claude');
   const defaultAgyModelId = effAgyCat.find((m) => m.isDefault)?.id || effAgyCat[0]?.id || 'gemini-4-argon';
   const defaultClaudeModelId = effClaudeCat.find((m) => m.isDefault)?.id || effClaudeCat[0]?.id || 'claude-opus-4-7';
   if (
@@ -1232,9 +357,9 @@
     const cleanProv = provKey === 'claude' ? 'claude' : 'antigravity';
     if (prefs.modelSelectionExplicit?.[cleanProv]) return;
     const hasLive =
-      cleanProv === 'claude' ? liveClaudeCatalog.models.length > 0 : liveAntigravityCatalog.models.length > 0;
+      cleanProv === 'claude' ? S.liveClaudeCatalog.models.length > 0 : S.liveAntigravityCatalog.models.length > 0;
     if (!hasLive) return;
-    const effCat = getEffectiveModelCatalog(cleanProv);
+    const effCat = S.getEffectiveModelCatalog(cleanProv);
     const liveDefId = effCat.find((m) => m.isDefault)?.id || effCat[0]?.id || '';
     if (!liveDefId) return;
     if (!prefs.selectedModelByProvider || typeof prefs.selectedModelByProvider !== 'object') {
@@ -1271,7 +396,7 @@
         if (!tid || tid === '__new__' || String(tid).startsWith('draft-new-')) return false;
         if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return false;
         const prov = cfg.provider === 'claude' ? 'claude' : 'antigravity';
-        const cat = getEffectiveModelCatalog(prov);
+        const cat = S.getEffectiveModelCatalog(prov);
         const catMatch = cat.find((m) => m.id === cfg.modelId);
         const mOk = Boolean(catMatch);
         const customOk = typeof cfg.customModel === 'string' && cfg.customModel.trim().length > 0;
@@ -1428,11 +553,6 @@
     saveJson(STORAGE_KEYS.PREFS, prefs);
     return true;
   }
-
-  let pairClaimInFlight = false;
-  let pairCodeGenInFlight = false;
-  let activeGeneratedPairCode = null;
-  let showQuickPairLinkFallback = false;
   let pinLockInitialized = false;
   let pendingPinPairPayload = null;
 
@@ -1453,38 +573,6 @@
     );
   }
 
-  function resetTransportsForFreshPairing() {
-    lastLocalProbeFailedAt = 0;
-    cachedBridgeTokenHex = '';
-    cachedBridgeTokenSrc = '';
-    edgeReconnectAttempts = 0;
-    localWsReconnectAttempts = 0;
-    showQuickPairLinkFallback = false;
-    if (edgeWs) {
-      try {
-        edgeWs.close();
-      } catch {}
-      edgeWs = null;
-      edgeWsAuthed = false;
-      edgeWsUrlConnected = '';
-      edgeWsTokenConnected = '';
-    }
-    if (localWs) {
-      try {
-        localWs.close();
-      } catch {}
-      localWs = null;
-      localWsAuthed = false;
-    }
-    if (
-      document.activeElement &&
-      typeof document.activeElement.blur === 'function' &&
-      document.activeElement.closest?.('.quick-pair-card, #pairing-grid')
-    ) {
-      document.activeElement.blur();
-    }
-  }
-
   function ingestLocationPairHash(triggerLiveConnect = false) {
     try {
       if (!location.hash || !/pair=/i.test(location.hash)) return false;
@@ -1498,16 +586,16 @@
       }
       applyPairPayloadToPrefs(parsedBootPair);
       if (triggerLiveConnect) {
-        refreshCloudConfig();
-        resetTransportsForFreshPairing();
-        const targetEdge = prefs.edgeRelayUrl || discoveredEdgeUrl || DEFAULT_EDGE_RELAY_URL;
+        S.refreshCloudConfig();
+        S.resetTransportsForFreshPairing();
+        const targetEdge = prefs.edgeRelayUrl || S.discoveredEdgeUrl || S.DEFAULT_EDGE_RELAY_URL;
         if (!isHeadlessBrowser && targetEdge) {
-          connectEdgeWs(targetEdge).catch(() => {});
+          S.connectEdgeWs(targetEdge).catch(() => {});
         }
         if (!isHeadlessBrowser) {
-          syncData({ force: true, toast: true }).catch(() => {});
+          S.syncData({ force: true, toast: true }).catch(() => {});
         }
-        updateConnectionBanner();
+        S.updateConnectionBanner();
         renderAll();
         showToast('✓ Device paired & connected to THEO Fleet');
       }
@@ -1660,7 +748,7 @@
         if (incomingPrefs) {
           Object.assign(prefs, incomingPrefs);
           saveJson(STORAGE_KEYS.PREFS, prefs);
-          refreshCloudConfig();
+          S.refreshCloudConfig();
           importedKeys.push(k);
         }
       } else if (k === STORAGE_KEYS.PIN_HASH) {
@@ -1726,135 +814,6 @@
   ingestLocationPairHash(false);
   const bootMigRes = parseTheoHashMigrationSync();
 
-  // v64: the cloud store lives on the Edge relay Worker (<edge base>/store) and its key is derived from the
-  // edge access key, so a device paired before the move keeps working with no re-pairing and no stored store secret.
-  function sha256HexSync(text) {
-    const K = [
-      0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-      0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-      0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-      0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-      0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-      0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-      0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-      0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
-    ];
-    const H = [
-      0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
-    ];
-    const rotr = (x, n) => (x >>> n) | (x << (32 - n));
-    const bytes = new TextEncoder().encode(String(text));
-    const len = bytes.length;
-    const padded = new Uint8Array(((len + 9 + 63) >> 6) << 6);
-    padded.set(bytes);
-    padded[len] = 0x80;
-    const view = new DataView(padded.buffer);
-    view.setUint32(padded.length - 8, Math.floor((len * 8) / 0x100000000), false);
-    view.setUint32(padded.length - 4, (len * 8) >>> 0, false);
-    const w = new Uint32Array(64);
-    for (let off = 0; off < padded.length; off += 64) {
-      for (let i = 0; i < 16; i++) w[i] = view.getUint32(off + i * 4, false);
-      for (let i = 16; i < 64; i++) {
-        const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3);
-        const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10);
-        w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
-      }
-      let [a, b, c, d, e, f, g, h] = H;
-      for (let i = 0; i < 64; i++) {
-        const t1 = (h + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) >>> 0;
-        const t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
-        h = g;
-        g = f;
-        f = e;
-        e = (d + t1) >>> 0;
-        d = c;
-        c = b;
-        b = a;
-        a = (t1 + t2) >>> 0;
-      }
-      H[0] = (H[0] + a) >>> 0;
-      H[1] = (H[1] + b) >>> 0;
-      H[2] = (H[2] + c) >>> 0;
-      H[3] = (H[3] + d) >>> 0;
-      H[4] = (H[4] + e) >>> 0;
-      H[5] = (H[5] + f) >>> 0;
-      H[6] = (H[6] + g) >>> 0;
-      H[7] = (H[7] + h) >>> 0;
-    }
-    return H.map((x) => x.toString(16).padStart(8, '0')).join('');
-  }
-
-  let edgeStoreKeySrc = '';
-  let edgeStoreKeyHex = '';
-  function getEdgeStoreKeyHex(edgeKey) {
-    const clean = String(edgeKey || '').trim();
-    if (!clean) return '';
-    if (edgeStoreKeySrc !== clean) {
-      edgeStoreKeySrc = clean;
-      edgeStoreKeyHex = sha256HexSync(`theo-edge-v1:${clean}`);
-      // Cross-check against WebCrypto; if the two ever disagree the platform digest wins.
-      deriveEdgeAuthTokenHex(clean)
-        .then((hex) => {
-          if (hex && edgeStoreKeySrc === clean) edgeStoreKeyHex = hex;
-        })
-        .catch(() => {});
-    }
-    return edgeStoreKeyHex;
-  }
-
-  function getEdgeStoreUrl() {
-    const cfg = window.THEO_CLOUD_CFG || {};
-    const raw = String(
-      prefs.edgeRelayUrl || cfg.edgeRelayUrl || 'wss://theo-edge-relay.husseinbdeir.workers.dev/ws'
-    ).trim();
-    const base = raw
-      .replace(/^wss:\/\//i, 'https://')
-      .replace(/^ws:\/\//i, 'http://')
-      .replace(/[?#].*$/, '')
-      .replace(/\/+$/, '')
-      .replace(/\/ws$/i, '')
-      .replace(/\/+$/, '');
-    if (!/^https:\/\/[^\s]+$/i.test(base) && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(base)) {
-      return '';
-    }
-    return `${base}/store`;
-  }
-
-  const cloudCfg = { url: '', key: '', edgeAccessKey: '', port: 4318 };
-  function refreshCloudConfig() {
-    const cfg = window.THEO_CLOUD_CFG || {};
-    let fallbackUrl = '';
-    let fallbackKey = '';
-    try {
-      fallbackUrl = cfg.u ? atob(cfg.u) : '';
-      fallbackKey = cfg.k ? atob(cfg.k) : '';
-    } catch {}
-    cloudCfg.edgeAccessKey = String(prefs.edgeAccessKey || '').trim();
-    const edgeStoreUrl = cloudCfg.edgeAccessKey ? getEdgeStoreUrl() : '';
-    if (edgeStoreUrl) {
-      cloudCfg.url = edgeStoreUrl;
-      cloudCfg.key = getEdgeStoreKeyHex(cloudCfg.edgeAccessKey);
-    } else {
-      cloudCfg.url = String(prefs.cloudUrl || fallbackUrl || '').trim();
-      cloudCfg.key = String(prefs.cloudKey || fallbackKey || '').trim();
-    }
-    cloudCfg.port = Number(prefs.port || cfg.port || 4318) || 4318;
-    return cloudCfg;
-  }
-  refreshCloudConfig();
-
-  function hasAnyPairingCredentials() {
-    refreshCloudConfig();
-    return Boolean(
-      localBridgeBase ||
-        (localBootInfo && localBootInfo.token) ||
-        cloudCfg.edgeAccessKey ||
-        (cloudCfg.url && cloudCfg.key) ||
-        cachedPairingInfo?.pairUrl ||
-        cachedPairingInfo?.mobilePairUrl
-    );
-  }
-
   function isFocusInsideContainerInputs(containerEl) {
     const active = document.activeElement;
     if (!containerEl || !active || !containerEl.contains(active)) return false;
@@ -1900,44 +859,8 @@
     outbox = outbox.filter((c) => !(c && LEGACY_DROPPED_CMD_TYPES.has(c.type)));
     saveJson(STORAGE_KEYS.OUTBOX, outbox);
   }
-  let connMode = 'probing'; // 'local' | 'edge' | 'cloud' | 'offline'
-  let localBridgeBase = '';
-  let localBridgeWsPath = '/ws';
-  let sseSource = null;
-  let localWs = null;
-  let localWsAuthed = false;
-  let localWsRttMs = 0;
-  let localWsDevice = null;
-  let localWsPingTimer = null;
-  let localWsReconnectTimer = null;
-  let edgeWs = null;
-  let edgeWsAuthed = false;
-  let edgeWsRttMs = 0;
-  let edgeWsUrlConnected = '';
-  let edgeWsTokenConnected = '';
-  const DEFAULT_EDGE_RELAY_URL = 'wss://theo-edge-relay.husseinbdeir.workers.dev/ws';
-  let edgeWsPingTimer = null;
-  let edgeWsReconnectTimer = null;
-  let discoveredEdgeUrl = localBootInfo?.edgeRelayUrl || prefs.edgeRelayUrl || DEFAULT_EDGE_RELAY_URL;
-  let lastCloudBackstopAt = 0;
-  let lastCloudQueue = null;
-  let edgeReconnectAttempts = 0;
-  let localWsReconnectAttempts = 0;
-  let cachedBridgeTokenHex = '';
-  let cachedBridgeTokenSrc = '';
-  let cachedPairingInfo = null;
-  let wsRenderSeq = 0;
-  let hasProvidersHydrated = Boolean(appState?.providers);
   let hasExplicitBootUrlNav = false;
   let suppressHistoryPush = false;
-  const hostSnapshotsByDevice = new Map();
-  const wsPendingRpcs = new Map();
-  const fleetDevicesMap = new Map();
-  const liveStreamsByThreadId = new Map();
-  let streamDomRafId = 0;
-  let streamDomTargetTid = '';
-  let lastRenderedThreadId = '';
-  let lastRenderedMsgCount = 0;
   let pushSub = null;
   let pushBusy = false;
   let pushSyncTimer = null;
@@ -1946,11 +869,6 @@
   const prevRowStatuses = new Map();
   const prevRowSteps = new Map();
   const prevRowAts = new Map();
-  const pendingThreadRequests = new Map();
-  const lastThreadDetailFetchAtById = new Map();
-  const lastThreadDetailReceivedAtById = new Map();
-  const lastSeenThreadStepStampById = new Map();
-  const stepKindFilterByTurnKey = new Map();
   function setBoundedMap(map, key, val, max = 120) {
     if (!map || !key) return;
     if (map.has(key)) map.delete(key);
@@ -2192,7 +1110,7 @@
   async function setFleetClaudeModeRemote(rawMode, opts = {}) {
     const nextMode = normalizeClaudePermModeClient(rawMode);
     if (!CLAUDE_PERM_MODES.some((m) => m.id === nextMode)) return { ok: false, error: 'invalid_mode' };
-    refreshCloudConfig();
+    S.refreshCloudConfig();
     const itemCreatedAt = Number(opts.createdAt || 0);
     if (
       opts.fromOutbox &&
@@ -2215,7 +1133,7 @@
         (c) => c && c.id !== 'cmd-claude-mode' && c.type !== 'setClaudePermissionMode'
       );
       saveJson(STORAGE_KEYS.OUTBOX, outbox);
-      renderOutboxBadge();
+      S.renderOutboxBadge();
       pendingClaudeModeOverride = {
         defaultMode: nextMode,
         setAt: now,
@@ -2234,7 +1152,7 @@
         appState.claudePermissionMode = { ...claudeModeState };
       }
       recordFreqUsage('commands', `/mode-${nextMode === 'bypassPermissions' ? 'bypass' : nextMode}`);
-      persistCache();
+      S.persistCache();
       renderAll();
       haptic(18);
       if (!opts.silent) {
@@ -2262,15 +1180,15 @@
       let authoritativeDoc = null;
 
       // 1. Authoritative Cloudflare THEO Store patch (reaches every PC, including ones offline right now)
-      if (cloudCfg.url && cloudCfg.key) {
+      if (S.cloudCfg.url && S.cloudCfg.key) {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 12000);
         try {
-          const res = await fetch(cloudCfg.url, {
+          const res = await fetch(S.cloudCfg.url, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
             body: JSON.stringify({
-              key: cloudCfg.key,
+              key: S.cloudCfg.key,
               op: 'patch',
               ackOnly: true,
               patch: {
@@ -2300,7 +1218,7 @@
                   );
                   ingestClaudePermissionModeDoc(retDoc, { fromStoreAck: true });
                   if (ackMode && ackMode !== nextMode) {
-                    persistCache();
+                    S.persistCache();
                     renderAll();
                     if (!opts.silent) {
                       showToast(
@@ -2348,23 +1266,23 @@
 
       // 2. Instant <50ms Edge WebSocket fan-out to every online host & client
       let edgeSent = false;
-      if (edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
+      if (S.edgeWsAuthed && S.edgeWs && S.edgeWs.readyState === 1) {
         try {
-          edgeWs.send(JSON.stringify(wsFrame));
+          S.edgeWs.send(JSON.stringify(wsFrame));
           edgeSent = true;
           hostReached = true;
         } catch {}
       }
 
       // 3. Direct Local WebSocket or HTTP Loopback Bridge
-      if (localWsAuthed && localWs && localWs.readyState === 1) {
+      if (S.localWsAuthed && S.localWs && S.localWs.readyState === 1) {
         try {
-          localWs.send(JSON.stringify({ ...wsFrame, edgeBroadcasted: edgeSent }));
+          S.localWs.send(JSON.stringify({ ...wsFrame, edgeBroadcasted: edgeSent }));
           hostReached = true;
         } catch {}
-      } else if (connMode === 'local' && localBridgeBase) {
+      } else if (S.connMode === 'local' && S.localBridgeBase) {
         try {
-          const res = await authFetchLocal(`${localBridgeBase}/api/claude-permission-mode`, {
+          const res = await S.authFetchLocal(`${S.localBridgeBase}/api/claude-permission-mode`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2406,7 +1324,7 @@
           status: 'pending'
         });
         saveJson(STORAGE_KEYS.OUTBOX, outbox);
-        renderOutboxBadge();
+        S.renderOutboxBadge();
         return { ok: true, mode: 'queued', defaultMode: nextMode };
       }
 
@@ -2414,9 +1332,9 @@
         (c) => c && c.id !== 'cmd-claude-mode' && c.type !== 'setClaudePermissionMode'
       );
       saveJson(STORAGE_KEYS.OUTBOX, outbox);
-      renderOutboxBadge();
+      S.renderOutboxBadge();
       if (mySeq === claudeModeMutationSeq) {
-        persistCache();
+        S.persistCache();
         renderAll();
       }
       return {
@@ -2506,14 +1424,14 @@
     if (appState && typeof appState === 'object') {
       appState.hideThirdPartyQuota = next;
       appState.hideThirdPartyQuotaUpdatedAt = nowMs;
-      persistCache();
+      S.persistCache();
     }
-    renderPulseView();
-    renderIdeSidebar();
+    S.renderPulseView();
+    S.renderIdeSidebar();
     updateAppBadgeCount(false);
-    if (prefs.activeTab === 'analytics') renderAnalyticsView();
+    if (prefs.activeTab === 'analytics') S.renderAnalyticsView();
     showToast(next ? 'Claude & GPT quota bars hidden' : 'Claude & GPT quota bars shown');
-    dispatchRemoteCommand({
+    S.dispatchRemoteCommand({
       type: 'sessionAction',
       action: 'setHideThirdPartyQuota',
       subAction: 'setHideThirdPartyQuota',
@@ -2560,12 +1478,12 @@
     if (appState && typeof appState === 'object') {
       appState.hideClaudeDesktop = next;
       appState.hideClaudeDesktopUpdatedAt = nowMs;
-      persistCache();
+      S.persistCache();
     }
-    renderIdeSidebar();
-    renderSessionsView();
+    S.renderIdeSidebar();
+    S.renderSessionsView();
     showToast(next ? 'Claude Desktop sessions hidden' : 'Claude Desktop sessions shown');
-    dispatchRemoteCommand({
+    S.dispatchRemoteCommand({
       type: 'sessionAction',
       action: 'setHideClaudeDesktop',
       subAction: 'setHideClaudeDesktop',
@@ -2839,9 +1757,9 @@
         })
       );
     } catch {}
-    if (!skipHint && typeof emitPrewarmHint === 'function') {
+    if (!skipHint && typeof S.emitPrewarmHint === 'function') {
       try {
-        emitPrewarmHint(pinnedNavThreadId, { provider: pinnedNavProvider, source: 'focus' });
+        S.emitPrewarmHint(pinnedNavThreadId, { provider: pinnedNavProvider, source: 'focus' });
       } catch {}
     }
   }
@@ -3030,11 +1948,11 @@
   }
 
   async function callCloudPush(body) {
-    if (!cloudCfg.url || !cloudCfg.key) return null;
-    const res = await fetch(cloudCfg.url, {
+    if (!S.cloudCfg.url || !S.cloudCfg.key) return null;
+    const res = await fetch(S.cloudCfg.url, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-      body: JSON.stringify(Object.assign({ key: cloudCfg.key }, body))
+      body: JSON.stringify(Object.assign({ key: S.cloudCfg.key }, body))
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
@@ -3227,7 +2145,7 @@
     syncUnreadCacheToSw(items, closeOsNotifications, checkedTags, count);
     const notifModal = $('notif-modal');
     if (notifModal && !notifModal.hidden) {
-      renderNotifModal();
+      S.renderNotifModal();
     }
     return count;
   }
@@ -3484,7 +2402,7 @@
     saveNotifLog(next);
     updateAppBadgeCount(true, checkedTags);
     if (opts.navigate && matchedItem) {
-      closeNotifModal();
+      S.closeNotifModal();
       applyNotificationNav({ ...matchedItem, clicked: true });
     }
   }
@@ -3606,7 +2524,7 @@
   }
 
   async function cancelExactReminderPush(itemId) {
-    if (isHeadlessBrowser || !cloudCfg.url || !cloudCfg.key || !itemId) return;
+    if (isHeadlessBrowser || !S.cloudCfg.url || !S.cloudCfg.key || !itemId) return;
     try {
       await callCloudPush({
         op: 'patch',
@@ -3755,8 +2673,8 @@
     };
 
     // 1. Register with Direct Local Bridge (:4318) if available
-    if (localBridgeBase) {
-      fetch(`${localBridgeBase}/api/push-register`, {
+    if (S.localBridgeBase) {
+      fetch(`${S.localBridgeBase}/api/push-register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ device: entry, enabled: Boolean(nf.enabled) })
@@ -3765,7 +2683,7 @@
 
     // 2. Register with the Edge relay store (its hourly slot dispatcher replaced Personal - THEO Remote Daily Push)
     // Note: Do NOT arm duplicate theo_brief_d* push_delay timers — Personal - THEO Remote Daily Push already dispatches entry.slots hourly!
-    if (cloudCfg.url && cloudCfg.key) {
+    if (S.cloudCfg.url && S.cloudCfg.key) {
       theoPushRegistryLock = theoPushRegistryLock.then(async () => {
         try {
           const curRes = await callCloudPush({ op: 'get' });
@@ -3985,9 +2903,9 @@
 
     // Never hijack when the user is composing or binding a new session
     if (
-      isNewSessionMode() ||
+      S.isNewSessionMode() ||
       String(prefs.selectedThreadId || '').startsWith('draft-new-') ||
-      pendingNewSessionBind
+      S.pendingNewSessionBind
     ) {
       consumeAllSeen();
       return;
@@ -4440,7 +3358,7 @@
     $('btn-palette-picker')?.setAttribute('aria-expanded', 'false');
     const modPop = $('model-picker-popover');
     if (modPop) modPop.hidden = true;
-    modelPickerAdjustEffortOpen = false;
+    S.modelPickerAdjustEffortOpen = false;
     $('composer-model-btn')?.setAttribute('aria-expanded', 'false');
     const hoverCard = $('ide-hover-card');
     if (hoverCard) {
@@ -4455,9 +3373,9 @@
     const chatMoreMenu = $('chat-more-menu');
     if (chatMoreMenu) chatMoreMenu.hidden = true;
     $('btn-chat-more')?.setAttribute('aria-expanded', 'false');
-    if (typeof ideMenuPinFreeze !== 'undefined' && ideMenuPinFreeze) {
-      ideMenuPinFreeze = false;
-      if (typeof flushDeferredIdeTreeOrder === 'function') flushDeferredIdeTreeOrder();
+    if (typeof S.ideMenuPinFreeze !== 'undefined' && S.ideMenuPinFreeze) {
+      S.ideMenuPinFreeze = false;
+      if (typeof S.flushDeferredIdeTreeOrder === 'function') S.flushDeferredIdeTreeOrder();
     }
   }
 
@@ -4586,3049 +3504,6 @@
     });
   }
 
-  // Connectivity Engine: Probes Direct Local Bridge (:4318) first, then Edge WS & Cloud Relay fallback
-  let lastLocalProbeFailedAt = 0;
-  let syncInFlight = false;
-  let pendingSyncAfterFlight = false;
-
-  async function deriveEdgeAuthTokenHex(rawKey) {
-    const clean = String(rawKey || '').trim();
-    if (!clean || !window.crypto || !window.crypto.subtle) return '';
-    const bytes = new TextEncoder().encode(`theo-edge-v1:${clean}`);
-    const digest = await window.crypto.subtle.digest('SHA-256', bytes);
-    return Array.from(new Uint8Array(digest))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
-  }
-
-  async function getBridgeAuthTokenHex() {
-    if (window.__THEO_MOCK_BRIDGE_TOKEN) {
-      return String(window.__THEO_MOCK_BRIDGE_TOKEN).trim();
-    }
-    if (localBootInfo && typeof localBootInfo.token === 'string' && localBootInfo.token.trim()) {
-      return localBootInfo.token.trim();
-    }
-    refreshCloudConfig();
-    const rawSecret = cloudCfg.edgeAccessKey || cloudCfg.key || '';
-    if (!rawSecret) return '';
-    if (cachedBridgeTokenHex && cachedBridgeTokenSrc === rawSecret) {
-      return cachedBridgeTokenHex;
-    }
-    const derived = await deriveEdgeAuthTokenHex(rawSecret);
-    if (derived) {
-      cachedBridgeTokenSrc = rawSecret;
-      cachedBridgeTokenHex = derived;
-    }
-    return derived;
-  }
-
-  async function authFetchLocal(url, init = {}) {
-    const token = await getBridgeAuthTokenHex();
-    const headers = Object.assign({}, init.headers || {});
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-    return fetch(url, { ...init, headers });
-  }
-
-  async function fetchPairingInfoFromBridge() {
-    if (isHeadlessBrowser || !localBridgeBase) return cachedPairingInfo;
-    try {
-      const res = await authFetchLocal(`${localBridgeBase}/api/pairing-info`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.ok) {
-          cachedPairingInfo = data;
-          return data;
-        }
-      }
-    } catch {}
-    return cachedPairingInfo;
-  }
-
-  async function probeLocalBridge(force = false) {
-    if (isHeadlessBrowser && !window.__THEO_ALLOW_PROBE_MOCK_FETCH) return '';
-    refreshCloudConfig();
-    const candidates = [];
-    const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
-    const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(ua);
-    const isPublicHosted =
-      location.hostname.endsWith('.github.io') || location.hostname.endsWith('.workers.dev');
-
-    if (
-      location.port === String(cloudCfg.port) ||
-      (location.protocol === 'http:' && !isPublicHosted)
-    ) {
-      candidates.push(location.origin.replace(/\/+$/, ''));
-    }
-    if (prefs.customBridgeUrl) {
-      candidates.push(prefs.customBridgeUrl.replace(/\/+$/, ''));
-    }
-    if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
-      candidates.push(`http://127.0.0.1:${cloudCfg.port}`);
-      candidates.push(`http://localhost:${cloudCfg.port}`);
-    }
-    if (!isMobileDevice) {
-      candidates.push(`http://127.0.0.1:${cloudCfg.port}`);
-    }
-
-    if (!candidates.length) return '';
-    if (!force && lastLocalProbeFailedAt && Date.now() - lastLocalProbeFailedAt < 30000) {
-      return '';
-    }
-
-    const seen = new Set();
-    for (const base of candidates) {
-      if (!base || seen.has(base)) continue;
-      seen.add(base);
-      try {
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 750);
-        const res = await authFetchLocal(`${base}/api/ping`, { signal: ctrl.signal });
-        clearTimeout(timer);
-        if (res.ok) {
-          const data = await res.json();
-          if (data && data.ok) {
-            if (data.edgeRelayUrl && !prefs.edgeRelayUrl && isSafeEdgeEndpointUrl(data.edgeRelayUrl)) {
-              discoveredEdgeUrl = String(data.edgeRelayUrl).trim();
-            }
-            const isAuthedPing =
-              data.authenticated !== false && !(data.authRequired && !data.localUrl);
-            if (!isAuthedPing) {
-              continue;
-            }
-            localBridgeBase = base;
-            lastLocalProbeFailedAt = 0;
-            if (data.device && data.device.id) {
-              localWsDevice = data.device;
-              updateFleetDevices([{ ...data.device, online: true, local: true, lastSeen: Date.now() }]);
-            }
-            fetchPairingInfoFromBridge().catch(() => {});
-            return base;
-          }
-        }
-      } catch {}
-    }
-    lastLocalProbeFailedAt = Date.now();
-    return '';
-  }
-
-  const initialNoSse = location.search.includes('nosse=1');
-
-  // A session belongs to the host that published it: every host stamps `deviceId` on the rows it sends, and a row
-  // without a stamp belongs to the host whose snapshot it arrived in. Nothing here knows a PC by name or folder.
-  // The name shown is the host's current name from the fleet list, so a renamed PC shows its new name at once.
-  function inferFrontendRowDeviceId(r, fallbackId = '', fallbackName = '') {
-    const id = String(r?.deviceId || fallbackId || '').trim();
-    const devMeta = id ? fleetDevicesMap.get(id) : null;
-    const name = String(devMeta?.name || r?.deviceName || fallbackName || id || '').trim();
-    return { id, name };
-  }
-
-  function sanitizeFleetPcSetup(raw) {
-    if (!raw || typeof raw !== 'object') return null;
-    const totalCount = Math.max(0, Math.min(99, Math.trunc(Number(raw.totalCount) || 0)));
-    if (totalCount <= 0) return null;
-    const okCount = Math.max(0, Math.min(totalCount, Math.trunc(Number(raw.okCount) || 0)));
-    const pendingCount = Math.max(
-      0,
-      Math.min(
-        totalCount,
-        raw.pendingCount !== undefined ? Math.trunc(Number(raw.pendingCount) || 0) : totalCount - okCount
-      )
-    );
-    const pendingIds = Array.isArray(raw.pendingIds)
-      ? raw.pendingIds
-          .map((x) => String(x || '').trim())
-          .filter((x) => /^[a-z0-9._-]{1,64}$/i.test(x))
-          .slice(0, 16)
-      : [];
-    // A host sends its pending steps as `pending: [{ id, name }]`; older snapshots used `pendingTitles`.
-    const rawTitles = Array.isArray(raw.pendingTitles)
-      ? raw.pendingTitles
-      : Array.isArray(raw.pending)
-        ? raw.pending.map((p) => (p && typeof p === 'object' ? p.name || p.title || p.id : ''))
-        : [];
-    const pendingTitles = rawTitles
-      .map((x) => String(x || '').replace(/[\\/]+/g, ' ').trim().slice(0, 80))
-      .filter(Boolean)
-      .slice(0, 16);
-    return {
-      ok: Boolean((raw.ok || raw.ready) && pendingCount === 0),
-      checkedAt: Number(raw.checkedAt || 0),
-      totalCount,
-      okCount,
-      pendingCount,
-      pendingIds,
-      pendingTitles
-    };
-  }
-
-  // Whether a PC can be driven from the phone alone, with no VS Code window open (theo-hub pc-setup.js
-  // buildPwaReadySummary), carried on each fleet device entry like pcSetup. null = that PC's build does not
-  // report it. Counts are recomputed from the checks, never taken from the wire.
-  function sanitizeFleetPwaReady(raw) {
-    if (!raw || typeof raw !== 'object' || !Array.isArray(raw.checks)) return null;
-    const checks = [];
-    for (const c of raw.checks) {
-      if (!c || typeof c !== 'object') continue;
-      const id = String(c.id || '').trim();
-      if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id) || checks.some((x) => x.id === id)) continue;
-      checks.push({
-        id,
-        ok: Boolean(c.ok),
-        level: c.level === 'required' ? 'required' : 'info',
-        title: String(c.title || id).replace(/\s+/g, ' ').trim().slice(0, 60),
-        detail: String(c.detail || '').replace(/\s+/g, ' ').trim().slice(0, 200)
-      });
-      if (checks.length >= 16) break;
-    }
-    const required = checks.filter((c) => c.level === 'required');
-    if (!required.length) return null;
-    const okCount = required.filter((c) => c.ok).length;
-    return {
-      ready: okCount === required.length,
-      okCount,
-      totalCount: required.length,
-      vscodeOpen: Boolean(raw.vscodeOpen),
-      // The PC's build runs an account sign-in itself and reports its progress (the sign-in sheet needs that).
-      signIn: raw.signIn === true,
-      checks
-    };
-  }
-
-  // Unsaved git working folders per PC (theo-hub unsaved-work.js, hourly theo-worktree-guard report), carried on
-  // each fleet device entry like pcSetup. null = this PC has no report (older build, or none yet).
-  const UNSAVED_WORK_MAX_ITEMS = 50;
-  const UNSAVED_WORK_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
-  const UNSAVED_WORK_OLD_AFTER_MS = 2 * 3600 * 1000;
-  // opts.age (render time only): add the time since the check to each folder's idle hours and re-mark 24 h+, so a
-  // report from a PC that has been off for days still shows true idle times. Stored copies keep the PC's values.
-  function sanitizeFleetUnsavedWork(raw, now = Date.now(), opts = {}) {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-    const checkedAt = Math.max(0, Math.trunc(Number(raw.checkedAt) || 0));
-    if (!checkedAt || now - checkedAt > UNSAVED_WORK_MAX_AGE_MS) return null;
-    if (checkedAt - now > 10 * 60 * 1000) return null; // stamped in the future: would never age out
-    const ageH = opts.age ? Math.max(0, now - checkedAt) / 3600000 : 0;
-    const staleHoursRaw = Number(raw.staleHours);
-    const staleHours = Number.isFinite(staleHoursRaw) && staleHoursRaw > 0 ? staleHoursRaw : 24;
-    const clip = (v, max) =>
-      String(v == null ? '' : v)
-        .replace(/[\u0000-\u001f\u007f]+/g, ' ')
-        .trim()
-        .slice(0, max);
-    const items = [];
-    for (const it of Array.isArray(raw.items) ? raw.items : []) {
-      if (!it || typeof it !== 'object') continue;
-      const idle = it.idleHours == null ? NaN : Number(it.idleHours);
-      const idleHours = Number.isFinite(idle) ? Math.max(0, idle) + ageH : null;
-      items.push({
-        repo: clip(it.repo, 40) || '?',
-        branch: clip(it.branch, 60) || '-',
-        where: clip(it.where, 40),
-        why: clip(it.why, 60),
-        path: clip(it.path, 180),
-        idleHours,
-        stale: Boolean(it.stale) || (idleHours != null && idleHours >= staleHours)
-      });
-      if (items.length >= UNSAVED_WORK_MAX_ITEMS) break;
-    }
-    const count = (v, fallback) => Math.max(0, Math.min(999, Math.trunc(Number(v ?? fallback) || 0)));
-    const unsavedCount = Math.max(items.length, count(raw.unsavedCount, items.length));
-    const listedStale = items.filter((i) => i.stale).length;
-    let stalledWt = null;
-    const rawSt =
-      raw.stalledWt && typeof raw.stalledWt === 'object' && !Array.isArray(raw.stalledWt)
-        ? raw.stalledWt
-        : null;
-    if (rawSt) {
-      const stTsRaw =
-        typeof rawSt.checkedAt === 'number' && Number.isFinite(rawSt.checkedAt)
-          ? Math.max(0, Math.trunc(rawSt.checkedAt))
-          : rawSt.checkedAt
-            ? Math.max(0, Date.parse(String(rawSt.checkedAt)) || 0)
-            : 0;
-      const stCheckedAt = stTsRaw && stTsRaw - now <= 10 * 60 * 1000 ? stTsRaw : checkedAt;
-      const stAgeH = opts.age ? Math.max(0, now - stCheckedAt) / 3600000 : 0;
-      const stItems = [];
-      for (const sit of Array.isArray(rawSt.items) ? rawSt.items : []) {
-        if (!sit || typeof sit !== 'object') continue;
-        const ah = sit.ageHours == null ? NaN : Number(sit.ageHours);
-        const ageHours = Number.isFinite(ah) ? Math.max(0, ah) + stAgeH : null;
-        stItems.push({
-          repo: clip(sit.repo, 40) || '?',
-          branch: clip(sit.branch, 60) || '-',
-          sha: clip(sit.sha, 16),
-          ageHours,
-          ahead: Math.max(0, Math.min(999, Math.trunc(Number(sit.ahead) || 0))),
-          subject: clip(sit.subject, 80)
-        });
-        if (stItems.length >= UNSAVED_WORK_MAX_ITEMS) break;
-      }
-      const stCount = Math.max(stItems.length, count(rawSt.stalledCount, stItems.length));
-      if (stCount > 0 || stItems.length > 0) {
-        const cutRaw = Number(rawSt.cutoffHours ?? rawSt.hours);
-        stalledWt = {
-          checkedAt: stCheckedAt,
-          cutoffHours: Number.isFinite(cutRaw) && cutRaw >= 0 ? cutRaw : 24,
-          stalledCount: stCount,
-          items: stItems
-        };
-      }
-    }
-    return {
-      checkedAt,
-      staleHours,
-      unsavedCount,
-      // The PC's own count also covers folders past the 50 sent; aging can only add to it.
-      staleCount: Math.min(unsavedCount, Math.max(listedStale, count(raw.staleCount, listedStale))),
-      unchecked: count(raw.unchecked, 0),
-      items,
-      ...(stalledWt ? { stalledWt } : {})
-    };
-  }
-
-  // Several copies of a PC's list reach the phone (its own fleet entry, host snapshots, other hosts' device lists).
-  // The newest report wins; only the PC's own entry (authoritative) may clear it, and an older copy can never refill
-  // a list the PC itself cleared.
-  const uwAuthClearedAt = new Map();
-  function mergeFleetUnsavedWork(devId, prev, incomingRaw, authoritative) {
-    if (incomingRaw === undefined) return prev || null;
-    const inc = sanitizeFleetUnsavedWork(incomingRaw);
-    if (!inc) {
-      if (authoritative) {
-        uwAuthClearedAt.set(devId, Date.now());
-        return null;
-      }
-      return prev || null;
-    }
-    if (authoritative) uwAuthClearedAt.delete(devId);
-    if (!prev) {
-      const clearedAt = uwAuthClearedAt.get(devId) || 0;
-      return !authoritative && clearedAt && inc.checkedAt <= clearedAt ? null : inc;
-    }
-    return inc.checkedAt >= Number(prev.checkedAt || 0) ? inc : prev;
-  }
-
-  function sanitizeFleetHostHealth(raw) {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-    const clip = (v, max) =>
-      String(v == null ? '' : v)
-        .replace(/[\u0000-\u001f\u007f]+/g, ' ')
-        .trim()
-        .slice(0, max);
-    const out = {};
-    if (raw.hotSwapHold && typeof raw.hotSwapHold === 'object') {
-      const h = raw.hotSwapHold;
-      out.hotSwapHold = {
-        held: Boolean(h.held),
-        stage: clip(h.stage || h.version, 40),
-        file: clip(h.file, 80),
-        error: clip(h.error || h.reason, 220),
-        since: Number(h.since || h.heldAt || h.updatedAt || 0)
-      };
-    }
-    if (raw.autoReload && typeof raw.autoReload === 'object') {
-      const ar = raw.autoReload;
-      const failAt = Number(ar.failure?.firstAt || ar.canaryFailure?.at || 0);
-      out.autoReload = {
-        pending: Boolean(ar.pending ?? ar.pendingReload),
-        state: clip(ar.state, 32),
-        reasons: Array.isArray(ar.reasons) ? ar.reasons.map((x) => clip(x, 80)).filter(Boolean).slice(0, 4) : [],
-        blockers: Array.isArray(ar.blockers)
-          ? ar.blockers.map((b) => ({ code: clip(b?.code, 40), label: clip(b?.label || b?.code, 120) })).slice(0, 5)
-          : [],
-        since: Number(ar.since || 0),
-        failure: failAt > 0 || ar.canaryFailure ? { firstAt: failAt || 1 } : null
-      };
-    }
-    const skipMsg = clip(raw.skipMessage || raw.bridge?.skipMessage || raw.bridge?.patchSkipNotice, 360);
-    if (skipMsg) out.skipMessage = skipMsg;
-    if (raw.attachFailed || raw.bridge?.attachFailed) {
-      out.attachFailed = true;
-      out.bridgeMessage = clip(raw.bridgeMessage || raw.bridge?.message, 280);
-    }
-    if (raw.hasVsCodeUi) out.hasVsCodeUi = true;
-    return Object.keys(out).length ? out : null;
-  }
-
-  function renderFleetPcSetupPillHtml(d) {
-    const ps = d && d.pcSetup ? sanitizeFleetPcSetup(d.pcSetup) : null;
-    if (!ps) return '';
-    const hostLbl = String(d?.name || d?.id || 'Host').trim();
-    if (ps.ok || ps.pendingCount === 0) {
-      return ` <span class="fleet-setup-pill is-ready tabular" aria-label="${esc(hostLbl)} PC setup ready (${ps.okCount}/${ps.totalCount})">✓ ${ps.okCount}/${ps.totalCount}</span>`;
-    }
-    return ` <span class="fleet-setup-pill is-pending tabular" aria-label="${esc(hostLbl)}: ${ps.pendingCount} PC setup update(s) pending (${ps.okCount}/${ps.totalCount})">! ${ps.okCount}/${ps.totalCount}</span>`;
-  }
-
-  function getFleetStalledWtCount(d) {
-    const uw = d && d.unsavedWork ? sanitizeFleetUnsavedWork(d.unsavedWork) : null;
-    return uw && uw.stalledWt && uw.stalledWt.stalledCount > 0 ? uw.stalledWt.stalledCount : 0;
-  }
-
-  function renderFleetStalledWtPillHtml(d) {
-    const cnt = getFleetStalledWtCount(d);
-    if (!cnt) return '';
-    const hostLbl = String(d?.name || d?.id || 'Host').trim();
-    return ` <span class="fleet-stalled-pill tabular" aria-label="${esc(hostLbl)}: ${cnt} stalled wt/* branch(es)">⎇ ${cnt} wt/*</span>`;
-  }
-
-  // opts.authoritative: the list holds each PC's own entry (store device_states, or a host's own device), so a
-  // null unsaved-work list there means "no report" rather than "not mentioned".
-  function updateFleetDevices(list, opts = {}) {
-    if (!Array.isArray(list)) return;
-    for (const d of list) {
-      if (!d || !d.id) continue;
-      const prev = fleetDevicesMap.get(d.id) || {};
-      const nextPcSetup =
-        d.pcSetup !== undefined
-          ? sanitizeFleetPcSetup(d.pcSetup)
-          : prev.pcSetup || null;
-      // Like pcSetup: a list that does not mention it (edge presence frames) keeps the last copy.
-      const nextUnsavedWork = mergeFleetUnsavedWork(
-        d.id,
-        prev.unsavedWork || null,
-        d.unsavedWork,
-        Boolean(opts.authoritative)
-      );
-      // A list that does not carry it (edge presence frames, another host's copy) keeps the last report.
-      const nextPwaReady =
-        (d.pwaReady !== undefined ? sanitizeFleetPwaReady(d.pwaReady) : null) || prev.pwaReady || null;
-      const nextHostHealth =
-        d.hostHealth !== undefined
-          ? sanitizeFleetHostHealth(d.hostHealth)
-          : prev.hostHealth || null;
-      fleetDevicesMap.set(d.id, {
-        ...prev,
-        ...d,
-        id: d.id,
-        name: d.name || prev.name || d.hostname || d.id,
-        online: d.online !== undefined ? Boolean(d.online) : Boolean(prev.online),
-        lastSeen: Number(d.lastSeen || d.updatedAt || prev.lastSeen || Date.now()),
-        sessionCount: Number(
-          d.sessionCount !== undefined ? d.sessionCount : prev.sessionCount || 0
-        ),
-        pcSetup: nextPcSetup,
-        pwaReady: nextPwaReady,
-        unsavedWork: nextUnsavedWork,
-        hostHealth: nextHostHealth
-      });
-    }
-  }
-
-  function getUnifiedFleetDevices() {
-    if (Array.isArray(appState?.devices)) {
-      updateFleetDevices(appState.devices);
-    }
-    const stateDev = appState?.device || appState?.connection?.device;
-    if (stateDev && stateDev.id) {
-      updateFleetDevices([
-        {
-          ...stateDev,
-          online: connMode === 'local' || connMode === 'edge' ? true : Boolean(stateDev.online),
-          sessionCount: (appState?.rows || []).filter(
-            (r) => !r.archived && (!r.deviceId || r.deviceId === stateDev.id)
-          ).length
-        }
-      ]);
-    }
-    const all = Array.from(fleetDevicesMap.values());
-    return rankByFreq(
-      all,
-      'devices',
-      (d) => d.id,
-      (d) => (d.local ? 500 : d.online ? 300 : 100) + Math.min(99, Number(d.sessionCount || 0))
-    );
-  }
-
-  function storeHostSnapshotEntry(snap, hintDeviceId = '') {
-    if (!snap || typeof snap !== 'object') return '';
-    const devObj = snap.device || snap.connection?.device || {};
-    const devId = String(hintDeviceId || devObj.id || 'primary-host').trim();
-    const devName = String(
-      devObj.name || snap.connection?.hostname || fleetDevicesMap.get(devId)?.name || devId
-    ).trim();
-
-    if (Array.isArray(snap.devices)) {
-      updateFleetDevices(snap.devices);
-    }
-
-    const normalizedRows = (Array.isArray(snap.rows) ? snap.rows : [])
-      .filter((r) => r && r.id)
-      .map((r) => {
-        const owner = inferFrontendRowDeviceId(r, devId, devName);
-        return {
-          ...r,
-          deviceId: owner.id || devId,
-          deviceName: owner.name || devName
-        };
-      });
-
-    if (devId && devId !== 'primary-host') {
-      updateFleetDevices([
-        {
-          ...devObj,
-          id: devId,
-          name: devName,
-          hostname: snap.connection?.hostname || devObj.hostname || '',
-          sessionCount: normalizedRows.filter((r) => !r.archived && r.deviceId === devId).length,
-          lastSeen: Number(snap.generatedAt || Date.now()),
-          ...(devObj.pcSetup || snap.pcSetup ? { pcSetup: devObj.pcSetup || snap.pcSetup } : {})
-        }
-      ], { authoritative: true });
-    }
-
-    const prevSnap = hostSnapshotsByDevice.get(devId) || {};
-    hostSnapshotsByDevice.set(devId, {
-      ...prevSnap,
-      ...snap,
-      device: { ...devObj, id: devId, name: devName },
-      rows: normalizedRows,
-      approvals: Array.isArray(snap.approvals)
-        ? snap.approvals.map((a) => ({
-            ...a,
-            deviceId: a.deviceId || devId,
-            deviceName: a.deviceName || devName
-          }))
-        : prevSnap.approvals || [],
-      workspaces: Array.isArray(snap.workspaces)
-        ? snap.workspaces.map((w) => ({
-            ...w,
-            deviceId: w.deviceId || devId,
-            deviceName: w.deviceName || devName
-          }))
-        : prevSnap.workspaces || [],
-      groups: Array.isArray(snap.groups) ? snap.groups : prevSnap.groups || [],
-      providers: snap.providers || prevSnap.providers || null,
-      accountOrder: Array.isArray(snap.accountOrder) ? snap.accountOrder : prevSnap.accountOrder || [],
-      summary: snap.summary || prevSnap.summary || null,
-      summaryByProvider: snap.summaryByProvider || prevSnap.summaryByProvider || null,
-      topSessions: Array.isArray(snap.topSessions) ? snap.topSessions : prevSnap.topSessions || [],
-      generatedAt: Number(snap.generatedAt || Date.now())
-    });
-
-    if (snap.providers) {
-      hasProvidersHydrated = true;
-    }
-    return devId;
-  }
-
-  function rebuildUnifiedAppState(preferredDeviceId = '') {
-    if (hostSnapshotsByDevice.size === 0) return appState;
-    const entries = Array.from(hostSnapshotsByDevice.entries()).sort((a, b) => {
-      const aLocal = localWsDevice?.id && a[0] === localWsDevice.id ? 1 : 0;
-      const bLocal = localWsDevice?.id && b[0] === localWsDevice.id ? 1 : 0;
-      if (aLocal !== bLocal) return bLocal - aLocal;
-      return Number(b[1]?.generatedAt || 0) - Number(a[1]?.generatedAt || 0);
-    });
-
-    const primarySnap =
-      (preferredDeviceId && hostSnapshotsByDevice.get(preferredDeviceId)) ||
-      (localWsDevice?.id && hostSnapshotsByDevice.get(localWsDevice.id)) ||
-      entries[0][1];
-
-    const rowMap = new Map();
-    const appMap = new Map();
-    const wsMap = new Map();
-    const grpMap = new Map();
-    let maxGeneratedAt = 0;
-    let chosenProviders = primarySnap?.providers || null;
-    let chosenAccountOrder = Array.isArray(primarySnap?.accountOrder) ? primarySnap.accountOrder : [];
-    let chosenSummary = primarySnap?.summary || null;
-    let chosenSummaryByProv = primarySnap?.summaryByProvider || null;
-    let chosenTopSessions = Array.isArray(primarySnap?.topSessions) ? primarySnap.topSessions : [];
-    let bestModelCatalog = primarySnap?.antigravityModelCatalog || null;
-    let bestClaudeCatalog = primarySnap?.claudeModelCatalog || null;
-    let bestClaudeMode = extractClaudeModeFields(
-      primarySnap?.claudePermissionMode || primarySnap?.connection?.claudePermissionMode
-    );
-    let bestHide3p =
-      typeof primarySnap?.hideThirdPartyQuota === 'boolean'
-        ? {
-            value: primarySnap.hideThirdPartyQuota,
-            updatedAt: Number(primarySnap.hideThirdPartyQuotaUpdatedAt || 0)
-          }
-        : null;
-    let bestHideDesktop =
-      typeof primarySnap?.hideClaudeDesktop === 'boolean'
-        ? {
-            value: primarySnap.hideClaudeDesktop,
-            updatedAt: Number(primarySnap.hideClaudeDesktopUpdatedAt || 0)
-          }
-        : null;
-
-    let activePendingLogin =
-      primarySnap?.pendingAccountLogin?.active ? primarySnap.pendingAccountLogin : null;
-    for (const [devId, snap] of entries) {
-      maxGeneratedAt = Math.max(maxGeneratedAt, Number(snap?.generatedAt || 0));
-      if (!activePendingLogin && snap?.pendingAccountLogin?.active) {
-        activePendingLogin = { ...snap.pendingAccountLogin, hostId: snap.pendingAccountLogin.hostId || devId };
-      }
-      if (typeof snap?.hideThirdPartyQuota === 'boolean') {
-        const candAt = Number(snap.hideThirdPartyQuotaUpdatedAt || 0);
-        if (!bestHide3p || candAt > bestHide3p.updatedAt) {
-          bestHide3p = { value: snap.hideThirdPartyQuota, updatedAt: candAt };
-        }
-      }
-      if (typeof snap?.hideClaudeDesktop === 'boolean') {
-        const candAt = Number(snap.hideClaudeDesktopUpdatedAt || 0);
-        if (!bestHideDesktop || candAt > bestHideDesktop.updatedAt) {
-          bestHideDesktop = { value: snap.hideClaudeDesktop, updatedAt: candAt };
-        }
-      }
-      const candMode = extractClaudeModeFields(
-        snap?.claudePermissionMode || snap?.connection?.claudePermissionMode
-      );
-      if (candMode) {
-        if (
-          !bestClaudeMode ||
-          candMode.rev > bestClaudeMode.rev ||
-          (candMode.rev === bestClaudeMode.rev && candMode.updatedAt > bestClaudeMode.updatedAt)
-        ) {
-          bestClaudeMode = candMode;
-        }
-      }
-      if (!chosenProviders && snap?.providers) chosenProviders = snap.providers;
-      if (!chosenAccountOrder.length && Array.isArray(snap?.accountOrder) && snap.accountOrder.length) {
-        chosenAccountOrder = snap.accountOrder;
-      }
-      if ((!chosenSummary || !Number(chosenSummary?.week?.tokens || 0)) && snap?.summary) {
-        chosenSummary = snap.summary;
-      }
-      if (!chosenSummaryByProv && snap?.summaryByProvider) {
-        chosenSummaryByProv = snap.summaryByProvider;
-      }
-      if (!chosenTopSessions.length && Array.isArray(snap?.topSessions) && snap.topSessions.length) {
-        chosenTopSessions = snap.topSessions;
-      }
-
-      if (
-        snap?.antigravityModelCatalog &&
-        Array.isArray(snap.antigravityModelCatalog.models) &&
-        (!bestModelCatalog ||
-          Number(snap.antigravityModelCatalog.updatedAt || 0) >= Number(bestModelCatalog.updatedAt || 0))
-      ) {
-        bestModelCatalog = snap.antigravityModelCatalog;
-      }
-      if (
-        snap?.claudeModelCatalog &&
-        Array.isArray(snap.claudeModelCatalog.models) &&
-        (!bestClaudeCatalog ||
-          Number(snap.claudeModelCatalog.updatedAt || 0) >= Number(bestClaudeCatalog.updatedAt || 0))
-      ) {
-        bestClaudeCatalog = snap.claudeModelCatalog;
-      }
-
-      for (const r of snap.rows || []) {
-        if (!r || !r.id) continue;
-        const prev = rowMap.get(r.id);
-        if (!prev) {
-          rowMap.set(r.id, { ...r });
-        } else {
-          const rAt = Number(r.at || 0);
-          const pAt = Number(prev.at || 0);
-          const rOwned = r.deviceId === devId;
-          const pOwned = prev.deviceId !== r.deviceId;
-          const rWinsRow = rAt > pAt || (rAt === pAt && rOwned && pOwned);
-          const effArchived = rWinsRow ? Boolean(r.archived) : Boolean(prev.archived);
-          const rChatUpd = Number(r.pinUpdatedAt || (r.pinned ? r.pinnedAt || 1 : 0));
-          const pChatUpd = Number(prev.pinUpdatedAt || (prev.pinned ? prev.pinnedAt || 1 : 0));
-          let winChatPinned = Boolean(prev.pinned && !effArchived);
-          let winChatPinnedAt = winChatPinned ? Number(prev.pinnedAt || 0) : 0;
-          let winChatPinUpd = pChatUpd;
-          if (effArchived) {
-            winChatPinned = false;
-            winChatPinnedAt = 0;
-            winChatPinUpd = Math.max(rChatUpd, pChatUpd);
-          } else if (
-            rChatUpd > pChatUpd ||
-            (rChatUpd === pChatUpd && rChatUpd > 0 && !r.pinned && Boolean(prev.pinned))
-          ) {
-            winChatPinned = Boolean(r.pinned);
-            winChatPinnedAt = winChatPinned ? Number(r.pinnedAt || rChatUpd || 1) : 0;
-            winChatPinUpd = rChatUpd;
-          }
-          if (rWinsRow) {
-            rowMap.set(r.id, {
-              ...prev,
-              ...r,
-              pinned: winChatPinned,
-              pinnedAt: winChatPinnedAt,
-              pinUpdatedAt: winChatPinUpd
-            });
-          } else if (winChatPinUpd > pChatUpd || winChatPinned !== Boolean(prev.pinned)) {
-            rowMap.set(r.id, {
-              ...prev,
-              pinned: winChatPinned,
-              pinnedAt: winChatPinnedAt,
-              pinUpdatedAt: winChatPinUpd
-            });
-          }
-        }
-      }
-
-      for (const a of snap.approvals || []) {
-        if (!a) continue;
-        const aKey = String(a.id || a.approvalId || `${devId}:${a.sessionId || ''}`);
-        if (aKey && !appMap.has(aKey)) {
-          appMap.set(aKey, { ...a });
-        }
-      }
-
-      for (const w of snap.workspaces || []) {
-        if (!w || !w.id) continue;
-        const prevW = wsMap.get(w.id);
-        if (!prevW || w.deviceId === localWsDevice?.id || Number(snap.generatedAt || 0) >= Number(prevW._snapAt || 0)) {
-          wsMap.set(w.id, { ...w, _snapAt: Number(snap.generatedAt || 0) });
-        }
-      }
-
-      for (const g of snap.groups || []) {
-        if (g && g.id && !grpMap.has(g.id)) {
-          grpMap.set(g.id, { ...g });
-        }
-      }
-    }
-
-    if (bestClaudeMode) {
-      ingestClaudePermissionModeDoc(bestClaudeMode, { fromHostSnapshot: true });
-    }
-    if (bestModelCatalog) {
-      ingestLiveAntigravityCatalog(bestModelCatalog);
-      syncDefaultModelPrefsIfAuto('antigravity');
-    }
-    if (bestClaudeCatalog) {
-      ingestLiveClaudeCatalog(bestClaudeCatalog);
-      syncDefaultModelPrefsIfAuto('claude');
-    }
-
-    return {
-      ...primarySnap,
-      generatedAt: maxGeneratedAt || Date.now(),
-      rows: Array.from(rowMap.values()).sort(
-        (a, b) =>
-          (isRowPinned(b) ? 1 : 0) - (isRowPinned(a) ? 1 : 0) ||
-          Number(b.at || 0) - Number(a.at || 0) ||
-          Number(b.pinnedAt || 0) - Number(a.pinnedAt || 0)
-      ),
-      approvals: Array.from(appMap.values()),
-      workspaces: Array.from(wsMap.values()),
-      groups: Array.from(grpMap.values()),
-      providers: chosenProviders || appState?.providers || {},
-      accountOrder: chosenAccountOrder.length ? chosenAccountOrder : appState?.accountOrder || [],
-      summary: chosenSummary || appState?.summary || null,
-      summaryByProvider: chosenSummaryByProv || appState?.summaryByProvider || null,
-      topSessions: chosenTopSessions.length ? chosenTopSessions : appState?.topSessions || [],
-      antigravityModelCatalog: bestModelCatalog || appState?.antigravityModelCatalog || null,
-      claudeModelCatalog: bestClaudeCatalog || appState?.claudeModelCatalog || null,
-      claudePermissionMode: { ...claudeModeState },
-      pendingAccountLogin: activePendingLogin || null,
-      ...(bestHide3p
-        ? {
-            hideThirdPartyQuota: bestHide3p.value,
-            hideThirdPartyQuotaUpdatedAt: bestHide3p.updatedAt
-          }
-        : {}),
-      ...(bestHideDesktop
-        ? {
-            hideClaudeDesktop: bestHideDesktop.value,
-            hideClaudeDesktopUpdatedAt: bestHideDesktop.updatedAt
-          }
-        : {})
-    };
-  }
-
-  function ingestIncomingHostState(st, sourceDeviceId = '') {
-    if (!st || typeof st !== 'object') return;
-    if (st.antigravityModelCatalog) {
-      ingestLiveAntigravityCatalog(st.antigravityModelCatalog);
-      syncDefaultModelPrefsIfAuto('antigravity');
-    }
-    if (st.claudeModelCatalog) {
-      ingestLiveClaudeCatalog(st.claudeModelCatalog);
-      syncDefaultModelPrefsIfAuto('claude');
-    }
-    const directMode = st.claudePermissionMode || st.connection?.claudePermissionMode;
-    if (directMode) {
-      ingestClaudePermissionModeDoc(directMode, { fromHostSnapshot: true });
-    }
-    const devId = storeHostSnapshotEntry(st, sourceDeviceId);
-    const nextState = rebuildUnifiedAppState(devId) || st;
-    nextState.claudePermissionMode = { ...claudeModeState };
-
-    const nowMs = Date.now();
-    if (pendingHideThirdPartyQuota) {
-      if (nowMs >= pendingHideThirdPartyQuota.expiresAt) {
-        pendingHideThirdPartyQuota = null;
-      } else if (
-        typeof st.hideThirdPartyQuota === 'boolean' &&
-        st.hideThirdPartyQuota === pendingHideThirdPartyQuota.value &&
-        Number(st.hideThirdPartyQuotaUpdatedAt || 0) >= pendingHideThirdPartyQuota.startedAt
-      ) {
-        pendingHideThirdPartyQuota = null;
-      } else {
-        nextState.hideThirdPartyQuota = pendingHideThirdPartyQuota.value;
-        nextState.hideThirdPartyQuotaUpdatedAt = pendingHideThirdPartyQuota.startedAt;
-      }
-    }
-    if (!pendingHideThirdPartyQuota) {
-      const snapUpdatedAt = Number(nextState.hideThirdPartyQuotaUpdatedAt || 0);
-      const localUpdatedAt = Number(prefs.hideThirdPartyQuotaUpdatedAt || 0);
-      if (
-        typeof nextState.hideThirdPartyQuota === 'boolean' &&
-        (typeof prefs.hideThirdPartyQuota !== 'boolean' ||
-          snapUpdatedAt > localUpdatedAt ||
-          (localUpdatedAt === 0 && typeof st.hideThirdPartyQuota === 'boolean'))
-      ) {
-        if (
-          prefs.hideThirdPartyQuota !== nextState.hideThirdPartyQuota ||
-          (snapUpdatedAt > 0 && localUpdatedAt !== snapUpdatedAt)
-        ) {
-          prefs.hideThirdPartyQuota = nextState.hideThirdPartyQuota;
-          if (snapUpdatedAt > 0) prefs.hideThirdPartyQuotaUpdatedAt = snapUpdatedAt;
-          saveJson(STORAGE_KEYS.PREFS, prefs);
-        }
-      } else if (typeof prefs.hideThirdPartyQuota === 'boolean') {
-        nextState.hideThirdPartyQuota = prefs.hideThirdPartyQuota;
-        nextState.hideThirdPartyQuotaUpdatedAt = localUpdatedAt;
-      }
-    }
-
-    if (pendingHideClaudeDesktop) {
-      if (nowMs >= pendingHideClaudeDesktop.expiresAt) {
-        pendingHideClaudeDesktop = null;
-      } else if (
-        typeof st.hideClaudeDesktop === 'boolean' &&
-        st.hideClaudeDesktop === pendingHideClaudeDesktop.value &&
-        Number(st.hideClaudeDesktopUpdatedAt || 0) >= pendingHideClaudeDesktop.startedAt
-      ) {
-        pendingHideClaudeDesktop = null;
-      } else {
-        nextState.hideClaudeDesktop = pendingHideClaudeDesktop.value;
-        nextState.hideClaudeDesktopUpdatedAt = pendingHideClaudeDesktop.startedAt;
-      }
-    }
-    if (!pendingHideClaudeDesktop) {
-      const snapDeskAt = Number(nextState.hideClaudeDesktopUpdatedAt || 0);
-      const localDeskAt = Number(prefs.hideClaudeDesktopUpdatedAt || 0);
-      if (
-        typeof nextState.hideClaudeDesktop === 'boolean' &&
-        (typeof prefs.hideClaudeDesktop !== 'boolean' ||
-          snapDeskAt > localDeskAt ||
-          (localDeskAt === 0 && typeof st.hideClaudeDesktop === 'boolean'))
-      ) {
-        if (
-          prefs.hideClaudeDesktop !== nextState.hideClaudeDesktop ||
-          (snapDeskAt > 0 && localDeskAt !== snapDeskAt)
-        ) {
-          prefs.hideClaudeDesktop = nextState.hideClaudeDesktop;
-          if (snapDeskAt > 0) prefs.hideClaudeDesktopUpdatedAt = snapDeskAt;
-          saveJson(STORAGE_KEYS.PREFS, prefs);
-        }
-      } else if (typeof prefs.hideClaudeDesktop === 'boolean') {
-        nextState.hideClaudeDesktop = prefs.hideClaudeDesktop;
-        nextState.hideClaudeDesktopUpdatedAt = localDeskAt;
-      }
-    }
-
-    for (const [tid, live] of liveStreamsByThreadId.entries()) {
-      if (live && live.status === 'working' && Date.now() - Number(live.receivedAt || 0) < 45000) {
-        const matchRow = (nextState.rows || []).find((r) => r && r.id === tid);
-        if (matchRow) {
-          matchRow.status = 'working';
-          matchRow.statusLabel = 'Streaming Live';
-          matchRow.dot = 'running';
-        }
-      }
-    }
-
-    applyStoppedSessionOverrides(nextState);
-    applyAnsweredQuestionOverrides(nextState);
-    applyPendingLocalOverrides(nextState);
-    checkLiveStateNotifications(nextState);
-    appState = nextState;
-    reconcilePendingNewSessionBind(nextState, lastCloudQueue);
-    persistCache();
-    renderAll();
-
-    if (!isHeadlessBrowser) {
-      const watchedIds = [
-        prefs.selectedThreadId,
-        prefs.splitWatchOpen ? prefs.splitWatchThreadId : ''
-      ].filter((id) => id && id !== '__new__' && !String(id).startsWith('draft-new-'));
-      const nowMs = Date.now();
-      for (const tid of watchedIds) {
-        const row = (nextState.rows || []).find((r) => r && r.id === tid);
-        if (!row) continue;
-        const rowStamp = `${row.status || ''}:${row.stepCount || 0}:${row.at || 0}:${String(row.preview || '').slice(0, 64)}`;
-        const prevStamp = lastSeenThreadStepStampById.get(tid) || '';
-        setBoundedMap(lastSeenThreadStepStampById, tid, rowStamp);
-        const isWorking = Boolean(row.status === 'working' || row.dot === 'running');
-        const stampChanged = Boolean(prevStamp && rowStamp !== prevStamp);
-        if (
-          (isWorking || stampChanged) &&
-          nowMs - (lastThreadDetailFetchAtById.get(tid) || 0) >= 950 &&
-          nowMs - (lastThreadDetailReceivedAtById.get(tid) || 0) >= 800
-        ) {
-          setBoundedMap(lastThreadDetailFetchAtById, tid, nowMs);
-          fetchThreadDetail(tid, row.provider || '').catch(() => {});
-        }
-      }
-    }
-  }
-
-  function ingestIncomingThreadDetailFrame(msg) {
-    const tObj = msg?.thread?.thread || msg?.thread || msg?.detail || null;
-    const tid = String(msg?.threadId || msg?.id || tObj?.id || '').trim();
-    if (!tid || !tObj || typeof tObj !== 'object') return false;
-    setBoundedMap(lastThreadDetailReceivedAtById, tid, Date.now());
-    mergeRemoteThreads({ [tid]: tObj });
-    persistCache();
-    if (prefs.activeTab === 'chat' && prefs.selectedThreadId === tid) {
-      renderChatView(false);
-    } else if (
-      prefs.activeTab === 'chat' &&
-      prefs.splitWatchOpen &&
-      prefs.splitWatchThreadId === tid
-    ) {
-      renderSplitWatchPane();
-    }
-    return true;
-  }
-
-  function patchLiveStreamingDom(tid) {
-    streamDomRafId = 0;
-    if (prefs.activeTab !== 'chat' || prefs.selectedThreadId !== tid) {
-      return;
-    }
-    const streamEl = $('chat-stream');
-    if (!streamEl) return;
-    const turnEl = streamEl.querySelector('[data-streaming-turn="1"]');
-    const live = liveStreamsByThreadId.get(tid);
-    if (!turnEl || !live) {
-      renderChatView(false);
-      return;
-    }
-    const wasNearBottom = streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight < 120;
-    const thinkWrap = turnEl.querySelector('[data-stream-think-wrap]');
-    const thinkBody = turnEl.querySelector('[data-stream-think-body]');
-    const textWrap = turnEl.querySelector('[data-stream-text-body]');
-    const toolSlot = turnEl.querySelector('[data-stream-tool-slot]');
-    const statusLbl = turnEl.querySelector('[data-stream-status-lbl]');
-
-    if (thinkWrap && thinkBody) {
-      if (live.fullThinking) {
-        thinkWrap.hidden = false;
-        thinkBody.innerHTML = formatTurnMarkdown(live.fullThinking);
-        const thinkPrev = turnEl.querySelector('[data-stream-think-preview]');
-        if (thinkPrev) {
-          const lastLine = String(live.fullThinking)
-            .trim()
-            .split(/\n+/)
-            .filter(Boolean)
-            .pop() || '';
-          thinkPrev.textContent = lastLine.replace(/[*`#_>]+/g, '').trim().slice(0, 96);
-        }
-      } else {
-        thinkWrap.hidden = true;
-      }
-    }
-    if (toolSlot) {
-      if (live.activeTool && live.status === 'working') {
-        toolSlot.hidden = false;
-        toolSlot.textContent = `⚡ ${live.activeTool}`;
-      } else {
-        toolSlot.hidden = true;
-      }
-    }
-    if (textWrap) {
-      const rendered = live.fullText ? formatTurnMarkdown(live.fullText) : '';
-      const cursor = live.status === 'working' ? '<span class="stream-cursor"></span>' : '';
-      textWrap.innerHTML = rendered + cursor;
-    }
-    if (statusLbl) {
-      if (live.status === 'working') {
-        statusLbl.textContent = `⚡ Live Stream${live.deviceName ? ` · ${live.deviceName}` : ''}`;
-      } else if (live.status === 'failed' || live.status === 'error') {
-        statusLbl.textContent = `⚠️ Stream Failed${live.error ? `: ${String(live.error).slice(0, 90)}` : ''}`;
-      } else if (live.status === 'cancelled' || live.status === 'stopped') {
-        statusLbl.textContent = '⏹ Stream Stopped';
-      } else {
-        statusLbl.textContent = '✓ Stream Complete';
-      }
-    }
-    if (live.status !== 'working') {
-      turnEl.classList.remove('is-streaming');
-      if (thinkWrap) {
-        thinkWrap.classList.remove('is-streaming');
-        const lbl = thinkWrap.querySelector('.vs-thought-lbl');
-        if (lbl) lbl.textContent = 'Thought process';
-      }
-    }
-    if (wasNearBottom) {
-      streamEl.scrollTop = streamEl.scrollHeight;
-    }
-    updateComposerActionButton();
-  }
-
-  function handleStreamDelta(rawDelta) {
-    const delta = rawDelta?.delta && typeof rawDelta.delta === 'object' ? rawDelta.delta : rawDelta;
-    if (!delta || typeof delta !== 'object') return;
-    const prov = delta.provider === 'claude' ? 'claude' : 'antigravity';
-    const realId = cleanTargetThreadId(delta.realThreadId || delta.threadId || '');
-    const draftId = String(delta.draftThreadId || delta.draftId || '').trim();
-
-    if (realId && pendingNewSessionBind) {
-      const wantDev = pendingNewSessionBind.targetDeviceId || '';
-      const deltaDev = String(delta.deviceId || '').trim();
-      const devMatches = !wantDev || !deltaDev || wantDev === deltaDev;
-      const matchesDraft =
-        (draftId && pendingNewSessionBind.draftThreadId === draftId) ||
-        (devMatches &&
-          pendingNewSessionBind.provider === prov &&
-          Date.now() - Number(pendingNewSessionBind.createdAt || 0) < 35000 &&
-          !(pendingNewSessionBind.knownIds && pendingNewSessionBind.knownIds.has(realId)));
-      if (matchesDraft) {
-        bindDraftThreadToRealSession(pendingNewSessionBind.draftThreadId, realId, prov);
-      }
-    }
-
-    const tid = realId || draftId || String(delta.runKey || delta.runId || '').trim();
-    if (!tid) return;
-
-    const mergedDelta = {
-      ...(liveStreamsByThreadId.get(tid) || {}),
-      ...delta,
-      provider: prov,
-      receivedAt: Date.now()
-    };
-    liveStreamsByThreadId.set(tid, mergedDelta);
-
-    if (appState && Array.isArray(appState.rows)) {
-      let row = appState.rows.find((r) => r && r.id === tid);
-      if (!row && realId) {
-        row = {
-          id: realId,
-          title: String(delta.prompt || delta.title || 'Live Session').slice(0, 64),
-          provider: prov,
-          folder: delta.folder || delta.workspaceName || '',
-          model: delta.model || '',
-          group: pendingRowOverrides.get(realId)?.group || '',
-          deviceId: delta.deviceId || '',
-          deviceName: delta.deviceName || '',
-          status: 'working',
-          statusLabel: 'Streaming Live',
-          dot: 'running',
-          at: Date.now()
-        };
-        appState.rows.unshift(row);
-        appState.rows.sort(compareRowsPinnedFirst);
-      } else if (row) {
-        row.at = Date.now();
-        noteRowOverride(row.id, { lastWorkedAt: row.at });
-        if (delta.deviceId) row.deviceId = delta.deviceId;
-        if (delta.deviceName) row.deviceName = delta.deviceName;
-        if (delta.status === 'working') {
-          row.status = 'working';
-          row.statusLabel = 'Streaming Live';
-          row.dot = 'running';
-        } else if (delta.status === 'failed' || delta.status === 'error') {
-          row.status = 'completed';
-          row.statusLabel = 'Failed';
-          row.dot = row.open ? 'idle' : null;
-        } else if (delta.status === 'done' || delta.status === 'completed') {
-          row.status = 'completed';
-          row.statusLabel = 'Completed';
-          row.dot = row.open ? 'idle' : null;
-        }
-        appState.rows.sort(compareRowsPinnedFirst);
-      }
-    }
-
-    if (!threadsCache[tid]) {
-      threadsCache[tid] = {
-        id: tid,
-        provider: prov,
-        title: String(delta.title || 'Live Session').slice(0, 64),
-        messages: []
-      };
-    }
-    const msgs = Array.isArray(threadsCache[tid].messages) ? threadsCache[tid].messages : [];
-    const streamMsgId = `stream-${delta.runKey || delta.runId || tid}`;
-    let streamMsg = msgs.find((m) => m && (m.id === streamMsgId || m.isStreaming));
-    const isWorking = delta.status === 'working';
-    const incomingTrimmed = String(mergedDelta.fullText || '').trim();
-    const lastNonStreamAssistant = [...msgs]
-      .reverse()
-      .find((m) => m && m.role === 'assistant' && m.id !== streamMsgId && !m.isStreaming);
-    const alreadyPersisted = Boolean(
-      !isWorking &&
-        incomingTrimmed &&
-        lastNonStreamAssistant &&
-        String(lastNonStreamAssistant.text || '').trim() === incomingTrimmed
-    );
-
-    if (!streamMsg && !alreadyPersisted) {
-      streamMsg = {
-        id: streamMsgId,
-        role: 'assistant',
-        createdAt: new Date().toISOString(),
-        text: mergedDelta.fullText || '',
-        thinking: mergedDelta.fullThinking || '',
-        toolCalls: Array.isArray(mergedDelta.toolSteps) ? mergedDelta.toolSteps : [],
-        activeTool: mergedDelta.activeTool || '',
-        deviceName: mergedDelta.deviceName || '',
-        isStreaming: isWorking
-      };
-      msgs.push(streamMsg);
-    } else if (streamMsg) {
-      if (mergedDelta.fullText !== undefined) streamMsg.text = mergedDelta.fullText;
-      if (mergedDelta.fullThinking !== undefined) streamMsg.thinking = mergedDelta.fullThinking;
-      if (Array.isArray(mergedDelta.toolSteps)) streamMsg.toolCalls = mergedDelta.toolSteps;
-      streamMsg.activeTool = isWorking ? mergedDelta.activeTool || '' : '';
-      streamMsg.isStreaming = isWorking;
-      if (mergedDelta.deviceName) streamMsg.deviceName = mergedDelta.deviceName;
-    }
-    threadsCache[tid].messages = msgs;
-
-    if (!isWorking) {
-      setTimeout(() => {
-        fetchThreadDetail(tid, prov)
-          .then((loaded) => {
-            if (loaded && Array.isArray(loaded.messages) && loaded.messages.length > 0) {
-              const curLive = liveStreamsByThreadId.get(tid);
-              if (curLive && curLive.status !== 'working') {
-                liveStreamsByThreadId.delete(tid);
-              }
-            }
-          })
-          .catch(() => {});
-        renderPulseView();
-        renderSessionsView();
-      }, 450);
-    }
-
-    if (prefs.activeTab === 'chat' && prefs.selectedThreadId === tid) {
-      streamDomTargetTid = tid;
-      if (!streamDomRafId) {
-        streamDomRafId = requestAnimationFrame(() => patchLiveStreamingDom(streamDomTargetTid));
-      }
-    } else if (prefs.activeTab === 'chat' && prefs.splitWatchOpen && prefs.splitWatchThreadId === tid) {
-      renderSplitWatchPane();
-      if (!isWorking) {
-        renderIdeSidebar();
-        syncAndRenderEditorTabs();
-      }
-    } else if (!isWorking) {
-      renderPulseView();
-      renderSessionsView();
-    }
-  }
-
-  function rejectPendingRpcsForSocket(wsConn, reason = 'ws_closed') {
-    for (const [reqId, pending] of Array.from(wsPendingRpcs.entries())) {
-      if (!wsConn || pending.ws === wsConn) {
-        clearTimeout(pending.timer);
-        wsPendingRpcs.delete(reqId);
-        pending.reject(new Error(reason));
-      }
-    }
-  }
-
-  function sendWsRpc(wsConn, framePayload, timeoutMs = 9000) {
-    return new Promise((resolve, reject) => {
-      if (!wsConn || wsConn.readyState !== 1) {
-        reject(new Error('ws_not_open'));
-        return;
-      }
-      const reqId = `rpc-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`;
-      const timer = setTimeout(() => {
-        wsPendingRpcs.delete(reqId);
-        reject(new Error('ws_rpc_timeout'));
-      }, timeoutMs);
-      wsPendingRpcs.set(reqId, { resolve, reject, timer, ws: wsConn });
-      try {
-        wsConn.send(JSON.stringify({ ...framePayload, reqId }));
-      } catch (err) {
-        clearTimeout(timer);
-        wsPendingRpcs.delete(reqId);
-        reject(err);
-      }
-    });
-  }
-
-  const wsBaselineBySocket = new WeakMap();
-  const wsDeltaStats = {
-    stateFrames: 0,
-    patchFrames: 0,
-    patchedRows: 0,
-    resyncRequests: 0,
-    lastSeq: 0,
-    edgeSuppressedForLocal: 0,
-    prewarmHintsSent: 0
-  };
-  window.__theoWsDeltaStats = wsDeltaStats;
-
-  const PREWARM_HINT_MIN_INTERVAL_MS = 12000;
-  const PREWARM_HINT_PENDING_TTL_MS = 45000;
-  const lastPrewarmHintById = new Map();
-  let pendingPrewarmHint = null;
-
-  function flushPendingPrewarmHint() {
-    if (!pendingPrewarmHint) return false;
-    const item = pendingPrewarmHint;
-    pendingPrewarmHint = null;
-    if (
-      !item ||
-      !item.threadId ||
-      Date.now() - Number(item.at || 0) > PREWARM_HINT_PENDING_TTL_MS ||
-      isPinLocked()
-    ) {
-      return false;
-    }
-    const stillActive =
-      item.threadId === prefs.selectedThreadId || item.threadId === prefs.splitWatchThreadId;
-    if (!stillActive) return false;
-    return emitPrewarmHint(item.threadId, { ...(item.opts || {}), noQueue: true });
-  }
-
-  function emitPrewarmHint(threadId, opts = {}) {
-    if ((isHeadlessBrowser && !window.__THEO_ALLOW_MOCK_WS) || isPinLocked()) {
-      return false;
-    }
-    const cleanTid = String(threadId || '')
-      .trim()
-      .replace(/^(?:antigravity|claude):/, '');
-    if (
-      !cleanTid ||
-      cleanTid === '__new__' ||
-      cleanTid === '__new_claude__' ||
-      cleanTid.startsWith('cmd-') ||
-      cleanTid.startsWith('draft-') ||
-      !/^[A-Za-z0-9._:-]{1,160}$/.test(cleanTid)
-    ) {
-      return false;
-    }
-    const now = Date.now();
-    if (!opts.force) {
-      const lastSent = Number(lastPrewarmHintById.get(cleanTid) || 0);
-      if (now - lastSent < PREWARM_HINT_MIN_INTERVAL_MS) {
-        return false;
-      }
-    }
-    const matchedRow = (appState?.rows || []).find((r) => r && r.id === cleanTid) || null;
-    const rowDeviceId = String(opts.targetDeviceId || matchedRow?.deviceId || '').trim();
-    const resolvedProv = String(opts.provider || matchedRow?.provider || '').trim();
-    const isRemotePeerRow = Boolean(
-      rowDeviceId && localWsDevice?.id && rowDeviceId !== localWsDevice.id
-    );
-    const frame = {
-      type: 'prewarm_hint',
-      threadId: cleanTid,
-      ...(resolvedProv ? { provider: resolvedProv } : {}),
-      ...(rowDeviceId ? { targetDeviceId: rowDeviceId } : {}),
-      source: String(opts.source || 'tap').trim().slice(0, 32),
-      ts: now
-    };
-    let transportSent = false;
-    if (!isRemotePeerRow && localWsAuthed && localWs && localWs.readyState === 1) {
-      try {
-        localWs.send(JSON.stringify(frame));
-        transportSent = 'local';
-      } catch {}
-    } else if (edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
-      try {
-        edgeWs.send(JSON.stringify({ ...frame, targetDeviceId: rowDeviceId || 'auto' }));
-        transportSent = 'edge';
-      } catch {}
-    } else if (localWsAuthed && localWs && localWs.readyState === 1) {
-      try {
-        localWs.send(JSON.stringify(frame));
-        transportSent = 'local-forward';
-      } catch {}
-    }
-    if (!transportSent) {
-      if (!opts.noQueue) {
-        pendingPrewarmHint = {
-          threadId: cleanTid,
-          opts: { ...opts, noQueue: true },
-          at: now
-        };
-      }
-      return false;
-    }
-    if (pendingPrewarmHint && pendingPrewarmHint.threadId === cleanTid) {
-      pendingPrewarmHint = null;
-    }
-    setBoundedMap(lastPrewarmHintById, cleanTid, now, 64);
-    wsDeltaStats.prewarmHintsSent += 1;
-    return transportSent;
-  }
-
-  function getSocketBaselineMap(ws) {
-    if (!ws || typeof ws !== 'object') return null;
-    let map = wsBaselineBySocket.get(ws);
-    if (!map) {
-      map = new Map();
-      wsBaselineBySocket.set(ws, map);
-    }
-    return map;
-  }
-
-  function cloneBaselineSnapshot(snap) {
-    if (!snap || typeof snap !== 'object') return null;
-    return {
-      ...snap,
-      rows: Array.isArray(snap.rows)
-        ? snap.rows.map((r) => (r && typeof r === 'object' ? { ...r } : r))
-        : []
-    };
-  }
-
-  function isLocalWsAuthoritativeForDevice(devId) {
-    const cleanId = String(devId || '').trim();
-    if (!cleanId || !localWsAuthed || !localWs || localWs.readyState !== 1) {
-      return false;
-    }
-    if (localWsDevice?.id && String(localWsDevice.id).trim() === cleanId) {
-      return true;
-    }
-    return Boolean(wsBaselineBySocket.get(localWs)?.has(cleanId));
-  }
-
-  function recordWsFullState(ws, snap, fallbackDevId = '', seq = null, transport = 'local') {
-    if (!snap || typeof snap !== 'object') return false;
-    const devId = String(snap?.device?.id || fallbackDevId || localWsDevice?.id || '').trim();
-    const mapKey = devId || '__default__';
-    const sockMap = getSocketBaselineMap(ws);
-    if (sockMap) {
-      const prevEntry = sockMap.get(mapKey);
-      const nextSeq = typeof seq === 'number' && Number.isFinite(seq) ? seq : null;
-      sockMap.set(mapKey, {
-        seq: nextSeq,
-        snapshot: cloneBaselineSnapshot(snap),
-        lastResyncReqAt: nextSeq === null ? Number(prevEntry?.lastResyncReqAt || 0) : 0
-      });
-    }
-    wsDeltaStats.stateFrames += 1;
-    if (typeof seq === 'number' && Number.isFinite(seq)) {
-      wsDeltaStats.lastSeq = seq;
-    }
-    if (transport === 'edge' && isLocalWsAuthoritativeForDevice(devId)) {
-      wsDeltaStats.edgeSuppressedForLocal += 1;
-      return false;
-    }
-    ingestIncomingHostState(cloneBaselineSnapshot(snap), devId || fallbackDevId);
-    return true;
-  }
-
-  function requestWsStateResync(ws, devId = '', transport = 'local') {
-    if (!ws || ws.readyState !== 1) return false;
-    const sockMap = getSocketBaselineMap(ws);
-    const mapKey = String(devId || '').trim() || '__default__';
-    let entry = sockMap ? sockMap.get(mapKey) : null;
-    const now = Date.now();
-    if (entry && now - Number(entry.lastResyncReqAt || 0) < 1500) {
-      return false;
-    }
-    if (!entry) {
-      entry = { seq: null, snapshot: null, lastResyncReqAt: now };
-      if (sockMap) sockMap.set(mapKey, entry);
-    } else {
-      entry.lastResyncReqAt = now;
-    }
-    wsDeltaStats.resyncRequests += 1;
-    if (transport === 'local') {
-      try {
-        ws.send(JSON.stringify({ type: 'resync_state', targetDeviceId: devId || undefined }));
-      } catch {}
-      return true;
-    }
-    sendWsRpc(ws, { type: 'rpc_cmd', action: 'getState', targetDeviceId: devId || undefined }, 8000)
-      .then((res) => {
-        const st = res?.result?.state || res?.state || null;
-        const resolvedSeq =
-          typeof res?.result?.seq === 'number'
-            ? res.result.seq
-            : typeof res?.seq === 'number'
-              ? res.seq
-              : typeof st?.seq === 'number'
-                ? st.seq
-                : null;
-        if (st && typeof st === 'object') {
-          recordWsFullState(ws, st, devId, resolvedSeq, 'edge');
-        }
-      })
-      .catch(() => {});
-    return true;
-  }
-
-  function applyIncomingWsRowPatch(ws, msg, fallbackDevId = '', transport = 'local') {
-    if (!msg || typeof msg !== 'object') return false;
-    const sockMap = getSocketBaselineMap(ws);
-    const rawDevId = String(msg.deviceId || msg.device?.id || fallbackDevId || '').trim();
-    const lookupKey = rawDevId || '__default__';
-    const base = (sockMap && (sockMap.get(lookupKey) || sockMap.get('__default__'))) || null;
-    const hasSeq = typeof msg.seq === 'number' && Number.isFinite(msg.seq);
-    const seqValid =
-      !hasSeq ||
-      (base && typeof base.seq === 'number' && Number.isFinite(base.seq) && msg.seq === base.seq + 1);
-    if (!base || !base.snapshot || !seqValid) {
-      requestWsStateResync(ws, rawDevId, transport);
-      return false;
-    }
-
-    const remIds = new Set(Array.isArray(msg.removedIds) ? msg.removedIds.map(String) : []);
-    const remKeys = new Set(Array.isArray(msg.removedKeys) ? msg.removedKeys.map(String) : []);
-    const hasExplicitRemKeys = remKeys.size > 0;
-    const prevRows = Array.isArray(base.snapshot.rows) ? base.snapshot.rows : [];
-    const nextRows = [];
-    const idxByKey = new Map();
-    const idxById = new Map();
-    for (let i = 0; i < prevRows.length; i += 1) {
-      const r = prevRows[i];
-      if (!r || typeof r !== 'object') continue;
-      const rawKey = String(r.key || '').trim();
-      const rid = String(r.id || '').trim();
-      const rk = rawKey || rid;
-      const shouldDrop = hasExplicitRemKeys
-        ? Boolean((rk && remKeys.has(rk)) || (!rawKey && rid && remIds.has(rid)))
-        : Boolean((rid && remIds.has(rid)) || (rk && remKeys.has(rk)));
-      if (shouldDrop) {
-        continue;
-      }
-      const cloned = { ...r };
-      const idx = nextRows.length;
-      nextRows.push(cloned);
-      if (rawKey) idxByKey.set(rawKey, idx);
-      if (rid) {
-        const list = idxById.get(rid) || [];
-        list.push({ idx, rawKey });
-        idxById.set(rid, list);
-      }
-    }
-
-    const rawUpserts = Array.isArray(msg.upserts) ? msg.upserts : [];
-    for (let i = 0; i < rawUpserts.length; i += 1) {
-      const u = rawUpserts[i];
-      if (!u || typeof u !== 'object') continue;
-      const rawUKey = String(u.key || '').trim();
-      const rid = String(u.id || u.key || '').trim();
-      const rk = rawUKey || rid;
-      if (!rid && !rk) continue;
-      let hitIdx = rawUKey && idxByKey.has(rawUKey) ? idxByKey.get(rawUKey) : undefined;
-      if (hitIdx === undefined && rid && idxById.has(rid)) {
-        const idEntries = idxById.get(rid);
-        if (!rawUKey) {
-          if (idEntries.length === 1) {
-            hitIdx = idEntries[0].idx;
-          } else {
-            const keylessMatch = idEntries.find((e) => !e.rawKey);
-            if (keylessMatch) hitIdx = keylessMatch.idx;
-          }
-        } else {
-          const keylessMatch = idEntries.find((e) => !e.rawKey);
-          if (keylessMatch) hitIdx = keylessMatch.idx;
-        }
-      }
-      if (hitIdx !== undefined) {
-        const prevKey = String(nextRows[hitIdx]?.key || '').trim();
-        const mergedKey = rawUKey || prevKey;
-        const cloned = mergedKey ? { ...u, id: rid || mergedKey, key: mergedKey } : { ...u, id: rid };
-        nextRows[hitIdx] = cloned;
-        if (mergedKey) idxByKey.set(mergedKey, hitIdx);
-        if (rid && idxById.has(rid)) {
-          for (const entry of idxById.get(rid)) {
-            if (entry.idx === hitIdx) entry.rawKey = mergedKey;
-          }
-        }
-      } else {
-        const cloned = rawUKey ? { ...u, id: rid || rawUKey, key: rawUKey } : { ...u, id: rid };
-        const newIdx = nextRows.length;
-        nextRows.push(cloned);
-        if (rawUKey) idxByKey.set(rawUKey, newIdx);
-        if (rid) {
-          const list = idxById.get(rid) || [];
-          list.push({ idx: newIdx, rawKey: rawUKey });
-          idxById.set(rid, list);
-        }
-      }
-    }
-
-    nextRows.sort(
-      (a, b) =>
-        (isRowPinned(b) ? 1 : 0) - (isRowPinned(a) ? 1 : 0) ||
-        Number(b.at || 0) - Number(a.at || 0) ||
-        Number(b.pinnedAt || 0) - Number(a.pinnedAt || 0) ||
-        String(a.id || '').localeCompare(String(b.id || ''))
-    );
-
-    const nextSnap = {
-      ...base.snapshot,
-      generatedAt: Number(msg.generatedAt || Date.now()),
-      total: typeof msg.total === 'number' ? msg.total : nextRows.length,
-      rows: nextRows,
-      ...(msg.pendingActiveKey !== undefined ? { pendingActiveKey: msg.pendingActiveKey } : {}),
-      ...(msg.summary !== undefined ? { summary: msg.summary } : {}),
-      ...(msg.summaryByProvider !== undefined ? { summaryByProvider: msg.summaryByProvider } : {}),
-      ...(Array.isArray(msg.topSessions) ? { topSessions: msg.topSessions } : {}),
-      ...(msg.connection !== undefined && msg.connection !== null ? { connection: msg.connection } : {})
-    };
-
-    base.snapshot = cloneBaselineSnapshot(nextSnap);
-    if (hasSeq) {
-      base.seq = msg.seq;
-      wsDeltaStats.lastSeq = msg.seq;
-    }
-    wsDeltaStats.patchFrames += 1;
-    wsDeltaStats.patchedRows += rawUpserts.length + Math.max(remIds.size, remKeys.size);
-
-    const effectiveDevId = rawDevId || String(nextSnap?.device?.id || '').trim();
-    if (transport === 'edge' && isLocalWsAuthoritativeForDevice(effectiveDevId)) {
-      wsDeltaStats.edgeSuppressedForLocal += 1;
-      return false;
-    }
-    ingestIncomingHostState(cloneBaselineSnapshot(nextSnap), effectiveDevId || fallbackDevId);
-    return true;
-  }
-
-  function connectLocalWs(base, opts = {}) {
-    if (
-      (isHeadlessBrowser && !window.__THEO_ALLOW_MOCK_WS) ||
-      (!window.__THEO_ALLOW_MOCK_WS && (initialNoSse || location.search.includes('nosse=1'))) ||
-      !base ||
-      typeof WebSocket === 'undefined'
-    ) {
-      return;
-    }
-    const cleanBase = String(base || '').replace(/\/+$/, '');
-    const sameBase = Boolean(localBridgeBase && localBridgeBase === cleanBase);
-    localBridgeBase = cleanBase;
-    const rawSubpath =
-      opts && opts.wsPath
-        ? String(opts.wsPath)
-        : sameBase && localBridgeWsPath
-          ? localBridgeWsPath
-          : '/ws';
-    const wsSubpath = rawSubpath.startsWith('/') ? rawSubpath : `/${rawSubpath}`;
-    localBridgeWsPath = wsSubpath;
-    const wsUrl = `${cleanBase.replace(/^http/i, 'ws')}${wsSubpath}`;
-    if (localWs && localWsAuthed && (localWs.readyState === 0 || localWs.readyState === 1)) {
-      return;
-    }
-    if (localWs && localWs.readyState === 0) {
-      return;
-    }
-    if (localWs) {
-      try {
-        localWs.close();
-      } catch {}
-      localWs = null;
-      localWsAuthed = false;
-    }
-    if (localWsReconnectTimer) {
-      clearTimeout(localWsReconnectTimer);
-      localWsReconnectTimer = null;
-    }
-    try {
-      const ws = new WebSocket(wsUrl);
-      localWs = ws;
-      ws.addEventListener('open', async () => {
-        try {
-          const token = await getBridgeAuthTokenHex();
-          ws.send(JSON.stringify({ type: 'auth', role: 'client', token, protocol: 2, supportsRowPatch: true }));
-          ws.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
-        } catch {}
-        if (localWsPingTimer) clearInterval(localWsPingTimer);
-        localWsPingTimer = setInterval(() => {
-          if (ws.readyState === 1) {
-            try {
-              ws.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
-            } catch {}
-          }
-        }, 20000);
-      });
-      ws.addEventListener('message', (ev) => {
-        if (ws !== localWs) return;
-        try {
-          const msg = JSON.parse(ev.data);
-          if (!msg || typeof msg !== 'object') return;
-          if (msg.type === 'welcome' || msg.type === 'auth_ok') {
-            localWsAuthed = true;
-            localWsReconnectAttempts = 0;
-            connMode = 'local';
-            const wDev = msg.device || msg.status?.device;
-            if (wDev) {
-              localWsDevice = wDev;
-              updateFleetDevices([{ ...wDev, online: true, local: true, lastSeen: Date.now() }]);
-            }
-            if (Array.isArray(msg.devices)) updateFleetDevices(msg.devices);
-            const wEdge = msg.edgeRelayUrl || msg.status?.edgeRelayUrl;
-            if (wEdge && !prefs.edgeRelayUrl) {
-              discoveredEdgeUrl = String(wEdge).trim();
-            }
-            const wSnap = msg.state || msg.snapshot;
-            if (wSnap) {
-              recordWsFullState(
-                ws,
-                wSnap,
-                wDev?.id || '',
-                typeof msg.seq === 'number' ? msg.seq : null,
-                'local'
-              );
-            }
-            flushOutbox().catch(() => {});
-            flushPendingPrewarmHint();
-            updateConnectionBanner();
-          } else if (msg.type === 'pong') {
-            const sentTs = Number(msg.echoTs || msg.ts || 0);
-            if (sentTs) localWsRttMs = Math.max(1, Date.now() - sentTs);
-            updateConnectionBanner();
-          } else if (msg.type === 'state' || msg.type === 'host_state') {
-            const snap = msg.state || msg.snapshot;
-            if (snap) {
-              recordWsFullState(
-                ws,
-                snap,
-                msg.deviceId || localWsDevice?.id || '',
-                typeof msg.seq === 'number' ? msg.seq : null,
-                'local'
-              );
-            }
-          } else if (msg.type === 'rowPatch' || msg.type === 'host_row_patch') {
-            applyIncomingWsRowPatch(ws, msg, localWsDevice?.id || '', 'local');
-          } else if (msg.type === 'devices_presence') {
-            if (Array.isArray(msg.devices)) {
-              updateFleetDevices(msg.devices);
-              updateConnectionBanner();
-              renderPulseView();
-              renderSessionsView();
-            }
-          } else if (msg.type === 'thread_detail') {
-            ingestIncomingThreadDetailFrame(msg);
-          } else if (msg.type === 'stream_delta') {
-            handleStreamDelta(msg);
-          } else if (msg.type === 'claude_permission_mode') {
-            if (ingestClaudePermissionModeDoc(msg, { fromWsFrame: true })) {
-              persistCache();
-              renderAll();
-            }
-          } else if (msg.type === 'rpc_res' && msg.reqId && wsPendingRpcs.has(msg.reqId)) {
-            const p = wsPendingRpcs.get(msg.reqId);
-            clearTimeout(p.timer);
-            wsPendingRpcs.delete(msg.reqId);
-            p.resolve(msg);
-          }
-        } catch {}
-      });
-      ws.addEventListener('close', (ev) => {
-        rejectPendingRpcsForSocket(ws, 'local_ws_closed');
-        const closedDevIds = new Set();
-        if (localWsDevice?.id) closedDevIds.add(String(localWsDevice.id));
-        const closedSockMap = wsBaselineBySocket.get(ws);
-        if (closedSockMap) {
-          for (const k of closedSockMap.keys()) {
-            if (k && k !== '__default__') closedDevIds.add(k);
-          }
-        }
-        if (localWs === ws) {
-          localWs = null;
-          localWsAuthed = false;
-        }
-        if (localWsPingTimer) {
-          clearInterval(localWsPingTimer);
-          localWsPingTimer = null;
-        }
-        if (edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
-          const edgeMap = wsBaselineBySocket.get(edgeWs);
-          if (edgeMap) {
-            for (const devId of closedDevIds) {
-              const edgeEntry = edgeMap.get(devId);
-              const curSnap = hostSnapshotsByDevice.get(devId);
-              if (
-                edgeEntry?.snapshot &&
-                Number(edgeEntry.snapshot.generatedAt || 0) > Number(curSnap?.generatedAt || 0)
-              ) {
-                ingestIncomingHostState(cloneBaselineSnapshot(edgeEntry.snapshot), devId);
-              }
-            }
-          }
-        }
-        updateConnectionBanner();
-        const code = Number(ev?.code || 0);
-        localWsReconnectAttempts += 1;
-        const delay = code === 4001 ? 30000 : Math.min(20000, 2500 * localWsReconnectAttempts);
-        if (!initialNoSse && localBridgeBase) {
-          localWsReconnectTimer = setTimeout(
-            () => connectLocalWs(localBridgeBase, { wsPath: localBridgeWsPath }),
-            delay
-          );
-        }
-      });
-    } catch {}
-  }
-
-  function normalizeEdgeWsUrl(rawUrl) {
-    let u = String(rawUrl || '').trim();
-    if (!u) return '';
-    u = u.replace(/^https:\/\//i, 'wss://').replace(/^http:\/\//i, 'ws://').replace(/\/+$/, '');
-    if (!/\/ws(\?|$)/i.test(u)) u += '/ws';
-    u += u.includes('?') ? '&role=client' : '?role=client';
-    return u;
-  }
-
-  async function connectEdgeWs(rawUrl) {
-    if (isHeadlessBrowser && !window.__THEO_ALLOW_MOCK_WS) return;
-    const cleanTarget = normalizeEdgeWsUrl(rawUrl || prefs.edgeRelayUrl || discoveredEdgeUrl);
-    const token = await getBridgeAuthTokenHex();
-    if (
-      (!window.__THEO_ALLOW_MOCK_WS && (initialNoSse || location.search.includes('nosse=1'))) ||
-      !cleanTarget ||
-      !token ||
-      typeof WebSocket === 'undefined'
-    ) {
-      return;
-    }
-    if (
-      edgeWs &&
-      edgeWsUrlConnected === cleanTarget &&
-      edgeWsTokenConnected === token &&
-      (edgeWs.readyState === 0 || edgeWs.readyState === 1)
-    ) {
-      return;
-    }
-    if (edgeWs) {
-      try {
-        edgeWs.close();
-      } catch {}
-      edgeWs = null;
-      edgeWsAuthed = false;
-      edgeWsTokenConnected = '';
-    }
-    if (edgeWsReconnectTimer) {
-      clearTimeout(edgeWsReconnectTimer);
-      edgeWsReconnectTimer = null;
-    }
-
-    try {
-      const ws = new WebSocket(cleanTarget);
-      edgeWs = ws;
-      edgeWsUrlConnected = cleanTarget;
-      edgeWsTokenConnected = token;
-      ws.addEventListener('open', async () => {
-        try {
-          const freshToken = await getBridgeAuthTokenHex();
-          ws.send(
-            JSON.stringify({
-              type: 'auth_client',
-              token: freshToken,
-              protocol: 2,
-              supportsRowPatch: true,
-              clientLabel: (navigator.userAgent || 'THEO PWA').slice(0, 64)
-            })
-          );
-        } catch {}
-      });
-      ws.addEventListener('message', (ev) => {
-        if (ws !== edgeWs) return;
-        try {
-          const msg = JSON.parse(ev.data);
-          if (!msg || typeof msg !== 'object') return;
-          if (msg.type === 'auth_ok') {
-            edgeWsAuthed = true;
-            edgeReconnectAttempts = 0;
-            if (!localWsAuthed) connMode = 'edge';
-            if (Array.isArray(msg.devices)) updateFleetDevices(msg.devices);
-            if (msg.cachedSnapshots && typeof msg.cachedSnapshots === 'object') {
-              for (const [devId, entry] of Object.entries(msg.cachedSnapshots)) {
-                const snap = entry?.snapshot || entry?.state || entry;
-                if (snap) {
-                  recordWsFullState(
-                    ws,
-                    snap,
-                    devId,
-                    typeof entry?.seq === 'number'
-                      ? entry.seq
-                      : typeof snap?.seq === 'number'
-                        ? snap.seq
-                        : null,
-                    'edge'
-                  );
-                }
-              }
-            }
-            try {
-              ws.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
-            } catch {}
-            if (edgeWsPingTimer) clearInterval(edgeWsPingTimer);
-            edgeWsPingTimer = setInterval(() => {
-              if (ws.readyState === 1) {
-                try {
-                  ws.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
-                } catch {}
-              }
-            }, 22000);
-            flushOutbox().catch(() => {});
-            flushPendingPrewarmHint();
-            updateConnectionBanner();
-            renderAll();
-          } else if (msg.type === 'auth_err') {
-            edgeReconnectAttempts = Math.max(edgeReconnectAttempts, 5);
-            try {
-              ws.close();
-            } catch {}
-          } else if (msg.type === 'pong') {
-            const sentTs = Number(msg.echoTs || msg.ts || 0);
-            if (sentTs) edgeWsRttMs = Math.max(1, Date.now() - sentTs);
-            updateConnectionBanner();
-          } else if (msg.type === 'devices_presence') {
-            if (Array.isArray(msg.devices)) {
-              updateFleetDevices(msg.devices);
-              updateConnectionBanner();
-              renderPulseView();
-              renderSessionsView();
-            }
-          } else if (msg.type === 'host_state' || msg.type === 'state') {
-            const snap = msg.snapshot || msg.state;
-            if (snap) {
-              const frameSeq =
-                typeof msg.seq === 'number'
-                  ? msg.seq
-                  : typeof snap?.seq === 'number'
-                    ? snap.seq
-                    : null;
-              recordWsFullState(
-                ws,
-                snap,
-                msg.deviceId || '',
-                frameSeq,
-                'edge'
-              );
-            }
-          } else if (msg.type === 'rowPatch' || msg.type === 'host_row_patch') {
-            const patchPayload =
-              msg.patch && typeof msg.patch === 'object'
-                ? {
-                    ...msg.patch,
-                    deviceId: msg.deviceId || msg.patch.deviceId,
-                    seq: msg.seq ?? msg.patch.seq
-                  }
-                : msg;
-            applyIncomingWsRowPatch(ws, patchPayload, msg.deviceId || '', 'edge');
-          } else if (msg.type === 'thread_detail') {
-            ingestIncomingThreadDetailFrame(msg);
-          } else if (msg.type === 'stream_delta') {
-            handleStreamDelta(msg);
-          } else if (msg.type === 'claude_permission_mode') {
-            if (ingestClaudePermissionModeDoc(msg, { fromWsFrame: true })) {
-              persistCache();
-              renderAll();
-            }
-          } else if (msg.type === 'rpc_res' && msg.reqId && wsPendingRpcs.has(msg.reqId)) {
-            const p = wsPendingRpcs.get(msg.reqId);
-            clearTimeout(p.timer);
-            wsPendingRpcs.delete(msg.reqId);
-            p.resolve(msg);
-          }
-        } catch {}
-      });
-      ws.addEventListener('close', (ev) => {
-        rejectPendingRpcsForSocket(ws, 'edge_ws_closed');
-        if (edgeWs === ws) {
-          edgeWs = null;
-          edgeWsAuthed = false;
-          edgeWsTokenConnected = '';
-          if (connMode === 'edge') connMode = appState ? 'cloud' : 'offline';
-        }
-        if (edgeWsPingTimer) {
-          clearInterval(edgeWsPingTimer);
-          edgeWsPingTimer = null;
-        }
-        updateConnectionBanner();
-        const code = Number(ev?.code || 0);
-        edgeReconnectAttempts += 1;
-        const delay =
-          code === 4001
-            ? 45000
-            : Math.min(35000, Math.round(2500 * Math.pow(1.6, Math.min(edgeReconnectAttempts, 7))));
-        const retryUrl = prefs.edgeRelayUrl || discoveredEdgeUrl;
-        if (!initialNoSse && retryUrl) {
-          edgeWsReconnectTimer = setTimeout(() => {
-            connectEdgeWs(retryUrl).catch(() => {});
-          }, delay);
-        }
-      });
-    } catch {}
-  }
-
-  async function saveEdgeRelayConfig(nextUrl) {
-    const clean = String(nextUrl || '').trim();
-    prefs.edgeRelayUrl = clean;
-    discoveredEdgeUrl = clean || DEFAULT_EDGE_RELAY_URL;
-    saveJson(STORAGE_KEYS.PREFS, prefs);
-    if (isHeadlessBrowser) return true;
-    if (localBridgeBase) {
-      try {
-        await authFetchLocal(`${localBridgeBase}/api/edge-config`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ edgeRelayUrl: clean, url: clean })
-        });
-      } catch {}
-    }
-    if (cloudCfg.url && cloudCfg.key) {
-      try {
-        await fetch(cloudCfg.url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-          body: JSON.stringify({
-            key: cloudCfg.key,
-            op: 'patch',
-            ackOnly: true,
-            patch: { edge_relay: { url: clean, updatedAt: Date.now() } }
-          })
-        });
-      } catch {}
-    }
-    if (clean) {
-      connectEdgeWs(clean).catch(() => {});
-    } else if (edgeWs) {
-      try {
-        edgeWs.close();
-      } catch {}
-      edgeWs = null;
-      edgeWsAuthed = false;
-    }
-    updateConnectionBanner();
-    renderAnalyticsView();
-    return true;
-  }
-
-  async function connectSse(base) {
-    if (isHeadlessBrowser || initialNoSse || location.search.includes('nosse=1') || !base) {
-      return;
-    }
-    connectLocalWs(base);
-    // Avoid opening duplicate SSE stream when WebSocket is available (#14.1)
-    if (typeof WebSocket !== 'undefined') {
-      if (sseSource) {
-        try {
-          sseSource.close();
-        } catch {}
-        sseSource = null;
-      }
-      return;
-    }
-    if (sseSource) {
-      try {
-        sseSource.close();
-      } catch {}
-      sseSource = null;
-    }
-    try {
-      const token = await getBridgeAuthTokenHex();
-      const qs = token ? `?token=${encodeURIComponent(token)}` : '';
-      const es = new EventSource(`${base}/api/events${qs}`);
-      es.addEventListener('state', (ev) => {
-        try {
-          const st = JSON.parse(ev.data);
-          if (st) ingestIncomingHostState(st, localWsDevice?.id || '');
-        } catch {}
-      });
-      es.addEventListener('stream_delta', (ev) => {
-        try {
-          handleStreamDelta(JSON.parse(ev.data));
-        } catch {}
-      });
-      sseSource = es;
-    } catch {}
-  }
-
-  function persistCache() {
-    saveJson(STORAGE_KEYS.CACHE, {
-      state: appState,
-      threads: threadsCache,
-      workspacesDetail: workspacesDetailCache,
-      updatedAt: Date.now()
-    });
-  }
-
-  function mergeRemoteThreads(incomingThreads) {
-    if (!incomingThreads || typeof incomingThreads !== 'object') return;
-    const now = Date.now();
-    for (const [tid, remoteThread] of Object.entries(incomingThreads)) {
-      if (!remoteThread || typeof remoteThread !== 'object') continue;
-      const existing = threadsCache[tid];
-      const remoteMsgs = Array.isArray(remoteThread.messages) ? [...remoteThread.messages] : [];
-      if (existing && Array.isArray(existing.messages)) {
-        const optimisticMsgs = existing.messages.filter((m) => {
-          if (!m) return false;
-          if (m.isStreaming) {
-            const streamTxt = String(m.text || '').trim();
-            const alreadyInRemote =
-              streamTxt &&
-              remoteMsgs.some(
-                (rm) => rm && rm.role === 'assistant' && String(rm.text || '').trim() === streamTxt
-              );
-            return !alreadyInRemote;
-          }
-          if (!m.optimistic) return false;
-          const optAt = Number(m.optimisticAt || 0);
-          if (now - optAt >= 45000) return false;
-          const cleanOptText = String(m.text || '')
-            .replace(/\n*(?:📎\s*)?Attached:.*$/s, '')
-            .trim();
-          const matchedRemoteUser = remoteMsgs.some((rm) => {
-            if (!rm || rm.role !== 'user') return false;
-            const rTxt = String(rm.text || '').trim();
-            if (!cleanOptText) return false;
-            return rTxt === cleanOptText || (cleanOptText.length >= 4 && rTxt.includes(cleanOptText));
-          });
-          if (matchedRemoteUser) return false;
-          if (m.optimisticQuestionAnswer) {
-            const baseCount = Number(m.baseMsgCount || 0);
-            const hasServerQuestionReply = remoteMsgs.some((rm) => {
-              if (!rm || rm.role !== 'user') return false;
-              const rid = String(rm.id || '');
-              if (rid.startsWith('agy-q-') || rid.startsWith('claude-qa-')) {
-                const rmTs = rm.createdAt ? Date.parse(rm.createdAt) : 0;
-                if (!rmTs || rmTs >= optAt - 20000 || remoteMsgs.length > baseCount) return true;
-              }
-              return false;
-            });
-            if (hasServerQuestionReply || (baseCount > 0 && remoteMsgs.length > baseCount)) {
-              return false;
-            }
-          }
-          return true;
-        });
-        if (optimisticMsgs.length) {
-          remoteMsgs.push(...optimisticMsgs);
-        }
-      }
-      threadsCache[tid] = {
-        ...remoteThread,
-        messages: remoteMsgs
-      };
-      if (remoteMsgs.length > 0) {
-        pendingThreadRequests.delete(tid);
-      }
-    }
-  }
-
-  function maybePollCloudClaudeModeBackstop() {
-    if (!cloudCfg.url || !cloudCfg.key || edgeWsAuthed) return;
-    if (isHeadlessBrowser && !window.__THEO_ALLOW_PROBE_MOCK_FETCH) return;
-    if (Date.now() - lastCloudBackstopAt < 60000) return;
-    lastCloudBackstopAt = Date.now();
-    fetch(cloudCfg.url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-      body: JSON.stringify({ key: cloudCfg.key, op: 'get_theo' })
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((raw) => {
-        const store = raw?.docs && typeof raw.docs === 'object' ? raw.docs : raw || {};
-        if (
-          store?.claude_permission_mode &&
-          ingestClaudePermissionModeDoc(store.claude_permission_mode, { fromStore: true })
-        ) {
-          persistCache();
-          renderAll();
-        }
-      })
-      .catch(() => {});
-  }
-
-  async function retireOldTheoPushDevice() {
-    refreshCloudConfig();
-    const mf = getTheoMigrationMeta();
-    if (!cloudCfg.url || !cloudCfg.key || !mf || mf.pushRetired || !mf.oldPushDeviceId) {
-      return false;
-    }
-    let retired = false;
-    theoPushRegistryLock = theoPushRegistryLock.then(async () => {
-      try {
-        const curRes = await callCloudPush({ op: 'get' });
-        if (!curRes || curRes.ok === false) return;
-        const curDocs = (curRes && curRes.docs) || curRes || {};
-        const existing = Array.isArray(curDocs?.push_registry?.items)
-          ? curDocs.push_registry.items
-          : [];
-        const filtered = existing.filter((x) => x && x.id !== mf.oldPushDeviceId);
-        if (filtered.length !== existing.length) {
-          const patchRes = await callCloudPush({
-            op: 'patch',
-            patch: {
-              push_registry: {
-                items: filtered,
-                updatedAt: new Date().toISOString()
-              }
-            }
-          });
-          if (!patchRes || patchRes.ok === false) return;
-        }
-        const latestMf = getTheoMigrationMeta();
-        if (latestMf) {
-          saveTheoMigrationMeta({ ...latestMf, pushRetired: true });
-        }
-        retired = true;
-      } catch {}
-    });
-    await theoPushRegistryLock;
-    return retired;
-  }
-
-  function buildTheoMigrationUrl() {
-    refreshCloudConfig();
-    const kv = {};
-    for (const k of THEO_MIGRATE_ALLOWLIST) {
-      try {
-        const raw = localStorage.getItem(k);
-        if (raw === null) continue;
-        if (k === STORAGE_KEYS.PIN_HASH || k === STORAGE_KEYS.PIN) {
-          kv[k] = raw;
-          continue;
-        }
-        kv[k] = JSON.parse(raw);
-      } catch {}
-    }
-    const oldPushDeviceId = loadJson(STORAGE_KEYS.DEVID, '') || '';
-    const encodePayload = (obj) => {
-      const json = JSON.stringify(obj);
-      const bytes = new TextEncoder().encode(json);
-      return bytesToB64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    };
-    const payload = { v: 1, app: 'theo', oldPushDeviceId, ts: Date.now(), kv };
-    let encoded = encodePayload(payload);
-    for (const dropKey of [STORAGE_KEYS.PERSONAL, STORAGE_KEYS.COMMAND, STORAGE_KEYS.NOTIFS, STORAGE_KEYS.ANSWERED_QUESTIONS]) {
-      if (encoded.length <= 240000) break;
-      delete kv[dropKey];
-      encoded = encodePayload(payload);
-    }
-    return `${THEO_CF_MIGRATE_URL}#migrate=${encoded}`;
-  }
-
-  function renderTheoMigrationBannerHtml() {
-    if (isTheoOldGithubOrigin()) {
-      return `
-        <div class="push-banner-card">
-          <div class="push-banner-top">
-            <strong>New Cloudflare address</strong>
-            <span class="pill-count amber">Move App</span>
-          </div>
-          <div class="meta-timestamp" style="color:var(--text-secondary);font-size:12.5px">
-            THEO moved off GitHub Pages to <strong>theo.husseinbdeir.workers.dev</strong>. Move your pairing and PIN in one tap.
-          </div>
-          <div class="push-banner-actions">
-            <button type="button" class="btn-brass-sm" data-push-act="cf-migrate-now">Move to Cloudflare App</button>
-          </div>
-        </div>
-      `;
-    }
-    const mf = getTheoMigrationMeta();
-    if (!mf || !mf.needsPushPrompt) return '';
-    const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
-    const pushActive = Boolean(nf.enabled && pushSub && notifPerm() === 'granted');
-    return `
-      <div class="push-banner-card">
-        <div class="push-banner-top">
-          <strong>Moved to Cloudflare</strong>
-          <span class="pill-count emerald">Ready</span>
-        </div>
-        <div class="meta-timestamp" style="color:var(--text-secondary);font-size:12.5px">
-          ${pushActive ? 'Your data moved and your old GitHub push slot is retired.' : 'Your pairing moved here safely. Re-enable Push Notifications on this device so alerts work.'}
-        </div>
-        <div class="push-banner-actions">
-          ${!pushActive ? `<button type="button" class="btn-brass-sm" data-push-act="enable">${pushBusy ? 'Enabling…' : 'Enable Push'}</button>` : ''}
-          <button type="button" class="btn-ghost-sm" data-push-act="cf-migrate-dismiss">Dismiss</button>
-        </div>
-      </div>
-    `;
-  }
-
-  async function syncData(options = {}) {
-    if (isHeadlessBrowser && !window.__THEO_ALLOW_PROBE_MOCK_FETCH) return false;
-    refreshCloudConfig();
-    if (syncInFlight) {
-      if (options.force || options.toast) {
-        pendingSyncAfterFlight = true;
-      }
-      return false;
-    }
-    syncInFlight = true;
-    try {
-      retireOldTheoPushDevice().catch(() => {});
-      if (options.toast || connMode === 'probing' || !appState) {
-        updateConnectionBanner('syncing');
-      }
-
-      // 1. Try Direct Local Bridge first
-      const bridgeBase = localBridgeBase || (await probeLocalBridge(Boolean(options.toast)));
-      if (bridgeBase) {
-        if (
-          localWsAuthed &&
-          localWs &&
-          localWs.readyState === 1 &&
-          appState &&
-          !options.force &&
-          !options.toast
-        ) {
-          connMode = 'local';
-          updateConnectionBanner();
-          flushOutbox().catch(() => {});
-          maybePollCloudClaudeModeBackstop();
-          if (
-            prefs.activeTab === 'chat' &&
-            prefs.selectedThreadId &&
-            isSessionActivelyRunning(prefs.selectedThreadId) &&
-            Date.now() - (lastThreadDetailFetchAtById.get(prefs.selectedThreadId) || 0) >= 1400 &&
-            Date.now() - (lastThreadDetailReceivedAtById.get(prefs.selectedThreadId) || 0) >= 1200
-          ) {
-            lastThreadDetailFetchAtById.set(prefs.selectedThreadId, Date.now());
-            fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
-          }
-          return true;
-        }
-        try {
-          const res = await authFetchLocal(`${bridgeBase}/api/state`);
-          if (res.ok) {
-            const payload = await res.json();
-            if (payload?.state) {
-              connMode = 'local';
-              ingestIncomingHostState(
-                payload.state,
-                payload.state?.device?.id || localWsDevice?.id || ''
-              );
-              connectLocalWs(bridgeBase);
-              const candidateEdge = prefs.edgeRelayUrl || discoveredEdgeUrl;
-              if (candidateEdge) connectEdgeWs(candidateEdge).catch(() => {});
-              if (
-                pushSub &&
-                prefs.notif &&
-                prefs.notif.enabled &&
-                Date.now() - lastPushScheduleSyncAt > 10 * 60 * 1000
-              ) {
-                schedulePushSync();
-              }
-              flushOutbox().catch(() => {});
-              if (
-                prefs.selectedThreadId &&
-                prefs.selectedThreadId !== '__new__' &&
-                !String(prefs.selectedThreadId).startsWith('draft-new-')
-              ) {
-                fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
-              }
-              if (options.toast) {
-                showToast(`Connected to host (${(appState?.rows || []).length} sessions)`);
-              }
-              maybePollCloudClaudeModeBackstop();
-              return true;
-            }
-          } else if (res.status === 401 || res.status === 403) {
-            localBridgeBase = '';
-            lastLocalProbeFailedAt = Date.now();
-          }
-        } catch {
-          localBridgeBase = '';
-        }
-      }
-
-      // 2. Worldwide Multi-Device Sync via Cloudflare Edge WS (<70ms) + Cloud Relay 60s Backstop
-      const candidateEdgeBoot = prefs.edgeRelayUrl || discoveredEdgeUrl;
-      if (candidateEdgeBoot) {
-        connectEdgeWs(candidateEdgeBoot).catch(() => {});
-      }
-      if (
-        edgeWsAuthed &&
-        edgeWs &&
-        edgeWs.readyState === 1 &&
-        appState &&
-        !options.force &&
-        !options.toast &&
-        Date.now() - lastCloudBackstopAt < 60000
-      ) {
-        connMode = 'edge';
-        updateConnectionBanner();
-        flushOutbox().catch(() => {});
-        if (
-          prefs.activeTab === 'chat' &&
-          prefs.selectedThreadId &&
-          isSessionActivelyRunning(prefs.selectedThreadId) &&
-          Date.now() - (lastThreadDetailFetchAtById.get(prefs.selectedThreadId) || 0) >= 1400 &&
-          Date.now() - (lastThreadDetailReceivedAtById.get(prefs.selectedThreadId) || 0) >= 1200
-        ) {
-          lastThreadDetailFetchAtById.set(prefs.selectedThreadId, Date.now());
-          fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
-        }
-        return true;
-      }
-
-      if (cloudCfg.url && cloudCfg.key) {
-        try {
-          const res = await fetch(cloudCfg.url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-            body: JSON.stringify({ key: cloudCfg.key, op: 'get_theo' })
-          });
-          if (res.ok) {
-            lastCloudBackstopAt = Date.now();
-            const rawStore = await res.json();
-            const store =
-              rawStore?.docs && typeof rawStore.docs === 'object' ? rawStore.docs : rawStore || {};
-            lastCloudQueue = store?.queue || null;
-            connMode = edgeWsAuthed ? 'edge' : 'cloud';
-            if (store?.edge_relay?.url && !prefs.edgeRelayUrl) {
-              discoveredEdgeUrl = String(store.edge_relay.url).trim();
-            }
-            const candidateEdge = prefs.edgeRelayUrl || discoveredEdgeUrl;
-            if (candidateEdge) {
-              connectEdgeWs(candidateEdge).catch(() => {});
-            }
-            if (store?.threads && typeof store.threads === 'object') {
-              mergeRemoteThreads(store.threads);
-            }
-            if (store?.state?.snapshot) {
-              storeHostSnapshotEntry(
-                store.state.snapshot,
-                store.state.snapshot?.device?.id || ''
-              );
-            }
-            if (store?.device_states && typeof store.device_states === 'object') {
-              for (const [devId, entry] of Object.entries(store.device_states)) {
-                if (!entry || typeof entry !== 'object') continue;
-                const snap = entry.snapshot || (Array.isArray(entry.rows) ? entry : null);
-                const dInfo = entry.device || snap?.device || { id: devId, name: devId };
-                const ageMs = Date.now() - Number(entry.updatedAt || snap?.generatedAt || 0);
-                updateFleetDevices([
-                  {
-                    ...dInfo,
-                    id: devId,
-                    online: Boolean(fleetDevicesMap.get(devId)?.online) || ageMs < 90000,
-                    lastSeen: Number(entry.updatedAt || snap?.generatedAt || Date.now()),
-                    sessionCount: Array.isArray(snap?.rows)
-                      ? snap.rows.filter((r) => r && !r.archived).length
-                      : 0
-                  }
-                ], { authoritative: true });
-                if (entry.threads && typeof entry.threads === 'object') {
-                  mergeRemoteThreads(entry.threads);
-                }
-                if (snap) {
-                  storeHostSnapshotEntry(snap, devId);
-                }
-              }
-            }
-            if (store?.claude_permission_mode) {
-              ingestClaudePermissionModeDoc(store.claude_permission_mode, { fromStore: true });
-            }
-            const unified = rebuildUnifiedAppState();
-            if (unified) {
-              applyStoppedSessionOverrides(unified);
-              applyAnsweredQuestionOverrides(unified);
-              applyPendingLocalOverrides(unified);
-              checkLiveStateNotifications(unified);
-              unified.claudePermissionMode = { ...claudeModeState };
-              appState = unified;
-              reconcilePendingNewSessionBind(unified, lastCloudQueue);
-            }
-            if (store?.state?.workspacesDetail && typeof store.state.workspacesDetail === 'object') {
-              workspacesDetailCache = { ...workspacesDetailCache, ...store.state.workspacesDetail };
-            }
-            if (!hasExplicitBootUrlNav && pinnedNavThreadId && Date.now() < pinnedNavUntil) {
-              prefs.selectedThreadId = pinnedNavThreadId;
-              prefs.activeTab = 'chat';
-            }
-            persistCache();
-            renderAll();
-            if (
-              pushSub &&
-              prefs.notif &&
-              prefs.notif.enabled &&
-              Date.now() - lastPushScheduleSyncAt > 10 * 60 * 1000
-            ) {
-              schedulePushSync();
-            }
-            flushOutbox().catch(() => {});
-            if (
-              prefs.selectedThreadId &&
-              prefs.selectedThreadId !== '__new__' &&
-              !String(prefs.selectedThreadId).startsWith('draft-new-')
-            ) {
-              fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
-            }
-            if (options.toast) {
-              showToast(`Synced Multi-Device Fleet (${(appState?.rows || []).length} sessions)`);
-            }
-            return true;
-          }
-        } catch {}
-      }
-
-      connMode = edgeWsAuthed ? 'edge' : 'offline';
-      renderAll();
-      if (options.toast && connMode === 'offline') {
-        const hasCreds = hasAnyPairingCredentials();
-        if (hasCreds) {
-          showToast('Offline — showing cached snapshot');
-        } else {
-          const activeViewInput = document.querySelector(
-            '.view-pane.active [data-pair-code-input], #conn-modal:not([hidden]) [data-pair-code-input]'
-          );
-          if (activeViewInput) {
-            setTimeout(() => activeViewInput.focus({ preventScroll: false }), 20);
-          } else {
-            openConnModal();
-          }
-          showToast('Enter your 6-digit pairing code to connect live');
-        }
-      }
-      return false;
-    } finally {
-      syncInFlight = false;
-      if (pendingSyncAfterFlight) {
-        pendingSyncAfterFlight = false;
-        setTimeout(() => {
-          syncData().catch(() => {});
-        }, 80);
-      }
-    }
-  }
-
-  async function fetchThreadDetail(threadId, providerHint = '') {
-    if (isHeadlessBrowser || !threadId) return null;
-    setBoundedMap(lastThreadDetailFetchAtById, threadId, Date.now());
-    const matchedRow = (appState?.rows || []).find((r) => r && r.id === threadId);
-    const rowDeviceId = matchedRow?.deviceId || '';
-    const isRemoteDeviceSession = Boolean(
-      rowDeviceId && localWsDevice?.id && rowDeviceId !== localWsDevice.id
-    );
-    const hadAnyCachedTurns = Boolean(threadsCache[threadId]?.messages?.length);
-
-    if (connMode === 'local' && localBridgeBase && !isRemoteDeviceSession) {
-      try {
-        const res = await authFetchLocal(
-          `${localBridgeBase}/api/thread?id=${encodeURIComponent(threadId)}&provider=${encodeURIComponent(providerHint)}`
-        );
-        if (res.ok) {
-          const data = await res.json();
-          if (data?.thread) {
-            setBoundedMap(lastThreadDetailReceivedAtById, threadId, Date.now());
-            mergeRemoteThreads({ [threadId]: data.thread });
-            persistCache();
-            if (prefs.activeTab === 'chat' && prefs.selectedThreadId === threadId) {
-              renderChatView(!hadAnyCachedTurns);
-            } else if (prefs.activeTab === 'chat' && prefs.splitWatchOpen && prefs.splitWatchThreadId === threadId) {
-              renderSplitWatchPane();
-            }
-            return threadsCache[threadId];
-          }
-        }
-      } catch {}
-    }
-
-    if (edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
-      try {
-        const rpcOut = await sendWsRpc(
-          edgeWs,
-          {
-            type: 'rpc_cmd',
-            targetDeviceId: rowDeviceId,
-            cmd: { type: 'getThread', id: threadId, threadId, provider: providerHint }
-          },
-          6500
-        );
-        const threadObj =
-          rpcOut?.result?.thread ||
-          rpcOut?.thread ||
-          (Array.isArray(rpcOut?.result?.messages) ? rpcOut.result : null);
-        if (threadObj) {
-          setBoundedMap(lastThreadDetailReceivedAtById, threadId, Date.now());
-          mergeRemoteThreads({ [threadId]: threadObj });
-          persistCache();
-          if (prefs.activeTab === 'chat' && prefs.selectedThreadId === threadId) {
-            renderChatView(!hadAnyCachedTurns);
-          } else if (prefs.activeTab === 'chat' && prefs.splitWatchOpen && prefs.splitWatchThreadId === threadId) {
-            renderSplitWatchPane();
-          }
-          return threadsCache[threadId];
-        }
-      } catch {}
-    }
-
-    if (cloudCfg.url && cloudCfg.key) {
-      const cached = threadsCache[threadId];
-      const hasMessages = Array.isArray(cached?.messages) && cached.messages.length > 0;
-      const lastReq = pendingThreadRequests.get(threadId) || 0;
-      if (!hasMessages && Date.now() - lastReq > 30000) {
-        pendingThreadRequests.set(threadId, Date.now());
-        if (prefs.activeTab === 'chat' && prefs.selectedThreadId === threadId) {
-          renderChatView(false);
-        }
-        dispatchRemoteCommand({
-          type: 'requestThread',
-          id: threadId,
-          threadId,
-          targetDeviceId: rowDeviceId,
-          provider: providerHint
-        })
-          .then(() => {
-            setTimeout(() => syncData(), 2500);
-            setTimeout(() => syncData(), 6000);
-          })
-          .catch(() => {});
-      }
-    }
-    return threadsCache[threadId] || null;
-  }
-
-  async function fetchWorkspaceDetail(repoId, fileRel = '') {
-    if (isHeadlessBrowser || !repoId) {
-      return { workspace: workspacesDetailCache[repoId] || null, file: null };
-    }
-    const wsEntry = (appState?.workspaces || []).find((w) => w && w.id === repoId);
-    const targetDeviceId = wsEntry?.deviceId || '';
-    const isRemoteWs = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
-
-    if (connMode === 'local' && localBridgeBase && !isRemoteWs) {
-      try {
-        const q = `id=${encodeURIComponent(repoId)}${fileRel ? `&file=${encodeURIComponent(fileRel)}` : ''}`;
-        const res = await authFetchLocal(`${localBridgeBase}/api/workspace?${q}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data?.workspace) {
-            workspacesDetailCache[repoId] = data.workspace;
-            persistCache();
-          }
-          return data;
-        }
-      } catch {}
-    }
-
-    if (edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
-      try {
-        const rpcOut = await sendWsRpc(
-          edgeWs,
-          {
-            type: 'rpc_cmd',
-            targetDeviceId,
-            cmd: { type: 'getWorkspace', id: repoId, file: fileRel || '' }
-          },
-          6500
-        );
-        const out = rpcOut?.result || rpcOut || {};
-        if (out?.workspace) {
-          workspacesDetailCache[repoId] = out.workspace;
-          persistCache();
-          return out;
-        }
-      } catch {}
-    }
-
-    return { workspace: workspacesDetailCache[repoId] || null, file: null };
-  }
-
-  let cloudCmdChain = Promise.resolve();
-
-  function cleanTargetThreadId(val) {
-    const s = String(val || '').trim();
-    if (!s || s === '__new__' || s.startsWith('cmd-') || s.startsWith('draft-new-')) {
-      return '';
-    }
-    return s;
-  }
-
-  const MAX_LIVE_WS_ATTACHMENT_BYTES = 8 * 1024 * 1024;
-  const MAX_CLOUD_FALLBACK_CHARS = 360 * 1024;
-
-  function hasLiveAttachmentTransport(targetDeviceId = '') {
-    if (window.__THEO_TEST_FORCE_TRANSPORT_MODE === 'cloud') return false;
-    const targetsOther = Boolean(
-      targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id
-    );
-    if (localWsAuthed && localWs && localWs.readyState === 1 && !targetsOther) return true;
-    if (edgeWsAuthed && edgeWs && edgeWs.readyState === 1) return true;
-    if (connMode === 'local' && Boolean(localBridgeBase) && !targetsOther) return true;
-    return false;
-  }
-
-  function calcAttachmentsPayloadChars(atts) {
-    if (!Array.isArray(atts) || !atts.length) return 0;
-    return atts.reduce(
-      (sum, a) => sum + String(a?.dataUrl || '').length + String(a?.textContent || '').length,
-      0
-    );
-  }
-
-  function compactAttachmentsForCloudFallback(atts) {
-    if (!Array.isArray(atts) || !atts.length) return [];
-    return atts.map((a) => {
-      if (!a) return a;
-      if (a.textContent && String(a.dataUrl || '').length > 0) {
-        return { ...a, dataUrl: '' };
-      }
-      return a;
-    });
-  }
-
-  async function uploadLargeAttachmentsOverWs(wsConn, isEdge, targetDeviceId, attachments) {
-    if (!Array.isArray(attachments) || attachments.length === 0) return attachments;
-    const CHUNK_CHAR_SIZE = 240000;
-    const out = [];
-    for (const att of attachments) {
-      if (!att) continue;
-      const rawData = String(att.dataUrl || '');
-      if (rawData.length <= 520000) {
-        out.push(att);
-        continue;
-      }
-      const uploadId = `up-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const totalChunks = Math.ceil(rawData.length / CHUNK_CHAR_SIZE);
-      let okAll = true;
-      for (let idx = 0; idx < totalChunks; idx++) {
-        const chunkData = rawData.slice(idx * CHUNK_CHAR_SIZE, (idx + 1) * CHUNK_CHAR_SIZE);
-        const frame = isEdge
-          ? {
-              type: 'rpc_cmd',
-              targetDeviceId: targetDeviceId || '',
-              cmd: { type: 'uploadAttachmentChunk', uploadId, chunkIndex: idx, totalChunks, data: chunkData }
-            }
-          : {
-              type: 'rpc',
-              targetDeviceId: targetDeviceId || '',
-              cmd: { type: 'uploadAttachmentChunk', uploadId, chunkIndex: idx, totalChunks, data: chunkData }
-            };
-        const res = await sendWsRpc(wsConn, frame, 9000).catch(() => null);
-        if (!res || res.ok === false) {
-          okAll = false;
-          break;
-        }
-      }
-      if (okAll) {
-        out.push({
-          name: att.name,
-          mime: att.mime,
-          size: att.size,
-          uploadId,
-          totalChunks,
-          textContent: att.textContent || ''
-        });
-      } else {
-        out.push({
-          name: att.name,
-          mime: att.mime,
-          size: att.size,
-          textContent: att.textContent || '',
-          chunkUploadFailed: true
-        });
-      }
-    }
-    return out;
-  }
-
-  async function dispatchRemoteCommand(cmdObj) {
-    refreshCloudConfig();
-    const targetThreadId =
-      cleanTargetThreadId(cmdObj?.threadId) ||
-      cleanTargetThreadId(cmdObj?.id) ||
-      cleanTargetThreadId(cmdObj?.sessionId);
-    const matchedRow = targetThreadId
-      ? (appState?.rows || []).find((r) => r && r.id === targetThreadId)
-      : null;
-    const activeFilterDev =
-      prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
-        ? String(prefs.selectedDeviceFilter).trim()
-        : '';
-    const composerPrefDev =
-      prefs.composerTargetDevice && prefs.composerTargetDevice !== 'auto'
-        ? String(prefs.composerTargetDevice).trim()
-        : '';
-    const resolvedTargetDevice =
-      cmdObj?.targetDeviceId !== undefined
-        ? String(cmdObj.targetDeviceId || '').trim()
-        : matchedRow?.deviceId
-          ? String(matchedRow.deviceId).trim()
-          : cmdObj?.newSession
-            ? composerPrefDev || activeFilterDev
-            : activeFilterDev;
-    const resolvedWorkspace =
-      cmdObj?.workspace !== undefined
-        ? String(cmdObj.workspace || '').trim()
-        : String(prefs.composerRepoPrefix || '').trim();
-    const resolvedExecMode =
-      cmdObj?.executionMode ||
-      (prefs.composerDirectStream === false
-        ? 'ide'
-        : cmdObj?.newSession
-          ? 'direct'
-          : 'auto');
-
-    if (resolvedTargetDevice) recordFreqUsage('devices', resolvedTargetDevice);
-    if (resolvedWorkspace) recordFreqUsage('repos', resolvedWorkspace);
-    if (targetThreadId) recordFreqUsage('threads', targetThreadId);
-
-    const cmd = {
-      ...cmdObj,
-      id:
-        cmdObj?.id && String(cmdObj.id).startsWith('cmd-')
-          ? cmdObj.id
-          : `cmd-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
-      threadId: targetThreadId,
-      targetDeviceId: resolvedTargetDevice || undefined,
-      workspace: resolvedWorkspace || undefined,
-      executionMode: resolvedExecMode,
-      createdAt: cmdObj?.createdAt || Date.now(),
-      status: 'pending'
-    };
-
-    if (isHeadlessBrowser) {
-      try {
-        window.__theoLastQuarantinedCmd = cmd;
-      } catch {}
-      if (window.__THEO_TEST_QUARANTINE_RES && typeof window.__THEO_TEST_QUARANTINE_RES === 'object') {
-        return { ...window.__THEO_TEST_QUARANTINE_RES, id: cmd.id };
-      }
-      return { ok: true, mode: 'quarantined', id: cmd.id };
-    }
-
-    const targetsAnotherHost = Boolean(
-      resolvedTargetDevice &&
-        localWsDevice?.id &&
-        resolvedTargetDevice !== localWsDevice.id
-    );
-
-    // 1. Direct Local WebSocket RPC (<5ms local + automatic peer forwarding)
-    if (localWsAuthed && localWs && localWs.readyState === 1 && !targetsAnotherHost) {
-      try {
-        const wsAttachments = Array.isArray(cmd.attachments) && cmd.attachments.length
-          ? await uploadLargeAttachmentsOverWs(localWs, false, resolvedTargetDevice, cmd.attachments)
-          : cmd.attachments;
-        if (Array.isArray(wsAttachments) && wsAttachments.some((a) => a && a.chunkUploadFailed)) {
-          return {
-            ok: false,
-            blocked: 'attachment_chunk_failed',
-            error: 'Large attachment chunk upload failed over Direct WS.'
-          };
-        }
-        const wsRes = await sendWsRpc(
-          localWs,
-          {
-            type: 'rpc',
-            targetDeviceId: resolvedTargetDevice || '',
-            cmd: {
-              ...cmd,
-              attachments: wsAttachments,
-              cmdId: cmd.id,
-              id: cmd.newSession ? '' : targetThreadId,
-              threadId: cmd.newSession ? '' : targetThreadId
-            }
-          },
-          10000
-        );
-        const innerOk = wsRes && wsRes.ok !== false && wsRes?.result?.ok !== false;
-        if (innerOk) {
-          return { ok: true, mode: 'local_ws', id: cmd.id, out: wsRes.result || wsRes };
-        }
-      } catch {}
-    }
-
-    // 2. Cloudflare Edge WebSocket RPC (<25ms worldwide to ANY online PC)
-    if (edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
-      try {
-        const edgeAttachments = Array.isArray(cmd.attachments) && cmd.attachments.length
-          ? await uploadLargeAttachmentsOverWs(edgeWs, true, resolvedTargetDevice, cmd.attachments)
-          : cmd.attachments;
-        if (Array.isArray(edgeAttachments) && edgeAttachments.some((a) => a && a.chunkUploadFailed)) {
-          return {
-            ok: false,
-            blocked: 'attachment_chunk_failed',
-            error: 'Large attachment chunk upload failed over Edge WS.'
-          };
-        }
-        const edgeRes = await sendWsRpc(
-          edgeWs,
-          {
-            type: 'rpc_cmd',
-            targetDeviceId: resolvedTargetDevice || '',
-            cmd: {
-              ...cmd,
-              attachments: edgeAttachments,
-              cmdId: cmd.id,
-              id: cmd.newSession ? '' : targetThreadId,
-              threadId: cmd.newSession ? '' : targetThreadId
-            }
-          },
-          10000
-        );
-        const innerOk = edgeRes && edgeRes.ok !== false && edgeRes?.result?.ok !== false;
-        if (innerOk) {
-          return { ok: true, mode: 'edge_ws', id: cmd.id, out: edgeRes.result || edgeRes };
-        }
-      } catch {}
-    }
-
-    // 3. Direct Local HTTP Bridge (not for a live-only command meant for another PC: the bridge PC would have
-    // to pass it on, and it must never end up in a queue)
-    if (connMode === 'local' && localBridgeBase && !(cmdObj?.liveOnly && targetsAnotherHost)) {
-      try {
-        const endpoint =
-          cmd.type === 'send'
-            ? '/api/send'
-            : cmd.type === 'approve' || cmd.type === 'answerQuestion'
-              ? '/api/approve'
-              : '/api/session-action';
-        const res = await authFetchLocal(`${localBridgeBase}${endpoint}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...cmd,
-            cmdId: cmd.id,
-            id: cmd.newSession ? '' : targetThreadId,
-            threadId: cmd.newSession ? '' : targetThreadId
-          })
-        });
-        if (res.ok) {
-          const out = await res.json();
-          if (out && out.ok !== false) {
-            setTimeout(() => syncData(), 500);
-            return { ok: true, mode: 'local', id: cmd.id, out };
-          }
-        }
-      } catch {}
-    }
-
-    // A command marked `liveOnly` (an account sign-in step, which may carry a one-time code) reaches a PC over
-    // a live link or not at all: it is never written to the cloud queue or kept in this device's outbox.
-    if (cmdObj?.liveOnly) {
-      return { ok: false, mode: 'no_live_link', id: cmd.id };
-    }
-
-    if (Array.isArray(cmd.attachments) && cmd.attachments.length > 0) {
-      const slimmedAtts = compactAttachmentsForCloudFallback(cmd.attachments);
-      if (calcAttachmentsPayloadChars(slimmedAtts) > MAX_CLOUD_FALLBACK_CHARS) {
-        return {
-          ok: false,
-          blocked: 'attachment_too_large_for_cloud',
-          error: 'Attachment exceeds 250 KB Cloud Store fallback limit; connect live Edge WS for up to 8 MB.'
-        };
-      }
-      cmd.attachments = slimmedAtts;
-    }
-
-    // 4. Cloud Relay Command Queue (serialized + fast get_control)
-    if (cloudCfg.url && cloudCfg.key) {
-      const runCloudWrite = async () => {
-        const ctrlGet = new AbortController();
-        const tGet = setTimeout(() => ctrlGet.abort(), 12000);
-        const curRes = await fetch(cloudCfg.url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-          body: JSON.stringify({ key: cloudCfg.key, op: 'get_control' }),
-          signal: ctrlGet.signal
-        }).finally(() => clearTimeout(tGet));
-        const rawCur = curRes.ok ? await curRes.json() : {};
-        const curStore =
-          rawCur?.docs && typeof rawCur.docs === 'object' ? rawCur.docs : rawCur || {};
-        const existingCmds = Array.isArray(curStore?.queue?.commands)
-          ? curStore.queue.commands
-              .filter((c) => c && c.id && c.id !== cmd.id)
-              .slice(-14)
-          : [];
-        existingCmds.push(cmd);
-
-        const nextQueue = {
-          ...(curStore.queue || {}),
-          commands: existingCmds
-        };
-        if ((cmd.type === 'requestThread' || cmd.subAction === 'requestThread') && targetThreadId) {
-          nextQueue.activeThreadId = targetThreadId;
-        }
-
-        const ctrlPost = new AbortController();
-        const tPost = setTimeout(() => ctrlPost.abort(), 15000);
-        const postRes = await fetch(cloudCfg.url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-          body: JSON.stringify({
-            key: cloudCfg.key,
-            op: 'patch',
-            ackOnly: true,
-            patch: {
-              queue: nextQueue
-            }
-          }),
-          signal: ctrlPost.signal
-        }).finally(() => clearTimeout(tPost));
-        return Boolean(postRes.ok);
-      };
-
-      try {
-        const p = cloudCmdChain.then(runCloudWrite, runCloudWrite);
-        cloudCmdChain = p.catch(() => false);
-        const ok = await p;
-        if (ok) {
-          return { ok: true, mode: 'cloud', id: cmd.id };
-        }
-      } catch {}
-    }
-
-    // 5. Offline Outbox Queue
-    outbox = outbox.filter((c) => c && c.id !== cmd.id);
-    outbox.push(cmd);
-    saveJson(STORAGE_KEYS.OUTBOX, outbox);
-    renderOutboxBadge();
-    return { ok: true, mode: 'queued', id: cmd.id };
-  }
-
-  async function flushOutbox() {
-    if (!outbox.length || connMode === 'offline') return;
-    const pending = [...outbox];
-    outbox = [];
-    saveJson(STORAGE_KEYS.OUTBOX, outbox);
-    for (const item of pending) {
-      if (item && item.type === 'setClaudePermissionMode' && item.defaultMode) {
-        const itemTs = Number(item.createdAt || 0);
-        if (itemTs > 0 && itemTs < Number(claudeModeState.updatedAt || 0)) {
-          continue;
-        }
-        await setFleetClaudeModeRemote(item.defaultMode, {
-          fromOutbox: true,
-          silent: true,
-          createdAt: itemTs
-        });
-        continue;
-      }
-      await dispatchRemoteCommand(item);
-    }
-    renderOutboxBadge();
-  }
-
-  function renderOutboxBadge() {
-    const ind = $('outbox-indicator');
-    if (!ind) return;
-    if (outbox.length > 0) {
-      ind.hidden = false;
-      ind.textContent = `${outbox.length} queued`;
-    } else {
-      ind.hidden = true;
-    }
-  }
-
-  function updateConnectionBanner(overrideState = '') {
-    const dotRail = $('rail-conn-dot');
-    const titleRail = $('rail-conn-title');
-    const subRail = $('rail-conn-sub');
-    const pillMob = $('mobile-conn-pill');
-    const dotMob = $('mobile-conn-dot');
-    const textMob = $('mobile-conn-text');
-
-    if (overrideState === 'syncing') {
-      if (titleRail) titleRail.textContent = 'Syncing Bridge…';
-      return;
-    }
-
-    const rowCount = (appState?.rows || []).length;
-    const snapAge = appState?.generatedAt ? timeAgo(appState.generatedAt) : '';
-    const fleetList = getUnifiedFleetDevices();
-    const onlineHosts = fleetList.filter((d) => d.online).length;
-    const hostLabel =
-      localWsDevice?.name ||
-      appState?.device?.name ||
-      appState?.connection?.hostname ||
-      'Local Host';
-
-    if (connMode === 'local') {
-      const wsBadge = localWsAuthed
-        ? `WS${localWsRttMs > 0 ? ` ${localWsRttMs}ms` : ''}`
-        : 'Live SSE';
-      const isHeadlessDaemon = Boolean(appState?.connection?.standaloneMode);
-      if (dotRail) dotRail.className = 'conn-dot live';
-      if (titleRail) titleRail.textContent = `${hostLabel} · ${wsBadge}`;
-      if (subRail) {
-        subRail.textContent = `${fleetList.length > 1 ? `${fleetList.length} hosts · ` : ''}${rowCount} sess · ${isHeadlessDaemon ? 'Headless 24/7' : '24/7 Daemon'}`;
-      }
-      if (pillMob) pillMob.hidden = true;
-      if (dotMob) dotMob.className = 'conn-dot live';
-      if (textMob) textMob.textContent = localWsAuthed ? 'Direct WS' : 'Direct SSE';
-    } else if (connMode === 'edge' || edgeWsAuthed) {
-      const rttTxt = edgeWsRttMs > 0 ? ` · ${edgeWsRttMs}ms` : '';
-      if (dotRail) dotRail.className = 'conn-dot live';
-      if (titleRail) titleRail.textContent = `Edge WS · ${Math.max(1, onlineHosts)} Host${onlineHosts === 1 ? '' : 's'} Live`;
-      if (subRail) subRail.textContent = `Cloudflare DO${rttTxt} · ${rowCount} sess · 24/7 Daemon`;
-      if (pillMob) pillMob.hidden = true;
-      if (dotMob) dotMob.className = 'conn-dot live';
-      if (textMob) textMob.textContent = `Edge WS${rttTxt}`;
-    } else if (connMode === 'cloud') {
-      if (dotRail) dotRail.className = 'conn-dot cloud';
-      if (titleRail) {
-        titleRail.textContent =
-          fleetList.length > 1 ? `Cloud Fleet · ${fleetList.length} Hosts` : 'Cloud Relay · Connected';
-      }
-      if (subRail) subRail.textContent = `Sync ${snapAge || 'live'} · ${rowCount} sess · 24/7 Daemon`;
-      if (pillMob) pillMob.hidden = true;
-      if (dotMob) dotMob.className = 'conn-dot cloud';
-      if (textMob) textMob.textContent = snapAge ? `Live · ${snapAge.replace(' ago', '')}` : 'Cloud Live';
-    } else {
-      const paired = hasAnyPairingCredentials();
-      if (dotRail) dotRail.className = 'conn-dot';
-      if (titleRail) titleRail.textContent = paired ? 'Offline Snapshot' : 'Pair This Device';
-      if (subRail) {
-        subRail.textContent = !paired
-          ? 'Enter 6-digit code or pair link'
-          : snapAge
-            ? `Cached ${snapAge} · 24/7 Daemon`
-            : 'Waiting · 24/7 Daemon';
-      }
-      if (pillMob) pillMob.hidden = paired && connMode === 'probing' && navigator.onLine !== false;
-      if (dotMob) dotMob.className = 'conn-dot';
-      if (textMob) {
-        textMob.textContent = !paired
-          ? 'Pair Device'
-          : outbox.length > 0
-            ? `Offline · ${outbox.length}`
-            : 'Offline';
-      }
-    }
-
-    const pushDot = $('mobile-push-dot');
-    const pushBtn = $('mobile-push-btn');
-    const railPushDot = $('rail-push-dot');
-    const railPushBtn = $('rail-push-btn');
-    const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
-    const pushActive = Boolean(nf.enabled && pushSub && notifPerm() === 'granted');
-    if (pushDot) {
-      pushDot.className = `conn-dot ${pushActive ? 'live' : ''}`;
-    }
-    if (railPushDot) {
-      railPushDot.className = `conn-dot ${pushActive ? 'live' : ''}`;
-    }
-    const bellTitle = pushActive
-      ? 'Notifications & Home Screen Badge (Web Push Active)'
-      : 'Notifications & Home Screen Badge (Tap to enable Web Push)';
-    if (pushBtn) {
-      pushBtn.classList.toggle('is-push-active', pushActive);
-      pushBtn.style.borderColor = '';
-      pushBtn.style.color = '';
-      pushBtn.setAttribute('aria-label', bellTitle);
-    }
-    if (railPushBtn) {
-      railPushBtn.classList.toggle('is-push-active', pushActive);
-      railPushBtn.style.borderColor = '';
-      railPushBtn.style.color = '';
-      railPushBtn.setAttribute('aria-label', bellTitle);
-    }
-
-    const connModal = $('conn-modal');
-    if (connModal && !connModal.hidden) {
-      renderConnModal();
-    }
-    const notifModal = $('notif-modal');
-    if (notifModal && !notifModal.hidden) {
-      renderNotifModal();
-    }
-  }
-
   function pushUiHistoryState(overlay = '') {
     if (suppressHistoryPush) return;
     try {
@@ -7637,1264 +3512,86 @@
     } catch {}
   }
 
-  function openNotifModal() {
-    const modal = $('notif-modal');
-    if (!modal) return;
-    seedUncheckedTheoNotifications();
-    renderNotifModal();
-    const wasHidden = modal.hidden;
-    modal.hidden = false;
-    if (wasHidden) pushUiHistoryState('notif-modal');
-  }
+  Object.assign(S, {
+    CLAUDE_PERM_MODES,
+    THEO_CF_MIGRATE_URL,
+    THEO_MIGRATE_ALLOWLIST,
+    applyPairPayloadToPrefs,
+    applyTheme,
+    bytesToB64,
+    callCloudPush,
+    checkLiveStateNotifications,
+    clearPinnedNav,
+    computeTheoUnreadBadgeCount,
+    decodePairTokenString,
+    defaultAgyModelId,
+    defaultClaudeModelId,
+    encodePairTokenString,
+    extractClaudeModeFields,
+    formatQuotaResetLine,
+    getEffectiveClaudePermissionMode,
+    getTheoMigrationMeta,
+    haptic,
+    hasAnyAntigravityThirdPartyBars,
+    hideIdeMicroTip,
+    ingestClaudePermissionModeDoc,
+    isClaudeDesktopHidden,
+    isClaudeDesktopRow,
+    isFocusInsideContainerInputs,
+    isPinLocked,
+    isSafeEdgeEndpointUrl,
+    isStandalone,
+    isTheoOldGithubOrigin,
+    isThirdPartyQuotaBar,
+    isThirdPartyQuotaHidden,
+    loadNotifLog,
+    markNotificationsCheckedForSession,
+    notifPerm,
+    playChime,
+    positionPalettePopover,
+    prefs,
+    pushSupported,
+    pushUiHistoryState,
+    rankByFreq,
+    reconcileIdeMicroTip,
+    recordFreqUsage,
+    renderClaudeModeSelectorHtml,
+    saveTheoMigrationMeta,
+    schedulePushSync,
+    seedUncheckedTheoNotifications,
+    setBoundedMap,
+    setFleetClaudeModeRemote,
+    setHideThirdPartyQuota,
+    setPinnedNav,
+    showToast,
+    syncDefaultModelPrefsIfAuto,
+    syncPalettePickerUi
+  });
+  Object.defineProperties(S, {
+    appState: { get: () => appState, set: (v) => { appState = v; }, enumerable: true, configurable: true },
+    claudeModeState: { get: () => claudeModeState, set: (v) => { claudeModeState = v; }, enumerable: true, configurable: true },
+    hasExplicitBootUrlNav: { get: () => hasExplicitBootUrlNav, set: (v) => { hasExplicitBootUrlNav = v; }, enumerable: true, configurable: true },
+    lastPushScheduleSyncAt: { get: () => lastPushScheduleSyncAt, set: (v) => { lastPushScheduleSyncAt = v; }, enumerable: true, configurable: true },
+    outbox: { get: () => outbox, set: (v) => { outbox = v; }, enumerable: true, configurable: true },
+    pendingHideClaudeDesktop: { get: () => pendingHideClaudeDesktop, set: (v) => { pendingHideClaudeDesktop = v; }, enumerable: true, configurable: true },
+    pendingHideThirdPartyQuota: { get: () => pendingHideThirdPartyQuota, set: (v) => { pendingHideThirdPartyQuota = v; }, enumerable: true, configurable: true },
+    pinnedNavProvider: { get: () => pinnedNavProvider, set: (v) => { pinnedNavProvider = v; }, enumerable: true, configurable: true },
+    pinnedNavThreadId: { get: () => pinnedNavThreadId, set: (v) => { pinnedNavThreadId = v; }, enumerable: true, configurable: true },
+    pinnedNavTitle: { get: () => pinnedNavTitle, set: (v) => { pinnedNavTitle = v; }, enumerable: true, configurable: true },
+    pinnedNavUntil: { get: () => pinnedNavUntil, set: (v) => { pinnedNavUntil = v; }, enumerable: true, configurable: true },
+    pushBusy: { get: () => pushBusy, set: (v) => { pushBusy = v; }, enumerable: true, configurable: true },
+    pushSub: { get: () => pushSub, set: (v) => { pushSub = v; }, enumerable: true, configurable: true },
+    recentResumeUntil: { get: () => recentResumeUntil, set: (v) => { recentResumeUntil = v; }, enumerable: true, configurable: true },
+    theoPushRegistryLock: { get: () => theoPushRegistryLock, set: (v) => { theoPushRegistryLock = v; }, enumerable: true, configurable: true },
+    threadsCache: { get: () => threadsCache, set: (v) => { threadsCache = v; }, enumerable: true, configurable: true },
+    workspacesDetailCache: { get: () => workspacesDetailCache, set: (v) => { workspacesDetailCache = v; }, enumerable: true, configurable: true }
+  });
+  factories.transport(S);
+  factories.sidebar(S);
+  factories.inspector(S);
+  factories.chat(S);
+  factories.views(S);
 
-  function closeNotifModal() {
-    const modal = $('notif-modal');
-    if (modal) modal.hidden = true;
-  }
-
-  function renderNotifModal() {
-    const dotEl = $('notif-modal-dot');
-    const titleEl = $('notif-modal-title');
-    const bodyEl = $('notif-modal-body');
-    if (!bodyEl) return;
-
-    const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
-    const pushActive = Boolean(nf.enabled && pushSub && notifPerm() === 'granted');
-    const items = loadNotifLog();
-    const unchecked = items.filter((x) => x && !x.checked);
-    const checked = items.filter((x) => x && x.checked);
-    const badgeCount = computeTheoUnreadBadgeCount(items);
-
-    if (dotEl) {
-      dotEl.className = `conn-dot ${pushActive ? 'live' : ''}`;
-    }
-    if (titleEl) {
-      titleEl.textContent =
-        badgeCount > 0
-          ? `Notifications (${badgeCount} Unchecked on Home Screen)`
-          : 'Notifications & Home Screen Badge';
-    }
-
-    const listHtml =
-      items.length === 0
-        ? `<div class="meta-timestamp" style="padding:14px 12px;border-radius:10px;background:var(--bg-ink);border:1px solid var(--border-subtle);text-align:center">No unchecked notifications — Home Screen badge is clear (0).</div>`
-        : `<div class="notif-inbox-list">
-            ${items
-              .slice(0, 25)
-              .map(
-                (it) => `
-              <div class="notif-item-row ${it.checked ? 'checked' : 'unchecked'}" data-notif-open="${esc(it.id || it.tag)}">
-                <div class="notif-item-body">
-                  <div class="notif-item-title">${esc(it.title || 'THEO Notification')}</div>
-                  ${it.body ? `<div class="notif-item-sub">${esc(it.body)}</div>` : ''}
-                  <div class="notif-item-meta tabular">${timeAgo(it.ts)} · ${it.checked ? '✓ Checked' : '● Unchecked (on Home Screen badge)'}</div>
-                </div>
-                ${
-                  !it.checked
-                    ? `<button type="button" class="notif-check-btn" data-notif-check="${esc(it.id || it.tag)}" aria-label="Mark checked &amp; decrement Home Screen badge">✓ Check</button>`
-                    : `<span class="pill-count steel" style="font-size:10px">Done</span>`
-                }
-              </div>
-            `
-              )
-              .join('')}
-          </div>`;
-
-    bodyEl.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
-        <span class="meta-timestamp">
-          Home Screen Badge: <strong class="tabular" style="color:${badgeCount > 0 ? '#FF3B30' : 'var(--emerald)'}">${badgeCount > 0 ? `${badgeCount} Unchecked` : '0 (All Clear)'}</strong> · Push: <strong style="color:${pushActive ? 'var(--emerald)' : 'var(--amber)'}">${pushActive ? 'Active' : 'Off'}</strong>
-        </span>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          ${
-            unchecked.length > 0 || badgeCount > 0
-              ? `<button type="button" class="btn-brass-sm" data-notif-act="check-all" style="padding:5px 10px;font-size:11.5px">✓ Mark All Checked (${badgeCount})</button>`
-              : ''
-          }
-          ${
-            checked.length > 0
-              ? `<button type="button" class="btn-ghost-sm" data-notif-act="clear-checked" style="padding:5px 10px;font-size:11.5px">Clear Checked</button>`
-              : ''
-          }
-        </div>
-      </div>
-      ${listHtml}
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;padding-top:8px;border-top:1px solid var(--border-subtle)">
-        ${
-          pushActive
-            ? `<button type="button" class="btn-brass-sm" data-push-act="test">🔔 Send Test Push</button><button type="button" class="btn-ghost-sm" data-push-act="reset">🔄 Re-Pair Push</button>`
-            : `<button type="button" class="btn-brass-sm" data-push-act="enable">${pushBusy ? 'Enabling…' : '🔔 Enable Web Push'}</button>`
-        }
-        <button type="button" class="btn-ghost-sm" data-notif-act="open-settings" style="margin-left:auto">⚙️ Push Settings</button>
-      </div>
-    `;
-  }
-
-  function openConnModal() {
-    const modal = $('conn-modal');
-    if (!modal) return;
-    renderConnModal();
-    const wasHidden = modal.hidden;
-    modal.hidden = false;
-    if (wasHidden) pushUiHistoryState('conn-modal');
-  }
-
-  function closeConnModal() {
-    const modal = $('conn-modal');
-    if (modal) modal.hidden = true;
-  }
-
-  function getEdgeHttpBaseUrl() {
-    const raw = String(prefs.edgeRelayUrl || discoveredEdgeUrl || DEFAULT_EDGE_RELAY_URL).trim();
-    if (!raw) return '';
-    return raw
-      .replace(/^wss:\/\//i, 'https://')
-      .replace(/^ws:\/\//i, 'http://')
-      .replace(/[?#].*$/, '')
-      .replace(/\/+$/, '')
-      .replace(/\/ws$/i, '')
-      .replace(/\/+$/, '');
-  }
-
-  async function finalizeInteractivePairSuccess(parsed) {
-    if (!applyPairPayloadToPrefs(parsed)) return false;
-    refreshCloudConfig();
-    resetTransportsForFreshPairing();
-    const targetEdge = prefs.edgeRelayUrl || discoveredEdgeUrl || DEFAULT_EDGE_RELAY_URL;
-    if (!isHeadlessBrowser && targetEdge) {
-      connectEdgeWs(targetEdge).catch(() => {});
-    }
-    if (!isHeadlessBrowser) {
-      await syncData({ force: true, toast: false });
-    }
-    closeConnModal();
-    updateConnectionBanner();
-    renderAll();
-    showToast('✓ Device paired & connected to THEO Fleet');
-    return true;
-  }
-
-  async function claimSixDigitPairCode(rawCode) {
-    if (pairClaimInFlight) return false;
-    const digits = String(rawCode || '').replace(/\D+/g, '');
-    if (digits.length !== 6) {
-      showToast('Enter the 6-digit pairing code shown on your PC');
-      return false;
-    }
-    if (isHeadlessBrowser && !window.__THEO_ALLOW_PAIR_MOCK_FETCH) {
-      showToast('Headless quarantine active');
-      return false;
-    }
-    const httpBase = getEdgeHttpBaseUrl();
-    if (!httpBase) {
-      showToast('Edge Relay URL is not configured');
-      return false;
-    }
-    pairClaimInFlight = true;
-    let timer = null;
-    try {
-      const ctrl = new AbortController();
-      timer = setTimeout(() => ctrl.abort(), 10000);
-      const res = await fetch(`${httpBase}/pair/claim`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: digits }),
-        signal: ctrl.signal
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data?.ok || !data?.bundle) {
-        showToast(data?.error || 'Invalid or expired 6-digit code');
-        return false;
-      }
-      const parsed = decodePairTokenString(data.bundle);
-      if (!parsed) {
-        showToast('Invalid pairing bundle returned by relay');
-        return false;
-      }
-      return await finalizeInteractivePairSuccess(parsed);
-    } catch {
-      showToast('Could not reach Edge Relay — check internet connection');
-      return false;
-    } finally {
-      if (timer) clearTimeout(timer);
-      pairClaimInFlight = false;
-    }
-  }
-
-  async function generateSixDigitPairCode(opts = {}) {
-    const silentToast = Boolean(opts && opts.silentToast);
-    if (pairCodeGenInFlight) return null;
-    if (isHeadlessBrowser && !window.__THEO_ALLOW_PAIR_MOCK_FETCH) return null;
-    pairCodeGenInFlight = true;
-    let timer = null;
-    try {
-      if (localBridgeBase) {
-        const res = await authFetchLocal(`${localBridgeBase}/api/pair-code`, { method: 'POST' });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data?.ok && data?.code) {
-          activeGeneratedPairCode = {
-            code: data.code,
-            formatted: data.formatted || `${data.code.slice(0, 3)}-${data.code.slice(3)}`,
-            expiresAt: Number(data.expiresAt || Date.now() + 600000)
-          };
-          renderAnalyticsView();
-          renderConnModal();
-          if (!silentToast) {
-            showToast(`🔢 6-Digit Phone Code: ${activeGeneratedPairCode.formatted} (valid 10m)`);
-          }
-          return activeGeneratedPairCode;
-        }
-      }
-      refreshCloudConfig();
-      const bearer = await getBridgeAuthTokenHex();
-      const bundle = encodePairTokenString({
-        cloudUrl: cloudCfg.url,
-        cloudKey: cloudCfg.key,
-        edgeAccessKey: cloudCfg.edgeAccessKey,
-        edgeRelayUrl: prefs.edgeRelayUrl || discoveredEdgeUrl || DEFAULT_EDGE_RELAY_URL,
-        port: cloudCfg.port
-      });
-      const httpBase = getEdgeHttpBaseUrl();
-      if (!bearer || !bundle || !httpBase) {
-        showToast('Open Settings on your paired PC (http://127.0.0.1:4318) to generate a 6-digit code');
-        return null;
-      }
-      const ctrl = new AbortController();
-      timer = setTimeout(() => ctrl.abort(), 10000);
-      const res = await fetch(`${httpBase}/pair/create`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${bearer}`
-        },
-        body: JSON.stringify({ bundle, ttlSec: 600 }),
-        signal: ctrl.signal
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data?.ok || !data?.code) {
-        showToast(data?.error || 'Could not generate 6-digit code');
-        return null;
-      }
-      activeGeneratedPairCode = {
-        code: data.code,
-        formatted: data.formatted || `${data.code.slice(0, 3)}-${data.code.slice(3)}`,
-        expiresAt: Number(data.expiresAt || Date.now() + 600000)
-      };
-      renderAnalyticsView();
-      renderConnModal();
-      if (!silentToast) {
-        showToast(`🔢 6-Digit Phone Code: ${activeGeneratedPairCode.formatted} (valid 10m)`);
-      }
-      return activeGeneratedPairCode;
-    } catch {
-      if (!silentToast) {
-        showToast('Failed to contact Edge Relay to mint 6-digit code');
-      }
-      return null;
-    } finally {
-      if (timer) clearTimeout(timer);
-      pairCodeGenInFlight = false;
-    }
-  }
-
-  function buildPcSetupLauncherCmd(sixDigitCode = '') {
-    const cleanDigits = String(sixDigitCode || '').replace(/\D+/g, '').slice(0, 6);
-    const codeLine =
-      cleanDigits.length === 6
-        ? `set "THEO_PAIR_CODE=${cleanDigits}"`
-        : 'rem Unpaired launcher (enter 6-digit code in the setup window if pairing a new PC)';
-    const psOneLiner = [
-      "$ErrorActionPreference='Stop'",
-      'try {',
-      "  $ps1=Join-Path $HOME 'bhfirms\\memory\\Admin\\Setup-THEO-PC.ps1'",
-      "  if(Test-Path -LiteralPath $ps1){& $ps1 -Gui}else{[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;$tmp=Join-Path $env:TEMP ('theo-install-'+$PID+'.ps1');Invoke-WebRequest -Uri 'https://theo.husseinbdeir.workers.dev/install.ps1' -OutFile $tmp -UseBasicParsing;try{& $tmp -Gui}finally{Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue}}",
-      "} catch { try { Add-Type -AssemblyName System.Windows.Forms; [void][System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'THEO PC Setup', 'OK', 'Error') } catch {}; exit 1 }"
-    ].join(';');
-    return [
-      '@echo off',
-      'setlocal',
-      ':: THEO PC Setup — Double-click on Windows to open the visual checklist & fleet setup window.',
-      ':: Carries at most a single-use 10-minute 6-digit pairing code (zero permanent secrets).',
-      codeLine,
-      `powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -STA -Command "${psOneLiner}"`,
-      'endlocal',
-      ''
-    ].join('\r\n');
-  }
-
-  let downloadPcSetupInFlight = false;
-  let lastLauncherMintedCode = null;
-
-  async function downloadPcSetupLauncher() {
-    if (downloadPcSetupInFlight) return;
-    downloadPcSetupInFlight = true;
-    const dlButtons = Array.from(document.querySelectorAll('[data-download-pc-setup]'));
-    for (const b of dlButtons) b.disabled = true;
-    try {
-      let minted = null;
-      if (hasAnyPairingCredentials()) {
-        const now = Date.now();
-        if (
-          lastLauncherMintedCode &&
-          now - Number(lastLauncherMintedCode.mintedAt || 0) < 15000 &&
-          Number(lastLauncherMintedCode.expiresAt || 0) - now > 60000
-        ) {
-          minted = lastLauncherMintedCode;
-        } else {
-          const fresh = await generateSixDigitPairCode({ silentToast: true });
-          if (fresh && fresh.code) {
-            lastLauncherMintedCode = { ...fresh, mintedAt: now };
-            minted = lastLauncherMintedCode;
-          }
-        }
-      }
-      const cmdText = buildPcSetupLauncherCmd(minted?.code || '');
-      const fileName = 'Set-Up-THEO-PC.cmd';
-      if (typeof window !== 'undefined' && window.__THEO_CAPTURE_PC_SETUP_CMD) {
-        window.__THEO_CAPTURED_PC_SETUP = {
-          fileName,
-          hasPairCode: Boolean(minted?.code),
-          cmdText
-        };
-        showToast(
-          minted?.formatted
-            ? `⬇ Downloaded Set-Up-THEO-PC.cmd (10m code ${minted.formatted})`
-            : '⬇ Downloaded Set-Up-THEO-PC.cmd'
-        );
-        return;
-      }
-      const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
-      const isIosStandalone =
-        /iPhone|iPad|iPod/i.test(ua) &&
-        document.documentElement.classList.contains('ios-standalone');
-      if (isIosStandalone) {
-        try {
-          const f = new File([cmdText], fileName, { type: 'text/plain' });
-          if (navigator.canShare && navigator.canShare({ files: [f] })) {
-            await navigator.share({ files: [f], title: fileName });
-            return;
-          }
-        } catch {}
-        showToast(
-          minted?.formatted
-            ? `🔢 6-Digit PC Code: ${minted.formatted} — open THEO on your PC or enter in Set Up This PC`
-            : 'Open THEO in your PC browser and click Download PC Setup'
-        );
-        return;
-      }
-      const blob = new Blob([cmdText], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      a.rel = 'noopener';
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1800);
-      showToast(
-        minted?.formatted
-          ? `Downloaded Set-Up-THEO-PC.cmd (code ${minted.formatted})`
-          : 'Downloaded Set-Up-THEO-PC.cmd'
-      );
-    } finally {
-      downloadPcSetupInFlight = false;
-      for (const b of document.querySelectorAll('[data-download-pc-setup]')) {
-        b.disabled = false;
-      }
-    }
-  }
-
-  function renderQuickPairOnboardingCardHtml(surfaceKey = 'main') {
-    return `
-      <div class="quick-pair-card" data-quick-pair-surface="${esc(surfaceKey)}">
-        <div class="quick-pair-head">
-          <div>
-            <div class="quick-pair-title">Pair This Device</div>
-          </div>
-          <span class="pill-count amber">One-Time Setup</span>
-        </div>
-        <p class="meta-timestamp quick-pair-desc">
-          Enter the <strong>6-digit code</strong> from your PC (works inside iOS Home Screen apps), or paste your <code>#pair=</code> link.
-        </p>
-        <div class="quick-pair-row">
-          <input
-            type="text"
-            inputmode="numeric"
-            autocomplete="one-time-code"
-            maxlength="24"
-            class="input-field mono quick-pair-code-input"
-            data-pair-code-input
-            placeholder="6-digit code (e.g. 482-917)"
-            aria-label="6-digit device pairing code"
-          >
-          <button type="button" class="btn-brass-sm quick-pair-btn" data-pair-code-submit>Connect</button>
-        </div>
-        <div class="quick-pair-subrow">
-          <button type="button" class="btn-ghost-sm" data-pair-paste-clipboard>Paste Pair Link</button>
-          <button type="button" class="btn-ghost-sm" data-pair-toggle-link-box>${showQuickPairLinkFallback ? 'Hide Link Box' : 'Type / Paste Manually'}</button>
-          <button type="button" class="btn-ghost-sm" data-download-pc-setup="1">⬇ Download PC Setup</button>
-        </div>
-        <div class="quick-pair-manual" data-pair-manual-wrap ${showQuickPairLinkFallback ? '' : 'hidden'}>
-          <input
-            type="text"
-            class="input-field mono pin-masked"
-            data-pair-link-input
-            placeholder="Paste https://.../#pair=... or 64-hex key"
-            autocomplete="off"
-            spellcheck="false"
-            aria-label="Paste pairing URL or access key"
-          >
-          <button type="button" class="btn-brass-sm" data-pair-link-submit>Apply Link</button>
-        </div>
-      </div>
-    `;
-  }
-
-  function renderConnModal() {
-    const dotEl = $('conn-modal-dot');
-    const titleEl = $('conn-modal-title');
-    const bodyEl = $('conn-modal-body');
-    if (!bodyEl || isFocusInsideContainerInputs(bodyEl)) return;
-
-    const conn = appState?.connection || {};
-    const lanUrl = conn.lanUrl || '';
-    const hostName = conn.hostname || 'Paired Host';
-    const activeCount = (appState?.rows || []).filter((r) => !r.archived).length;
-    const runningCount = (appState?.rows || []).filter((r) => !r.archived && r.status === 'working').length;
-    const snapTime = appState?.generatedAt ? timeAgo(appState.generatedAt) : '—';
-    const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
-    const pushActive = Boolean(nf.enabled && pushSub && notifPerm() === 'granted');
-
-    const fleetList = getUnifiedFleetDevices();
-    if (dotEl) {
-      dotEl.className = `conn-dot ${connMode === 'local' || connMode === 'edge' || edgeWsAuthed ? 'live' : connMode === 'cloud' ? 'cloud' : ''}`;
-    }
-    const isPairedNow = hasAnyPairingCredentials();
-    if (titleEl) {
-      titleEl.textContent =
-        connMode === 'local'
-          ? `Connected · Direct Host (${localWsRttMs ? `${localWsRttMs}ms` : 'Live'})`
-          : connMode === 'edge' || edgeWsAuthed
-            ? `Connected · Edge WebSocket (${edgeWsRttMs ? `${edgeWsRttMs}ms` : 'Live'})`
-            : connMode === 'cloud'
-              ? 'Connected · Cloud Relay'
-              : isPairedNow
-                ? 'Offline · Local Snapshot Cache'
-                : 'Pair This Device';
-    }
-
-    const fleetRowsHtml = fleetList.length
-      ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0">
-          ${fleetList
-            .map(
-              (d) =>
-                `<span class="sess-device-badge ${d.online ? 'is-online' : ''}">${d.online ? '●' : '◐'} ${esc(d.name || d.id)}${d.sessionCount ? ` · ${d.sessionCount}` : ''}${renderFleetPcSetupPillHtml(d)}${renderFleetStalledWtPillHtml(d)}</span>`
-            )
-            .join('')}
-        </div>`
-      : '';
-
-    bodyEl.innerHTML = `
-      ${!isPairedNow ? renderQuickPairOnboardingCardHtml('conn-modal') : ''}
-      <div class="conn-stat-grid tabular">
-        <div class="conn-stat-box">
-          <span class="conn-stat-lbl">Active Host</span>
-          <span class="conn-stat-val">${esc(localWsDevice?.name || hostName)}</span>
-        </div>
-        <div class="conn-stat-box">
-          <span class="conn-stat-lbl">Transport</span>
-          <span class="conn-stat-val">${localWsAuthed ? `Local WS (${localWsRttMs || 2}ms)` : edgeWsAuthed ? `Edge WS (${edgeWsRttMs || 18}ms)` : esc(snapTime)}</span>
-        </div>
-        <div class="conn-stat-box">
-          <span class="conn-stat-lbl">Fleet Sessions</span>
-          <span class="conn-stat-val">${runningCount} running · ${activeCount} sessions</span>
-        </div>
-        <div class="conn-stat-box">
-          <span class="conn-stat-lbl">Web Push Alerts</span>
-          <span class="conn-stat-val" style="color:${pushActive ? 'var(--emerald)' : 'var(--amber)'}">${pushActive ? 'Active' : 'Off'}</span>
-        </div>
-      </div>
-      ${fleetRowsHtml}
-      ${renderClaudeModeSelectorHtml('modal')}
-      <div class="meta-timestamp" style="line-height:1.45">
-        ${
-          connMode === 'local'
-            ? `Streaming directly from this PC on <code>${esc(localBridgeBase)}</code>.`
-            : `Synced via <strong>THEO Edge Relay</strong>. Prompts, approvals, and session actions go straight to your PC.`
-        }
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
-        <button type="button" class="btn-brass-sm" id="conn-modal-sync-btn" style="flex:1">↻ Sync Now</button>
-        <button type="button" class="btn-ghost-sm" id="conn-modal-pulse-btn" data-goto-tab="pulse">Pulse &amp; Accounts</button>
-        <button type="button" class="btn-ghost-sm" id="conn-modal-sessions-btn" data-goto-tab="sessions">All Sessions</button>
-        <button type="button" class="btn-ghost-sm" id="conn-modal-settings-btn" data-goto-tab="analytics">Settings &amp; Usage</button>
-        <button type="button" class="btn-ghost-sm" data-download-pc-setup="1">⬇ Download PC Setup</button>
-        ${
-          pushActive
-            ? `<button type="button" class="btn-ghost-sm" data-push-act="test">Test Push</button><button type="button" class="btn-ghost-sm" data-push-act="reset" aria-label="Mint a fresh iOS APNs / Web Push subscription">Re-Pair Push</button>`
-            : `<button type="button" class="btn-ghost-sm" data-push-act="enable">${pushBusy ? 'Enabling…' : 'Enable Push'}</button>`
-        }
-        ${
-          lanUrl && /^https?:\/\//i.test(lanUrl) && connMode !== 'local'
-            ? `<a href="${esc(lanUrl)}" class="btn-ghost-sm" style="text-decoration:none;display:inline-flex;align-items:center">Open Wi-Fi Direct (${esc(lanUrl.replace(/^https?:\/\//, '').replace(/\/$/, ''))})</a>`
-            : ''
-        }
-      </div>
-    `;
-  }
-
-  function renderFleetPcSetupPulseBannerHtml() {
-    const pendingHosts = getUnifiedFleetDevices().filter(
-      (d) => d && d.pcSetup && Number(d.pcSetup.pendingCount || 0) > 0
-    );
-    if (pendingHosts.length === 0) return '';
-    const summaryText = pendingHosts
-      .map((d) => {
-        const ps = d.pcSetup;
-        const stepHint =
-          Array.isArray(ps.pendingTitles) && ps.pendingTitles.length > 0
-            ? `: ${ps.pendingTitles.slice(0, 2).join(', ')}${ps.pendingTitles.length > 2 ? ` +${ps.pendingTitles.length - 2}` : ''}`
-            : '';
-        return `${esc(d.name || d.id)} (${ps.okCount}/${ps.totalCount}${esc(stepHint)})`;
-      })
-      .join(' · ');
-    // A PC that is online and reports phone-only readiness runs a build that takes the setup request itself.
-    const applyButtons = pendingHosts
-      .filter((d) => d.online && d.pwaReady)
-      .slice(0, 4)
-      .map((d) => renderApplyPcSetupButtonHtml(d, 'btn-brass-sm'))
-      .join('');
-    return `
-      <div class="pc-setup-pulse-card" id="pulse-pc-setup-card">
-        <div class="pc-setup-pulse-main">
-          <div class="pc-setup-pulse-title">${pendingHosts.length === 1 ? '1 PC has pending setup updates' : `${pendingHosts.length} PCs have pending setup updates`}</div>
-          <div class="meta-timestamp">${summaryText}. ${applyButtons ? 'Tap <strong>Apply</strong> to run the setup on that PC from here.' : 'Click <strong>Apply Setup</strong> in the THEO sidebar on that PC, or open <strong>Set Up This PC</strong>.'}</div>
-        </div>
-        <div class="pc-setup-pulse-actions">
-          ${applyButtons}
-          <button type="button" class="btn-ghost-sm" data-download-pc-setup="1">⬇ Download PC Setup</button>
-        </div>
-      </div>
-    `;
-  }
-
-  // PCs whose setup run was started from this phone, so the button reads "Applying" until the PC reports back.
-  const pcSetupApplyStartedAt = new Map();
-  const PC_SETUP_APPLY_SHOW_MS = 4 * 60 * 1000;
-
-  // True while a setup run started from this phone is taken to be in progress on that PC: until the PC reports a
-  // check made after the tap (its pill then shows the outcome), or four minutes at most.
-  function isPcSetupApplyShown(d) {
-    const startedAt = pcSetupApplyStartedAt.get(d && d.id) || 0;
-    if (!startedAt) return false;
-    const reportedAfter = Number(d?.pcSetup?.checkedAt || 0) > startedAt;
-    if (reportedAfter || Date.now() - startedAt >= PC_SETUP_APPLY_SHOW_MS) {
-      pcSetupApplyStartedAt.delete(d.id);
-      return false;
-    }
-    return true;
-  }
-
-  function renderApplyPcSetupButtonHtml(d, cls) {
-    const busy = isPcSetupApplyShown(d);
-    const name = String(d.name || d.id || 'PC').slice(0, 24);
-    return `<button type="button" class="${cls}" data-apply-pc-setup="${esc(d.id)}" ${busy ? 'disabled' : ''}>${busy ? `Applying on ${esc(name)}…` : `Apply on ${esc(name)}`}</button>`;
-  }
-
-  async function applyPcSetupOnDevice(devId) {
-    const cleanId = String(devId || '').trim();
-    const dev = cleanId ? fleetDevicesMap.get(cleanId) : null;
-    if (!dev) return;
-    const name = String(dev.name || dev.id || 'that PC');
-    if (isPcSetupApplyShown(dev)) return;
-    if (!dev.online) {
-      showToast(`${name} is offline. Switch it on, then apply the setup.`);
-      return;
-    }
-    pcSetupApplyStartedAt.set(cleanId, Date.now());
-    renderPulseView();
-    const res = await dispatchRemoteCommand({
-      type: 'sessionAction',
-      action: 'applyPcSetup',
-      subAction: 'applyPcSetup',
-      targetDeviceId: cleanId
-    }).catch(() => null);
-    const { toast, inProgress } = describePcSetupReply(name, res);
-    if (!inProgress) pcSetupApplyStartedAt.delete(cleanId);
-    showToast(toast);
-    renderPulseView();
-  }
-
-  // The reply of a command sent to one PC: the PC's own answer, or {} when the command is still on its way.
-  // A reply that came through another PC and was queued there (`queued`) is not the PC's own answer.
-  function readDirectPcReply(res) {
-    const mode = String(res?.mode || '');
-    const out = res && res.out && typeof res.out === 'object' ? res.out : {};
-    const reply = out.result && typeof out.result === 'object' ? out.result : out;
-    const direct = mode === 'local_ws' || mode === 'edge_ws' || mode === 'local';
-    return { mode, reply, answered: direct && !reply.queued, queuedOnAnotherPc: direct && Boolean(reply.queued) };
-  }
-
-  // What to say after asking a PC to show a session in a VS Code tab. VS Code is optional: a PC with no window
-  // open answers `opened: false`, and the session is already usable here.
-  function describeVsCodeOpenReply(res, openedText) {
-    const { mode, reply, answered } = readDirectPcReply(res);
-    if (mode === 'quarantined') return openedText;
-    if (answered && (reply.opened === false || reply.standalone)) {
-      return 'VS Code is not open on that PC. The session is fully usable here in THEO.';
-    }
-    if (answered) return openedText;
-    return 'Sent to the PC. A tab opens there only if VS Code is running.';
-  }
-  if (isHeadlessBrowser) {
-    try {
-      window.__theoDescribeVsCodeOpenReply = describeVsCodeOpenReply;
-    } catch {}
-  }
-
-  // What to tell the user about an Apply PC setup tap. "Started" is said only when that PC answered that it
-  // started; a request still on its way, refused, or unconfirmed is said as that.
-  function describePcSetupReply(name, res) {
-    if (!res) return { toast: `Could not send the setup request to ${name}.`, inProgress: false };
-    const { mode, reply, answered, queuedOnAnotherPc } = readDirectPcReply(res);
-    if (mode === 'quarantined') {
-      return { toast: `Setup started on ${name}. Its pill updates when it finishes.`, inProgress: true };
-    }
-    if (mode === 'cloud' || queuedOnAnotherPc) {
-      return {
-        toast: `${name} did not answer directly. The request is queued and starts if the PC picks it up within 15 minutes.`,
-        inProgress: false
-      };
-    }
-    if (!answered) {
-      return {
-        toast: 'The phone is offline. The request goes out when it reconnects, and is dropped after 15 minutes.',
-        inProgress: false
-      };
-    }
-    if (reply.reason === 'sessions_running') {
-      return { toast: `${name} has sessions running. Apply the setup when they finish.`, inProgress: false };
-    }
-    if (reply.busy) return { toast: `${name} is already applying its setup.`, inProgress: true };
-    if (reply.skipped === 'stale_request') {
-      return {
-        toast: `${name} dropped the request: it was more than 15 minutes old. Tap Apply again.`,
-        inProgress: false
-      };
-    }
-    if (reply.started === true) {
-      return { toast: `Setup started on ${name}. Its pill updates when it finishes.`, inProgress: true };
-    }
-    if (reply.started === false || reply.refused) {
-      return { toast: `${name} could not start its setup. Use Apply Setup on that PC.`, inProgress: false };
-    }
-    return {
-      toast: `${name} did not confirm that the setup started. Watch its setup pill, or use Apply Setup on that PC.`,
-      inProgress: false
-    };
-  }
-  // The automated browser check reads the wording for each kind of reply without a PC behind it.
-  if (isHeadlessBrowser) {
-    try {
-      window.__theoDescribePcSetupReply = describePcSetupReply;
-    } catch {}
-  }
-
-  // ---- Add an account from THEO, with no VS Code window on the PC ----
-  // The PC's background service runs the sign-in; this sheet shows its link and takes its code. Every step
-  // goes over a live link only (`liveOnly`): a sign-in link or code is never queued in the cloud store.
-  //   Claude:       open the link on any device, sign in, type the code the page shows.
-  //   Antigravity:  Google returns to the PC itself to finish, so the link is opened in a browser on that PC.
-  let acctSignIn = null;
-
-  function isSafeHttpsLink(url) {
-    return /^https:\/\/[^\s"'<>]+$/i.test(String(url || ''));
-  }
-
-  function accountSignInProviderName(provider) {
-    return provider === 'claude' ? 'Claude Code' : 'Antigravity';
-  }
-
-  async function sendAccountSignInStep(subAction, extra = {}) {
-    if (!acctSignIn) return null;
-    const res = await dispatchRemoteCommand({
-      type: 'sessionAction',
-      action: subAction,
-      subAction,
-      targetDeviceId: acctSignIn.hostId,
-      liveOnly: true,
-      ...extra
-    }).catch(() => null);
-    const info = readDirectPcReply(res);
-    if (info.mode === 'quarantined') return { quarantined: true };
-    return info.answered ? info.reply : null;
-  }
-
-  function applyAccountSignInReply(reply) {
-    if (!acctSignIn) return;
-    if (!reply) {
-      acctSignIn.linkLost = true;
-      return;
-    }
-    acctSignIn.linkLost = false;
-    if (reply.progress && typeof reply.progress === 'object') {
-      acctSignIn.progress = reply.progress;
-    }
-  }
-
-  async function startAccountSignIn(provider, label, host) {
-    stopAccountSignInPolling();
-    acctSignIn = {
-      provider: provider === 'claude' ? 'claude' : 'antigravity',
-      label: String(label || ''),
-      hostId: host.id,
-      hostName: host.name || 'the PC',
-      phase: 'starting',
-      progress: null,
-      error: '',
-      note: '',
-      linkLost: false,
-      pollTimer: null
-    };
-    const modal = $('acct-signin-modal');
-    if (modal) {
-      const wasHidden = modal.hidden;
-      modal.hidden = false;
-      if (wasHidden) pushUiHistoryState('acct-signin-modal');
-    }
-    renderAccountSignInModal();
-    const session = acctSignIn;
-    const reply = await sendAccountSignInStep('accountAdd', {
-      provider: session.provider,
-      label: session.label,
-      switchOnComplete: true
-    });
-    if (acctSignIn !== session) return;
-    if (!reply) {
-      session.phase = 'failed';
-      session.error = `THEO is not linked live to ${session.hostName} right now. A sign-in is only started over a live link.`;
-      renderAccountSignInModal();
-      return;
-    }
-    if (reply.quarantined) {
-      session.phase = 'pending';
-      renderAccountSignInModal();
-      return;
-    }
-    if (reply.started === false) {
-      session.phase = 'failed';
-      session.error = String(reply.error || `${session.hostName} could not start the sign-in.`);
-      renderAccountSignInModal();
-      return;
-    }
-    // `started` is absent when a VS Code window on that PC took the request: the sign-in runs in its terminal
-    // there (which keeps the link to itself), and the status below still reports how it ends.
-    if (reply.started !== true) {
-      session.viaVsCode = true;
-      session.note = `VS Code is open on ${session.hostName}: the sign-in is running in its terminal there.`;
-    }
-    session.phase = 'pending';
-    applyAccountSignInReply(reply);
-    renderAccountSignInModal();
-    session.pollTimer = setInterval(() => pollAccountSignIn(session), 2000);
-    pollAccountSignIn(session);
-  }
-
-  function stopAccountSignInPolling() {
-    if (acctSignIn?.pollTimer) {
-      clearInterval(acctSignIn.pollTimer);
-      acctSignIn.pollTimer = null;
-    }
-  }
-
-  async function pollAccountSignIn(session) {
-    if (acctSignIn !== session || session.phase !== 'pending' || session.polling) return;
-    session.polling = true;
-    try {
-      const reply = await sendAccountSignInStep('accountSignInStatus');
-      if (acctSignIn !== session) return;
-      applyAccountSignInReply(reply);
-      const progress = session.progress || {};
-      if (reply && !reply.quarantined && !progress.pending) {
-        stopAccountSignInPolling();
-        if (progress.lastSuccess && progress.lastSuccess.provider === session.provider) {
-          session.phase = 'done';
-          showToast(
-            `Signed in to ${accountSignInProviderName(session.provider)} on ${session.hostName} as ${progress.lastSuccess.email || 'the new account'}`
-          );
-          closeAccountSignInModal();
-          setTimeout(() => syncData(), 400);
-          return;
-        }
-        session.phase = 'failed';
-        session.error = String(progress.lastFailure?.message || 'The sign-in ended before it finished.');
-      }
-      // Do not redraw under the user's fingers while the code is being typed.
-      const codeInput = $('acct-signin-code');
-      if (!(codeInput && document.activeElement === codeInput && session.phase === 'pending')) {
-        renderAccountSignInModal();
-      } else {
-        const status = $('acct-signin-status');
-        if (status) status.textContent = accountSignInStatusLine(session);
-      }
-    } finally {
-      session.polling = false;
-    }
-  }
-
-  function accountSignInStatusLine(session) {
-    if (session.linkLost) return `Lost the live link to ${session.hostName}. Trying again…`;
-    return String(session.progress?.pending?.message || session.note || '');
-  }
-
-  function closeAccountSignInModal() {
-    const modal = $('acct-signin-modal');
-    if (modal) modal.hidden = true;
-    const session = acctSignIn;
-    stopAccountSignInPolling();
-    acctSignIn = null;
-    // Closing the sheet while a sign-in still runs stops it on the PC: nothing is left waiting unseen.
-    if (session && session.phase === 'pending') {
-      dispatchRemoteCommand({
-        type: 'sessionAction',
-        action: 'accountSignInCancel',
-        subAction: 'accountSignInCancel',
-        targetDeviceId: session.hostId,
-        liveOnly: true
-      }).catch(() => {});
-    }
-  }
-
-  function renderAccountSignInModal() {
-    const body = $('acct-signin-body');
-    const title = $('acct-signin-title');
-    const dot = $('acct-signin-dot');
-    if (!body) return;
-    const s = acctSignIn;
-    if (!s) {
-      body.innerHTML = '';
-      return;
-    }
-    const provName = accountSignInProviderName(s.provider);
-    const host = esc(s.hostName);
-    if (title) title.textContent = `Add a ${provName} account on ${s.hostName}`;
-    if (dot) {
-      dot.className = `conn-dot ${s.phase === 'failed' ? 'offline' : s.phase === 'pending' ? 'online' : ''}`.trim();
-    }
-    if (s.phase === 'starting') {
-      body.innerHTML = `<div class="acct-signin-wait">Starting the sign-in on ${host}…</div>`;
-      return;
-    }
-    if (s.phase === 'failed') {
-      body.innerHTML = `
-        <div class="acct-signin-error">${esc(s.error || 'The sign-in did not finish.')}</div>
-        <div class="acct-signin-actions">
-          <button type="button" class="btn-brass-sm" data-acct-signin-act="retry">Start again</button>
-          <button type="button" class="btn-ghost-sm" data-acct-signin-act="close">Close</button>
-        </div>
-      `;
-      return;
-    }
-    const pending = s.progress?.pending || {};
-    const authUrl = isSafeHttpsLink(pending.authUrl) ? pending.authUrl : '';
-    const verifyUrl = isSafeHttpsLink(pending.verificationUrl) ? pending.verificationUrl : '';
-    const onThatPc = Boolean(localWsDevice?.id && localWsDevice.id === s.hostId);
-    const statusLine = `<div class="acct-signin-status" id="acct-signin-status">${esc(accountSignInStatusLine(s))}</div>`;
-    const cancelRow = `
-      <div class="acct-signin-actions acct-signin-foot">
-        <button type="button" class="btn-ghost-sm" data-acct-signin-act="cancel">Cancel sign-in</button>
-      </div>`;
-    if (!authUrl && !verifyUrl) {
-      body.innerHTML = s.viaVsCode
-        ? `<div class="acct-signin-wait">The sign-in opened in the VS Code window on ${host}. Finish it in the browser there; this sheet closes when the account is added. To sign in from here instead, close VS Code on ${host} and start again.</div>${statusLine}${cancelRow}`
-        : `<div class="acct-signin-wait">Preparing the sign-in link on ${host}…</div>${statusLine}${cancelRow}`;
-      return;
-    }
-    if (s.provider === 'claude') {
-      const keptCode = String($('acct-signin-code')?.value || '');
-      body.innerHTML = `
-        <div class="acct-signin-step">
-          <span class="acct-signin-n">1</span>
-          <div class="acct-signin-copy">
-            <div>Open the Anthropic sign-in page and sign in. Any device works.</div>
-            <div class="acct-signin-actions">
-              <a class="btn-brass-sm" href="${esc(authUrl)}" target="_blank" rel="noopener noreferrer">Open sign-in page</a>
-              <button type="button" class="btn-ghost-sm" data-acct-signin-act="open-on-pc">Open on ${host}</button>
-            </div>
-          </div>
-        </div>
-        <div class="acct-signin-step">
-          <span class="acct-signin-n">2</span>
-          <div class="acct-signin-copy">
-            <div>Enter the code the page shows when you finish. If it was opened on ${host} and shows no code, it finishes by itself.</div>
-            <div class="acct-signin-code-row">
-              <input type="text" id="acct-signin-code" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Paste the code" ${pending.codeSubmitted ? 'disabled' : ''}>
-              <button type="button" class="btn-brass-sm" data-acct-signin-act="submit-code" ${pending.codeSubmitted ? 'disabled' : ''}>${pending.codeSubmitted ? 'Checking…' : 'Finish'}</button>
-            </div>
-          </div>
-        </div>
-        ${statusLine}${cancelRow}
-      `;
-      const codeInput = $('acct-signin-code');
-      if (codeInput && keptCode && !pending.codeSubmitted) codeInput.value = keptCode;
-      return;
-    }
-    if (pending.awaitingVerification && verifyUrl) {
-      body.innerHTML = `
-        <div class="acct-signin-step">
-          <span class="acct-signin-n">!</span>
-          <div class="acct-signin-copy">
-            <div>Google asked for a one-time check on this account. Complete it, then continue.</div>
-            <div class="acct-signin-actions">
-              <a class="btn-brass-sm" href="${esc(verifyUrl)}" target="_blank" rel="noopener noreferrer">Open verification page</a>
-              <button type="button" class="btn-ghost-sm" data-acct-signin-act="verified">Verified, continue</button>
-            </div>
-          </div>
-        </div>
-        ${statusLine}${cancelRow}
-      `;
-      return;
-    }
-    body.innerHTML = `
-      <div class="acct-signin-step">
-        <span class="acct-signin-n">1</span>
-        <div class="acct-signin-copy">
-          <div>Open the Google sign-in page in a browser on ${host} and choose the account. Google finishes this sign-in on the PC itself, so the page has to be opened there.</div>
-          <div class="acct-signin-actions">
-            ${
-              onThatPc
-                ? `<a class="btn-brass-sm" href="${esc(authUrl)}" target="_blank" rel="noopener noreferrer">Open sign-in page</a>`
-                : `<button type="button" class="btn-brass-sm" data-acct-signin-act="open-on-pc">Open on ${host}</button>`
-            }
-            <button type="button" class="btn-ghost-sm" data-acct-signin-act="copy-link">Copy link</button>
-          </div>
-        </div>
-      </div>
-      <div class="acct-signin-step">
-        <span class="acct-signin-n">2</span>
-        <div class="acct-signin-copy">This sheet closes by itself when the account is added.</div>
-      </div>
-      ${statusLine}${cancelRow}
-    `;
-  }
-
-  async function handleAccountSignInAct(act) {
-    const s = acctSignIn;
-    if (!s) return;
-    if (act === 'close') {
-      closeAccountSignInModal();
-      return;
-    }
-    if (act === 'retry') {
-      startAccountSignIn(s.provider, s.label, { id: s.hostId, name: s.hostName });
-      return;
-    }
-    if (act === 'cancel') {
-      closeAccountSignInModal();
-      showToast('Sign-in cancelled');
-      return;
-    }
-    if (act === 'copy-link') {
-      const link = s.progress?.pending?.authUrl;
-      if (!isSafeHttpsLink(link)) return;
-      try {
-        await navigator.clipboard.writeText(link);
-        showToast('Sign-in link copied');
-      } catch {
-        showToast('Could not copy the link on this device');
-      }
-      return;
-    }
-    if (act === 'open-on-pc') {
-      const reply = await sendAccountSignInStep('accountSignInOpenOnPc');
-      if (acctSignIn !== s) return;
-      showToast(
-        reply && reply.accepted
-          ? `Sign-in page opened in the browser on ${s.hostName}`
-          : String(reply?.error || `${s.hostName} did not answer. Try again.`)
-      );
-      return;
-    }
-    if (act === 'verified') {
-      const reply = await sendAccountSignInStep('accountVerifyContinue');
-      if (acctSignIn !== s) return;
-      applyAccountSignInReply(reply);
-      if (reply && !reply.accepted) showToast(String(reply.error || 'That did not go through.'));
-      renderAccountSignInModal();
-      return;
-    }
-    if (act === 'submit-code') {
-      const input = $('acct-signin-code');
-      const code = String(input?.value || '').trim();
-      if (!code) {
-        showToast('Paste the code from the sign-in page first');
-        return;
-      }
-      const reply = await sendAccountSignInStep('accountSignInCode', { code });
-      if (acctSignIn !== s) return;
-      if (!reply) {
-        showToast(`Lost the live link to ${s.hostName}. The code was not sent.`);
-        return;
-      }
-      applyAccountSignInReply(reply);
-      if (reply.accepted) {
-        if (input) input.value = '';
-      } else {
-        showToast(String(reply.error || 'That code was not accepted.'));
-      }
-      renderAccountSignInModal();
-    }
-  }
-  if (isHeadlessBrowser) {
-    try {
-      window.__theoAccountSignIn = {
-        start: startAccountSignIn,
-        render: renderAccountSignInModal,
-        get: () => acctSignIn,
-        set: (v) => {
-          acctSignIn = v;
-        },
-        close: closeAccountSignInModal
-      };
-    } catch {}
-  }
-
-  // Phone-only readiness: can THEO be driven from here alone, with VS Code closed on every PC?
-  // null = follow the state (open while something needs attention); true/false = the user's own choice.
-  let pwaReadyCardOpen = null;
-
-  function renderPwaReadyPulseCardHtml() {
-    const hosts = getUnifiedFleetDevices().filter((d) => d && d.pwaReady);
-    if (hosts.length === 0) return '';
-    const online = hosts.filter((d) => d.online);
-    const readyOnline = online.filter((d) => d.pwaReady.ready);
-    let tone = 'is-pending';
-    let title = 'Not ready for phone-only use yet';
-    let sub = 'Fix the items marked below, then VS Code can stay closed.';
-    if (online.length === 0) {
-      tone = 'is-off';
-      title = 'No PC is online';
-      sub = 'THEO needs one PC switched on and awake to run sessions.';
-    } else if (readyOnline.length === online.length) {
-      tone = 'is-ready';
-      title =
-        online.length === 1
-          ? `${online[0].name || online[0].id} is ready for phone-only use`
-          : `${online.length} PCs are ready for phone-only use`;
-      sub = 'VS Code can stay closed. Keep one PC switched on and awake.';
-    } else if (readyOnline.length > 0) {
-      tone = 'is-partial';
-      title = `${readyOnline.length} of ${online.length} online PCs are ready for phone-only use`;
-      sub = 'Sessions on a ready PC work with VS Code closed. The others need the items below.';
-    }
-    const hasNotes = hosts.some((d) =>
-      d.pwaReady.checks.some((c) => !c.ok && (c.level === 'info' ? d.online : true))
-    );
-    const open = pwaReadyCardOpen === null ? tone !== 'is-ready' : pwaReadyCardOpen;
-    const hostsHtml = hosts
-      .map((d) => {
-        const pr = d.pwaReady;
-        // Every required item, and a note only when it is not met.
-        const shown = pr.checks.filter((c) => c.level === 'required' || !c.ok);
-        const needsSetup = pr.checks.some(
-          (c) => !c.ok && (c.id === 'keepalive' || c.id === 'autostart')
-        );
-        const rows = shown
-          .map((c) => {
-            const kind = c.ok ? 'is-ok' : c.level === 'required' ? 'is-fail' : 'is-note';
-            const mark = c.ok ? '✓' : c.level === 'required' ? '✕' : 'i';
-            return `<li class="pwa-ready-row ${kind}"><span class="pwa-ready-mark" aria-hidden="true">${mark}</span><span class="pwa-ready-text"><strong>${esc(c.title)}</strong> <span class="pwa-ready-detail">${esc(c.detail)}</span></span></li>`;
-          })
-          .join('');
-        return `
-          <div class="pwa-ready-host">
-            <div class="pwa-ready-host-head">
-              <span class="sess-device-badge ${d.online ? 'is-online' : ''}">${d.online ? '●' : '◐'} ${esc(d.name || d.id)}</span>
-              <span class="fleet-setup-pill ${pr.ready ? 'is-ready' : 'is-pending'} tabular">${pr.ready ? '✓' : '!'} ${pr.okCount}/${pr.totalCount}</span>
-              <span class="meta-timestamp">${d.online ? (pr.vscodeOpen ? 'VS Code open' : 'VS Code closed') : 'offline, last report'}</span>
-            </div>
-            <ul class="pwa-ready-list">${rows}</ul>
-            ${needsSetup && d.online ? `<div class="pwa-ready-host-actions">${renderApplyPcSetupButtonHtml(d, 'btn-ghost-sm')}</div>` : ''}
-          </div>`;
-      })
-      .join('');
-    return `
-      <div class="pwa-ready-card ${tone} ${open ? 'is-open' : ''}" id="pulse-pwa-ready-card">
-        <button type="button" class="pwa-ready-head" data-pwa-ready-toggle="1" aria-expanded="${open ? 'true' : 'false'}" aria-controls="pulse-pwa-ready-body">
-          <span class="pwa-ready-head-main">
-            <span class="pwa-ready-title">${esc(title)}</span>
-            <span class="meta-timestamp">${esc(sub)}${tone === 'is-ready' && hasNotes ? ' One note inside.' : ''}</span>
-          </span>
-          <span class="pwa-ready-chevron" aria-hidden="true">${open ? '▾' : '▸'}</span>
-        </button>
-        <div class="pwa-ready-body" id="pulse-pwa-ready-body" ${open ? '' : 'hidden'}>${hostsHtml}</div>
-      </div>
-    `;
-  }
-
-  function renderPulseNotifBannerHtml() {
-    const migHtml = renderTheoMigrationBannerHtml();
-    if (
-      !hasAnyPairingCredentials() &&
-      connMode !== 'local' &&
-      connMode !== 'edge' &&
-      connMode !== 'cloud'
-    ) {
-      return `${migHtml}${renderQuickPairOnboardingCardHtml('pulse')}`;
-    }
-    const pcSetupNotice = `${migHtml}${renderPwaReadyPulseCardHtml()}${renderFleetPcSetupPulseBannerHtml()}`;
-    const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
-    const perm = notifPerm();
-    const active = Boolean(nf.enabled && pushSub && perm === 'granted');
-    if (active || loadJson(STORAGE_KEYS.PUSH_HINT, 0)) return pcSetupNotice;
-    const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
-    const ios = /iPhone|iPad|iPod/.test(ua);
-    if (!pushSupported() && !ios) return pcSetupNotice;
-    return `${pcSetupNotice}
-      <div class="push-banner-card">
-        <div class="push-banner-top">
-          <strong>Push Notifications</strong>
-        </div>
-        <div class="meta-timestamp" style="color:var(--text-secondary);font-size:12.5px">
-          Get lock-screen alerts for tool approvals, session completions, and quota warnings.
-        </div>
-        <div class="push-banner-actions">
-          <button type="button" class="btn-brass-sm" data-push-act="enable">
-            ${pushBusy ? 'Enabling…' : 'Enable Push Notifications'}
-          </button>
-          <button type="button" class="btn-ghost-sm" data-push-act="dismiss-hint">Not now</button>
-        </div>
-      </div>
-    `;
-  }
-
-  function renderHourOptions(hoursMap, selectedVal) {
-    return Object.entries(hoursMap)
-      .map(
-        ([k, lbl]) =>
-          `<option value="${esc(k)}" ${String(k) === String(selectedVal) ? 'selected' : ''}>${esc(lbl)}</option>`
-      )
-      .join('');
-  }
-
-  function renderPushSettingsCardHtml() {
-    const nf = Object.assign({ ...DEFAULT_NOTIF }, prefs.notif || {});
-    const perm = notifPerm();
-    const active = Boolean(nf.enabled && pushSub && perm === 'granted');
-    const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
-    const iosNeedsInstall = /iPhone|iPad|iPod/.test(ua) && !isStandalone();
-    const statusChip = active
-      ? '<span class="pill-count emerald">Active on this device</span>'
-      : perm === 'denied'
-        ? '<span class="pill-count crimson">Blocked in browser settings</span>'
-        : iosNeedsInstall
-          ? '<span class="pill-count amber">Open from Home Screen</span>'
-          : '<span class="pill-count steel">Off</span>';
-    const amHours = {
-      6: '06:00',
-      7: '07:00',
-      8: '08:30 / 08:00',
-      9: '09:00',
-      10: '10:00',
-      11: '11:00',
-      12: '12:00'
-    };
-    const pmHours = {
-      18: '18:00',
-      19: '19:00',
-      20: '20:00',
-      21: '21:30 / 21:00',
-      22: '22:00'
-    };
-    const descText = iosNeedsInstall
-      ? 'On iPhone, open THEO from your Home Screen icon to enable Web Push notifications.'
-      : perm === 'denied'
-        ? 'Notifications are blocked for this app. Open your phone Settings -> THEO -> Notifications and allow notifications.'
-        : 'Encrypted RFC 8291 (aes128gcm) + VAPID ES256 alerts dispatch directly from your PC and THEO Edge Relay.';
-
-    return `
-      <div class="push-settings-card">
-        <div class="section-head" style="margin-bottom:0">
-          <div>
-            <h2 class="section-title" style="font-size:17px;margin-top:2px">Push Notifications</h2>
-            <div class="brass-rule-single"></div>
-          </div>
-          ${statusChip}
-        </div>
-        <div class="meta-timestamp" style="line-height:1.45">${esc(descText)}</div>
-        <div class="push-pref-list">
-          <div class="push-pref-row">
-            <label class="push-pref-label">
-              <input type="checkbox" data-nf="approvals" ${nf.approvals !== false ? 'checked' : ''}>
-              <div class="push-pref-text">
-                <strong>Tool approvals &amp; input requests</strong>
-                <span>Alert when Antigravity or Claude Code pauses for permission or input</span>
-              </div>
-            </label>
-          </div>
-          <div class="push-pref-row">
-            <label class="push-pref-label">
-              <input type="checkbox" data-nf="completed" ${nf.completed !== false ? 'checked' : ''}>
-              <div class="push-pref-text">
-                <strong>Session turn &amp; task completions</strong>
-                <span>Alert when a running session finishes its turn while you are away</span>
-              </div>
-            </label>
-          </div>
-          <div class="push-pref-row">
-            <label class="push-pref-label">
-              <input type="checkbox" data-nf="quota" ${nf.quota !== false ? 'checked' : ''}>
-              <div class="push-pref-text">
-                <strong>Usage threshold (≥90%) &amp; stalled-task alerts</strong>
-                <span>Alert when a quota window reaches 90% or a task stalls</span>
-              </div>
-            </label>
-          </div>
-          <div class="push-pref-row">
-            <label class="push-pref-label">
-              <input type="checkbox" data-nf="morning" ${nf.morning !== false ? 'checked' : ''}>
-              <div class="push-pref-text">
-                <strong>Morning Brief</strong>
-                <span>Daily morning summary of pending approvals and active sessions</span>
-              </div>
-            </label>
-            <select class="push-hour-select tabular" data-nf="morningHour" aria-label="Morning briefing time">
-              ${renderHourOptions(amHours, nf.morningHour || 8)}
-            </select>
-          </div>
-          <div class="push-pref-row">
-            <label class="push-pref-label">
-              <input type="checkbox" data-nf="evening" ${nf.evening !== false ? 'checked' : ''}>
-              <div class="push-pref-text">
-                <strong>Evening Digest</strong>
-                <span>Evening summary of daily token usage and uncommitted git repos</span>
-              </div>
-            </label>
-            <select class="push-hour-select tabular" data-nf="eveningHour" aria-label="Evening digest time">
-              ${renderHourOptions(pmHours, nf.eveningHour || 21)}
-            </select>
-          </div>
-        </div>
-        <div class="push-banner-actions" style="margin-top:2px">
-          ${
-            active
-              ? `
-                <button type="button" class="btn-brass-sm" data-push-act="test">Send Test Push</button>
-                <button type="button" class="btn-ghost-sm" data-push-act="reset" aria-label="Unsubscribe and mint a brand-new APNs push token">${pushBusy ? 'Re-pairing…' : 'Re-Pair Push'}</button>
-                <button type="button" class="btn-ghost-sm" data-push-act="sync">↻ Refresh Schedule</button>
-                <button type="button" class="btn-ghost-sm" data-push-act="disable">Turn Off</button>
-              `
-              : `
-                <button type="button" class="btn-brass-sm" data-push-act="enable">${pushBusy ? 'Enabling…' : 'Enable Push Notifications'}</button>
-                ${perm === 'granted' ? `<button type="button" class="btn-ghost-sm" data-push-act="test">Send Test Push</button>` : ''}
-              `
-          }
-        </div>
-      </div>
-    `;
-  }
 
   // Navigation switching
   function switchTab(tabName) {
@@ -8925,9819 +3622,35 @@
     });
 
     if (target === 'chat') {
-      ensureSelectedThread();
-      renderChatView(true);
+      S.ensureSelectedThread();
+      S.renderChatView(true);
       if (
         prefs.selectedThreadId &&
         prefs.selectedThreadId !== '__new__' &&
         !String(prefs.selectedThreadId).startsWith('draft-new-')
       ) {
-        fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '');
+        S.fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '');
       }
     } else if (target === 'workspaces') {
-      renderWorkspacesView();
+      S.renderWorkspacesView();
     } else if (target === 'analytics') {
-      renderAnalyticsView();
+      S.renderAnalyticsView();
     }
-    renderIdeSidebar();
-  }
-
-  let pendingNewSessionBind = null;
-  const closedEditorTabIds = new Set();
-
-  function ensureEditorTabOpen(tid) {
-    const clean = String(tid || '').trim();
-    if (!clean || clean === '__new__') return;
-    closedEditorTabIds.delete(clean);
-    if (!Array.isArray(prefs.openEditorTabs)) prefs.openEditorTabs = [];
-    if (!prefs.openEditorTabs.includes(clean)) {
-      prefs.openEditorTabs.push(clean);
-      if (prefs.openEditorTabs.length > 12) {
-        const dropIdx = prefs.openEditorTabs.findIndex((id) => id !== clean && id !== prefs.selectedThreadId);
-        if (dropIdx >= 0) prefs.openEditorTabs.splice(dropIdx, 1);
-      }
-      saveJson(STORAGE_KEYS.PREFS, prefs);
-    }
-  }
-
-  function removeEditorTabIds(idsToRemove, advanceIfActive = true) {
-    const rmSet = new Set(
-      (Array.isArray(idsToRemove) ? idsToRemove : [idsToRemove])
-        .map((x) => String(x || '').trim())
-        .filter(Boolean)
-    );
-    if (!rmSet.size) return;
-    for (const id of rmSet) closedEditorTabIds.add(id);
-    if (prefs.lastReplyThreadId && rmSet.has(prefs.lastReplyThreadId)) {
-      prefs.lastReplyThreadId = '';
-    }
-    const curList = Array.isArray(prefs.openEditorTabs) ? [...prefs.openEditorTabs] : [];
-    const activeWasRemoved = Boolean(prefs.selectedThreadId && rmSet.has(prefs.selectedThreadId));
-    const removedIdx = activeWasRemoved ? curList.indexOf(prefs.selectedThreadId) : -1;
-    const nextList = curList.filter((id) => id && !rmSet.has(id));
-    prefs.openEditorTabs = nextList;
-
-    if (advanceIfActive && activeWasRemoved) {
-      const nonArchived = (appState?.rows || []).filter(
-        (r) => r && r.id && !r.draft && !r.archived && !rmSet.has(r.id) && !closedEditorTabIds.has(r.id)
-      );
-      const fallbackTabId =
-        nextList.length > 0
-          ? nextList[Math.max(0, Math.min(removedIdx, nextList.length - 1))]
-          : nonArchived[0]?.id || '';
-      if (fallbackTabId) {
-        prefs.selectedThreadId = fallbackTabId;
-        prefs.lastReplyThreadId = fallbackTabId;
-        prefs.composerMode = 'reply';
-        ensureEditorTabOpen(fallbackTabId);
-        if (prefs.activeTab === 'chat') {
-          fetchThreadDetail(fallbackTabId).catch(() => {});
-        }
-      } else {
-        prefs.composerMode = hasSignedInProviderRemote('antigravity') ? 'new-antigravity' : 'new-claude';
-        prefs.selectedThreadId = '__new__';
-      }
-    }
-    saveJson(STORAGE_KEYS.PREFS, prefs);
-  }
-
-  function closeEditorTab(tid) {
-    const clean = String(tid || '').trim();
-    if (!clean) return;
-    if (clean === '__new__') {
-      exitNewSessionModeToReply('', { allowResurrectClosed: false });
-      renderIdeSidebar();
-      return;
-    }
-    removeEditorTabIds([clean], true);
-    renderChatView(true);
-    renderIdeSidebar();
-  }
-
-  function syncAndRenderEditorTabs() {
-    const tabsEl = $('ide-editor-tabs');
-    if (!tabsEl) return;
-    const prevSerialized = JSON.stringify(prefs.openEditorTabs || []);
-    const rows = (appState?.rows || []).filter((r) => r && r.id && !r.draft);
-    const rowById = new Map(rows.map((r) => [r.id, r]));
-    const isNewDraft = isNewSessionMode();
-
-    let list = Array.isArray(prefs.openEditorTabs)
-      ? Array.from(
-          new Set(
-            prefs.openEditorTabs
-              .map((x) => (typeof x === 'string' || typeof x === 'number' ? String(x).trim() : ''))
-              .filter((x) => x && x !== '__new__')
-          )
-        )
-      : [];
-
-    if (rows.length > 0) {
-      list = list.filter((id) => {
-        if (String(id).startsWith('draft-new-')) return Boolean(threadsCache[id]);
-        const r = rowById.get(id);
-        if (r) return !r.archived;
-        return Boolean(id === prefs.selectedThreadId && threadsCache[id]);
-      });
-    }
-
-    if (list.length === 0 && rows.length > 0) {
-      const candidates = rows
-        .filter((r) => !r.archived && !closedEditorTabIds.has(r.id) && (r.open || r.status === 'working' || r.status === 'waiting'))
-        .slice(0, 6);
-      const seedRows = candidates.length > 0
-        ? candidates
-        : rows.filter((r) => !r.archived && !closedEditorTabIds.has(r.id)).slice(0, 4);
-      list = seedRows.map((r) => r.id);
-    }
-
-    const curTid = String(prefs.selectedThreadId || '').trim();
-    if (!isNewDraft && curTid && curTid !== '__new__') {
-      const curRow = rowById.get(curTid);
-      if (!curRow?.archived && !list.includes(curTid)) {
-        list.push(curTid);
-      }
-    }
-
-    if (list.length > 12) {
-      list = list.filter((id, idx) => idx >= list.length - 12 || id === curTid).slice(-12);
-    }
-    prefs.openEditorTabs = list;
-    if (JSON.stringify(list) !== prevSerialized) {
-      saveJson(STORAGE_KEYS.PREFS, prefs);
-    }
-
-    const tabsHtml = list
-      .map((id) => {
-        const r = rowById.get(id) || threadsCache[id] || { id, title: 'Session', provider: 'antigravity' };
-        const provKey = r.provider === 'claude' ? 'claude' : 'antigravity';
-        const isActive = !isNewDraft && id === curTid;
-        const isRunningNow = isSessionActivelyRunning(id);
-        const qCnt = getSessionPendingQuestionCount(r);
-        const stCls = isRunningNow
-          ? 'working'
-          : r.status === 'waiting' || qCnt > 0
-            ? 'waiting'
-            : '';
-        const rawTitle = String(r.title || threadsCache[id]?.title || 'Untitled Session').trim();
-        const bgBadge = r.bgTask?.state === 'running' ? getSessionRunningBgBadge(r) : '';
-        return `
-          <div class="ide-editor-tab${isActive ? ' active' : ''}${r.unread ? ' is-unread' : ''}" role="tab" tabindex="0" aria-selected="${isActive}" data-editor-tab-id="${esc(id)}" data-session-prov="${provKey}">
-            ${stCls ? `<span class="ide-dot ${stCls}"></span>` : ''}
-            <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
-            <span class="ide-tab-title">${esc(rawTitle)}</span>
-            ${qCnt > 0 ? `<span class="ide-row-pill q-pill tabular">?${qCnt}</span>` : ''}
-            ${bgBadge ? `<span class="ide-row-pill bg-pill tabular">${esc(bgBadge)}</span>` : ''}
-            <button type="button" class="ide-tab-close" data-close-editor-tab="${esc(id)}" aria-label="Close ${esc(rawTitle)}">×</button>
-          </div>
-        `;
-      })
-      .join('');
-
-    const newDraftProv = prefs.composerMode === 'new-claude' ? 'claude' : 'antigravity';
-    const newDraftTabHtml = isNewDraft
-      ? `
-        <div class="ide-editor-tab active is-draft" role="tab" tabindex="0" aria-selected="true" data-editor-tab-id="__new__" data-session-prov="${newDraftProv}">
-          <span class="prov-glyph">${PROVIDER_ICONS[newDraftProv]}</span>
-          <span class="ide-tab-title">New ${newDraftProv === 'claude' ? 'Claude' : 'Antigravity'} Session</span>
-          <button type="button" class="ide-tab-close" data-close-editor-tab="__new__" aria-label="Close new session draft">×</button>
-        </div>
-      `
-      : '';
-
-    tabsEl.innerHTML = tabsHtml + newDraftTabHtml;
-  }
-
-  function isSessionOpenTab(r) {
-    const sid = String(r?.id || '').trim();
-    if (!sid) return false;
-    if (Array.isArray(prefs.openEditorTabs) && prefs.openEditorTabs.includes(sid)) {
-      return true;
-    }
-    return Boolean(r?.open && !closedEditorTabIds.has(sid));
-  }
-
-  function getRowLastWorkedMs(r) {
-    if (!r) return 0;
-    const sid = String(r.id || '').trim();
-    const overrideWorkMs = sid ? Number(pendingRowOverrides.get(sid)?.lastWorkedAt || 0) : 0;
-    return Math.max(Number(r.at || 0), Number(r.lastWorkedAt || 0), overrideWorkMs);
-  }
-
-  function shortSidebarAge(ts) {
-    const n = Number(ts || 0);
-    if (!n) return '';
-    const raw = String(timeAgo(n) || '').trim();
-    if (!raw || raw === 'just now') return 'now';
-    return raw.replace(/\s*ago$/i, '');
-  }
-
-  function getSessionPendingQuestionsMeta(r) {
-    const sid = String(r?.id || '').trim();
-    if (!sid) return null;
-    const provKey = r?.provider === 'claude' ? 'claude' : 'antigravity';
-    const sessMsgs = coalesceThreadMessages(threadsCache[sid]?.messages || []);
-    const lastTurn = sessMsgs.length > 0 ? sessMsgs[sessMsgs.length - 1] : null;
-    const lastTurnId = lastTurn && lastTurn.role === 'assistant' ? String(lastTurn.id || '') : '';
-    const qApproval = (Array.isArray(appState?.approvals) ? appState.approvals : []).find(
-      (a) =>
-        a &&
-        a.sessionId === sid &&
-        (a.kind === 'question' ||
-          Boolean(a.isToolPermission) ||
-          /question/i.test(String(a.toolName || '')) ||
-          (Array.isArray(a.questions) && a.questions.length > 0) ||
-          (Array.isArray(a.options) && a.options.length > 0))
-    );
-    let qList = [];
-    if (qApproval) {
-      qList = resolveQuestionsForApproval(qApproval, sessMsgs);
-    } else if (r?.pendingQuestion?.questions?.length) {
-      qList = normalizeFrontendQuestions(r.pendingQuestion.questions);
-    } else if (lastTurn && lastTurn.role === 'assistant') {
-      const alreadySrvAns =
-        Array.isArray(lastTurn.questions) && lastTurn.questions.some((q) => Boolean(q?.answered));
-      if (!alreadySrvAns) {
-        qList = resolveQuestionsForTurn(lastTurn, null).questions;
-      }
-    }
-    if (!qList.length) return null;
-    const answered = lookupAnsweredQuestionState({
-      sessionId: sid,
-      approvalId: qApproval?.approvalId || '',
-      turnId: lastTurnId,
-      questions: qList,
-      isLastTurn: true
-    });
-    if (answered?.answered) return null;
-    const cardKey = `q-side-${sid}-${qApproval?.approvalId || lastTurnId || 'active'}`;
-    if (getQuestionDraft(cardKey).submitted) return null;
-    return {
-      cardKey,
-      sessionId: sid,
-      sessionTitle: String(r?.title || qApproval?.title || 'Session').trim(),
-      provider: provKey,
-      approvalId: qApproval?.approvalId || sid,
-      turnId: lastTurnId,
-      stepIndex: qApproval?.stepIndex ?? r?.pendingQuestion?.stepIndex ?? null,
-      selector: qApproval?.selector || '',
-      questions: qList
-    };
-  }
-
-  function getSessionPendingQuestionCount(r) {
-    const meta = getSessionPendingQuestionsMeta(r);
-    return meta ? meta.questions.length : 0;
-  }
-
-  function getSessionRunningBgBadge(r) {
-    if (!r?.id) return '';
-    const { runningTasks, runningCount } = getSessionBackgroundTasks(r, threadsCache[r.id]);
-    if (runningCount <= 0) return '';
-    const hasAgent = runningTasks.some((t) => t.kind === 'subagent');
-    if (hasAgent) return runningCount > 1 ? `${runningCount} Agents` : 'Agent';
-    return runningCount > 1 ? `${runningCount} Tasks` : 'Task';
-  }
-
-  // Phase 2 State: Inline Account Edit, Add Account Tray, Details Modal, Host Health & Tree Reconciler
-  let activeInlineAcctEdit = null; // { accountId, provider, surface: 'sidebar'|'pulse', value }
-  let addAccountTrayState = null; // { provider: 'antigravity'|'claude', label: '', surface: 'tray'|'modal' }
-  let activeIdeRename = null; // { kind: 'session'|'group', id, origText, el }
-  let idePointerInsideTree = false;
-  let ideMenuPinFreeze = false;
-  let ideDeferredTreeOrderChanged = false;
-  const ideFrozenOrderByGroup = new Map();
-
-  function flushDeferredIdeTreeOrder() {
-    if (!idePointerInsideTree && !ideMenuPinFreeze && !activeIdeRename && ideDeferredTreeOrderChanged) {
-      ideDeferredTreeOrderChanged = false;
-      ideFrozenOrderByGroup.clear();
-      renderIdeSidebar();
-    } else if (!idePointerInsideTree && !ideMenuPinFreeze && !activeIdeRename) {
-      ideFrozenOrderByGroup.clear();
-    }
-  }
-
-  function closeIdeContextMenu(skipFlush = false) {
-    const ctxMenuEl = $('ide-context-menu');
-    if (ctxMenuEl) {
-      ctxMenuEl.hidden = true;
-      ctxMenuEl.innerHTML = '';
-    }
-    if (ideMenuPinFreeze) {
-      ideMenuPinFreeze = false;
-      if (!skipFlush) flushDeferredIdeTreeOrder();
-    }
-  }
-
-  function resolveLiveAccountHostForAdd() {
-    const allDevs = getUnifiedFleetDevices();
-    const acctHosts = allDevs.filter((d) => d && d.online && d.pwaReady && d.pwaReady.signIn);
-    const acctFilterDev =
-      prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
-        ? String(prefs.selectedDeviceFilter).trim()
-        : '';
-    return (
-      acctHosts.find((d) => d.id === acctFilterDev) ||
-      acctHosts.find((d) => localWsDevice?.id && d.id === localWsDevice.id) ||
-      acctHosts[0] ||
-      allDevs.find((d) => d && d.online && d.id === acctFilterDev) ||
-      allDevs.find((d) => d && d.online) ||
-      null
-    );
-  }
-
-  function renderAddAccountTrayHtml(targetMode = 'tray') {
-    const st = addAccountTrayState || { provider: 'antigravity', label: '', surface: targetMode };
-    const host = resolveLiveAccountHostForAdd();
-    const hostTxt = host ? `on ${host.name || host.id}` : 'No PC online';
-    return `
-      <form class="ide-add-account-form" data-add-acct-form="1">
-        <div class="ide-add-tray-prov">
-          <button type="button" class="ide-add-tray-tab${st.provider === 'antigravity' ? ' active' : ''}" data-add-tray-prov="antigravity">Antigravity</button>
-          <button type="button" class="ide-add-tray-tab claude${st.provider === 'claude' ? ' active' : ''}" data-add-tray-prov="claude">Claude Code</button>
-        </div>
-        <input type="text" class="ide-add-tray-input" id="${targetMode === 'modal' ? 'acct-modal-add-label' : 'ide-add-tray-label'}" placeholder="Optional label (e.g. Work, Personal)" value="${esc(st.label || '')}" maxlength="32" autocomplete="off">
-        <div class="ide-add-tray-actions">
-          <span class="meta-timestamp" style="margin-right:auto;font-size:10px">${esc(hostTxt)}</span>
-          <button type="button" class="btn-ghost-sm" data-add-tray-cancel="1">Cancel</button>
-          <button type="submit" class="btn-brass-sm" ${host ? '' : 'disabled'}>Sign In</button>
-        </div>
-      </form>
-    `;
-  }
-
-  function openAddAccountTray(defaultProv = '', opts = {}) {
-    const host = resolveLiveAccountHostForAdd();
-    if (!host) {
-      showToast('A PC has to be online to add an account. Nothing was sent.');
-      return;
-    }
-    const prov =
-      defaultProv === 'claude'
-        ? 'claude'
-        : defaultProv === 'antigravity'
-          ? 'antigravity'
-          : addAccountTrayState?.provider || 'antigravity';
-    const trayEl = $('ide-add-account-tray');
-    const sidebarHost = trayEl?.closest('#ide-explorer-sidebar');
-    const sidebarVisible = Boolean(
-      trayEl &&
-        sidebarHost &&
-        getComputedStyle(sidebarHost).display !== 'none' &&
-        !prefs.sidebarCollapsed &&
-        !opts.preferModal
-    );
-    if (sidebarVisible) {
-      const sec = $('ide-sec-accounts');
-      if (sec) sec.open = true;
-      addAccountTrayState = { provider: prov, label: '', surface: 'tray' };
-      trayEl.innerHTML = renderAddAccountTrayHtml('tray');
-      trayEl.hidden = false;
-      setTimeout(() => $('ide-add-tray-label')?.focus(), 20);
-      return;
-    }
-    addAccountTrayState = { provider: prov, label: '', surface: 'modal' };
-    const modal = $('acct-signin-modal');
-    const titleEl = $('acct-signin-title');
-    const bodyEl = $('acct-signin-body');
-    const dotEl = $('acct-signin-dot');
-    if (modal && bodyEl) {
-      if (titleEl) titleEl.textContent = 'Add an account';
-      if (dotEl) dotEl.className = 'conn-dot is-live';
-      bodyEl.innerHTML = renderAddAccountTrayHtml('modal');
-      const wasHidden = modal.hidden;
-      modal.hidden = false;
-      if (wasHidden) pushUiHistoryState('acct-signin-modal');
-      setTimeout(() => $('acct-modal-add-label')?.focus(), 20);
-    }
-  }
-
-  function closeAddAccountTray() {
-    const wasModal = addAccountTrayState?.surface === 'modal';
-    addAccountTrayState = null;
-    const trayEl = $('ide-add-account-tray');
-    if (trayEl) {
-      trayEl.hidden = true;
-      trayEl.innerHTML = '';
-    }
-    if (wasModal && !acctSignIn) {
-      const modal = $('acct-signin-modal');
-      if (modal) modal.hidden = true;
-    }
-  }
-
-  async function submitAddAccountTray() {
-    if (!addAccountTrayState) return;
-    const labelEl =
-      addAccountTrayState.surface === 'modal'
-        ? $('acct-modal-add-label')
-        : $('ide-add-tray-label');
-    const provider = addAccountTrayState.provider === 'claude' ? 'claude' : 'antigravity';
-    const label = String(labelEl?.value ?? addAccountTrayState.label ?? '').trim();
-    const acctHosts = getUnifiedFleetDevices().filter((d) => d && d.online && d.pwaReady && d.pwaReady.signIn);
-    const acctFilterDev =
-      prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
-        ? String(prefs.selectedDeviceFilter).trim()
-        : '';
-    const acctSignInHost =
-      acctHosts.find((d) => d.id === acctFilterDev) ||
-      acctHosts.find((d) => localWsDevice?.id && d.id === localWsDevice.id) ||
-      acctHosts[0] ||
-      null;
-    const anyOnlineHost = getUnifiedFleetDevices().find((d) => d && d.online) || null;
-    if (!acctSignInHost && !anyOnlineHost) {
-      showToast('A PC has to be online to add an account. Nothing was sent.');
-      return;
-    }
-    closeAddAccountTray();
-    if (acctSignInHost) {
-      startAccountSignIn(provider, label, acctSignInHost);
-      return;
-    }
-    const acctRes = await dispatchRemoteCommand({
-      type: 'sessionAction',
-      action: 'accountAdd',
-      subAction: 'accountAdd',
-      provider,
-      label,
-      switchOnComplete: true
-    }).catch(() => null);
-    const acctProvName = provider === 'claude' ? 'Claude Code' : 'Antigravity';
-    const acctReplyInfo = readDirectPcReply(acctRes);
-    const acctReply = acctReplyInfo.reply || {};
-    showToast(
-      acctReplyInfo.mode === 'quarantined'
-        ? `🔐 ${acctProvName} sign-in requested on the PC. Existing accounts stay signed in.`
-        : acctReplyInfo.answered && acctReply.started === false
-          ? String(acctReply.error || `The PC could not start the ${acctProvName} sign-in.`)
-          : acctReplyInfo.answered
-            ? `🔐 ${acctProvName} sign-in requested on the PC. Existing accounts stay signed in.`
-            : `The PC did not answer directly. The ${acctProvName} sign-in opens there only if VS Code is running when the request arrives.`
-    );
-  }
-
-  function renderIdePendingLoginBanner() {
-    const slot = $('ide-pending-login-slot');
-    if (!slot) return;
-    const pl = appState?.pendingAccountLogin;
-    const hasPending = Boolean(pl && pl.active);
-    if (!hasPending) {
-      slot.hidden = true;
-      slot.innerHTML = '';
-      return;
-    }
-    const provLabel = pl.provider === 'claude' ? 'Claude Code' : 'Antigravity';
-    const labelBadge = pl.label ? ` (${esc(pl.label)})` : '';
-    const msg =
-      String(pl.error || pl.message || '').trim() ||
-      (pl.awaitingCode
-        ? 'Waiting for sign-in confirmation code.'
-        : pl.awaitingVerification
-          ? 'Waiting for browser verification.'
-          : 'Sign-in in progress on PC.');
-    slot.hidden = false;
-    slot.innerHTML = `
-      <div class="ide-pending-login-banner">
-        <div class="ide-pending-login-head">
-          <span>Signing in: ${esc(provLabel)}${labelBadge}</span>
-        </div>
-        <div class="ide-pending-login-copy">${esc(msg)}</div>
-        <div class="ide-pending-login-acts">
-          <button type="button" class="btn-brass-sm" data-pending-login-act="resume">Open Sign-In</button>
-          <button type="button" class="btn-ghost-sm" data-pending-login-act="cancel">Cancel</button>
-        </div>
-      </div>
-    `;
-  }
-
-  function openAccountDetailsModal() {
-    const modal = $('acct-details-modal');
-    if (!modal) return;
-    renderAccountDetailsModal();
-    const wasHidden = modal.hidden;
-    modal.hidden = false;
-    if (wasHidden) pushUiHistoryState('acct-details-modal');
-  }
-
-  function closeAccountDetailsModal() {
-    const modal = $('acct-details-modal');
-    if (modal) modal.hidden = true;
-  }
-
-  function renderAccountDetailsModal() {
-    const bodyEl = $('acct-details-body');
-    if (!bodyEl) return;
-    const { ordered } = getOrderedPulseQuotaCards();
-    const signedInRows = ordered.filter(({ acct }) => isSignedInQuotaCard(acct));
-    const fleetHosts = getUnifiedFleetDevices();
-    const hostListHtml = fleetHosts.length
-      ? fleetHosts
-          .map((d) => {
-            const ps = d.pcSetup;
-            const setupTxt = ps
-              ? ps.ok || ps.pendingCount === 0
-                ? `PC Setup ready (${ps.okCount}/${ps.totalCount})`
-                : `${ps.pendingCount} setup update(s) pending`
-              : 'Setup state pending';
-            return `<div class="acct-details-meta">${d.online ? '●' : '○'} <strong>${esc(d.name || d.id)}</strong> · ${esc(setupTxt)}</div>`;
-          })
-          .join('')
-      : '<div class="acct-details-meta">No paired host connected yet.</div>';
-
-    const acctsHtml = signedInRows.length
-      ? signedInRows
-          .map(({ acct, provKey }) => {
-            const label = provKey === 'claude' ? 'Claude Code' : 'Antigravity';
-            const nick = String(acct?.nickname || acct?.account?.nickname || '').trim();
-            const email = String(acct?.account?.email || acct?.email || '').trim();
-            const plan = String(acct?.account?.plan || acct?.plan || (provKey === 'claude' ? 'Max' : 'Pro')).trim();
-            const isActive = acct?.active !== false;
-            const limits = acct?.usage?.limits?.length ? acct.usage.limits : acct?.usage?.allLimits || [];
-            const limSummary = limits.length
-              ? limits
-                  .slice(0, 3)
-                  .map((l) => `${String(l.label || '').trim()}: ${l.known === false ? '—' : `${Math.round(Number(l.pct ?? l.usedPercent ?? 0))}%`}`)
-                  .join(' · ')
-              : acct?.usageMessage || 'Window idle';
-            return `
-              <div class="acct-details-item">
-                <div class="acct-details-top">
-                  <span>${esc(label)}${nick ? ` · ${esc(nick)}` : ''}</span>
-                  <span class="${isActive ? 'ide-acct-live-pill' : 'ide-plan-tag'}">${isActive ? '● Active' : 'Standby'}</span>
-                </div>
-                <div class="acct-details-meta">${email ? `${esc(email)} · ` : ''}${esc(plan)}</div>
-                <div class="acct-details-meta">${esc(limSummary)}</div>
-              </div>
-            `;
-          })
-          .join('')
-      : '<div class="acct-details-meta">No signed-in accounts synced yet.</div>';
-
-    bodyEl.innerHTML = `
-      <div class="acct-details-section">
-        <div class="acct-details-heading">Connected accounts (${signedInRows.length})</div>
-        ${acctsHtml}
-      </div>
-      <div class="acct-details-section">
-        <div class="acct-details-heading">Host storage &amp; setup</div>
-        <div class="acct-details-item">
-          <div class="acct-details-meta">Tokens stay encrypted in host local vault storage; OAuth URLs and home paths are excluded from remote snapshots.</div>
-          ${hostListHtml}
-        </div>
-      </div>
-      <div class="acct-details-foot">
-        <button type="button" class="btn-ghost-sm" data-acct-details-act="refresh">↻ Refresh Quotas</button>
-        <button type="button" class="btn-brass-sm" data-acct-details-act="add">+ Add Account</button>
-      </div>
-    `;
-  }
-
-  function renderIdeHostHealthCards() {
-    const stackEl = $('ide-host-health-stack');
-    if (!stackEl) return;
-    const devFilter =
-      prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
-        ? prefs.selectedDeviceFilter
-        : '';
-    const fleet = getUnifiedFleetDevices();
-    const targetHosts = devFilter
-      ? fleet.filter((d) => d && d.id === devFilter)
-      : fleet.filter((d) => d && (d.online || d.local));
-    const primaryHost = targetHosts[0] || fleet[0] || null;
-    const primaryId = primaryHost?.id || '';
-    const cards = [];
-
-    // 1. This PC setup updates (scan every matching host so healthy peer never hides sibling alerts)
-    const multiHostLabel = (d) =>
-      targetHosts.length > 1 && (d?.name || d?.id) ? `${d.name || d.id} · ` : '';
-    const setupHosts = targetHosts.filter(
-      (d) => d.pcSetup && !d.pcSetup.ok && Number(d.pcSetup.pendingCount || 0) > 0
-    );
-    if (
-      setupHosts.length === 0 &&
-      !devFilter &&
-      appState?.pcSetup &&
-      !appState.pcSetup.ok &&
-      Number(appState.pcSetup.pendingCount || 0) > 0
-    ) {
-      setupHosts.push({
-        id: primaryId,
-        name: primaryHost?.name || 'This PC',
-        pcSetup: appState.pcSetup,
-        online: true,
-        pwaReady: primaryHost?.pwaReady
-      });
-    }
-    for (const setupHost of setupHosts) {
-      const ps = setupHost.pcSetup;
-      const hint =
-        Array.isArray(ps.pendingTitles) && ps.pendingTitles.length
-          ? ps.pendingTitles.slice(0, 2).join(', ')
-          : `${ps.pendingCount} item(s) pending`;
-      const canApply = Boolean(setupHost.online && setupHost.pwaReady);
-      cards.push(`
-        <div class="ide-health-card is-warn" data-health-kind="pc-setup">
-          <div class="ide-health-head">
-            <span>${esc(multiHostLabel(setupHost))}This PC · Setup Updates (${ps.okCount}/${ps.totalCount})</span>
-          </div>
-          <div class="ide-health-sub">${esc(hint)}</div>
-          <div class="ide-health-acts">
-            ${canApply ? renderApplyPcSetupButtonHtml(setupHost, 'ide-link-pill') : ''}
-            <button type="button" class="ide-link-pill" data-host-act="checkPcSetup" data-device-id="${esc(setupHost.id || primaryId)}">Recheck</button>
-          </div>
-        </div>
-      `);
-    }
-
-    // Read hot-swap hold, auto-reload, and bridge notices across ALL matching target hosts
-    const healthSources = [];
-    const seenHealthIds = new Set();
-    for (const d of targetHosts) {
-      if (d?.hostHealth) {
-        seenHealthIds.add(d.id);
-        healthSources.push({
-          devId: d.id,
-          prefix: multiHostLabel(d),
-          hh: d.hostHealth
-        });
-      }
-    }
-    if (!devFilter && (appState?.hotSwapHold || appState?.autoReload || appState?.bridge)) {
-      const topHh = {
-        ...(appState.hotSwapHold ? { hotSwapHold: appState.hotSwapHold } : {}),
-        ...(appState.autoReload ? { autoReload: appState.autoReload } : {}),
-        ...(appState.bridge?.skipMessage || appState.bridge?.patchSkipNotice
-          ? { skipMessage: appState.bridge.skipMessage || appState.bridge.patchSkipNotice }
-          : {}),
-        ...(appState.bridge?.attachFailed
-          ? { attachFailed: true, bridgeMessage: appState.bridge.message || '' }
-          : {})
-      };
-      if (!healthSources.length || (!seenHealthIds.has(primaryId) && (topHh.hotSwapHold?.held || topHh.autoReload || topHh.skipMessage || topHh.attachFailed))) {
-        healthSources.push({ devId: primaryId, prefix: '', hh: topHh });
-      }
-    }
-
-    for (const { devId: hhDevId, prefix, hh } of healthSources) {
-      const hold = hh.hotSwapHold?.held ? hh.hotSwapHold : null;
-      if (hold) {
-        const holdLabel = hold.file || hold.stage || hold.version || '';
-        cards.push(`
-          <div class="ide-health-card is-crit" data-health-kind="hot-swap-hold">
-            <div class="ide-health-head">
-              <span>${esc(prefix)}THEO updates held${holdLabel ? ` (${esc(holdLabel)})` : ''}</span>
-            </div>
-            <div class="ide-health-sub">${esc(hold.error || hold.reason || 'A recent extension hot-swap failed verification.')}</div>
-          </div>
-        `);
-      }
-
-      const arRaw =
-        hh.autoReload &&
-        (hh.autoReload.pending || hh.autoReload.failure || hh.autoReload.pendingReload || hh.autoReload.canaryFailure)
-          ? hh.autoReload
-          : null;
-      if (arRaw) {
-        const isCanaryFail = Boolean(arRaw.failure || arRaw.canaryFailure || arRaw.state === 'failed');
-        const arPending = Boolean(arRaw.pending ?? arRaw.pendingReload);
-        const arReasons = Array.isArray(arRaw.reasons) && arRaw.reasons.length ? arRaw.reasons.join(' · ') : '';
-        const arBlockers = Array.isArray(arRaw.blockers) && arRaw.blockers.length
-          ? arRaw.blockers.map((b) => b.label || b.code).filter(Boolean).join(', ')
-          : '';
-        const arTitle = arPending
-          ? `${prefix}THEO update ready`
-          : isCanaryFail
-            ? `${prefix}THEO auto-reload check failed`
-            : `${prefix}THEO update status`;
-        const arSub =
-          arRaw.canaryFailure?.reason ||
-          arRaw.reason ||
-          arReasons ||
-          (arBlockers ? `Waiting on: ${arBlockers}` : isCanaryFail ? 'Previous canary reload failed.' : 'Reload the VS Code window to finish applying the bundle.');
-        cards.push(`
-          <div class="ide-health-card ${isCanaryFail ? 'is-crit' : 'is-info'}" data-health-kind="auto-reload">
-            <div class="ide-health-head">
-              <span>${esc(arTitle)}</span>
-            </div>
-            <div class="ide-health-sub">${esc(arSub)}</div>
-            <div class="ide-health-acts">
-              <button type="button" class="ide-link-pill" data-host-act="reload" data-device-id="${esc(hhDevId)}">Reload Window</button>
-              ${
-                isCanaryFail
-                  ? `<button type="button" class="ide-link-pill" data-host-act="dismissAutoReloadFailure" data-device-id="${esc(hhDevId)}">Dismiss</button>`
-                  : ''
-              }
-            </div>
-          </div>
-        `);
-      }
-
-      const skipNotice =
-        hh.skipMessage ||
-        (hh.attachFailed ? hh.bridgeMessage || 'Bridge attach failed.' : '');
-      if (skipNotice) {
-        cards.push(`
-          <div class="ide-health-card is-info" data-health-kind="patch-skip">
-            <div class="ide-health-head">
-              <span>${esc(prefix)}Bridge Notice</span>
-            </div>
-            <div class="ide-health-sub">${esc(skipNotice)}</div>
-          </div>
-        `);
-      }
-    }
-
-    if (cards.length === 0) {
-      stackEl.hidden = true;
-      stackEl.innerHTML = '';
-    } else {
-      stackEl.hidden = false;
-      stackEl.innerHTML = cards.join('');
-    }
-  }
-
-  function finishIdeInlineRename(commit = true) {
-    const st = activeIdeRename;
-    if (!st) return;
-    activeIdeRename = null;
-    const { kind, id, origText, el } = st;
-    if (el) {
-      el.contentEditable = 'false';
-      el.removeAttribute('spellcheck');
-    }
-    const rawNext = String(el?.textContent || '').replace(/\s+/g, ' ').trim();
-    if (!commit || !rawNext || rawNext === origText) {
-      if (el) el.textContent = origText;
-      flushDeferredIdeTreeOrder();
-      return;
-    }
-    if (el) el.textContent = rawNext;
-    if (kind === 'session' || kind === 'chat-session') {
-      const row = (appState?.rows || []).find((r) => r && r.id === id);
-      if (row) {
-        row.title = rawNext;
-        noteRowOverride(id, { title: rawNext });
-        persistCache();
-      }
-      renderIdeSidebar();
-      renderSessionsView();
-      if (prefs.selectedThreadId === id) renderChatView();
-      dispatchRemoteCommand({
-        type: 'sessionAction',
-        action: 'rename',
-        subAction: 'rename',
-        id,
-        name: rawNext,
-        provider: row?.provider || 'antigravity',
-        targetDeviceId: row?.deviceId || ''
-      }).catch(() => {});
-      showToast(`Renamed to "${rawNext}"`);
-    } else if (kind === 'group') {
-      noteGroupOverride(id, { op: 'rename', name: rawNext });
-      const grpObj = (appState?.groups || []).find((g) => g && g.id === id);
-      if (grpObj) {
-        grpObj.name = rawNext;
-        persistCache();
-      }
-      renderSessionsView();
-      if (isNewSessionMode()) renderChatView();
-      dispatchRemoteCommand({
-        type: 'sessionAction',
-        action: 'groupRename',
-        subAction: 'groupRename',
-        group: id,
-        name: rawNext
-      }).catch(() => {});
-      showToast(`Renamed group to "${rawNext}"`);
-    }
-    flushDeferredIdeTreeOrder();
-  }
-
-  function beginIdeInlineRename(kind, id) {
-    if (isPinLocked() || !id || id === '__new__') return false;
-    if (activeIdeRename) finishIdeInlineRename(false);
-    let targetEl = null;
-    if (kind === 'chat-session') {
-      targetEl = $('chat-session-title');
-    } else {
-      const treeEl = $('ide-sidebar-tree');
-      if (!treeEl) return false;
-      if (kind === 'session') {
-        const rowEl = Array.from(treeEl.querySelectorAll('.ide-tree-row[data-ide-open-session]')).find(
-          (n) => n.dataset.ideOpenSession === id
-        );
-        targetEl = rowEl?.querySelector('.ide-tree-title') || null;
-      } else if (kind === 'group') {
-        const grpEl = Array.from(treeEl.querySelectorAll('.ide-tree-group[data-ide-group]')).find(
-          (n) => n.dataset.ideGroup === id
-        );
-        targetEl = grpEl?.querySelector('.ide-tree-group-name') || null;
-      }
-    }
-    if (!targetEl) return false;
-    const origText = String(targetEl.textContent || '').trim();
-    activeIdeRename = { kind, id, origText, el: targetEl };
-    targetEl.contentEditable = 'true';
-    targetEl.setAttribute('spellcheck', 'false');
-    targetEl.focus();
-    try {
-      const range = document.createRange();
-      range.selectNodeContents(targetEl);
-      const sel = window.getSelection();
-      sel?.removeAllRanges();
-      sel?.addRange(range);
-    } catch {}
-    return true;
-  }
-
-  function openAccountContextMenu(accountId, provKey, clientX, clientY) {
-    if (isPinLocked() || !accountId) return;
-    const menuEl = $('ide-context-menu');
-    if (!menuEl) return;
-    hideIdeMicroTip();
-    const { ordered } = getOrderedPulseQuotaCards();
-    const idx = ordered.findIndex((x) => x.id === accountId);
-    const entry = idx >= 0 ? ordered[idx] : null;
-    if (!entry) return;
-    const { acct } = entry;
-    const prov = provKey === 'claude' ? 'claude' : 'antigravity';
-    const isActive = acct?.active !== false;
-    const email = String(acct?.account?.email || acct?.email || '').trim();
-    const nick = String(acct?.nickname || acct?.account?.nickname || '').trim();
-    const signedInCount = ordered.filter((x) => x.provKey === prov && isSignedInQuotaCard(x.acct)).length;
-    const canUp = ordered.length > 1 && idx > 0;
-    const canDown = ordered.length > 1 && idx < ordered.length - 1;
-    menuEl.innerHTML = `
-      ${
-        !isActive
-          ? `<button type="button" class="ctx-menu-item" data-acct-menu-act="switch" data-account-id="${esc(accountId)}" data-account-prov="${prov}"><span>⇄ Set Active Account</span></button>`
-          : ''
-      }
-      <button type="button" class="ctx-menu-item" data-acct-menu-act="new-session" data-account-id="${esc(accountId)}" data-account-prov="${prov}">
-        <span>+ New Session with Account</span>
-      </button>
-      <button type="button" class="ctx-menu-item" data-acct-menu-act="label" data-account-id="${esc(accountId)}" data-account-prov="${prov}" data-account-nick="${esc(nick)}">
-        <span>✎ Edit Label…</span>
-      </button>
-      ${canUp ? `<button type="button" class="ctx-menu-item" data-account-move="up" data-account-id="${esc(accountId)}" data-account-prov="${prov}"><span>↑ Move Up</span></button>` : ''}
-      ${canDown ? `<button type="button" class="ctx-menu-item" data-account-move="down" data-account-id="${esc(accountId)}" data-account-prov="${prov}"><span>↓ Move Down</span></button>` : ''}
-      <button type="button" class="ctx-menu-item" data-acct-menu-act="refresh" data-account-id="${esc(accountId)}" data-account-prov="${prov}">
-        <span>↻ Refresh Quotas</span>
-      </button>
-      <button type="button" class="ctx-menu-item" data-acct-menu-act="details" data-account-id="${esc(accountId)}" data-account-prov="${prov}">
-        <span>Details &amp; Storage…</span>
-      </button>
-      <button type="button" class="ctx-menu-item danger" data-account-remove="${esc(accountId)}" data-account-prov="${prov}" data-account-email="${esc(email)}">
-        <span>${signedInCount <= 1 ? 'Sign Out Account' : 'Disconnect Account'}</span>
-      </button>
-    `;
-    menuEl.hidden = false;
-    const vw = window.innerWidth || 1280;
-    const vh = window.innerHeight || 800;
-    const rect = menuEl.getBoundingClientRect();
-    menuEl.style.left = `${Math.max(8, Math.min(clientX, vw - (rect.width || 210) - 8))}px`;
-    menuEl.style.top = `${Math.max(8, Math.min(clientY, vh - (rect.height || 240) - 8))}px`;
-  }
-
-  function openGroupContextMenu(groupId, clientX, clientY) {
-    if (isPinLocked() || !groupId) return;
-    const grp = (appState?.groups || []).find((g) => g && g.id === groupId);
-    if (!grp) return;
-    const menuEl = $('ide-context-menu');
-    if (!menuEl) return;
-    hideIdeMicroTip();
-    const hoverCard = $('ide-hover-card');
-    if (hoverCard) hoverCard.hidden = true;
-    ideMenuPinFreeze = true;
-    menuEl.innerHTML = `
-      <button type="button" class="ctx-menu-item" data-group-act="new-in-group" data-group-id="${esc(grp.id)}">
-        <span>+ New Session in Group</span>
-      </button>
-      <button type="button" class="ctx-menu-item" data-group-act="rename" data-group-id="${esc(grp.id)}" data-group-name="${esc(grp.name || '')}">
-        <span>✎ Rename Group</span><span class="meta-timestamp">F2</span>
-      </button>
-      <button type="button" class="ctx-menu-item danger" data-group-act="delete" data-group-id="${esc(grp.id)}" data-group-name="${esc(grp.name || '')}">
-        <span>✕ Delete Group</span>
-      </button>
-    `;
-    menuEl.hidden = false;
-    const vw = window.innerWidth || 1280;
-    const vh = window.innerHeight || 800;
-    const rect = menuEl.getBoundingClientRect();
-    menuEl.style.left = `${Math.max(8, Math.min(clientX, vw - (rect.width || 210) - 8))}px`;
-    menuEl.style.top = `${Math.max(8, Math.min(clientY, vh - (rect.height || 180) - 8))}px`;
-  }
-
-  function openSessionContextMenu(sessionId, clientX, clientY) {
-    if (isPinLocked() || !sessionId) return;
-    const menuEl = $('ide-context-menu');
-    if (!menuEl) return;
-    hideIdeMicroTip();
-    const hoverCard = $('ide-hover-card');
-    if (hoverCard) hoverCard.hidden = true;
-    const r = (appState?.rows || []).find((x) => x && x.id === sessionId);
-    if (!r) return;
-    ideMenuPinFreeze = true;
-    const provKey = r.provider === 'claude' ? 'claude' : 'antigravity';
-    const isRunning = isSessionActivelyRunning(r.id);
-    const isPinnedBg = prefs.pinnedBgSessionId === r.id;
-    const hasCustomGroup = Boolean(
-      r.group && (appState?.groups || []).some((g) => g && g.id === r.group)
-    );
-    // "Reveal in VS Code" is offered only when connected and that host reports VS Code open and online.
-    const canRevealInVsCode = isHostVsCodeOpenForSession(r, false);
-    menuEl.innerHTML = `
-      <button type="button" class="ctx-menu-item" data-ctx-menu-act="open" data-id="${esc(r.id)}" data-prov="${provKey}">
-        <span>Open in Workbench</span><span class="meta-timestamp">↵</span>
-      </button>
-      <button type="button" class="ctx-menu-item" data-ctx-menu-act="rename" data-id="${esc(r.id)}" data-prov="${provKey}">
-        <span>✎ Rename Session</span><span class="meta-timestamp">F2</span>
-      </button>
-      <button type="button" class="ctx-menu-item" data-ctx-menu-act="inspect-outline" data-id="${esc(r.id)}" data-prov="${provKey}">
-        <span>Inspect Outline &amp; Files</span><span class="meta-timestamp">⌘I</span>
-      </button>
-      <button type="button" class="ctx-menu-item" data-ctx-menu-act="pin-bg" data-id="${esc(r.id)}">
-        <span>${isPinnedBg ? 'Unpin Side Agents' : 'Pin Side Agents in Sidebar'}</span>
-      </button>
-      ${
-        canRevealInVsCode
-          ? `<button type="button" class="ctx-menu-item" data-ctx-menu-act="open-vscode" data-id="${esc(r.id)}" data-prov="${provKey}">
-        <span>Reveal in Desktop VS Code</span>
-      </button>`
-          : ''
-      }
-      <button type="button" class="ctx-menu-item" data-sess-act="pin" data-id="${esc(r.id)}" data-val="${isRowPinned(r) ? 'false' : 'true'}">
-        <span>${isRowPinned(r) ? 'Unpin Chat' : 'Pin Chat'}</span>
-      </button>
-      <button type="button" class="ctx-menu-item" data-sess-act="group" data-id="${esc(r.id)}">
-        <span>Move to Group…</span>
-      </button>
-      ${
-        hasCustomGroup && !r.archived
-          ? `<button type="button" class="ctx-menu-item" data-sess-act="group-remove" data-id="${esc(r.id)}"><span>Remove from Group</span></button>`
-          : ''
-      }
-      <button type="button" class="ctx-menu-item" data-sess-act="unread" data-id="${esc(r.id)}" data-val="${r.unread ? 'false' : 'true'}">
-        <span>${r.unread ? 'Mark as Read' : 'Mark as Unread'}</span>
-      </button>
-      ${
-        isRunning
-          ? `<button type="button" class="ctx-menu-item danger" data-sess-act="stop" data-id="${esc(r.id)}"><span>■ Stop Running Session</span></button>`
-          : ''
-      }
-      <button type="button" class="ctx-menu-item${r.archived ? '' : ' danger'}" data-sess-act="archive" data-id="${esc(r.id)}" data-val="${r.archived ? 'false' : 'true'}">
-        <span>${r.archived ? 'Restore Session' : 'Archive Session'}</span>
-      </button>
-    `;
-    menuEl.hidden = false;
-    const vw = window.innerWidth || 1280;
-    const vh = window.innerHeight || 800;
-    const rect = menuEl.getBoundingClientRect();
-    const left = Math.max(8, Math.min(clientX, vw - (rect.width || 210) - 8));
-    const top = Math.max(8, Math.min(clientY, vh - (rect.height || 240) - 8));
-    menuEl.style.left = `${left}px`;
-    menuEl.style.top = `${top}px`;
-  }
-
-  function showSidebarHoverCard(rowEl) {
-    if (isPinLocked() || !rowEl || window.innerWidth <= 1024) return;
-    const ctxMenu = $('ide-context-menu');
-    if (ctxMenu && !ctxMenu.hidden) return;
-    const sid = rowEl.dataset.ideOpenSession;
-    const card = $('ide-hover-card');
-    if (!sid || !card) return;
-    const r = (appState?.rows || []).find((x) => x && x.id === sid);
-    if (!r) return;
-    const td = threadsCache[sid];
-    const msgs = coalesceThreadMessages(td?.messages || []);
-    const lastAsst = [...msgs].reverse().find((m) => m && m.role === 'assistant' && m.text);
-    const snippet = String(lastAsst?.text || r.preview || r.summary || '')
-      .replace(/```[\s\S]*?```/g, '[code]')
-      .replace(/[#*`_>\[\]]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 180);
-    const { runningCount, totalCount } = getSessionBackgroundTasks(r, td);
-    const qCnt = getSessionPendingQuestionCount(r);
-    card.innerHTML = `
-      <div class="hc-title">${esc(r.title || 'Untitled Session')}</div>
-      <div class="hc-meta tabular">
-        <span>${r.provider === 'claude' ? 'Claude Code' : 'Antigravity'}</span>
-        ${r.folder ? `<span>· ${esc(r.folder)}</span>` : ''}
-        ${r.branch ? `<span>· ⎇ ${esc(r.branch)}</span>` : ''}
-        ${r.at ? `<span>· ${esc(timeAgo(r.at))}</span>` : ''}
-      </div>
-      ${
-        qCnt > 0 || runningCount > 0 || totalCount > 0
-          ? `<div class="hc-meta tabular">${qCnt > 0 ? `<span style="color:var(--amber)">? ${qCnt} Question${qCnt > 1 ? 's' : ''}</span>` : ''}${runningCount > 0 ? `<span style="color:var(--emerald)">● ${runningCount} Live Agent/Task</span>` : totalCount > 0 ? `<span>${totalCount} Side Agent/Task</span>` : ''}</div>`
-          : ''
-      }
-      ${snippet ? `<div class="hc-snippet">${esc(snippet)}</div>` : ''}
-    `;
-    card.hidden = false;
-    const rRect = rowEl.getBoundingClientRect();
-    const vh = window.innerHeight || 800;
-    const vw = window.innerWidth || 1280;
-    const left = Math.min(vw - 304, Math.max(12, rRect.right + 10));
-    const top = Math.min(vh - 150, Math.max(12, rRect.top - 4));
-    card.style.left = `${left}px`;
-    card.style.top = `${top}px`;
-  }
-
-  function renderCollapsedGroupPinBadgeHtml(items, isCollapsed, clsName) {
-    if (!isCollapsed || !Array.isArray(items) || items.length === 0) return '';
-    const cnt = items.filter((r) => r && r.id && isRowPinned(r)).length;
-    if (cnt <= 0) return '';
-    const tip = cnt === 1 ? '1 pinned chat' : `${cnt} pinned chats`;
-    return `<span class="${clsName} tabular" role="img" aria-label="${tip}" data-micro-tip="${tip}">${PIN_FILLED_SVG}<span>${cnt}</span></span>`;
-  }
-
-  function applyFrozenIdeOrder(secKey, rows, qActive) {
-    const freezeOn = Boolean((idePointerInsideTree || ideMenuPinFreeze || activeIdeRename) && !qActive);
-    if (!freezeOn) {
-      ideFrozenOrderByGroup.set(secKey, rows.map((r) => r.id));
-      return rows;
-    }
-    const frozenIds = ideFrozenOrderByGroup.get(secKey);
-    if (!frozenIds || frozenIds.length === 0) {
-      ideFrozenOrderByGroup.set(secKey, rows.map((r) => r.id));
-      return rows;
-    }
-    const byId = new Map(rows.map((r) => [r.id, r]));
-    const ordered = [];
-    const seen = new Set();
-    for (const id of frozenIds) {
-      if (byId.has(id) && !seen.has(id)) {
-        ordered.push(byId.get(id));
-        seen.add(id);
-      }
-    }
-    for (const r of rows) {
-      if (!seen.has(r.id)) {
-        ordered.push(r);
-        seen.add(r.id);
-      }
-    }
-    const liveIds = rows.map((r) => r.id);
-    const frozenOutIds = ordered.map((r) => r.id);
-    if (
-      liveIds.length !== frozenOutIds.length ||
-      liveIds.some((id, idx) => id !== frozenOutIds[idx])
-    ) {
-      ideDeferredTreeOrderChanged = true;
-    }
-    return ordered;
-  }
-
-  function buildIdeTreeRowInnerHtml(r, provKey, dotCls, isPinnedRow, qCnt, bgBadge, age, isOpenTab) {
-    const isArc = Boolean(r.archived);
-    const isDesktop = isClaudeDesktopRow(r);
-    return `
-      <span class="ide-dot ${dotCls}"></span>
-      <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
-      ${
-        isPinnedRow
-          ? `<span class="ide-pin-ind" aria-label="Pinned chat">${PIN_FILLED_SVG}</span>`
-          : ''
-      }
-      <span class="ide-tree-title">${esc(r.title || 'Untitled Session')}</span>
-      ${
-        isDesktop
-          ? `<span class="session-origin-pill" aria-label="Claude Desktop session">Desktop</span>`
-          : ''
-      }
-      ${
-        !isArc && provKey === 'antigravity' && (r.neonWarning || /neon/i.test(String(r.model || '')))
-          ? `<button type="button" class="session-neon-pill" data-switch-neon-carbon="${esc(r.id)}" data-micro-tip="Switch session from Neon to Carbon" aria-label="Neon model active — switch to Carbon">Neon</button>`
-          : ''
-      }
-      ${qCnt > 0 ? `<span class="ide-row-pill q-pill tabular">?${qCnt}</span>` : ''}
-      ${bgBadge ? `<span class="ide-row-pill bg-pill tabular">${esc(bgBadge)}</span>` : ''}
-      <span class="ide-tree-age tabular">${esc(age)}</span>
-      <span class="ide-tree-acts">
-        ${
-          dotCls === 'working'
-            ? `<button type="button" class="ide-row-act stop" data-sess-act="stop" data-id="${esc(r.id)}" data-micro-tip="Stop session" aria-label="Stop session">■</button>`
-            : ''
-        }
-        ${
-          isOpenTab
-            ? `<button type="button" class="ide-row-act close-tab" data-close-editor-tab="${esc(r.id)}" data-micro-tip="Close open tab" aria-label="Close open tab">×</button>`
-            : ''
-        }
-        ${
-          !isArc
-            ? `<button type="button" class="ide-row-act pin-act${isPinnedRow ? ' active' : ''}" data-sess-act="pin" data-id="${esc(r.id)}" data-val="${isPinnedRow ? 'false' : 'true'}" data-micro-tip="${isPinnedRow ? 'Unpin chat' : 'Pin chat'}" aria-pressed="${isPinnedRow}" aria-label="${isPinnedRow ? 'Unpin chat' : 'Pin chat'}">${isPinnedRow ? PIN_FILLED_SVG : PIN_OUTLINE_SVG}</button>`
-            : ''
-        }
-        <button type="button" class="ide-row-act" data-sess-ctx-menu="${esc(r.id)}" data-micro-tip="Session actions" aria-label="Session actions">⋯</button>
-        <button type="button" class="ide-row-act" data-sess-act="archive" data-id="${esc(r.id)}" data-val="${isArc ? 'false' : 'true'}" data-micro-tip="${isArc ? 'Restore session' : 'Archive session'}" aria-label="${isArc ? 'Restore session' : 'Archive session'}">${isArc ? '↩' : '✕'}</button>
-      </span>
-    `;
-  }
-
-  function patchIdeTreeRowNode(rowEl, r, curSelected) {
-    const provKey = r.provider === 'claude' ? 'claude' : 'antigravity';
-    const isSelected = r.id === curSelected;
-    const isRunningNow = isSessionActivelyRunning(r.id);
-    const isOpenTab = isSessionOpenTab(r);
-    const isPinnedRow = isRowPinned(r);
-    const qCnt = getSessionPendingQuestionCount(r);
-    const dotCls = isRunningNow
-      ? 'working'
-      : r.status === 'waiting' || qCnt > 0
-        ? 'waiting'
-        : isOpenTab
-          ? 'open'
-          : 'closed';
-    const age = shortSidebarAge(getRowLastWorkedMs(r));
-    const bgBadge = r.bgTask?.state === 'running' ? getSessionRunningBgBadge(r) : '';
-    const isArc = Boolean(r.archived);
-    const desiredClass = `ide-tree-row${isSelected ? ' active' : ''}${isPinnedRow ? ' is-pinned' : ''}${isOpenTab ? ' is-open-tab' : ''}${r.unread ? ' is-unread' : ''}${isArc ? ' is-archived' : ''}`;
-    if (rowEl.className !== desiredClass) rowEl.className = desiredClass;
-    if (rowEl.getAttribute('role') !== 'button') rowEl.setAttribute('role', 'button');
-    if (rowEl.getAttribute('tabindex') !== '0') rowEl.setAttribute('tabindex', '0');
-    if (rowEl.dataset.ideOpenSession !== r.id) rowEl.dataset.ideOpenSession = r.id;
-    if (rowEl.dataset.sessionProv !== provKey) rowEl.dataset.sessionProv = provKey;
-
-    if (activeIdeRename && activeIdeRename.kind === 'session' && activeIdeRename.id === r.id) {
-      return;
-    }
-
-    const neon = Boolean(
-      !isArc && provKey === 'antigravity' && (r.neonWarning || /neon/i.test(String(r.model || '')))
-    );
-    const desk = isClaudeDesktopRow(r);
-    const sig = `${provKey}|${dotCls}|${isPinnedRow ? 1 : 0}|${r.title || ''}|${desk ? 1 : 0}|${neon ? 1 : 0}|${qCnt}|${bgBadge}|${age}|${isOpenTab ? 1 : 0}|${isArc ? 1 : 0}`;
-    if (rowEl.dataset.rowRenderSig !== sig) {
-      rowEl.dataset.rowRenderSig = sig;
-      rowEl.innerHTML = buildIdeTreeRowInnerHtml(
-        r,
-        provKey,
-        dotCls,
-        isPinnedRow,
-        qCnt,
-        bgBadge,
-        age,
-        isOpenTab
-      );
-    }
-  }
-
-  function reconcileIdeRowsContainer(itemsEl, rows, curSelected) {
-    const existingById = new Map();
-    for (const child of Array.from(itemsEl.children)) {
-      const sid = child.dataset?.ideOpenSession;
-      if (child.classList?.contains('ide-tree-row') && sid) {
-        existingById.set(sid, child);
-      } else {
-        child.remove();
-      }
-    }
-    const wantIds = new Set(rows.map((r) => r.id));
-    for (const [sid, el] of existingById.entries()) {
-      if (!wantIds.has(sid)) {
-        el.remove();
-        existingById.delete(sid);
-      }
-    }
-    rows.forEach((r, idx) => {
-      let rowEl = existingById.get(r.id);
-      if (!rowEl) {
-        rowEl = document.createElement('div');
-      }
-      patchIdeTreeRowNode(rowEl, r, curSelected);
-      const curAtIdx = itemsEl.children[idx];
-      if (curAtIdx !== rowEl) {
-        itemsEl.insertBefore(rowEl, curAtIdx || null);
-      }
-    });
-  }
-
-  function reconcileIdeTreeDOM(treeEl, groupSpecs, flatRows, curSelected) {
-    if (!groupSpecs) {
-      const sliceRows = Array.isArray(flatRows) ? flatRows : [];
-      if (sliceRows.length === 0) return;
-      for (const ch of Array.from(treeEl.children)) {
-        if (!ch.classList?.contains('ide-tree-group-items') || ch.dataset?.flatRoot !== '1') {
-          ch.remove();
-        }
-      }
-      let flatContainer = treeEl.firstElementChild;
-      if (!flatContainer || !flatContainer.classList.contains('ide-tree-group-items')) {
-        flatContainer = document.createElement('div');
-        flatContainer.className = 'ide-tree-group-items';
-        flatContainer.dataset.flatRoot = '1';
-        treeEl.appendChild(flatContainer);
-      }
-      reconcileIdeRowsContainer(flatContainer, sliceRows, curSelected);
-      return;
-    }
-
-    const existingGroups = new Map();
-    for (const ch of Array.from(treeEl.children)) {
-      const gid = ch.dataset?.ideGroup;
-      if (ch.classList?.contains('ide-tree-group') && gid) {
-        existingGroups.set(gid, ch);
-      } else {
-        ch.remove();
-      }
-    }
-    const wantKeys = new Set(groupSpecs.map((s) => s.key));
-    for (const [gid, el] of existingGroups.entries()) {
-      if (!wantKeys.has(gid)) {
-        el.remove();
-        existingGroups.delete(gid);
-      }
-    }
-
-    groupSpecs.forEach((spec, gIdx) => {
-      let grpEl = existingGroups.get(spec.key);
-      if (!grpEl) {
-        grpEl = document.createElement('div');
-        grpEl.className = `ide-tree-group${spec.collapsed ? ' collapsed' : ''}`;
-        grpEl.dataset.ideGroup = spec.key;
-        grpEl.innerHTML = `
-          <div class="ide-tree-group-hdr">
-            <button type="button" class="ide-tree-group-btn" data-group-act="toggle" data-group-id="${esc(spec.key)}" aria-expanded="${!spec.collapsed}">
-              <span class="ide-chevron-sm"></span>
-              <span class="ide-tree-group-name"></span>
-              <span class="ide-group-pin-slot"></span>
-              <span class="ide-group-pill tabular"></span>
-            </button>
-            <div class="ide-tree-group-acts"></div>
-          </div>
-          <div class="ide-tree-group-items"></div>
-        `;
-      }
-      const wantGrpCls = `ide-tree-group${spec.collapsed ? ' collapsed' : ''}`;
-      if (grpEl.className !== wantGrpCls) grpEl.className = wantGrpCls;
-      if (grpEl.dataset.ideGroup !== spec.key) grpEl.dataset.ideGroup = spec.key;
-
-      const hdrBtn = grpEl.querySelector(':scope > .ide-tree-group-hdr > .ide-tree-group-btn');
-      if (hdrBtn) {
-        hdrBtn.setAttribute('aria-expanded', spec.collapsed ? 'false' : 'true');
-        hdrBtn.dataset.groupId = spec.key;
-        const chevEl = hdrBtn.querySelector('.ide-chevron-sm');
-        const wantChev = spec.collapsed ? CHEVRON_RIGHT_SVG : CHEVRON_DOWN_SVG;
-        if (chevEl && chevEl.dataset.chevDir !== (spec.collapsed ? 'r' : 'd')) {
-          chevEl.dataset.chevDir = spec.collapsed ? 'r' : 'd';
-          chevEl.innerHTML = wantChev;
-        }
-        const nameEl = hdrBtn.querySelector('.ide-tree-group-name');
-        if (nameEl && !(activeIdeRename && activeIdeRename.kind === 'group' && activeIdeRename.id === spec.key)) {
-          if (nameEl.textContent !== spec.name) nameEl.textContent = spec.name;
-        }
-        const pinSlot = hdrBtn.querySelector('.ide-group-pin-slot');
-        const wantPinHtml = renderCollapsedGroupPinBadgeHtml(
-          spec.items,
-          spec.collapsed,
-          'ide-group-pin-badge'
-        );
-        if (pinSlot && pinSlot.dataset.pinSig !== wantPinHtml) {
-          pinSlot.dataset.pinSig = wantPinHtml;
-          pinSlot.innerHTML = wantPinHtml;
-        }
-        const pillEl = hdrBtn.querySelector('.ide-group-pill');
-        const countTxt = String(spec.items.length);
-        if (pillEl && pillEl.textContent !== countTxt) pillEl.textContent = countTxt;
-      }
-
-      const actsEl = grpEl.querySelector(':scope > .ide-tree-group-hdr > .ide-tree-group-acts');
-      if (actsEl) {
-        const wantActsHtml = spec.actionsHtml || '';
-        const pinnedCls = `ide-tree-group-acts${spec.alwaysShowActions ? ' is-pinned-visible' : ''}`;
-        if (actsEl.className !== pinnedCls) actsEl.className = pinnedCls;
-        if (actsEl.dataset.actsSig !== wantActsHtml) {
-          actsEl.dataset.actsSig = wantActsHtml;
-          actsEl.innerHTML = wantActsHtml;
-        }
-      }
-
-      let itemsEl = grpEl.querySelector(':scope > .ide-tree-group-items');
-      if (spec.collapsed) {
-        if (itemsEl) itemsEl.remove();
-      } else {
-        if (!itemsEl) {
-          itemsEl = document.createElement('div');
-          itemsEl.className = 'ide-tree-group-items';
-          grpEl.appendChild(itemsEl);
-        }
-        reconcileIdeRowsContainer(itemsEl, spec.items, curSelected);
-      }
-      const curAtIdx = treeEl.children[gIdx];
-      if (curAtIdx !== grpEl) {
-        treeEl.insertBefore(grpEl, curAtIdx || null);
-      }
-    });
-  }
-
-  function renderIdeSidebar() {
-    const accountsEl = $('ide-sidebar-accounts');
-    const acctsCountEl = $('ide-accounts-count');
-    const approvalsEl = $('ide-sidebar-approvals');
-    const secQuestionsEl = $('ide-sec-questions');
-    const questionsCountEl = $('ide-questions-count');
-    const sidebarQuestionsEl = $('ide-sidebar-questions');
-    const secBgTasksEl = $('ide-sec-bgtasks');
-    const bgHeadingEl = $('ide-bgtasks-heading');
-    const bgCountEl = $('ide-bgtasks-count');
-    const bgUnpinBtn = $('ide-bgtasks-unpin');
-    const bgStopAllBtn = $('ide-bgtasks-stop-all');
-    const sidebarBgEl = $('ide-sidebar-bgtasks');
-    const countEl = $('ide-sidebar-count');
-    const treeEl = $('ide-sidebar-tree');
-    if (!treeEl) return;
-
-    // 1. Account & Usage compact VS Code Hub cards + Pending Login + Exception Host Health Cards
-    renderIdePendingLoginBanner();
-    renderIdeHostHealthCards();
-    const hide3pSide = isThirdPartyQuotaHidden();
-    const has3pSide = hasAnyAntigravityThirdPartyBars();
-    const side3pPill = $('ide-toggle-3p-pill');
-    if (side3pPill) {
-      side3pPill.hidden = !(has3pSide || hide3pSide);
-      side3pPill.setAttribute('data-toggle-3p-quota', hide3pSide ? 'show' : 'hide');
-      side3pPill.textContent = hide3pSide ? '+ 3P' : 'Hide 3P';
-      side3pPill.setAttribute('aria-pressed', hide3pSide ? 'true' : 'false');
-    }
-    if (accountsEl) {
-      const { ordered, sameProvCounts } = getOrderedPulseQuotaCards();
-      const signedInCards = ordered.filter(({ acct }) => isSignedInQuotaCard(acct));
-      if (acctsCountEl) {
-        acctsCountEl.hidden = signedInCards.length === 0;
-        acctsCountEl.textContent = String(signedInCards.length);
-      }
-      const editingAccountInput = Boolean(
-        activeInlineAcctEdit &&
-          document.activeElement &&
-          accountsEl.contains(document.activeElement) &&
-          document.activeElement.matches('.ide-acct-inline-edit')
-      );
-      if (!editingAccountInput) {
-        const nowMs = Date.now();
-        const canReorderSide =
-          ordered.length > 1 && ordered.every(({ acct }) => isSignedInQuotaCard(acct));
-        accountsEl.innerHTML = ordered
-          .map(({ acct, provKey }, cardIdx) => {
-            const acctId = acct?.id || `${provKey}:default`;
-            const label = provKey === 'claude' ? 'Claude Code' : 'Antigravity';
-            if (!isSignedInQuotaCard(acct)) {
-              return `
-                <div class="ide-acct-card is-offline" data-quota-card-id="${esc(acctId)}" data-account-prov="${provKey}">
-                  <div class="ide-acct-head">
-                    <span class="ide-acct-left">
-                      <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
-                      <span class="ide-acct-name">${esc(label)}</span>
-                    </span>
-                    <button type="button" class="ide-acct-use-btn" data-account-add-remote="${provKey}">+ Sign in</button>
-                  </div>
-                </div>
-              `;
-            }
-            const isActive = acct?.active !== false;
-            const multi = (sameProvCounts[provKey] || 1) > 1;
-            const collapseKey = multi ? acctId : provKey;
-            const isCollapsed = Boolean(
-              prefs.collapsedQuotaCards &&
-                (prefs.collapsedQuotaCards[collapseKey] ?? prefs.collapsedQuotaCards[acctId])
-            );
-            const email = String(acct?.account?.email || acct?.email || '').trim();
-            const shortEmail = email.includes('@') ? email.split('@')[0] : email;
-            const plan = String(
-              acct?.account?.plan || acct?.plan || (provKey === 'claude' ? 'Max' : 'Pro')
-            )
-              .replace(/^Google AI\s+/i, '')
-              .trim();
-            // Never fall back to acct?.label (provider name) so "Antigravity [Antigravity]" never occurs
-            const nick = String(acct?.nickname || acct?.account?.nickname || '').trim();
-            const badgeTxt =
-              nick || (multi ? shortEmail || (isActive ? 'Primary' : 'Secondary') : '');
-            const limits = acct?.usage?.limits?.length
-              ? acct.usage.limits
-              : acct?.usage?.allLimits || [];
-            const renderSideRow = (l, isThirdParty) => {
-              const passed = Boolean(l.expired || (l.reset && l.reset <= nowMs));
-              const known = l.known !== false;
-              const rawPct = l.pct !== undefined ? l.pct : l.usedPercent;
-              const pct =
-                passed || !known ? 0 : Math.min(100, Math.max(0, Math.round(Number(rawPct || 0))));
-              const pctTxt = known ? `${pct}%` : '—';
-              const barCls =
-                pct >= 90
-                  ? 'crit'
-                  : pct >= 78
-                    ? 'warn'
-                    : isThirdParty
-                      ? 'third-party'
-                      : provKey === 'claude'
-                        ? 'claude'
-                        : 'agy';
-              const rst = formatQuotaResetLine(l, nowMs);
-              return `
-                <div class="ide-qrow tabular">
-                  <div class="ide-qlabels">
-                    <span class="ide-qlbl">${esc(String(l.label || '').replace(/\s*Ledger$/i, ''))}</span>
-                    <span class="ide-qmeta">${rst ? `<span class="ide-qrst">${esc(rst)}</span>` : ''}<strong>${pctTxt}</strong></span>
-                  </div>
-                  <div class="ide-qtrack"><div class="ide-qfill ${barCls}" style="width:${pct}%"></div></div>
-                </div>
-              `;
-            };
-            let barsHtml = '';
-            if (!limits.length) {
-              barsHtml = `<div class="ide-acct-empty-usage">${esc(acct?.usageMessage || (isActive ? 'Window idle' : 'Signed in · Standby'))}</div>`;
-            } else if (provKey === 'antigravity') {
-              const gemBars = limits.filter((l) => !isThirdPartyQuotaBar(l));
-              const tpBars = limits.filter((l) => isThirdPartyQuotaBar(l));
-              if (hide3pSide) {
-                barsHtml = gemBars.length
-                  ? gemBars.map((l) => renderSideRow(l, false)).join('')
-                  : tpBars.length
-                    ? `<div class="q-pool-hidden-note"><span>Claude &amp; GPT hidden</span><button type="button" class="q-pool-toggle-btn" data-toggle-3p-quota="show" aria-label="Show Claude and GPT quota bars">Show</button></div>`
-                    : `<div class="ide-acct-empty-usage">${esc(acct?.usageMessage || 'Window idle')}</div>`;
-              } else if (tpBars.length) {
-                const gemHtml = gemBars.length
-                  ? `<div class="ide-qpool-group"><div class="ide-qpool-head"><span class="q-pool-dot agy"></span><span class="q-pool-title">Gemini models</span></div>${gemBars.map((l) => renderSideRow(l, false)).join('')}</div>`
-                  : '';
-                const tpHtml = `<div class="ide-qpool-3p"><div class="ide-qpool-head"><span class="q-pool-dot third-party"></span><span class="q-pool-title">Claude &amp; GPT pool</span><button type="button" class="q-pool-toggle-btn" data-toggle-3p-quota="hide" aria-label="Hide Claude and GPT quota bars">Hide</button></div>${tpBars.map((l) => renderSideRow(l, true)).join('')}</div>`;
-                barsHtml = gemHtml + tpHtml;
-              } else {
-                barsHtml = gemBars.map((l) => renderSideRow(l, false)).join('');
-              }
-            } else {
-              barsHtml = limits.map((l) => renderSideRow(l, false)).join('');
-            }
-            const canMoveUp = canReorderSide && cardIdx > 0;
-            const canMoveDown = canReorderSide && cardIdx < ordered.length - 1;
-            const moveBtnsHtml =
-              canReorderSide && (canMoveUp || canMoveDown)
-                ? (canMoveUp
-                    ? `<button type="button" class="ide-acct-icon-btn ide-acct-move-btn" data-account-move="up" data-account-id="${esc(acctId)}" data-account-prov="${provKey}" data-micro-tip="Move up" aria-label="Move account up">↑</button>`
-                    : '') +
-                  (canMoveDown
-                    ? `<button type="button" class="ide-acct-icon-btn ide-acct-move-btn" data-account-move="down" data-account-id="${esc(acctId)}" data-account-prov="${provKey}" data-micro-tip="Move down" aria-label="Move account down">↓</button>`
-                    : '')
-                : '';
-            const isEditingLabel = Boolean(
-              activeInlineAcctEdit &&
-                activeInlineAcctEdit.accountId === acctId &&
-                activeInlineAcctEdit.surface === 'sidebar'
-            );
-            const editRowHtml = isEditingLabel
-              ? `<form class="ide-acct-edit-row" data-acct-label-form="${esc(acctId)}" data-acct-prov="${provKey}"><input type="text" class="ide-acct-inline-edit" value="${esc(activeInlineAcctEdit.value ?? nick)}" placeholder="Label (e.g. Work, Personal)" maxlength="32" autocomplete="off"><button type="submit" class="ide-link-pill">Save</button><button type="button" class="ide-link-pill" data-acct-label-cancel="1">Cancel</button></form>`
-              : '';
-            return `
-              <div class="ide-acct-card${isActive ? ' is-active' : ''}${isCollapsed ? ' collapsed' : ''}" data-quota-card-id="${esc(acctId)}" data-account-prov="${provKey}"${canReorderSide ? ' draggable="true"' : ''}>
-                <div class="ide-acct-head">
-                  <button type="button" class="ide-acct-toggle" data-quota-collapse="${esc(collapseKey)}" aria-expanded="${!isCollapsed}">
-                    <span class="ide-chevron-sm">${isCollapsed ? CHEVRON_RIGHT_SVG : CHEVRON_DOWN_SVG}</span>
-                    <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
-                    <span class="ide-acct-name">${esc(label)}</span>
-                    ${badgeTxt ? `<span class="ide-acct-role${isActive ? ' primary' : ''}">${esc(badgeTxt)}</span>` : ''}
-                  </button>
-                  <div class="ide-acct-actions">
-                    ${
-                      !isActive
-                        ? `<button type="button" class="ide-acct-use-btn" data-account-switch="${esc(acctId)}" data-account-prov="${provKey}">⇄ Use</button>`
-                        : `<span class="ide-acct-live-pill">● Active</span>`
-                    }
-                    ${moveBtnsHtml}
-                    <button type="button" class="ide-acct-icon-btn" data-account-label="${esc(acctId)}" data-account-prov="${provKey}" data-account-nick="${esc(nick)}" data-account-surface="sidebar" data-micro-tip="Edit account label" aria-label="Edit account label">✎</button>
-                    <button type="button" class="ide-acct-icon-btn" data-acct-ctx-menu="${esc(acctId)}" data-acct-prov="${provKey}" data-micro-tip="Account actions" aria-label="Account actions">⋯</button>
-                  </div>
-                </div>
-                ${
-                  isCollapsed
-                    ? editRowHtml
-                    : `${editRowHtml}<div class="ide-acct-sub">${email ? `<span>${esc(email)}</span>` : '<span></span>'}<span class="ide-plan-tag">${esc(plan)}</span></div>${barsHtml ? `<div class="ide-qstack">${barsHtml}</div>` : ''}${provKey === 'claude' && isActive ? renderClaudeModeSelectorHtml('sidebar') : ''}`
-                }
-              </div>
-            `;
-          })
-          .join('');
-      }
-    }
-
-    // 2. Live Approvals Banner in Sidebar
-    const devFilter =
-      prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
-        ? prefs.selectedDeviceFilter
-        : '';
-    if (approvalsEl) {
-      const approvals = (Array.isArray(appState?.approvals) ? appState.approvals : []).filter((a) => {
-        if (!a) return false;
-        if (!devFilter) return true;
-        if (a.deviceId) return a.deviceId === devFilter;
-        const linkedRow = (appState?.rows || []).find((r) => r && r.id === a.sessionId);
-        return !linkedRow?.deviceId || linkedRow.deviceId === devFilter;
-      });
-      if (approvals.length === 0) {
-        approvalsEl.hidden = true;
-        approvalsEl.innerHTML = '';
-      } else {
-        approvalsEl.hidden = false;
-        approvalsEl.innerHTML = `
-          <div class="ide-appr-head tabular">
-            <span>${approvals.length} Waiting for Input</span>
-          </div>
-          ${approvals
-            .slice(0, 3)
-            .map((a) => {
-              const aProv = a.provider === 'claude' ? 'claude' : 'antigravity';
-              const isQ = a.kind === 'question' || a.kind === 'waiting_session' || /question/i.test(String(a.toolName || ''));
-              return `
-                <div class="ide-appr-item">
-                  <button type="button" class="ide-appr-open" data-ide-open-session="${esc(a.sessionId || '')}" data-session-prov="${aProv}">
-                    <span class="ide-dot waiting"></span>
-                    <span class="ide-appr-title">${esc(a.title || a.toolName || 'Pending Action')}</span>
-                  </button>
-                  ${
-                    !isQ && a.approvalId
-                      ? `<button type="button" class="ide-appr-ok" data-approve-act="approve" data-app-id="${esc(a.approvalId)}" data-sess-id="${esc(a.sessionId || '')}" data-prov="${aProv}" data-sel="${esc(a.selector || '')}" data-lbl="${esc(a.toolName || 'Accept')}">Approve</button>`
-                      : `<button type="button" class="ide-appr-ok" data-ide-open-session="${esc(a.sessionId || '')}" data-session-prov="${aProv}">Reply</button>`
-                  }
-                </div>
-              `;
-            })
-            .join('')}
-        `;
-      }
-    }
-
-    // 3. Session Manager Tree + Interactive QUESTIONS & SIDE AGENTS Sections
-    const hideDesktop = isClaudeDesktopHidden();
-    const rawHostRows = (appState?.rows || []).filter(
-      (r) => r && r.id && (!devFilter || !r.deviceId || r.deviceId === devFilter)
-    );
-    const hasDesktopRows = rawHostRows.some(isClaudeDesktopRow);
-    const hideDesktopChip = $('ide-hide-desktop-chip');
-    if (hideDesktopChip) {
-      hideDesktopChip.hidden = !(hasDesktopRows || hideDesktop);
-      hideDesktopChip.classList.toggle('active', hideDesktop);
-      hideDesktopChip.setAttribute('aria-pressed', hideDesktop ? 'true' : 'false');
-      hideDesktopChip.textContent = hideDesktop ? 'Desktop Hidden' : 'Hide Desktop';
-    }
-    const visibleHostRows = hideDesktop ? rawHostRows.filter((r) => !isClaudeDesktopRow(r)) : rawHostRows;
-    const allRows = visibleHostRows.filter((r) => !r.archived);
-    const archivedRows = visibleHostRows.filter((r) => r.archived);
-    if (countEl) countEl.textContent = String(allRows.length);
-
-    // 3A. Sidebar Interactive QUESTIONS Section (VS Code Hub Parity)
-    if (secQuestionsEl && sidebarQuestionsEl) {
-      const qMetas = [];
-      const seenQSess = new Set();
-      for (const r of allRows) {
-        const meta = getSessionPendingQuestionsMeta(r);
-        if (meta && !seenQSess.has(meta.sessionId)) {
-          seenQSess.add(meta.sessionId);
-          qMetas.push(meta);
-        }
-      }
-      const totalQItems = qMetas.reduce((acc, m) => acc + m.questions.length, 0);
-      if (questionsCountEl) questionsCountEl.textContent = String(totalQItems);
-      if (qMetas.length === 0) {
-        secQuestionsEl.hidden = true;
-        sidebarQuestionsEl.innerHTML = '';
-      } else {
-        secQuestionsEl.hidden = false;
-        const activeInSidebarQ =
-          document.activeElement &&
-          sidebarQuestionsEl.contains(document.activeElement) &&
-          document.activeElement.matches('[data-q-writein-input]');
-        const focusedCardKey = activeInSidebarQ ? document.activeElement.dataset.cardKey || '' : '';
-        const focusedStillActive = Boolean(
-          focusedCardKey && qMetas.some((m) => m.cardKey === focusedCardKey)
-        );
-        if (!focusedStillActive) {
-          sidebarQuestionsEl.innerHTML = qMetas
-            .slice(0, 5)
-            .map((meta) => {
-              renderedQuestionsByCardKey.set(meta.cardKey, {
-                cardKey: meta.cardKey,
-                sessionId: meta.sessionId,
-                provider: meta.provider,
-                approvalId: meta.approvalId,
-                turnId: meta.turnId,
-                stepIndex: extractQuestionsStepIndex(meta.questions, meta.stepIndex),
-                selector: meta.selector,
-                questions: meta.questions,
-                plainQuestionFallback: false
-              });
-              const draft = getQuestionDraft(meta.cardKey);
-              const selectedCount = countDraftSelections(draft, meta.questions.length);
-              const anyToolPerm = meta.questions.some((q) => q.isToolPermission);
-              const qBlocks = meta.questions
-                .map((qItem, qIdx) => {
-                  const selSet = draft.selectedByQ[qIdx] || new Set();
-                  const writeVal = String(draft.writeInByQ[qIdx] || '');
-                  const opts = Array.isArray(qItem.options) ? qItem.options : [];
-                  return `
-                    <div data-q-block="${qIdx}" style="display:flex;flex-direction:column;gap:4px">
-                      <div class="sb-q-text">${meta.questions.length > 1 ? `<span class="tabular" style="color:var(--amber);font-weight:700">Q${qIdx + 1}.</span> ` : ''}${esc(qItem.question || 'Question')}</div>
-                      ${
-                        opts.length > 0
-                          ? `<div class="sb-q-opts">${opts
-                              .map((opt, oIdx) => {
-                                const isSel = selSet.has(String(oIdx));
-                                return `<button type="button" class="sb-q-opt${isSel ? ' selected is-selected' : ''}" data-q-opt-toggle="1" data-card-key="${esc(meta.cardKey)}" data-q-idx="${qIdx}" data-opt-idx="${oIdx}" aria-pressed="${isSel ? 'true' : 'false'}"><span class="sb-q-num">${oIdx + 1}</span><span>${esc(opt.cleanText || opt.text)}</span>${opt.isRecommended && !qItem.isToolPermission ? `<span class="sb-q-rec">★ Rec</span>` : ''}</button>`;
-                              })
-                              .join('')}</div>`
-                          : ''
-                      }
-                      <input type="text" class="sb-q-other" data-q-writein-input="1" data-card-key="${esc(meta.cardKey)}" data-q-idx="${qIdx}" placeholder="${esc(opts.length > 0 ? 'Other (custom answer)…' : 'Type your answer…')}" value="${esc(writeVal)}" autocomplete="off">
-                    </div>
-                  `;
-                })
-                .join('');
-              return `
-                <div class="sb-q-card" data-q-card="${esc(meta.cardKey)}">
-                  <div class="sb-q-head" role="button" tabindex="0" data-ide-open-session="${esc(meta.sessionId)}" data-session-prov="${meta.provider}">
-                    <span class="sb-q-sess">
-                      <span class="prov-glyph">${PROVIDER_ICONS[meta.provider]}</span>
-                      <span>${esc(meta.sessionTitle)}</span>
-                    </span>
-                    <span class="ide-side-count amber tabular">${meta.questions.length}Q</span>
-                  </div>
-                  ${qBlocks}
-                  <div class="sb-q-actions">
-                    <button type="button" class="sb-q-btn" data-q-skip="1" data-card-key="${esc(meta.cardKey)}">${anyToolPerm ? 'Deny' : 'Skip'}</button>
-                    <button type="button" class="sb-q-btn primary" data-q-submit="1" data-card-key="${esc(meta.cardKey)}">✓ ${anyToolPerm ? (selectedCount > 0 ? `Confirm (${selectedCount})` : 'Yes (Allow)') : `Submit Answer${selectedCount > 0 ? ` (${selectedCount})` : ''}`}</button>
-                  </div>
-                </div>
-              `;
-            })
-            .join('');
-        }
-      }
-    }
-
-    // 3B. Sidebar SIDE AGENTS & TASKS Section (VS Code Hub Parity + Pinning)
-    const curSelected = isNewSessionMode() ? '' : String(prefs.selectedThreadId || '');
-    if (secBgTasksEl && sidebarBgEl) {
-      let pinnedRow = prefs.pinnedBgSessionId
-        ? allRows.find((r) => r.id === prefs.pinnedBgSessionId)
-        : null;
-      if (prefs.pinnedBgSessionId && !pinnedRow) {
-        prefs.pinnedBgSessionId = '';
-        saveJson(STORAGE_KEYS.PREFS, prefs);
-      }
-      const bgEntries = [];
-      if (pinnedRow) {
-        const { allTasks } = getSessionBackgroundTasks(pinnedRow, threadsCache[pinnedRow.id]);
-        for (const t of allTasks.slice(0, 12)) {
-          bgEntries.push({ row: pinnedRow, task: t });
-        }
-      } else {
-        const seenEntryKeys = new Set();
-        for (const r of allRows) {
-          const { allTasks } = getSessionBackgroundTasks(r, threadsCache[r.id]);
-          for (const t of allTasks) {
-            const isActiveTask =
-              t.state === 'running' || t.state === 'stalled' || t.state === 'interrupted';
-            const isSelectedSubagent = r.id === curSelected && t.kind === 'subagent';
-            if (isActiveTask || isSelectedSubagent) {
-              const eKey = `${r.id}:${t.id}`;
-              if (!seenEntryKeys.has(eKey)) {
-                seenEntryKeys.add(eKey);
-                bgEntries.push({ row: r, task: t });
-              }
-            }
-          }
-        }
-      }
-      const runningBgCount = bgEntries.filter((e) => e.task.state === 'running').length;
-      if (bgHeadingEl) {
-        bgHeadingEl.textContent = pinnedRow
-          ? `PINNED · ${String(pinnedRow.title || 'Session').slice(0, 14)}`
-          : 'SIDE AGENTS & TASKS';
-      }
-      if (bgUnpinBtn) bgUnpinBtn.hidden = !pinnedRow;
-      if (bgStopAllBtn) bgStopAllBtn.hidden = runningBgCount === 0;
-      if (bgCountEl) {
-        bgCountEl.textContent = String(runningBgCount > 0 ? runningBgCount : bgEntries.length);
-      }
-
-      if (!pinnedRow && bgEntries.length === 0) {
-        secBgTasksEl.hidden = true;
-        sidebarBgEl.innerHTML = '';
-      } else {
-        secBgTasksEl.hidden = false;
-        if (bgEntries.length === 0) {
-          sidebarBgEl.innerHTML = `<div class="ide-tree-empty" style="padding:6px 4px">No side agents or tasks in pinned session.</div>`;
-        } else {
-          sidebarBgEl.innerHTML = bgEntries
-            .slice(0, 10)
-            .map(({ row, task }) => {
-              const provKey = row.provider === 'claude' ? 'claude' : 'antigravity';
-              const isRun = task.state === 'running';
-              const titleTxt = task.subagentRole || task.summary || task.command || task.id || 'Side Agent';
-              const subTxt = `${getBgKindLabel(task.kind)} · ${row.title || 'Session'}`;
-              const ageStr = task.startedAt ? shortSidebarAge(task.startedAt) : isRun ? 'live' : 'done';
-              return `
-                <div class="ide-bg-row${isRun ? ' is-running' : ''}" role="button" tabindex="0" data-insp-open-agent="${esc(task.id)}" data-sess-id="${esc(row.id)}" data-session-prov="${provKey}">
-                  <span class="ide-bg-ico">${isRun ? '●' : task.kind === 'subagent' ? '◈' : '▪'}</span>
-                  <span class="ide-bg-copy">
-                    <span class="ide-bg-title">${esc(titleTxt)}</span>
-                    <span class="ide-bg-sub">${esc(subTxt)}</span>
-                  </span>
-                  <span class="ide-bg-right tabular">
-                    <span class="ide-bg-age">${esc(ageStr)}</span>
-                    ${
-                      isRun
-                        ? `<button type="button" class="ide-bg-stop" data-bg-act="stop-task" data-sess-id="${esc(row.id)}" data-task-id="${esc(task.fullId || task.id)}" data-prov="${provKey}" aria-label="Stop ${esc(titleTxt)}">■</button>`
-                        : ''
-                    }
-                  </span>
-                </div>
-              `;
-            })
-            .join('');
-        }
-      }
-    }
-
-    document.querySelectorAll('#ide-sidebar-filters .ide-fchip[data-side-filter]').forEach((btn) => {
-      btn.classList.toggle('active', btn.dataset.sideFilter === prefs.sidebarFilter);
-    });
-
-    const groups = Array.isArray(appState?.groups) ? appState.groups : [];
-    const groupIds = new Set(groups.map((g) => g.id));
-    const q = ($('ide-sidebar-search')?.value || '').trim().toLowerCase();
-
-    const filterSourceRows = prefs.sidebarFilter === 'archived' ? archivedRows : allRows;
-    const rawFiltered = filterSourceRows.filter((r) => {
-      if (prefs.sidebarFilter === 'working' && r.status !== 'working') return false;
-      if (prefs.sidebarFilter === 'needs_input' && r.status !== 'waiting') return false;
-      if (prefs.sidebarFilter === 'unread' && !r.unread) return false;
-      if (prefs.sidebarFilter === 'open' && !isSessionOpenTab(r)) return false;
-      if (q) {
-        const grpName = r.group ? groups.find((g) => g.id === r.group)?.name || '' : '';
-        const hay = `${r.title || ''} ${r.folder || ''} ${r.branch || ''} ${r.model || ''} ${r.provider || ''} ${grpName}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    });
-
-    // When searching (q !== ''), rank by exact match + operational frequency descending (Hard Rule #11).
-    // When not searching (!q), order chronologically by most recently worked on (active running first, then lastWorkedMs desc).
-    const nowRankMs = Date.now();
-    const rowBaseWeight = (r) =>
-      (r.status === 'working' ? 500 : r.status === 'waiting' ? 400 : 0) +
-      Math.max(0, 299 - Math.min(299, Math.floor(Math.max(0, nowRankMs - getRowLastWorkedMs(r)) / 3600000)));
-    const sortRowsChrono = (list) =>
-      q
-        ? rankSearchMatchesWithPinnedFirst(list, q, rowBaseWeight)
-        : [...list].sort(
-            (a, b) =>
-              (isRowPinned(b) ? 1 : 0) - (isRowPinned(a) ? 1 : 0) ||
-              (isSessionActivelyRunning(b.id) ? 1 : 0) - (isSessionActivelyRunning(a.id) ? 1 : 0) ||
-              getRowLastWorkedMs(b) - getRowLastWorkedMs(a) ||
-              Number(b.pinnedAt || 0) - Number(a.pinnedAt || 0)
-          );
-    const filtered = sortRowsChrono(rawFiltered);
-
-    if (filtered.length === 0 && !(prefs.sidebarFilter === 'all' && !q && archivedRows.length > 0)) {
-      const emptyTxt =
-        prefs.sidebarFilter === 'archived'
-          ? 'No archived sessions.'
-          : allRows.length === 0
-            ? 'No sessions synced yet.'
-            : 'No matching sessions.';
-      treeEl.innerHTML = `<div class="ide-tree-empty">${emptyTxt}</div>`;
-      reconcileIdeMicroTip();
-      return;
-    }
-
-    if (!q && prefs.sidebarFilter !== 'archived' && groups.length > 0) {
-      const groupSpecs = [];
-      for (const g of groups) {
-        const gItems = applyFrozenIdeOrder(
-          g.id,
-          filtered.filter((r) => r.group === g.id),
-          false
-        );
-        if (prefs.sidebarFilter !== 'all' && gItems.length === 0) continue;
-        const collapsed =
-          prefs.sidebarFilter !== 'all'
-            ? false
-            : isSessionGroupCollapsed(g.id, gItems.length === 0 ? true : Boolean(g.collapsed));
-        groupSpecs.push({
-          key: g.id,
-          name: g.name || 'Group',
-          collapsed,
-          items: gItems,
-          alwaysShowActions: false,
-          actionsHtml: `
-            <button type="button" class="ide-group-act-btn" data-group-act="new-in-group" data-group-id="${esc(g.id)}" data-micro-tip="New session in group" aria-label="New session in ${esc(g.name || 'group')}">+</button>
-            <button type="button" class="ide-group-act-btn" data-group-ctx-menu="${esc(g.id)}" data-micro-tip="Group actions" aria-label="Group actions for ${esc(g.name || 'group')}">⋯</button>
-          `
-        });
-      }
-      const ungrouped = applyFrozenIdeOrder(
-        'ungrouped',
-        filtered.filter((r) => !r.group || !groupIds.has(r.group)),
-        false
-      );
-      if (ungrouped.length > 0) {
-        const ugCollapsed =
-          prefs.sidebarFilter !== 'all' ? false : isSessionGroupCollapsed('ungrouped', false);
-        const archivableCount = ungrouped.filter(
-          (r) =>
-            r.id &&
-            !r.archived &&
-            !isRowPinned(r) &&
-            !isSessionOpenTab(r) &&
-            r.status !== 'working' &&
-            r.status !== 'waiting' &&
-            !r.unread
-        ).length;
-        groupSpecs.push({
-          key: 'ungrouped',
-          name: 'Ungrouped',
-          collapsed: ugCollapsed,
-          items: ungrouped,
-          alwaysShowActions: archivableCount > 0,
-          actionsHtml:
-            archivableCount > 0
-              ? `<button type="button" class="ide-group-act-btn" data-group-act="archive-closed" data-micro-tip="Archive ${archivableCount} closed idle sessions" aria-label="Archive closed sessions">Archive closed</button>`
-              : ''
-        });
-      }
-      if (prefs.sidebarFilter === 'all' && archivedRows.length > 0) {
-        const arcSorted = applyFrozenIdeOrder('archived', sortRowsChrono(archivedRows), false);
-        const arcCollapsed = isSessionGroupCollapsed('archived', true);
-        groupSpecs.push({
-          key: 'archived',
-          name: 'Archived sessions',
-          collapsed: arcCollapsed,
-          items: arcSorted,
-          alwaysShowActions: !arcCollapsed,
-          actionsHtml: `<button type="button" class="ide-group-act-btn" data-group-act="unarchive-all" data-micro-tip="Restore all archived sessions" aria-label="Unarchive all sessions">Unarchive all</button>`
-        });
-      }
-      reconcileIdeTreeDOM(treeEl, groupSpecs, null, curSelected);
-      reconcileIdeMicroTip();
-      return;
-    }
-
-    const flatList = applyFrozenIdeOrder('__flat__', filtered.slice(0, 120), Boolean(q));
-    reconcileIdeTreeDOM(treeEl, null, flatList, curSelected);
-    reconcileIdeMicroTip();
-  }
-
-  function isNewSessionMode() {
-    return Boolean(
-      prefs.selectedThreadId === '__new__' ||
-        prefs.composerMode === 'new-antigravity' ||
-        prefs.composerMode === 'new-claude'
-    );
-  }
-
-  function resolveCurrentActiveSessionGroupId() {
-    const hasGroups = Array.isArray(appState?.groups);
-    const validGroupIds = hasGroups
-      ? new Set(appState.groups.map((g) => g?.id).filter(Boolean))
-      : null;
-    const validateGroup = (gid) => {
-      const clean = String(gid || '').trim();
-      if (!clean || clean === 'ungrouped') return '';
-      return validGroupIds ? (validGroupIds.has(clean) ? clean : '') : clean;
-    };
-    if (isNewSessionMode()) {
-      return validateGroup(prefs.newSessionGroupId);
-    }
-    const curTid = String(prefs.selectedThreadId || '').trim();
-    if (!curTid || curTid === '__new__') return '';
-    if (
-      pendingNewSessionBind &&
-      pendingNewSessionBind.draftThreadId === curTid &&
-      pendingNewSessionBind.groupId
-    ) {
-      return validateGroup(pendingNewSessionBind.groupId);
-    }
-    if (pendingRowOverrides.has(curTid)) {
-      const ov = pendingRowOverrides.get(curTid);
-      if (ov && Date.now() - Number(ov.at || 0) <= PENDING_OVERRIDE_TTL_MS && ov.group !== undefined) {
-        return validateGroup(ov.group);
-      }
-    }
-    const curRow = (appState?.rows || []).find((r) => r && r.id === curTid);
-    if (curRow && !curRow.archived) {
-      return validateGroup(curRow.group);
-    }
-    return '';
-  }
-
-  function enterNewSessionMode(provider = 'antigravity', opts = {}) {
-    clearPinnedNav();
-    recentResumeUntil = 0;
-    if ('caches' in window) {
-      caches
-        .open(NAV_HANDOFF_CACHE)
-        .then((c) => c.delete(LAST_PUSH_NAV_CACHE_URL))
-        .catch(() => {});
-    }
-    const prov = provider === 'claude' ? 'claude' : 'antigravity';
-    const hasGroups = Array.isArray(appState?.groups);
-    const validGroupIds = hasGroups
-      ? new Set(appState.groups.map((g) => g?.id).filter(Boolean))
-      : null;
-    const validateExplicitGroup = (gid) => {
-      const clean = String(gid || '').trim();
-      if (!clean || clean === 'ungrouped') return '';
-      return validGroupIds ? (validGroupIds.has(clean) ? clean : '') : clean;
-    };
-    const nextGroupId =
-      opts.groupId !== undefined
-        ? validateExplicitGroup(opts.groupId)
-        : resolveCurrentActiveSessionGroupId();
-    if (
-      prefs.selectedThreadId &&
-      prefs.selectedThreadId !== '__new__' &&
-      !String(prefs.selectedThreadId).startsWith('draft-new-')
-    ) {
-      prefs.lastReplyThreadId = prefs.selectedThreadId;
-    }
-    prefs.composerMode = prov === 'claude' ? 'new-claude' : 'new-antigravity';
-    prefs.selectedThreadId = '__new__';
-    prefs.newSessionGroupId = nextGroupId;
-    if (nextGroupId) {
-      if (!prefs.collapsedSessionGroups || typeof prefs.collapsedSessionGroups !== 'object') {
-        prefs.collapsedSessionGroups = {};
-      }
-      prefs.collapsedSessionGroups[nextGroupId] = false;
-    }
-    if (opts.repoPrefix !== undefined) {
-      prefs.composerRepoPrefix = opts.repoPrefix;
-    }
-    saveJson(STORAGE_KEYS.PREFS, prefs);
-    switchTab('chat');
-    updateComposerModePills();
-    renderChatView(true);
-    if (nextGroupId) renderIdeSidebar();
-    setTimeout(() => $('composer-input')?.focus(), 30);
-  }
-
-  function exitNewSessionModeToReply(explicitThreadId = '', opts = {}) {
-    const allowResurrectClosed = opts.allowResurrectClosed !== false;
-    const rows = (appState?.rows || []).filter((r) => r && r.id && !r.draft && !r.archived);
-    const isUsableReplyTarget = (id, respectClosed = true) => {
-      const clean = String(id || '').trim();
-      if (!clean || clean === '__new__') return false;
-      if (respectClosed && closedEditorTabIds.has(clean)) return false;
-      if (rows.some((x) => x.id === clean)) return true;
-      return Boolean(
-        threadsCache[clean] &&
-          !(appState?.rows || []).some((x) => x && x.id === clean && x.archived)
-      );
-    };
-    const openTabsRev = Array.isArray(prefs.openEditorTabs) ? [...prefs.openEditorTabs].reverse() : [];
-    const candidateId =
-      (explicitThreadId && isUsableReplyTarget(explicitThreadId, false) ? explicitThreadId : '') ||
-      (isUsableReplyTarget(prefs.lastReplyThreadId, true) ? prefs.lastReplyThreadId : '') ||
-      openTabsRev.find((id) => isUsableReplyTarget(id, true)) ||
-      (
-        rows.find((r) => !closedEditorTabIds.has(r.id) && r.active) ||
-        rows.find((r) => !closedEditorTabIds.has(r.id) && r.open) ||
-        rows.find((r) => !closedEditorTabIds.has(r.id))
-      )?.id ||
-      (allowResurrectClosed ? rows[0]?.id || '' : '');
-
-    if (!candidateId) {
-      prefs.composerMode = hasSignedInProviderRemote('antigravity') ? 'new-antigravity' : 'new-claude';
-      prefs.selectedThreadId = '__new__';
-      saveJson(STORAGE_KEYS.PREFS, prefs);
-      updateComposerModePills();
-      renderChatView(true);
-      return;
-    }
-
-    ensureEditorTabOpen(candidateId);
-    prefs.composerMode = 'reply';
-    prefs.selectedThreadId = candidateId;
-    prefs.lastReplyThreadId = candidateId;
-    prefs.newSessionGroupId = '';
-    saveJson(STORAGE_KEYS.PREFS, prefs);
-    updateComposerModePills();
-    renderChatView(true);
-    fetchThreadDetail(candidateId);
-  }
-
-  function bindDraftThreadToRealSession(draftId, realId, provider = 'antigravity') {
-    const cleanReal = String(realId || '').trim();
-    if (!cleanReal) return false;
-    const draftThread = draftId ? threadsCache[draftId] : null;
-    if (draftThread && Array.isArray(draftThread.messages)) {
-      if (!threadsCache[cleanReal]) {
-        threadsCache[cleanReal] = {
-          id: cleanReal,
-          provider,
-          title: draftThread.title || 'New Session',
-          model: draftThread.model || '',
-          effort: draftThread.effort || '',
-          messages: []
-        };
-      } else {
-        if (draftThread.model && !threadsCache[cleanReal].model) {
-          threadsCache[cleanReal].model = draftThread.model;
-        }
-        if (draftThread.effort && !threadsCache[cleanReal].effort) {
-          threadsCache[cleanReal].effort = draftThread.effort;
-        }
-      }
-      const existingMsgs = Array.isArray(threadsCache[cleanReal].messages)
-        ? threadsCache[cleanReal].messages
-        : [];
-      for (const m of draftThread.messages) {
-        if (
-          m &&
-          !existingMsgs.some(
-            (em) => em.role === m.role && String(em.text || '').trim() === String(m.text || '').trim()
-          )
-        ) {
-          existingMsgs.push(m);
-        }
-      }
-      threadsCache[cleanReal].messages = existingMsgs;
-    }
-    if (draftId && draftId !== cleanReal) {
-      const draftLive = liveStreamsByThreadId.get(draftId);
-      if (draftLive && !liveStreamsByThreadId.has(cleanReal)) {
-        liveStreamsByThreadId.set(cleanReal, draftLive);
-      }
-      liveStreamsByThreadId.delete(draftId);
-      if (chatOpenDetailsByThread.has(draftId)) {
-        if (!chatOpenDetailsByThread.has(cleanReal)) {
-          chatOpenDetailsByThread.set(cleanReal, chatOpenDetailsByThread.get(draftId));
-        }
-        chatOpenDetailsByThread.delete(draftId);
-      }
-      if (pendingRowOverrides.has(draftId)) {
-        const draftOv = pendingRowOverrides.get(draftId);
-        pendingRowOverrides.delete(draftId);
-        noteRowOverride(cleanReal, draftOv);
-      }
-      if (prefs.threadModelConfig && prefs.threadModelConfig[draftId]) {
-        prefs.threadModelConfig[cleanReal] = {
-          ...prefs.threadModelConfig[draftId],
-          updatedAt: Date.now()
-        };
-        delete prefs.threadModelConfig[draftId];
-        saveJson(STORAGE_KEYS.PREFS, prefs);
-      }
-      delete threadsCache[draftId];
-      if (Array.isArray(prefs.openEditorTabs)) {
-        const idx = prefs.openEditorTabs.indexOf(draftId);
-        if (idx >= 0) {
-          prefs.openEditorTabs[idx] = cleanReal;
-          prefs.openEditorTabs = Array.from(new Set(prefs.openEditorTabs));
-        }
-      }
-    }
-    ensureEditorTabOpen(cleanReal);
-    if (
-      !prefs.selectedThreadId ||
-      prefs.selectedThreadId === draftId ||
-      prefs.selectedThreadId === '__new__'
-    ) {
-      prefs.selectedThreadId = cleanReal;
-      prefs.lastReplyThreadId = cleanReal;
-      prefs.composerMode = 'reply';
-      saveJson(STORAGE_KEYS.PREFS, prefs);
-      setPinnedNav({
-        threadId: cleanReal,
-        provider,
-        title: draftThread?.title || '',
-        durationMs: 60000
-      });
-    }
-    const boundGroupId = String(
-      (pendingNewSessionBind && (!draftId || pendingNewSessionBind.draftThreadId === draftId)
-        ? pendingNewSessionBind.groupId
-        : '') ||
-        (draftId && pendingRowOverrides.has(draftId) ? pendingRowOverrides.get(draftId)?.group : '') ||
-        ''
-    ).trim();
-    if (boundGroupId) {
-      noteRowOverride(cleanReal, { group: boundGroupId });
-      const existingRealRow = (appState?.rows || []).find((r) => r && r.id === cleanReal);
-      if (existingRealRow) {
-        existingRealRow.group = boundGroupId;
-      }
-      if (!prefs.collapsedSessionGroups || typeof prefs.collapsedSessionGroups !== 'object') {
-        prefs.collapsedSessionGroups = {};
-      }
-      prefs.collapsedSessionGroups[boundGroupId] = false;
-      saveJson(STORAGE_KEYS.PREFS, prefs);
-    }
-    if (pendingNewSessionBind && (!draftId || pendingNewSessionBind.draftThreadId === draftId)) {
-      pendingNewSessionBind = null;
-    }
-    persistCache();
-    renderAll();
-    fetchThreadDetail(cleanReal, provider).catch(() => {});
-    return true;
-  }
-
-  function reconcilePendingNewSessionBind(stateObj, queueObj = null) {
-    if (!pendingNewSessionBind) return;
-    if (Date.now() - pendingNewSessionBind.createdAt > 90000) {
-      pendingNewSessionBind = null;
-      return;
-    }
-    const wantProv = pendingNewSessionBind.provider || 'antigravity';
-    const rows = Array.isArray(stateObj?.rows) ? stateObj.rows : [];
-
-    // 1. Authoritative bind from Cloud Relay command execution result
-    if (queueObj && queueObj.results && typeof queueObj.results === 'object') {
-      const cmdId = pendingNewSessionBind.cmdId || '';
-      const resEntry = cmdId ? queueObj.results[cmdId] : null;
-      const resolvedId = cleanTargetThreadId(
-        resEntry?.id ||
-          resEntry?.result?.id ||
-          resEntry?.result?.sessionId ||
-          resEntry?.result?.opened?.id ||
-          ''
-      );
-      if (resolvedId) {
-        const matchedRow = rows.find((r) => r && r.id === resolvedId);
-        if (matchedRow && pendingNewSessionBind.groupId) {
-          matchedRow.group = pendingNewSessionBind.groupId;
-          noteRowOverride(matchedRow.id, { group: pendingNewSessionBind.groupId });
-        }
-        bindDraftThreadToRealSession(
-          pendingNewSessionBind.draftThreadId,
-          resolvedId,
-          wantProv
-        );
-        return;
-      }
-    }
-
-    // 2. Fallback: match a genuinely brand-new row whose timestamp is recent (never bind to older sessions missing from a stale cache)
-    const known = pendingNewSessionBind.knownIds || new Set();
-    const wantDev = pendingNewSessionBind.targetDeviceId || '';
-    const minRowAt = (pendingNewSessionBind.createdAt || Date.now()) - 15000;
-    const freshRow = rows.find(
-      (r) =>
-        r &&
-        r.id &&
-        !r.draft &&
-        (r.provider === 'claude' ? 'claude' : 'antigravity') === wantProv &&
-        (!wantDev || !r.deviceId || r.deviceId === wantDev) &&
-        !known.has(r.id) &&
-        Number(r.at || 0) >= minRowAt
-    );
-    if (freshRow) {
-      if (pendingNewSessionBind.groupId) {
-        freshRow.group = pendingNewSessionBind.groupId;
-        noteRowOverride(freshRow.id, { group: pendingNewSessionBind.groupId });
-      }
-      bindDraftThreadToRealSession(
-        pendingNewSessionBind.draftThreadId,
-        freshRow.id,
-        wantProv
-      );
-    }
-  }
-
-  function ensureSelectedThread() {
-    if (isNewSessionMode()) {
-      if (prefs.selectedThreadId !== '__new__') {
-        prefs.selectedThreadId = '__new__';
-      }
-      return;
-    }
-    if (String(prefs.selectedThreadId || '').startsWith('draft-new-')) {
-      return;
-    }
-    const rows = (appState?.rows || []).filter((r) => r.id && !r.draft && !r.archived);
-    const curRowObj = (appState?.rows || []).find((r) => r && r.id === prefs.selectedThreadId);
-    if (curRowObj?.archived) {
-      prefs.selectedThreadId = '';
-    }
-    const hasPinned =
-      Boolean(pinnedNavThreadId) &&
-      prefs.selectedThreadId === pinnedNavThreadId &&
-      Date.now() < pinnedNavUntil &&
-      !curRowObj?.archived;
-    const hasCachedThread = Boolean(
-      prefs.selectedThreadId && threadsCache[prefs.selectedThreadId] && !curRowObj?.archived
-    );
-    if (hasPinned || hasCachedThread) {
-      return;
-    }
-    if (!prefs.selectedThreadId || (rows.length > 0 && !rows.some((r) => r.id === prefs.selectedThreadId))) {
-      const openOrRecent = rows.find((r) => r.active) || rows.find((r) => r.open) || rows[0];
-      if (openOrRecent) {
-        prefs.selectedThreadId = openOrRecent.id;
-        saveJson(STORAGE_KEYS.PREFS, prefs);
-      }
-    }
-  }
-
-  // ---------- Interactive Question & Recommendation Cards (VS Code Parity) ----------
-  const questionDrafts = new Map();
-  const renderedQuestionsByCardKey = new Map();
-  const pendingAnsweredSessions = new Map();
-  let answeredQuestionsLedger = loadJson(STORAGE_KEYS.ANSWERED_QUESTIONS, {});
-  if (!answeredQuestionsLedger || typeof answeredQuestionsLedger !== 'object') {
-    answeredQuestionsLedger = {};
-  }
-  for (const [k, v] of Object.entries(answeredQuestionsLedger)) {
-    if (k.startsWith('sess:') && v && Date.now() - Number(v.at || 0) < 240000) {
-      const sid = k.slice(5);
-      if (sid) pendingAnsweredSessions.set(sid, v);
-    }
-  }
-
-  function buildQuestionPromptSignature(questions = []) {
-    if (!Array.isArray(questions) || questions.length === 0) return '';
-    return questions
-      .map((q) => String(q?.question || q?.prompt || '').trim().toLowerCase())
-      .filter(Boolean)
-      .join('||')
-      .slice(0, 320);
-  }
-
-  function extractQuestionsStepIndex(questions = [], fallbackStep = null) {
-    if (Array.isArray(questions)) {
-      for (const q of questions) {
-        if (q && q.stepIndex !== undefined && q.stepIndex !== null && Number.isFinite(Number(q.stepIndex))) {
-          return Number(q.stepIndex);
-        }
-      }
-    }
-    if (fallbackStep !== undefined && fallbackStep !== null && Number.isFinite(Number(fallbackStep))) {
-      return Number(fallbackStep);
-    }
-    return null;
-  }
-
-  function recordQuestionAnswered({
-    sessionId = '',
-    approvalId = '',
-    turnId = '',
-    stepIndex = null,
-    questions = [],
-    summary = '',
-    skipped = false
-  } = {}) {
-    const cleanSess = String(sessionId || '').trim();
-    if (!cleanSess) return;
-    const cleanApp = String(approvalId || '').trim();
-    const cleanTurn = String(turnId || '').trim();
-    const resolvedStep = extractQuestionsStepIndex(questions, stepIndex);
-    const sig = buildQuestionPromptSignature(questions);
-    const now = Date.now();
-    const entry = {
-      summary: String(summary || '').trim(),
-      skipped: Boolean(skipped),
-      stepIndex: resolvedStep,
-      at: now
-    };
-
-    if (cleanTurn) {
-      answeredQuestionsLedger[`turn:${cleanSess}:${cleanTurn}`] = entry;
-    }
-    if (cleanApp && cleanApp !== cleanSess) {
-      answeredQuestionsLedger[`approval:${cleanSess}:${cleanApp}`] = entry;
-    }
-    if (resolvedStep !== null && resolvedStep >= 0) {
-      answeredQuestionsLedger[`step:${cleanSess}:${resolvedStep}`] = entry;
-    }
-    if (sig) {
-      answeredQuestionsLedger[`sig:${cleanSess}:${sig}`] = entry;
-    }
-    const sessOverrideEntry = {
-      approvalId: cleanApp,
-      stepIndex: resolvedStep ?? 0,
-      sig,
-      summary: entry.summary,
-      skipped: entry.skipped,
-      at: now
-    };
-    answeredQuestionsLedger[`sess:${cleanSess}`] = sessOverrideEntry;
-
-    const keys = Object.keys(answeredQuestionsLedger);
-    if (keys.length > 260) {
-      keys
-        .sort((a, b) => Number(answeredQuestionsLedger[a]?.at || 0) - Number(answeredQuestionsLedger[b]?.at || 0))
-        .slice(0, keys.length - 220)
-        .forEach((k) => delete answeredQuestionsLedger[k]);
-    }
-    saveJson(STORAGE_KEYS.ANSWERED_QUESTIONS, answeredQuestionsLedger);
-
-    pendingAnsweredSessions.set(cleanSess, sessOverrideEntry);
-
-    // Also mark any matching in-memory questionDrafts entries for this session so Pulse & Workbench stay in sync
-    for (const [k, meta] of renderedQuestionsByCardKey.entries()) {
-      if (meta && meta.sessionId === cleanSess) {
-        const metaSig = buildQuestionPromptSignature(meta.questions);
-        if (!sig || !metaSig || metaSig === sig || (cleanApp && meta.approvalId === cleanApp)) {
-          const d = getQuestionDraft(k);
-          d.submitted = true;
-          d.submittedSkipped = Boolean(skipped);
-          d.submittedSummary = entry.summary;
-        }
-      }
-    }
-  }
-
-  function lookupAnsweredQuestionState({
-    sessionId = '',
-    approvalId = '',
-    turnId = '',
-    questions = [],
-    isLastTurn = true
-  } = {}) {
-    const qs = Array.isArray(questions) ? questions : [];
-    if (qs.length > 0 && qs.some((q) => Boolean(q?.answered))) {
-      const allSkipped = qs.every((q) => Boolean(q?.skipped));
-      const srvSummary = qs.map((q) => String(q?.answerSummary || '').trim()).find(Boolean) || '';
-      return {
-        answered: true,
-        skipped: allSkipped,
-        summary: srvSummary
-      };
-    }
-
-    if (!isLastTurn) {
-      return {
-        answered: true,
-        skipped: false,
-        summary: ''
-      };
-    }
-
-    const cleanSess = String(sessionId || '').trim();
-    if (!cleanSess) return null;
-    const cleanTurn = String(turnId || '').trim();
-    const cleanApp = String(approvalId || '').trim();
-    const qStep = extractQuestionsStepIndex(qs, null);
-    const sig = buildQuestionPromptSignature(qs);
-
-    if (cleanTurn && answeredQuestionsLedger[`turn:${cleanSess}:${cleanTurn}`]) {
-      return { answered: true, ...answeredQuestionsLedger[`turn:${cleanSess}:${cleanTurn}`] };
-    }
-    if (cleanApp && cleanApp !== cleanSess && answeredQuestionsLedger[`approval:${cleanSess}:${cleanApp}`]) {
-      return { answered: true, ...answeredQuestionsLedger[`approval:${cleanSess}:${cleanApp}`] };
-    }
-    if (qStep !== null && qStep >= 0 && answeredQuestionsLedger[`step:${cleanSess}:${qStep}`]) {
-      return { answered: true, ...answeredQuestionsLedger[`step:${cleanSess}:${qStep}`] };
-    }
-    if (sig && answeredQuestionsLedger[`sig:${cleanSess}:${sig}`]) {
-      const sigEntry = answeredQuestionsLedger[`sig:${cleanSess}:${sig}`];
-      const stepAllowsMatch =
-        qStep === null ||
-        sigEntry.stepIndex === null ||
-        sigEntry.stepIndex === undefined ||
-        Number(sigEntry.stepIndex) >= qStep;
-      if (stepAllowsMatch && Date.now() - Number(sigEntry.at || 0) < 24 * 3600 * 1000) {
-        return { answered: true, ...sigEntry };
-      }
-    }
-    return null;
-  }
-
-  function applyAnsweredQuestionOverrides(stateObj) {
-    if (!stateObj || typeof stateObj !== 'object') return;
-    const now = Date.now();
-    if (pendingAnsweredSessions.size === 0) return;
-    const rows = Array.isArray(stateObj.rows) ? stateObj.rows : [];
-
-    for (const [sessId, rec] of Array.from(pendingAnsweredSessions.entries())) {
-      if (!rec || now - Number(rec.at || 0) > 240000) {
-        pendingAnsweredSessions.delete(sessId);
-        continue;
-      }
-      let strippedAny = false;
-      if (Array.isArray(stateObj.approvals) && stateObj.approvals.length > 0) {
-        const beforeLen = stateObj.approvals.length;
-        stateObj.approvals = stateObj.approvals.filter((a) => {
-          if (!a || a.sessionId !== sessId) return true;
-          if (rec.approvalId && (a.approvalId === rec.approvalId || a.id === rec.approvalId)) {
-            return false;
-          }
-          const aStep = Number(a.stepIndex || 0);
-          const recStep = Number(rec.stepIndex || 0);
-          if (recStep > 0 && aStep > recStep) {
-            return true;
-          }
-          const aSig = buildQuestionPromptSignature(a.questions || []);
-          if (rec.sig && aSig && aSig !== rec.sig && aStep > recStep) {
-            return true;
-          }
-          return false;
-        });
-        if (stateObj.approvals.length !== beforeLen) strippedAny = true;
-      }
-
-      const row = rows.find((r) => r && r.id === sessId);
-      if (row && row.pendingQuestion) {
-        const pqStep = Number(row.pendingQuestion.stepIndex || 0);
-        const recStep = Number(rec.stepIndex || 0);
-        if (!recStep || !pqStep || pqStep <= recStep) {
-          row.pendingQuestion = null;
-          if (row.status === 'waiting' && now - Number(rec.at || 0) < 90000) {
-            row.status = 'working';
-            row.statusLabel = 'Running';
-            row.dot = 'running';
-          }
-          strippedAny = true;
-        }
-      }
-
-      if (!strippedAny && now - Number(rec.at || 0) > 12000) {
-        pendingAnsweredSessions.delete(sessId);
-      }
-    }
-  }
-
-  function getQuestionDraft(cardKey) {
-    let draft = questionDrafts.get(cardKey);
-    if (!draft) {
-      draft = {
-        selectedByQ: {},
-        writeInByQ: {},
-        submitted: false,
-        submittedSummary: ''
-      };
-      questionDrafts.set(cardKey, draft);
-    }
-    return draft;
-  }
-
-  function parseOptionRecommendation(rawText) {
-    const fullText = String(rawText || '').trim();
-    if (!fullText) {
-      return { isRecommended: false, cleanText: '', fullText: '' };
-    }
-    const prefixRe = /^\(\s*Recommended\s*\)\s*/i;
-    const suffixRe = /\s*\(\s*Recommended\s*\)\s*$/i;
-    if (prefixRe.test(fullText)) {
-      return {
-        isRecommended: true,
-        cleanText: fullText.replace(prefixRe, '').trim() || fullText,
-        fullText
-      };
-    }
-    if (suffixRe.test(fullText)) {
-      return {
-        isRecommended: true,
-        cleanText: fullText.replace(suffixRe, '').trim() || fullText,
-        fullText
-      };
-    }
-    return { isRecommended: false, cleanText: fullText, fullText };
-  }
-
-  function inferMultiSelectFromQuestion(questionText, optionsCount = 0) {
-    const q = String(questionText || '').toLowerCase();
-    if (
-      /which .* changes|which .* options|which .* items|select all|choose any|which of the following|apply right now/i.test(
-        q
-      ) &&
-      optionsCount >= 2
-    ) {
-      return true;
-    }
-    return false;
-  }
-
-  function normalizeFrontendQuestions(
-    rawQuestions,
-    fallbackPrompt = '',
-    fallbackOptions = [],
-    fallbackMulti = undefined
-  ) {
-    const out = [];
-    if (Array.isArray(rawQuestions) && rawQuestions.length > 0) {
-      for (let i = 0; i < rawQuestions.length; i++) {
-        const q = rawQuestions[i];
-        if (!q || typeof q !== 'object') continue;
-        const prompt = String(q.question || q.prompt || q.text || fallbackPrompt || '').trim();
-        const rawOpts = Array.isArray(q.options) ? q.options : [];
-        const options = rawOpts
-          .map((opt, idx) => {
-            const rawLabel =
-              typeof opt === 'string'
-                ? opt
-                : String(opt?.text || opt?.label || opt?.title || opt?.value || '').trim();
-            if (!rawLabel) return null;
-            const parsed = parseOptionRecommendation(rawLabel);
-            return {
-              id: String(opt?.id || idx + 1),
-              text: parsed.fullText,
-              cleanText: parsed.cleanText,
-              isRecommended: Boolean(opt?.isRecommended || parsed.isRecommended),
-              description: typeof opt === 'object' && opt?.description ? String(opt.description).trim() : ''
-            };
-          })
-          .filter(Boolean);
-        if (!prompt && options.length === 0) continue;
-        const explicitMulti =
-          typeof q.isMultiSelect === 'boolean'
-            ? q.isMultiSelect
-            : typeof q.multiSelect === 'boolean'
-              ? q.multiSelect
-              : typeof fallbackMulti === 'boolean'
-                ? fallbackMulti
-                : inferMultiSelectFromQuestion(prompt, options.length);
-        out.push({
-          question: prompt || 'Select an option',
-          header: String(q.header || '').trim(),
-          codePreview: String(q.codePreview || '').trim(),
-          description: String(q.description || '').trim(),
-          isToolPermission: Boolean(q.isToolPermission),
-          writeInPlaceholder: String(q.writeInPlaceholder || '').trim(),
-          isMultiSelect: Boolean(explicitMulti),
-          stepIndex:
-            q.stepIndex !== undefined && q.stepIndex !== null && Number.isFinite(Number(q.stepIndex))
-              ? Number(q.stepIndex)
-              : null,
-          toolUseId: String(q.toolUseId || '').trim(),
-          answered: Boolean(q.answered),
-          skipped: Boolean(q.skipped),
-          answerSummary: String(q.answerSummary || '').trim(),
-          options
-        });
-      }
-    }
-    if (out.length === 0 && Array.isArray(fallbackOptions) && fallbackOptions.length > 0) {
-      const prompt = String(fallbackPrompt || 'Select an option').trim();
-      const options = fallbackOptions
-        .map((opt, idx) => {
-          const rawLabel = typeof opt === 'string' ? opt : String(opt?.text || opt?.label || '').trim();
-          if (!rawLabel) return null;
-          const parsed = parseOptionRecommendation(rawLabel);
-          return {
-            id: String(idx + 1),
-            text: parsed.fullText,
-            cleanText: parsed.cleanText,
-            isRecommended: parsed.isRecommended,
-            description: ''
-          };
-        })
-        .filter(Boolean);
-      if (options.length > 0) {
-        out.push({
-          question: prompt,
-          header: '',
-          isMultiSelect:
-            typeof fallbackMulti === 'boolean'
-              ? fallbackMulti
-              : inferMultiSelectFromQuestion(prompt, options.length),
-          options
-        });
-      }
-    }
-    return out;
-  }
-
-  function extractStructuredQuestionsFromText(rawText) {
-    const src = String(rawText || '');
-    if (!src.trim()) {
-      return { questions: [], cleanedText: '' };
-    }
-
-    // 1. Parse explicit **Q1: ...**\n- opt1\n- opt2 blocks (appended by remote.js transcript parser)
-    const qBlockRegex = /(?:^|\n\n)\*\*Q(\d+):\s*([^\n*]+)\*\*\n((?:\s*-\s+[^\n]+(?:\n|$))+)/g;
-    const extracted = [];
-    let match;
-    while ((match = qBlockRegex.exec(src)) !== null) {
-      const qPrompt = String(match[2] || '').trim();
-      const bulletsRaw = String(match[3] || '');
-      const opts = bulletsRaw
-        .split('\n')
-        .map((line) => line.replace(/^\s*-\s+/, '').trim())
-        .filter(Boolean);
-      if (qPrompt && opts.length > 0) {
-        extracted.push({
-          question: qPrompt,
-          isMultiSelect: inferMultiSelectFromQuestion(qPrompt, opts.length),
-          options: opts
-        });
-      }
-    }
-
-    if (extracted.length > 0) {
-      const cleanedText = src.replace(qBlockRegex, '').trim();
-      return {
-        questions: normalizeFrontendQuestions(extracted),
-        cleanedText
-      };
-    }
-
-    // 2. Also detect plain-markdown recommendation lists (e.g. bullets starting with (Recommended) or following a question)
-    const lines = src.split('\n');
-    const bulletItems = [];
-    let firstBulletLine = -1;
-    let lastBulletLine = -1;
-    let hasRecommendedMarker = false;
-
-    for (let i = 0; i < lines.length; i++) {
-      const ln = lines[i].trim();
-      const mBullet = ln.match(/^(?:[-*•]|\d+[.)])\s+(.+)$/);
-      if (mBullet) {
-        const itemText = mBullet[1].trim().replace(/^\*\*(.+)\*\*$/, '$1');
-        if (firstBulletLine === -1) firstBulletLine = i;
-        lastBulletLine = i;
-        if (/\(\s*Recommended\s*\)/i.test(itemText)) {
-          hasRecommendedMarker = true;
-        }
-        bulletItems.push(itemText);
-      } else if (firstBulletLine !== -1 && ln !== '') {
-        // Non-bullet line after bullets started: only keep scanning if we haven't collected a recommendation block yet
-        if (!hasRecommendedMarker) {
-          bulletItems.length = 0;
-          firstBulletLine = -1;
-          lastBulletLine = -1;
-        } else {
-          break;
-        }
-      }
-    }
-
-    if (bulletItems.length >= 2 && hasRecommendedMarker) {
-      let promptLine = 'Which recommendation would you like to apply?';
-      for (let j = firstBulletLine - 1; j >= 0; j--) {
-        const prev = lines[j].trim().replace(/^\*\*|\*\*$/g, '');
-        if (prev) {
-          promptLine = prev;
-          break;
-        }
-      }
-      const beforeLines = lines.slice(0, firstBulletLine);
-      if (
-        beforeLines.length > 0 &&
-        beforeLines[beforeLines.length - 1].trim().replace(/^\*\*|\*\*$/g, '') === promptLine
-      ) {
-        beforeLines.pop();
-      }
-      const afterLines = lines.slice(lastBulletLine + 1);
-      const cleanedText = [...beforeLines, ...afterLines].join('\n').trim();
-      return {
-        questions: normalizeFrontendQuestions([
-          {
-            question: promptLine,
-            isMultiSelect: inferMultiSelectFromQuestion(promptLine, bulletItems.length),
-            options: bulletItems
-          }
-        ]),
-        cleanedText
-      };
-    }
-
-    return { questions: [], cleanedText: src };
-  }
-
-  function resolveQuestionsForTurn(m, matchingApproval = null) {
-    const parsedFromText = extractStructuredQuestionsFromText(m?.text || '');
-    const explicitQuestions = normalizeFrontendQuestions(
-      m?.questions || matchingApproval?.questions,
-      matchingApproval?.detail || '',
-      matchingApproval?.options || [],
-      matchingApproval?.isMultiSelect
-    );
-    const questions =
-      explicitQuestions.length > 0 ? explicitQuestions : parsedFromText.questions;
-
-    if (matchingApproval && typeof matchingApproval.isMultiSelect === 'boolean' && questions.length === 1) {
-      questions[0].isMultiSelect = matchingApproval.isMultiSelect;
-    }
-
-    return {
-      questions,
-      cleanedText: parsedFromText.cleanedText
-    };
-  }
-
-  function resolveQuestionsForApproval(a, sessionMessages = []) {
-    const direct = normalizeFrontendQuestions(
-      a?.questions,
-      a?.detail || a?.title || 'Question',
-      a?.options || [],
-      a?.isMultiSelect
-    );
-    if (direct.length > 0) return direct;
-
-    for (let i = sessionMessages.length - 1; i >= 0; i--) {
-      const msg = sessionMessages[i];
-      if (!msg || msg.role !== 'assistant') continue;
-      const resolved = resolveQuestionsForTurn(msg, a);
-      if (resolved.questions.length > 0) {
-        return resolved.questions;
-      }
-    }
-
-    if (a?.detail) {
-      return [
-        {
-          question: String(a.detail).trim(),
-          header: '',
-          isMultiSelect: Boolean(a?.isMultiSelect),
-          options: []
-        }
-      ];
-    }
-    return [];
-  }
-
-  function countDraftSelections(draft, questionsCount) {
-    if (!draft) return 0;
-    let total = 0;
-    for (let i = 0; i < questionsCount; i++) {
-      const set = draft.selectedByQ[i];
-      if (set && set.size > 0) total += set.size;
-      const w = String(draft.writeInByQ[i] || '').trim();
-      if (w) total += 1;
-    }
-    return total;
-  }
-
-  function renderInteractiveQuestionCardHtml(opts = {}) {
-    const cardKey = String(opts.cardKey || `qcard-${opts.sessionId || 'sess'}`);
-    const sessionId = String(opts.sessionId || '').trim();
-    const provider = opts.provider === 'claude' ? 'claude' : 'antigravity';
-    const approvalId = String(opts.approvalId || sessionId || '').trim();
-    const turnId = String(opts.turnId || '').trim();
-    const stepIndex = opts.stepIndex ?? null;
-    const selector = String(opts.selector || '').trim();
-    const sessionTitle = String(opts.sessionTitle || '').trim();
-    const showInspectBtn = Boolean(opts.showInspectBtn);
-    const plainQuestionFallback = Boolean(opts.plainQuestionFallback);
-    const isLastTurn = opts.isLastTurn !== false;
-    const hasFollowingTurn = Boolean(opts.hasFollowingTurn || !isLastTurn);
-    const questions = Array.isArray(opts.questions) ? opts.questions : [];
-
-    renderedQuestionsByCardKey.set(cardKey, {
-      cardKey,
-      sessionId,
-      provider,
-      approvalId,
-      turnId,
-      stepIndex: extractQuestionsStepIndex(questions, stepIndex),
-      selector,
-      questions,
-      plainQuestionFallback
-    });
-
-    const draft = getQuestionDraft(cardKey);
-    const selectedCount = countDraftSelections(draft, questions.length);
-    const anyMulti = questions.some((q) => q.isMultiSelect);
-    const anyToolPerm = questions.some((q) => q.isToolPermission);
-
-    const answeredState =
-      opts.answeredState ||
-      lookupAnsweredQuestionState({
-        sessionId,
-        approvalId,
-        turnId,
-        questions,
-        isLastTurn
-      });
-    const isAlreadyAnswered = Boolean(draft.submitted || answeredState?.answered);
-
-    if (isAlreadyAnswered) {
-      const isSkipped = Boolean(draft.submittedSkipped || answeredState?.skipped);
-      const summaryText = String(draft.submittedSummary || answeredState?.summary || '').trim();
-      const firstPrompt = String(questions[0]?.question || (anyToolPerm ? 'Tool Permission' : 'Question')).trim();
-      const promptsListHtml = questions
-        .map((q, idx) => {
-          const qTitle = String(q?.question || '').trim();
-          if (!qTitle) return '';
-          return `
-            <div class="vs-q-answered-item">
-              ${questions.length > 1 ? `<span class="vs-q-answered-num tabular">Q${idx + 1}</span>` : ''}
-              <span class="vs-q-answered-qtext">${esc(qTitle)}</span>
-            </div>
-          `;
-        })
-        .filter(Boolean)
-        .join('');
-      const showSummaryLine = Boolean(summaryText && (!hasFollowingTurn || isSkipped || anyToolPerm));
-      const ansDetailKey = `${cardKey}:ans`;
-      const savedMap = getThreadOpenDetailsMap(sessionId, false);
-      const isAnsOpen = Boolean(savedMap && savedMap.get(ansDetailKey) === true);
-
-      return `
-        <details class="vs-answered-q vs-question-card is-answered" data-q-card="${esc(cardKey)}" data-chat-detail-key="${esc(ansDetailKey)}" data-rendered-open="${isAnsOpen ? '1' : '0'}"${isAnsOpen ? ' open' : ''}>
-          <summary>
-            <span class="vs-answered-badge">${isSkipped ? 'Skipped' : anyToolPerm ? '✓ Resolved' : '✓ Answered'}</span>
-            <span style="font-weight:500;color:var(--text-heading);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1">${esc(questions.length > 1 ? `${questions.length} Questions · ${firstPrompt}` : firstPrompt)}</span>
-            ${summaryText ? `<span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:38%">${esc(summaryText)}</span>` : ''}
-            <span class="vs-thought-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>
-          </summary>
-          <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border-hairline)">
-            ${sessionTitle ? `<div class="approval-title">${esc(sessionTitle)}</div>` : ''}
-            ${promptsListHtml ? `<div class="vs-q-answered-prompts">${promptsListHtml}</div>` : ''}
-            ${showSummaryLine || summaryText ? `<div class="vs-q-answered-summary">${esc(summaryText)}</div>` : ''}
-          </div>
-        </details>
-      `;
-    }
-
-    const blocksHtml = questions
-      .map((q, qIdx) => {
-        const selSet = draft.selectedByQ[qIdx] || new Set();
-        const writeInVal = String(draft.writeInByQ[qIdx] || '');
-        const optionsList = Array.isArray(q.options) ? q.options : [];
-        const modeHint = q.isMultiSelect ? 'Select all that apply' : 'Select one option';
-        const writeInPh =
-          q.writeInPlaceholder ||
-          (optionsList.length > 0 ? 'Other (type custom answer or notes)…' : 'Type your answer…');
-
-        const optionsHtml = optionsList
-          .map((opt, oIdx) => {
-            const isSelected = selSet.has(String(oIdx));
-            return `
-              <button
-                type="button"
-                class="vs-q-opt ${isSelected ? 'is-selected' : ''} ${opt.isRecommended ? 'is-recommended' : ''}"
-                data-q-opt-toggle="1"
-                data-card-key="${esc(cardKey)}"
-                data-q-idx="${qIdx}"
-                data-opt-idx="${oIdx}"
-                aria-pressed="${isSelected ? 'true' : 'false'}"
-              >
-                <span class="vs-q-check ${q.isMultiSelect ? 'is-checkbox' : 'is-radio'}" aria-hidden="true">${isSelected ? '✓' : ''}</span>
-                <span class="vs-q-num tabular">${oIdx + 1}</span>
-                <span class="vs-q-opt-body">
-                  <span class="vs-q-opt-title-row">
-                    <span class="vs-q-opt-text">${esc(opt.cleanText || opt.text)}</span>
-                    ${opt.isRecommended && !q.isToolPermission ? `<span class="vs-q-rec-badge">★ Recommended</span>` : ''}
-                  </span>
-                  ${opt.description ? `<span class="vs-q-opt-desc">${esc(opt.description)}</span>` : ''}
-                </span>
-              </button>
-            `;
-          })
-          .join('');
-
-        return `
-          <div class="vs-q-block" data-q-block="${qIdx}">
-            <div class="vs-q-prompt-row">
-              <div class="vs-q-prompt">${esc(q.question || 'Question')}</div>
-              ${optionsList.length > 0 ? `<span class="vs-q-mode-pill">${esc(modeHint)}</span>` : ''}
-            </div>
-            ${q.codePreview ? `<pre class="code-step-snippet mono" style="margin:6px 0 4px;padding:8px 10px;border-radius:8px;white-space:pre-wrap;word-break:break-all">${esc(q.codePreview)}</pre>` : ''}
-            ${q.description ? `<div class="vs-q-opt-desc" style="margin-bottom:6px">${esc(q.description)}</div>` : ''}
-            ${optionsList.length > 0 ? `<div class="vs-q-options-list">${optionsHtml}</div>` : ''}
-            <div class="vs-q-writein-wrap">
-              <input
-                type="text"
-                class="vs-q-writein-input"
-                data-q-writein-input="1"
-                data-card-key="${esc(cardKey)}"
-                data-q-idx="${qIdx}"
-                placeholder="${esc(writeInPh)}"
-                value="${esc(writeInVal)}"
-                autocomplete="off"
-              >
-            </div>
-          </div>
-        `;
-      })
-      .join('');
-
-    const badgeRight = anyToolPerm
-      ? questions[0]?.header || 'Permission'
-      : anyMulti
-        ? 'Multi-Select'
-        : 'Interactive Choice';
-
-    return `
-      <div class="vs-question-card" data-q-card="${esc(cardKey)}">
-        <div class="vs-q-card-top">
-          <span class="approval-prov">
-            <span class="prov-glyph">${PROVIDER_ICONS[provider]}</span>
-            <span>${provider === 'claude' ? 'Claude Code' : 'Antigravity'} · ${anyToolPerm ? 'Tool Permission' : 'Question'}</span>
-          </span>
-          <span class="approval-tool-badge tabular">${esc(badgeRight)}</span>
-        </div>
-        ${sessionTitle ? `<div class="approval-title">${esc(sessionTitle)}</div>` : ''}
-        ${blocksHtml}
-        <div class="vs-q-actions">
-          <button
-            type="button"
-            class="btn-approve btn-q-submit"
-            data-q-submit="1"
-            data-card-key="${esc(cardKey)}"
-          >✓ ${anyToolPerm ? (selectedCount > 0 ? `Confirm (${selectedCount})` : 'Yes (Allow)') : `Submit Answer${selectedCount > 0 ? ` (${selectedCount})` : ''}`}</button>
-          <button
-            type="button"
-            class="btn-inspect btn-q-skip"
-            data-q-skip="1"
-            data-card-key="${esc(cardKey)}"
-          >${anyToolPerm ? '✕ Deny' : 'Skip'}</button>
-          ${showInspectBtn && sessionId ? `<button type="button" class="btn-inspect" data-open-chat="${esc(sessionId)}">Inspect</button>` : ''}
-        </div>
-      </div>
-    `;
-  }
-
-  // Background Tasks & Subagents Telemetry + Control (Antigravity + Claude Code)
-  const bgTaskLogsCache = new Map();
-  const openBgTaskDetails = new Set();
-  const locallyCancelledBgTasks = new Map();
-
-  function getBgKindSvg(kind) {
-    if (kind === 'subagent') {
-      return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="4.5" r="2"/><circle cx="11.5" cy="11.5" r="2"/><path d="M5 6.5v2a2 2 0 0 0 2 2h2.5"/></svg>';
-    }
-    if (kind === 'timer') {
-      return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8.5" r="5.5"/><path d="M8 5.5v3.2l2.1 1.3M6.2 1.8h3.6"/></svg>';
-    }
-    return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M4.5 6.2l2.3 1.8-2.3 1.8M8.4 9.8h3"/></svg>';
-  }
-
-  function getBgKindLabel(kind) {
-    if (kind === 'subagent') return 'Subagent';
-    if (kind === 'timer') return 'Timer';
-    return 'Task';
-  }
-
-  function getBgStateBadgeInfo(state) {
-    const s = String(state || 'completed').toLowerCase();
-    if (s === 'running') return { label: 'Running', cls: 'is-running' };
-    if (s === 'stalled') return { label: 'Stalled', cls: 'is-stalled' };
-    if (s === 'interrupted') return { label: 'Interrupted', cls: 'is-interrupted' };
-    if (s === 'failed') return { label: 'Failed', cls: 'is-failed' };
-    if (s === 'cancelled') return { label: 'Stopped', cls: '' };
-    return { label: 'Done', cls: '' };
-  }
-
-  function getSessionBackgroundTasks(row, threadDetail) {
-    const sid = String(row?.id || threadDetail?.id || '').trim();
-    const now = Date.now();
-    for (const [k, ts] of locallyCancelledBgTasks.entries()) {
-      if (now - ts > 90000) locallyCancelledBgTasks.delete(k);
-    }
-    const rawDetail = Array.isArray(threadDetail?.backgroundTasks)
-      ? threadDetail.backgroundTasks
-      : [];
-    const rawRow = [
-      ...(Array.isArray(row?.bgTasks) ? row.bgTasks : []),
-      ...(Array.isArray(row?.backgroundTasks) ? row.backgroundTasks : [])
-    ];
-    const byId = new Map();
-    for (const item of rawRow) {
-      if (!item || !item.id) continue;
-      byId.set(String(item.id), { ...item });
-    }
-    for (const item of rawDetail) {
-      if (!item || !item.id) continue;
-      const prev = byId.get(String(item.id)) || {};
-      byId.set(String(item.id), { ...prev, ...item });
-    }
-    if (Array.isArray(threadDetail?.messages)) {
-      for (const m of threadDetail.messages) {
-        if (!Array.isArray(m?.toolCalls)) continue;
-        for (let idx = 0; idx < m.toolCalls.length; idx++) {
-          const tc = m.toolCalls[idx];
-          if (!tc || tc.kind !== 'subagent') continue;
-          const synthId = String(
-            tc.subagentConversationId || tc.id || `subagent-${m.id || 'turn'}-${idx}`
-          );
-          if (!byId.has(synthId)) {
-            byId.set(synthId, {
-              id: synthId,
-              kind: 'subagent',
-              state: 'completed',
-              subagentRole: tc.subagentRole || '',
-              subagentType: tc.subagentType || '',
-              subagentConversationId: tc.subagentConversationId || '',
-              summary: tc.subagentRole
-                ? `${tc.subagentRole}${tc.subagentType ? ` (${tc.subagentType})` : ''}`
-                : tc.summary || tc.label || 'Side Agent',
-              command: tc.subagentPrompt || tc.command || '',
-              outputPreview: tc.snippet || '',
-              startedAt: m.createdAt ? Date.parse(m.createdAt) || 0 : 0
-            });
-          }
-        }
-      }
-    }
-    const allTasks = Array.from(byId.values()).map((t) => {
-      const cancelKey = `${sid}:${t.id}`;
-      const cancelFullKey = t.fullId ? `${sid}:${t.fullId}` : '';
-      const isLocCancelled =
-        locallyCancelledBgTasks.has(cancelKey) ||
-        (cancelFullKey && locallyCancelledBgTasks.has(cancelFullKey));
-      return isLocCancelled && t.state === 'running'
-        ? { ...t, state: 'cancelled', completedAt: now }
-        : t;
-    });
-    allTasks.sort((a, b) => {
-      const aRun = a.state === 'running' ? 1 : 0;
-      const bRun = b.state === 'running' ? 1 : 0;
-      if (aRun !== bRun) return bRun - aRun;
-      return Number(b.startedAt || 0) - Number(a.startedAt || 0);
-    });
-    const runningTasks = allTasks.filter((t) => t.state === 'running');
-    const totalCount = Math.max(allTasks.length, Number(row?.bgTotalCount || 0));
-    const runningCount = runningTasks.length;
-    return { allTasks, runningTasks, totalCount, runningCount };
-  }
-
-  async function fetchBgTaskLiveLog(sessionId, taskId, provider = '') {
-    if (isHeadlessBrowser || !sessionId || !taskId) return '';
-    const cacheKey = `${sessionId}:${taskId}`;
-    const matchedRow = (appState?.rows || []).find((r) => r && r.id === sessionId);
-    const targetDeviceId = matchedRow?.deviceId || '';
-    const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
-
-    if (connMode === 'local' && localBridgeBase && !isRemote) {
-      try {
-        const q = `id=${encodeURIComponent(sessionId)}&taskId=${encodeURIComponent(taskId)}&provider=${encodeURIComponent(provider)}`;
-        const res = await authFetchLocal(`${localBridgeBase}/api/bg-task-log?${q}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (typeof data?.output === 'string' && data.output.trim()) {
-            bgTaskLogsCache.set(cacheKey, data.output);
-            document
-              .querySelectorAll(`[data-bg-log-key="${CSS.escape(cacheKey)}"]`)
-              .forEach((preEl) => {
-                preEl.textContent = data.output;
-              });
-            return data.output;
-          }
-        }
-      } catch {}
-    }
-
-    if (edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
-      try {
-        const rpcOut = await sendWsRpc(
-          edgeWs,
-          {
-            type: 'rpc_cmd',
-            targetDeviceId,
-            cmd: { type: 'getBgTaskLog', id: sessionId, taskId, provider }
-          },
-          6500
-        );
-        const outStr = rpcOut?.result?.output ?? rpcOut?.output ?? '';
-        if (typeof outStr === 'string' && outStr.trim()) {
-          bgTaskLogsCache.set(cacheKey, outStr);
-          document
-            .querySelectorAll(`[data-bg-log-key="${CSS.escape(cacheKey)}"]`)
-            .forEach((preEl) => {
-              preEl.textContent = outStr;
-            });
-          return outStr;
-        }
-      } catch {}
-    }
-    return bgTaskLogsCache.get(cacheKey) || '';
-  }
-
-  async function cancelSingleBgTask(sessionId, taskId, provider = '') {
-    if (!sessionId || !taskId) return;
-    const now = Date.now();
-    locallyCancelledBgTasks.set(`${sessionId}:${taskId}`, now);
-    const shortId = String(taskId).split('/').pop();
-    if (shortId) locallyCancelledBgTasks.set(`${sessionId}:${shortId}`, now);
-    const row = (appState?.rows || []).find((r) => r.id === sessionId);
-    for (const list of [row?.bgTasks, row?.backgroundTasks]) {
-      if (!Array.isArray(list)) continue;
-      for (const t of list) {
-        if (t && (t.id === taskId || t.fullId === taskId || t.id === shortId)) {
-          t.state = 'cancelled';
-        }
-      }
-    }
-    if (row) {
-      const mergedList = [
-        ...(Array.isArray(row.bgTasks) ? row.bgTasks : []),
-        ...(Array.isArray(row.backgroundTasks) ? row.backgroundTasks : [])
-      ];
-      row.bgRunningCount = mergedList.filter((t) => t && t.state === 'running').length;
-    }
-    const td = threadsCache[sessionId];
-    if (td && Array.isArray(td.backgroundTasks)) {
-      for (const t of td.backgroundTasks) {
-        if (t && (t.id === taskId || t.fullId === taskId || t.id === shortId)) {
-          t.state = 'cancelled';
-        }
-      }
-    }
-    persistCache();
-    renderAll();
-    await dispatchRemoteCommand({
-      type: 'sessionAction',
-      action: 'cancelBgTask',
-      subAction: 'cancelBgTask',
-      id: sessionId,
-      sessionId,
-      taskId,
-      provider: provider || row?.provider || 'antigravity'
-    });
-    showToast(`Stopped background task ${shortId || taskId}`);
-  }
-
-  async function cancelAllSessionBgTasks(sessionId, provider = '') {
-    if (!sessionId) return;
-    const now = Date.now();
-    const row = (appState?.rows || []).find((r) => r.id === sessionId);
-    const td = threadsCache[sessionId];
-    for (const list of [row?.bgTasks, row?.backgroundTasks, td?.backgroundTasks]) {
-      if (!Array.isArray(list)) continue;
-      for (const t of list) {
-        if (t && t.state === 'running') {
-          t.state = 'cancelled';
-          locallyCancelledBgTasks.set(`${sessionId}:${t.id}`, now);
-          if (t.fullId) locallyCancelledBgTasks.set(`${sessionId}:${t.fullId}`, now);
-        }
-      }
-    }
-    if (row) row.bgRunningCount = 0;
-    persistCache();
-    renderAll();
-    await dispatchRemoteCommand({
-      type: 'sessionAction',
-      action: 'cancelAllBgTasks',
-      subAction: 'cancelAllBgTasks',
-      id: sessionId,
-      sessionId,
-      provider: provider || row?.provider || 'antigravity'
-    });
-    showToast('Stopped all running background tasks');
-  }
-
-  function renderPulseBgTasksSection() {
-    const secEl = $('pulse-bgtasks-section');
-    const pillEl = $('pulse-bgtasks-count-pill');
-    const stopAllBtn = $('btn-pulse-stop-all-bg');
-    const listEl = $('pulse-bgtasks-list');
-    if (!secEl || !listEl) return;
-
-    const rows = (appState?.rows || []).filter((r) => r && r.id && !r.archived);
-    const activeEntries = [];
-    for (const r of rows) {
-      const { allTasks } = getSessionBackgroundTasks(r, threadsCache[r.id]);
-      for (const t of allTasks) {
-        if (t.state === 'running' || t.state === 'stalled' || t.state === 'interrupted') {
-          activeEntries.push({ row: r, task: t });
-        }
-      }
-    }
-
-    if (activeEntries.length === 0) {
-      secEl.hidden = true;
-      listEl.innerHTML = '';
-      if (stopAllBtn) stopAllBtn.hidden = true;
-      return;
-    }
-
-    secEl.hidden = false;
-    const runningOnlyCount = activeEntries.filter((e) => e.task.state === 'running').length;
-    if (pillEl) {
-      pillEl.textContent =
-        runningOnlyCount > 0
-          ? `${runningOnlyCount} Running`
-          : `${activeEntries.length} Attention`;
-      pillEl.className = `pill-count tabular ${runningOnlyCount > 0 ? 'emerald' : 'crimson'}`;
-    }
-    if (stopAllBtn) {
-      stopAllBtn.hidden = runningOnlyCount < 2;
-    }
-
-    listEl.innerHTML = activeEntries
-      .slice(0, 10)
-      .map(({ row, task }) => {
-        const provKey = row.provider === 'claude' ? 'claude' : 'antigravity';
-        const stInfo = getBgStateBadgeInfo(task.state);
-        const expl = task.summary || task.command || task.id || 'Background task';
-        const timeStr = task.startedAt ? timeAgo(task.startedAt) : 'Active';
-        return `
-          <div class="pulse-bgtask-card">
-            <div class="pulse-bgtask-top">
-              <span class="pulse-bgtask-sess" data-open-bgtasks="${esc(row.id)}" data-session-prov="${provKey}" data-focus-task="${esc(task.id)}">
-                <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
-                <span class="pulse-bgtask-sess-title">${esc(row.title || 'Session')}</span>
-              </span>
-              <span class="bg-kind-badge ${stInfo.cls}">
-                ${getBgKindSvg(task.kind)}
-                <span>${esc(getBgKindLabel(task.kind))} · ${esc(stInfo.label)}</span>
-              </span>
-            </div>
-            <div class="pulse-bgtask-summary">${esc(expl)}</div>
-            ${task.command ? `<div class="pulse-bgtask-cmd mono">${esc(task.command)}</div>` : ''}
-            <div class="pulse-bgtask-foot">
-              <span class="meta-timestamp tabular">${esc(task.id)} · ${esc(timeStr)}</span>
-              <div class="pulse-bgtask-btns">
-                <button type="button" class="btn-ghost-sm" data-open-bgtasks="${esc(row.id)}" data-session-prov="${provKey}" data-focus-task="${esc(task.id)}">Inspect Log</button>
-                ${
-                  task.state === 'running'
-                    ? `<button type="button" class="btn-ghost-sm bg-stop-task-btn" data-bg-act="stop-task" data-sess-id="${esc(row.id)}" data-task-id="${esc(task.fullId || task.id)}" data-prov="${provKey}">■ Stop</button>`
-                    : ''
-                }
-              </div>
-            </div>
-          </div>
-        `;
-      })
-      .join('');
-  }
-
-  function renderChatBgTasks(activeRow, threadDetail, provKey, isNewDraft) {
-    const pillBtn = $('btn-bg-tasks');
-    const pillDot = $('bg-pill-dot');
-    const pillLbl = $('bg-tasks-pill-label');
-    const popEl = $('bg-tasks-popover');
-    const popTitle = $('bg-popover-title');
-    const popStopAll = $('btn-stop-all-bgtasks');
-    const popList = $('bg-tasks-popover-list');
-    const liveStrip = $('chat-live-bgtasks');
-
-    if (isNewDraft || !activeRow?.id || activeRow.id === '__new__') {
-      if (pillBtn) pillBtn.hidden = true;
-      if (popEl) popEl.hidden = true;
-      if (liveStrip) liveStrip.hidden = true;
-      return;
-    }
-
-    const sid = activeRow.id;
-    const { allTasks, runningTasks, totalCount, runningCount } = getSessionBackgroundTasks(
-      activeRow,
-      threadDetail
-    );
-
-    if (pillBtn) {
-      if (totalCount === 0 && allTasks.length === 0) {
-        pillBtn.hidden = true;
-        if (popEl) popEl.hidden = true;
-      } else {
-        pillBtn.hidden = false;
-        pillBtn.classList.toggle('has-running', runningCount > 0);
-        pillBtn.classList.toggle('active', Boolean(popEl && !popEl.hidden));
-        pillBtn.setAttribute('aria-expanded', String(Boolean(popEl && !popEl.hidden)));
-        if (pillDot) pillDot.hidden = runningCount === 0;
-        if (pillLbl) {
-          pillLbl.textContent =
-            runningCount > 0
-              ? `${runningCount} Live`
-              : `${allTasks.length || totalCount}`;
-        }
-      }
-    }
-
-    if (liveStrip) {
-      if (runningCount === 0) {
-        liveStrip.hidden = true;
-        liveStrip.innerHTML = '';
-      } else {
-        const primary = runningTasks[0];
-        const expl = primary?.summary || primary?.command || 'Background task running';
-        const extra = runningCount > 1 ? ` (+${runningCount - 1} more)` : '';
-        liveStrip.hidden = false;
-        liveStrip.innerHTML = `
-          <span class="bg-pill-dot"></span>
-          <span class="chat-live-bg-text">${esc(expl)}${esc(extra)}</span>
-          <div class="chat-live-bg-btns">
-            <button type="button" class="btn-ghost-sm" data-bg-act="open-popover">Inspect (${runningCount})</button>
-            <button type="button" class="bg-stop-task-btn" data-bg-act="${runningCount > 1 ? 'stop-session-all' : 'stop-task'}" data-sess-id="${esc(sid)}" data-task-id="${esc(primary?.fullId || primary?.id || '')}" data-prov="${provKey}">■ Stop${runningCount > 1 ? ' All' : ''}</button>
-          </div>
-        `;
-      }
-    }
-
-    if (!popEl || !popList) return;
-    if (popTitle) {
-      popTitle.textContent =
-        runningCount > 0
-          ? `Background Tasks (${runningCount} running · ${allTasks.length} total)`
-          : `Background Tasks (${allTasks.length})`;
-    }
-    if (popStopAll) {
-      popStopAll.hidden = runningCount === 0;
-    }
-
-    const prevScroll = popList.scrollTop;
-    if (allTasks.length === 0) {
-      popList.innerHTML = `<div class="meta-timestamp" style="padding:8px 4px">No background tasks or subagents recorded in this session.</div>`;
-      return;
-    }
-
-    popList.innerHTML = allTasks
-      .map((t) => {
-        const cacheKey = `${sid}:${t.id}`;
-        const isOpen = openBgTaskDetails.has(cacheKey);
-        const stInfo = getBgStateBadgeInfo(t.state);
-        const expl = t.summary || t.command || t.id || 'Background task';
-        const liveOut =
-          bgTaskLogsCache.get(cacheKey) ||
-          t.outputPreview ||
-          (t.state === 'running'
-            ? 'Task is running — expand or tap Refresh Log to tail output.'
-            : 'No console log output captured for this task.');
-        const timeStr = t.startedAt ? timeAgo(t.startedAt) : '';
-        return `
-          <details class="bg-task-item ${t.state === 'running' ? 'is-running' : ''}" data-bg-detail-key="${esc(cacheKey)}" data-sess-id="${esc(sid)}" data-task-id="${esc(t.id)}" data-prov="${provKey}" ${isOpen ? 'open' : ''}>
-            <summary class="bg-task-summary">
-              <span class="bg-task-ico">${getBgKindSvg(t.kind)}</span>
-              <span class="bg-task-main">
-                <span class="bg-task-expl">${esc(expl)}</span>
-                <span class="bg-task-meta tabular">
-                  <span>${esc(getBgKindLabel(t.kind))}</span>
-                  <span>·</span>
-                  <span>${esc(t.id)}</span>
-                  ${timeStr ? `<span>· ${esc(timeStr)}</span>` : ''}
-                </span>
-              </span>
-              <span class="bg-task-right">
-                <span class="bg-kind-badge ${stInfo.cls}">${esc(stInfo.label)}</span>
-                ${
-                  t.state === 'running'
-                    ? `<button type="button" class="bg-stop-task-btn" data-bg-act="stop-task" data-sess-id="${esc(sid)}" data-task-id="${esc(t.fullId || t.id)}" data-prov="${provKey}" aria-label="Stop this background task">■ Stop</button>`
-                    : ''
-                }
-              </span>
-            </summary>
-            <div class="bg-task-detail-body">
-              ${
-                t.command
-                  ? `
-                <div class="bg-detail-label-row">
-                  <span>${t.kind === 'subagent' ? 'Subagent Prompt' : t.kind === 'timer' ? 'Timer Wakeup Prompt' : 'Command Line'}</span>
-                </div>
-                <pre class="bg-detail-pre mono">${esc(t.command)}</pre>
-              `
-                  : ''
-              }
-              <div class="bg-detail-label-row">
-                <span>Live Output / Trace</span>
-                <button type="button" class="btn-ghost-sm" style="padding:2px 8px;font-size:10.5px" data-bg-act="refresh-log" data-sess-id="${esc(sid)}" data-task-id="${esc(t.id)}" data-prov="${provKey}">↻ Refresh Log</button>
-              </div>
-              <pre class="bg-detail-pre mono" data-bg-log-key="${esc(cacheKey)}">${esc(liveOut)}</pre>
-            </div>
-          </details>
-        `;
-      })
-      .join('');
-    popList.scrollTop = prevScroll;
-  }
-
-  // VIEW 1: Render Pulse
-  function renderPulseView() {
-    const bannerEl = $('pulse-notif-banner');
-    if (bannerEl && !isFocusInsideContainerInputs(bannerEl)) {
-      bannerEl.innerHTML = renderPulseNotifBannerHtml();
-    }
-
-    const fleetEl = $('pulse-fleet-strip');
-    const fleetDevices = getUnifiedFleetDevices();
-    if (
-      prefs.selectedDeviceFilter &&
-      prefs.selectedDeviceFilter !== 'all' &&
-      fleetDevices.length > 0 &&
-      !fleetDevices.some((d) => d.id === prefs.selectedDeviceFilter)
-    ) {
-      prefs.selectedDeviceFilter = 'all';
-    }
-    const allRows = appState?.rows || [];
-    if (fleetEl) {
-      if (fleetDevices.length === 0 && !localWsAuthed && !edgeWsAuthed) {
-        fleetEl.hidden = true;
-      } else {
-        fleetEl.hidden = false;
-        const activeTotalAll = allRows.filter((r) => r.id && !r.archived).length;
-        const transportHtml = localWsAuthed
-          ? `<span class="fleet-latency-badge tabular">${localWsRttMs || 2}ms Direct WS</span>`
-          : edgeWsAuthed
-            ? `<span class="fleet-latency-badge tabular">${edgeWsRttMs || 18}ms Edge WS</span>`
-            : `<span class="fleet-latency-badge cloud-mode tabular">Cloud Relay</span>`;
-        fleetEl.innerHTML = `
-          <span class="fleet-strip-head">Connected Fleet</span>
-          <button type="button" class="fleet-chip ${prefs.selectedDeviceFilter === 'all' ? 'active' : ''}" data-fleet-filter="all">
-            <span>All Hosts</span>
-            <span class="fleet-chip-meta tabular">${activeTotalAll}</span>
-          </button>
-          ${fleetDevices
-            .map((d) => {
-              const cnt = allRows.filter((r) => !r.archived && r.deviceId === d.id).length || Number(d.sessionCount || 0);
-              const isAct = prefs.selectedDeviceFilter === d.id;
-              const stWtCnt = getFleetStalledWtCount(d);
-              return `
-                <button type="button" class="fleet-chip ${isAct ? 'active' : ''}" data-fleet-filter="${esc(d.id)}" aria-label="${esc(d.hostname || d.name || d.id)} · ${d.online ? 'Live WebSocket / Bridge' : 'Synced via Cloud Relay'}">
-                  <span class="fleet-chip-dot ${d.online ? 'online' : 'synced'}"></span>
-                  <span>${esc(d.name || d.id)}</span>
-                  ${d.pcSetup && d.pcSetup.pendingCount > 0 ? `<span class="fleet-chip-setup tabular">! ${d.pcSetup.okCount}/${d.pcSetup.totalCount}</span>` : ''}
-                  ${stWtCnt > 0 ? `<span class="fleet-chip-stalled tabular">⎇ ${stWtCnt} wt/*</span>` : ''}
-                  <span class="fleet-chip-meta tabular">${cnt}</span>
-                </button>
-              `;
-            })
-            .join('')}
-          ${transportHtml}
-        `;
-      }
-    }
-
-    const rows =
-      prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
-        ? allRows.filter((r) => !r.deviceId || r.deviceId === prefs.selectedDeviceFilter)
-        : allRows;
-    const approvals =
-      prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
-        ? (appState?.approvals || []).filter(
-            (a) => !a.deviceId || a.deviceId === prefs.selectedDeviceFilter
-          )
-        : appState?.approvals || [];
-    const activeTotal = rows.filter((r) => r.id && !r.archived).length;
-    const workingCount = rows.filter((r) => r.status === 'working' && !r.archived).length;
-    const waitingCount = approvals.length;
-    const unreadCount = rows.filter((r) => r.unread && !r.archived).length;
-    const openCount = rows.filter((r) => r.open && !r.archived).length;
-
-    // Update navigation badges
-    const badgePulse = $('badge-pulse');
-    const dockPulse = $('dock-badge-pulse');
-    if (badgePulse) {
-      badgePulse.hidden = waitingCount === 0;
-      badgePulse.textContent = String(waitingCount);
-    }
-    if (dockPulse) {
-      dockPulse.hidden = waitingCount === 0;
-    }
-    const badgeSessions = $('badge-sessions');
-    if (badgeSessions) {
-      badgeSessions.textContent = String(activeTotal);
-    }
-    const dockSessions = $('dock-badge-sessions');
-    if (dockSessions) {
-      dockSessions.hidden = activeTotal === 0;
-      dockSessions.textContent = String(activeTotal);
-    }
-    const dirtyRepoCount = (appState?.workspaces || []).filter((w) => Number(w?.dirtyCount || 0) > 0).length;
-    const badgeWorkspaces = $('badge-workspaces');
-    if (badgeWorkspaces) {
-      badgeWorkspaces.hidden = dirtyRepoCount === 0;
-      badgeWorkspaces.textContent = String(dirtyRepoCount);
-    }
-
-    const kpisEl = $('pulse-kpis');
-    if (kpisEl) {
-      kpisEl.innerHTML = `
-        <div class="kpi-tile tabular">
-          <span class="kpi-val ${waitingCount > 0 ? 'amber' : ''}">${waitingCount}</span>
-          <span class="kpi-lbl">Needs Input</span>
-        </div>
-        <div class="kpi-tile tabular">
-          <span class="kpi-val ${workingCount > 0 ? 'emerald' : ''}">${workingCount}</span>
-          <span class="kpi-lbl">Running Now</span>
-        </div>
-        <div class="kpi-tile tabular">
-          <span class="kpi-val steel">${unreadCount}</span>
-          <span class="kpi-lbl">Unread</span>
-        </div>
-        <div class="kpi-tile tabular">
-          <span class="kpi-val brass">${openCount}</span>
-          <span class="kpi-lbl">Open Tabs</span>
-        </div>
-      `;
-    }
-
-    // Approvals Queue
-    const pillEl = $('approvals-count-pill');
-    const listEl = $('approvals-list');
-    if (pillEl) {
-      pillEl.textContent = waitingCount > 0 ? `${waitingCount} Pending` : 'All Clear';
-      pillEl.className = `pill-count tabular ${waitingCount > 0 ? 'amber' : 'emerald'}`;
-    }
-    if (listEl) {
-      const focusedWriteIn =
-        document.activeElement &&
-        listEl.contains(document.activeElement) &&
-        document.activeElement.matches('[data-q-writein-input]');
-      if (!focusedWriteIn) {
-        if (approvals.length === 0) {
-          listEl.innerHTML = `
-            <div class="approval-card clear-state">
-              <div>
-                <div class="approval-title">Zero Blocked Sessions</div>
-                <div class="meta-timestamp">No Antigravity or Claude Code tool permissions are waiting on confirmation.</div>
-              </div>
-              <span class="pill-count emerald">✓ Ready</span>
-            </div>
-          `;
-        } else {
-          listEl.innerHTML = approvals
-            .map((a) => {
-              const provKey = a.provider === 'claude' ? 'claude' : 'antigravity';
-              const isQuestionApproval =
-                a.kind === 'question' ||
-                /question/i.test(String(a.toolName || '')) ||
-                (Array.isArray(a.questions) && a.questions.length > 0) ||
-                (Array.isArray(a.options) && a.options.length > 0);
-              if (isQuestionApproval) {
-                const sessMsgs = coalesceThreadMessages(threadsCache[a.sessionId]?.messages || []);
-                const qList = resolveQuestionsForApproval(a, sessMsgs);
-                if (qList.length > 0) {
-                  return renderInteractiveQuestionCardHtml({
-                    cardKey: `q-pulse-${a.sessionId || a.id}`,
-                    sessionId: a.sessionId,
-                    provider: provKey,
-                    approvalId: a.approvalId || a.sessionId,
-                    selector: a.selector || '',
-                    sessionTitle: a.title || 'Session',
-                    showInspectBtn: true,
-                    questions: qList
-                  });
-                }
-              }
-              return `
-                <div class="approval-card" data-approval-id="${esc(a.id)}">
-                  <div class="approval-top">
-                    <span class="approval-prov">
-                      <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
-                      <span>${provKey === 'claude' ? 'Claude Code' : 'Antigravity'}</span>
-                    </span>
-                    <span class="approval-tool-badge tabular">${esc(a.toolName || 'Permission')}</span>
-                  </div>
-                  <div class="approval-title">${esc(a.title || 'Session')}</div>
-                  <div class="approval-detail mono">${esc(a.detail || '')}</div>
-                  <div class="approval-actions">
-                    ${
-                      a.kind === 'waiting_session'
-                        ? `<button type="button" class="btn-approve" data-open-chat="${esc(a.sessionId)}">Open &amp; Reply →</button>`
-                        : `
-                          <button type="button" class="btn-approve" data-approve-act="approve" data-app-id="${esc(a.approvalId)}" data-sess-id="${esc(a.sessionId)}" data-prov="${provKey}" data-sel="${esc(a.selector || '')}" data-lbl="${esc(a.toolName || 'Accept')}">✓ Approve</button>
-                          <button type="button" class="btn-reject" data-approve-act="reject" data-app-id="${esc(a.approvalId)}" data-sess-id="${esc(a.sessionId)}" data-prov="${provKey}" data-sel="${esc(a.selector || '')}">✕ Deny</button>
-                          <button type="button" class="btn-inspect" data-open-chat="${esc(a.sessionId)}">Inspect</button>
-                        `
-                    }
-                  </div>
-                </div>
-              `;
-            })
-            .join('');
-        }
-      }
-    }
-
-    renderPulseBgTasksSection();
-
-    // Quota Cards
-    const quotaGrid = $('pulse-quota-grid');
-    const updatedLbl = $('quota-updated-at');
-    const toggle3pBtn = $('btn-toggle-3p-quota');
-    const hide3pPulse = isThirdPartyQuotaHidden();
-    const has3pPulse = hasAnyAntigravityThirdPartyBars();
-    if (toggle3pBtn) {
-      toggle3pBtn.hidden = !(has3pPulse || hide3pPulse);
-      toggle3pBtn.setAttribute('data-toggle-3p-quota', hide3pPulse ? 'show' : 'hide');
-      toggle3pBtn.textContent = hide3pPulse ? 'Show Claude & GPT' : 'Hide Claude & GPT';
-      toggle3pBtn.setAttribute('aria-pressed', hide3pPulse ? 'true' : 'false');
-    }
-    if (updatedLbl) {
-      updatedLbl.textContent = appState?.generatedAt
-        ? `Synced ${timeAgo(appState.generatedAt)}`
-        : 'Live telemetry';
-    }
-    if (quotaGrid && !(activeInlineAcctEdit && document.activeElement && quotaGrid.contains(document.activeElement) && document.activeElement.matches('.ide-acct-inline-edit'))) {
-      const { ordered, sameProvCounts } = getOrderedPulseQuotaCards();
-      quotaGrid.innerHTML = ordered
-        .map(({ acct, provKey }, index) =>
-          renderQuotaCardHtml(acct, provKey, sameProvCounts[provKey] || 1, {
-            index,
-            totalCards: ordered.length
-          })
-        )
-        .join('');
-    }
-
-    // Repo Quick Launchers
-    const repoGrid = $('pulse-repo-launchers');
-    if (repoGrid) {
-      const workspaces = appState?.workspaces || [];
-      repoGrid.innerHTML = workspaces
-        .slice(0, 8)
-        .map(
-          (w) => `
-          <button type="button" class="repo-launch-tile" data-launch-repo="${esc(w.id)}" data-launch-name="${esc(w.name)}">
-            <div class="repo-tile-top">
-              <span class="repo-tile-group">${esc(w.group || 'BHFIRMS')}</span>
-              <span class="tag-pill tabular">${esc(w.branch || 'main')}</span>
-            </div>
-            <div class="repo-tile-name">${esc(w.name)}</div>
-            <div class="repo-tile-meta tabular">
-              <span>${w.dirtyCount > 0 ? `${w.dirtyCount} modified` : 'Clean tree'}</span>
-              <span>Prompt →</span>
-            </div>
-          </button>
-        `
-        )
-        .join('');
-    }
-
-    // Recent Sessions
-    const recentEl = $('pulse-recent-sessions');
-    if (recentEl) {
-      const topRows = rows.filter((r) => !r.archived).slice(0, 6);
-      recentEl.innerHTML = topRows.map((r) => renderSessionCardHtml(r)).join('');
-    }
-  }
-
-  function isSignedInQuotaCard(provInfo) {
-    if (!provInfo || provInfo.signedOut) return false;
-    const a = provInfo.account;
-    if (a) {
-      if (a.signedOut) return false;
-      return Boolean(a.available || a.email);
-    }
-    return Boolean(provInfo.email || provInfo.available);
-  }
-
-  function hasSignedInProviderRemote(provKey) {
-    if (!appState?.providers) return true;
-    const prov = provKey === 'claude' ? 'claude' : 'antigravity';
-    const raw = appState.providers[prov];
-    const list = Array.isArray(raw?.accounts) && raw.accounts.length ? raw.accounts : [raw || {}];
-    return list.some(isSignedInQuotaCard);
-  }
-
-  function syncProviderNewSessionButtons() {
-    const hasAgy = hasSignedInProviderRemote('antigravity');
-    const hasClaude = hasSignedInProviderRemote('claude');
-    const railWrap = document.querySelector('.rail-launchers');
-    const railAgyBtn = $('rail-new-agy');
-    const railClaudeBtn = $('rail-new-claude');
-    if (railAgyBtn) railAgyBtn.hidden = !hasAgy;
-    if (railClaudeBtn) railClaudeBtn.hidden = !hasClaude;
-    if (railWrap) {
-      railWrap.hidden = !hasAgy && !hasClaude;
-      railWrap.style.gridTemplateColumns =
-        (hasAgy && !hasClaude) || (!hasAgy && hasClaude)
-          ? 'minmax(0, 1fr)'
-          : 'repeat(2, minmax(0, 1fr))';
-    }
-    const sessRow = $('sess-new-btns') || document.querySelector('#view-sessions .toolbar-new-btns');
-    const sessAgyBtn = $('btn-sess-new-agy') || document.querySelector('#view-sessions [data-quick-new="antigravity"]');
-    const sessClaudeBtn = $('btn-sess-new-claude') || document.querySelector('#view-sessions [data-quick-new="claude"]');
-    if (sessAgyBtn) sessAgyBtn.hidden = !hasAgy;
-    if (sessClaudeBtn) sessClaudeBtn.hidden = !hasClaude;
-    if (sessRow) {
-      sessRow.classList.toggle('single-prov', (hasAgy && !hasClaude) || (!hasAgy && hasClaude));
-      sessRow.classList.toggle('no-prov', !hasAgy && !hasClaude);
-    }
-    const compPills = $('composer-mode-pills') || document.querySelector('.composer-mode-pills');
-    const compAgyBtn = $('comp-mode-new-agy');
-    const compClaudeBtn = $('comp-mode-new-claude');
-    if (compAgyBtn) compAgyBtn.hidden = !hasAgy;
-    if (compClaudeBtn) compClaudeBtn.hidden = !hasClaude;
-    if (compPills) {
-      compPills.classList.toggle('single-prov', (hasAgy && !hasClaude) || (!hasAgy && hasClaude));
-      compPills.classList.toggle('no-prov', !hasAgy && !hasClaude);
-    }
-    // Only downgrade explicit new-session mode if live provider telemetry has hydrated (#29)
-    if (hasProvidersHydrated && !hasExplicitBootUrlNav) {
-      if (prefs.composerMode === 'new-claude' && !hasClaude) {
-        prefs.composerMode = hasAgy ? 'new-antigravity' : 'reply';
-      } else if (prefs.composerMode === 'new-antigravity' && !hasAgy) {
-        prefs.composerMode = hasClaude ? 'new-claude' : 'reply';
-      }
-    }
-  }
-
-  function getOrderedPulseQuotaCards() {
-    const agy = appState?.providers?.antigravity;
-    const claude = appState?.providers?.claude;
-    const agyList = Array.isArray(agy?.accounts) && agy.accounts.length ? agy.accounts : [agy || {}];
-    const claudeList = Array.isArray(claude?.accounts) && claude.accounts.length ? claude.accounts : [claude || {}];
-    const agySignedIn = agyList.filter(isSignedInQuotaCard);
-    const claudeSignedIn = claudeList.filter(isSignedInQuotaCard);
-    const totalSignedIn = agySignedIn.length + claudeSignedIn.length;
-    const visAgy = totalSignedIn > 0 ? agySignedIn : agyList;
-    const visClaude = totalSignedIn > 0 ? claudeSignedIn : claudeList;
-    const combined = [
-      ...visAgy.map((acct) => ({ acct, provKey: 'antigravity', id: acct?.id || 'antigravity:default' })),
-      ...visClaude.map((acct) => ({ acct, provKey: 'claude', id: acct?.id || 'claude:default' }))
-    ];
-    const orderSource =
-      Array.isArray(appState?.accountOrder) && appState.accountOrder.length
-        ? appState.accountOrder
-        : Array.isArray(prefs.accountOrder)
-          ? prefs.accountOrder
-          : [];
-    const orderMap = new Map();
-    orderSource.forEach((id, idx) => {
-      if (id && !orderMap.has(id)) orderMap.set(id, idx);
-    });
-    const ordered = combined
-      .map((entry, fallbackIdx) => ({ entry, fallbackIdx }))
-      .sort((a, b) => {
-        const ia = orderMap.has(a.entry.id)
-          ? orderMap.get(a.entry.id)
-          : Number.isFinite(Number(a.entry.acct?.sortOrder))
-            ? 1000 + Number(a.entry.acct.sortOrder)
-            : 2000 + a.fallbackIdx;
-        const ib = orderMap.has(b.entry.id)
-          ? orderMap.get(b.entry.id)
-          : Number.isFinite(Number(b.entry.acct?.sortOrder))
-            ? 1000 + Number(b.entry.acct.sortOrder)
-            : 2000 + b.fallbackIdx;
-        return ia - ib;
-      })
-      .map((x) => x.entry);
-    return {
-      ordered,
-      sameProvCounts: {
-        antigravity: visAgy.length,
-        claude: visClaude.length
-      }
-    };
-  }
-
-  async function reorderPulseQuotaCard(accountId, opts = {}) {
-    if (!accountId) return;
-    const { ordered } = getOrderedPulseQuotaCards();
-    const ids = ordered.map((x) => x.id).filter(Boolean);
-    const fromIdx = ids.indexOf(accountId);
-    if (fromIdx === -1) return;
-    const nextIds = [...ids];
-    if (opts.targetAccountId && opts.targetAccountId !== accountId) {
-      nextIds.splice(fromIdx, 1);
-      const targetIdx = nextIds.indexOf(opts.targetAccountId);
-      if (targetIdx === -1) return;
-      const insertAt = opts.position === 'after' ? targetIdx + 1 : targetIdx;
-      nextIds.splice(insertAt, 0, accountId);
-    } else {
-      const delta = opts.direction === 'up' ? -1 : opts.direction === 'down' ? 1 : 0;
-      const toIdx = fromIdx + delta;
-      if (!delta || toIdx < 0 || toIdx >= nextIds.length) return;
-      const [moved] = nextIds.splice(fromIdx, 1);
-      nextIds.splice(toIdx, 0, moved);
-    }
-    const existingExtra = (Array.isArray(appState?.accountOrder) ? appState.accountOrder : []).filter(
-      (id) => id && !nextIds.includes(id)
-    );
-    const fullOrder = [...nextIds, ...existingExtra];
-    prefs.accountOrder = fullOrder;
-    saveJson(STORAGE_KEYS.PREFS, prefs);
-    if (appState) {
-      appState.accountOrder = fullOrder;
-      for (const pk of ['antigravity', 'claude']) {
-        const list = appState.providers?.[pk]?.accounts;
-        if (Array.isArray(list)) {
-          list.sort((a, b) => {
-            const ia = fullOrder.indexOf(a?.id);
-            const ib = fullOrder.indexOf(b?.id);
-            return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
-          });
-          list.forEach((item, idx) => {
-            if (item) item.sortOrder = idx;
-          });
-        }
-      }
-      persistCache();
-    }
-    renderPulseView();
-    await dispatchRemoteCommand({
-      type: 'sessionAction',
-      action: 'accountReorder',
-      subAction: 'accountReorder',
-      accountId,
-      provider: opts.provider || (accountId.startsWith('claude:') ? 'claude' : 'antigravity'),
-      direction: opts.direction || '',
-      targetAccountId: opts.targetAccountId || '',
-      position: opts.position || '',
-      orderedIds: fullOrder
-    });
-  }
-
-  function renderQuotaCardHtml(provInfo, key, sameProvCount = 1, orderCtx = null) {
-    const acctId = provInfo?.id || `${key}:default`;
-    const label = key === 'claude' ? 'Claude Code' : 'Antigravity';
-    if (!isSignedInQuotaCard(provInfo)) {
-      return `
-        <div class="quota-card is-secondary" data-quota-card-id="${esc(acctId)}">
-          <div class="quota-card-head">
-            <div class="quota-prov-title">
-              <span class="prov-glyph">${PROVIDER_ICONS[key]}</span>
-              <div>
-                <div class="quota-title-line"><span class="quota-title-name">${esc(label)}</span></div>
-                <div class="meta-timestamp">Not signed in</div>
-              </div>
-            </div>
-            <div class="quota-head-actions">
-              <button type="button" class="quota-switch-btn" data-account-add-remote="${key}">+ Sign in</button>
-            </div>
-          </div>
-        </div>
-      `;
-    }
-    const plan = provInfo?.account?.plan || (key === 'claude' ? 'Claude Max' : 'Google AI Pro');
-    const email = provInfo?.account?.email || '';
-    const nick = String(provInfo?.nickname || provInfo?.account?.nickname || '').trim();
-    const isActive = provInfo?.active !== false;
-    const multi = sameProvCount > 1;
-    const collapseKey = multi ? acctId : key;
-    const isCollapsed = Boolean(
-      prefs.collapsedQuotaCards &&
-        (prefs.collapsedQuotaCards[collapseKey] ?? prefs.collapsedQuotaCards[acctId])
-    );
-    const cardIndex = typeof orderCtx?.index === 'number' ? orderCtx.index : 0;
-    const totalCards = typeof orderCtx?.totalCards === 'number' ? orderCtx.totalCards : sameProvCount;
-    const canReorder = totalCards > 1;
-    const canMoveUp = canReorder && cardIndex > 0;
-    const canMoveDown = canReorder && cardIndex < totalCards - 1;
-    const limits = provInfo?.usage?.limits?.length
-      ? provInfo.usage.limits
-      : provInfo?.usage?.allLimits || [];
-
-    const nowMs = Date.now();
-    const renderPulseBar = (l, isThirdParty) => {
-      const passed = Boolean(l.expired || (l.reset && l.reset <= nowMs));
-      const known = l.known !== false;
-      const rawPct = l.pct !== undefined ? l.pct : l.usedPercent;
-      const pct = passed || !known ? 0 : Math.min(100, Math.max(0, Math.round(Number(rawPct || 0))));
-      const pctTxt = known ? `${pct}%` : '—';
-      const cls = pct >= 90 ? 'crit' : pct >= 78 ? 'warn' : isThirdParty ? 'third-party' : key === 'claude' ? 'claude' : '';
-      const resetTxt = formatQuotaResetLine(l, nowMs);
-      return `
-        <div class="q-bar-row tabular">
-          <div class="q-bar-labels">
-            <span>${esc(l.label)}</span>
-            <span class="q-bar-meta">${resetTxt ? `<span class="q-reset">${esc(resetTxt)}</span>` : ''}<span class="q-pct">${pctTxt}</span></span>
-          </div>
-          <div class="q-track">
-            <div class="q-fill ${cls}" style="width:${pct}%"></div>
-          </div>
-        </div>
-      `;
-    };
-    let barsHtml = '';
-    if (!limits.length) {
-      barsHtml = `<div class="meta-timestamp">${esc(provInfo?.usageMessage || (isActive ? 'Quota telemetry ready.' : 'Signed in · Standby'))}</div>`;
-    } else if (key === 'antigravity') {
-      const hide3p = isThirdPartyQuotaHidden();
-      const gemBars = limits.filter((l) => !isThirdPartyQuotaBar(l));
-      const tpBars = limits.filter((l) => isThirdPartyQuotaBar(l));
-      if (hide3p) {
-        barsHtml = gemBars.length
-          ? gemBars.map((l) => renderPulseBar(l, false)).join('')
-          : tpBars.length
-            ? `<div class="q-pool-hidden-note"><span>Claude &amp; GPT pool hidden</span><button type="button" class="q-pool-toggle-btn" data-toggle-3p-quota="show" aria-label="Show Claude and GPT quota bars">Show</button></div>`
-            : `<div class="meta-timestamp">${esc(provInfo?.usageMessage || (isActive ? 'Quota telemetry ready.' : 'Signed in · Standby'))}</div>`;
-      } else if (tpBars.length) {
-        const gemHtml = gemBars.length
-          ? `<div class="q-pool-group"><div class="q-pool-head"><span class="q-pool-dot agy"></span><span class="q-pool-title">Gemini models</span></div>${gemBars.map((l) => renderPulseBar(l, false)).join('')}</div>`
-          : '';
-        const tpHtml = `<div class="q-pool-3p"><div class="q-pool-head"><span class="q-pool-dot third-party"></span><span class="q-pool-title">Claude &amp; GPT pool</span><button type="button" class="q-pool-toggle-btn" data-toggle-3p-quota="hide" aria-label="Hide Claude and GPT quota bars">Hide</button></div>${tpBars.map((l) => renderPulseBar(l, true)).join('')}</div>`;
-        barsHtml = gemHtml + tpHtml;
-      } else {
-        barsHtml = gemBars.map((l) => renderPulseBar(l, false)).join('');
-      }
-    } else {
-      barsHtml = limits.map((l) => renderPulseBar(l, false)).join('');
-    }
-
-    const shortEmail = email.includes('@') ? email.split('@')[0] : email;
-    const shortPlan = /^Google AI\s+/i.test(plan) ? plan.replace(/^Google AI\s+/i, '') : plan;
-    const headerNickHtml = nick
-      ? `<span class="quota-nick-pill${key === 'claude' ? ' claude' : ''}">${esc(nick)}</span>`
-      : multi && shortEmail
-        ? `<span class="quota-nick-pill${key === 'claude' ? ' claude' : ''}">${esc(shortEmail)}</span>`
-        : '';
-
-    const statusControlHtml = !isActive
-      ? `<button type="button" class="quota-switch-btn" data-account-switch="${esc(acctId)}" data-account-prov="${key}" aria-label="Switch active ${esc(label)} account to ${esc(email || label)} (keeps other accounts signed in)">⇄ Use</button>`
-      : multi
-        ? `<span class="quota-active-pill" aria-label="Currently active for new ${esc(label)} sessions"><span class="quota-active-dot"></span>Active</span>`
-        : '';
-
-    const moveBtnsHtml = canReorder && (canMoveUp || canMoveDown)
-      ? (canMoveUp ? `<button type="button" class="quota-nick-btn" data-account-move="up" data-account-id="${esc(acctId)}" data-account-prov="${key}" aria-label="Move account up">↑</button>` : '') +
-        (canMoveDown ? `<button type="button" class="quota-nick-btn" data-account-move="down" data-account-id="${esc(acctId)}" data-account-prov="${key}" aria-label="Move account down">↓</button>` : '')
-      : '';
-
-    return `
-      <div class="quota-card${isCollapsed ? ' collapsed' : ''}${isActive ? ' is-active' : ' is-secondary'}${multi ? ' multi' : ''}" data-quota-card-id="${esc(acctId)}" ${canReorder ? 'draggable="true"' : ''}>
-        <div class="quota-card-head">
-          <button type="button" class="quota-card-toggle" data-quota-collapse="${esc(collapseKey)}" aria-expanded="${!isCollapsed}" aria-label="${isCollapsed ? 'Show' : 'Hide'} ${esc(email || label)} usage">
-            <div class="quota-prov-title">
-              <svg class="quota-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg>
-              <span class="prov-glyph">${PROVIDER_ICONS[key]}</span>
-              <div class="quota-title-stack">
-                <div class="quota-title-line"><span class="quota-title-name">${esc(label)}</span>${headerNickHtml}</div>
-              </div>
-            </div>
-          </button>
-          <div class="quota-head-actions">
-            ${statusControlHtml}
-            ${isCollapsed && !multi ? `<span class="plan-pill">${esc(shortPlan)}</span>` : ''}
-            ${moveBtnsHtml}
-            <button type="button" class="quota-nick-btn" data-account-label="${esc(acctId)}" data-account-prov="${key}" data-account-nick="${esc(nick)}" aria-label="${nick ? 'Edit account label' : 'Set account label (e.g. Friend, Work)'}">✎</button>
-            <button type="button" class="quota-nick-btn" data-account-remove="${esc(acctId)}" data-account-prov="${key}" data-account-email="${esc(email)}" aria-label="${multi ? 'Disconnect account' : 'Sign out account'}">✕</button>
-          </div>
-        </div>
-        ${
-          isCollapsed
-            ? ''
-            : `${
-                activeInlineAcctEdit && activeInlineAcctEdit.accountId === acctId && activeInlineAcctEdit.surface === 'pulse'
-                  ? `<form class="ide-acct-edit-row" data-acct-label-form="${esc(acctId)}" data-acct-prov="${key}"><input type="text" class="ide-acct-inline-edit" value="${esc(activeInlineAcctEdit.value ?? nick)}" placeholder="Nickname (e.g. Work, Personal)" maxlength="32" autocomplete="off"><button type="submit" class="ide-link-pill">Save</button><button type="button" class="ide-link-pill" data-acct-label-cancel="1">Cancel</button></form>`
-                  : ''
-              }<div class="quota-sub-line">${email ? `<span class="meta-timestamp">${esc(email)}</span>` : '<span></span>'}<span class="plan-pill">${esc(shortPlan)}</span></div><div class="quota-bars-stack">${barsHtml}</div>${key === 'claude' && isActive ? renderClaudeModeSelectorHtml('quota') : ''}`
-        }
-      </div>
-    `;
-  }
-
-  function renderSessionCardHtml(r) {
-    const provKey = r.provider === 'claude' ? 'claude' : 'antigravity';
-    const groups = Array.isArray(appState?.groups) ? appState.groups : [];
-    const grpObj = r.group ? groups.find((g) => g && g.id === r.group) : null;
-    const td = threadsCache[r.id];
-    const ctxW = td?.contextWindow;
-    const savedCardOverride = r.id && prefs.threadModelConfig ? prefs.threadModelConfig[r.id] : null;
-    const hasThreadModelOverride = Boolean(
-      savedCardOverride && !(Number(r.modelUpdatedAt || 0) > Number(savedCardOverride.updatedAt || 0))
-    );
-    const cardCfg = hasThreadModelOverride
-      ? getEffectiveSessionModelConfig(r, provKey, false)
-      : null;
-    const rawCardModel = hasThreadModelOverride
-      ? cardCfg.displayLabel
-      : ctxW?.modelLabel || ctxW?.modelName || td?.model || r.model;
-    const displayModel = hasThreadModelOverride
-      ? cardCfg.displayLabel
-      : normalizeDisplayModel(rawCardModel, provKey);
-    const showNeonCardPill = Boolean(
-      !r.archived && provKey === 'antigravity' && (r.neonWarning || /neon/i.test(String(displayModel || '')))
-    );
-    const rawUsedTok = ctxW?.usedTokens ?? r.usedTokens ?? r.contextTokens ?? 0;
-    const rawLimTok = hasThreadModelOverride
-      ? inferDefaultContextLimit(provKey, displayModel)
-      : ctxW?.limitTokens || ctxW?.maxContextTokens || r.limitTokens || r.contextLimit || 0;
-    const {
-      usedTokens: safeUsed,
-      limitTokens: limTok,
-      pct: ctxPct
-    } = resolveDisplayContextMetrics(provKey, rawCardModel || displayModel, rawUsedTok, rawLimTok, false);
-    const statusCls =
-      r.status === 'waiting'
-        ? 'waiting'
-        : r.status === 'working'
-          ? 'working'
-          : r.unread
-            ? 'unread'
-            : '';
-    const { runningTasks: sessBgRunningTasks, runningCount: sessBgRunning } =
-      getSessionBackgroundTasks(r, td);
-    const bgPillHtml =
-      sessBgRunning > 0
-        ? `<button type="button" class="sess-bgtask-pill tabular is-running" data-open-bgtasks="${esc(r.id || '')}" data-session-prov="${provKey}" aria-label="Inspect running background tasks">${getBgKindSvg(sessBgRunningTasks[0]?.kind || 'task')}<span class="sess-bgtask-pill-txt">${sessBgRunning} live${sessBgRunningTasks[0]?.summary ? ` · ${esc(sessBgRunningTasks[0].summary)}` : ''}</span></button>`
-        : '';
-    const devEntry = r.deviceId ? fleetDevicesMap.get(r.deviceId) : null;
-    const devLabel = r.deviceName || devEntry?.name || '';
-    const devBadgeHtml = devLabel
-      ? `<span class="sess-device-badge ${devEntry?.online ? 'is-online' : ''}" aria-label="Host machine: ${esc(devLabel)}">${devEntry?.online ? '●' : '◐'} ${esc(devLabel)}</span>`
-      : '';
-    const isPinnedCard = isRowPinned(r);
-    return `
-      <div class="session-card ${statusCls}${isPinnedCard ? ' is-pinned' : ''}" data-session-id="${esc(r.id || '')}" data-session-prov="${provKey}">
-        <div class="sess-left">
-          <span class="sess-status-dot ${statusCls}" aria-label="${esc(r.status || 'idle')}"></span>
-          <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
-          <div class="sess-body">
-            <div class="sess-title-row">
-              ${isPinnedCard ? `<span class="sess-pin-glyph" aria-label="Pinned chat">${PIN_FILLED_SVG}</span>` : ''}
-              <span class="sess-title">${esc(r.title || 'Untitled Session')}</span>
-            </div>
-            <div class="sess-sub-row tabular">
-              ${devBadgeHtml}
-              ${isClaudeDesktopRow(r) ? `<span class="session-origin-pill">Desktop</span>` : ''}
-              ${r.folder ? `<span class="tag-pill">${esc(r.folder)}</span>` : ''}
-              ${r.branch ? `<span>⎇ ${esc(r.branch)}</span>` : ''}
-              <span>${esc(displayModel)}</span>
-              ${
-                showNeonCardPill && r.id
-                  ? `<button type="button" class="session-neon-pill" data-switch-neon-carbon="${esc(r.id)}" data-micro-tip="Switch session from Neon to Carbon" aria-label="Neon model active — switch to Carbon">Neon</button>`
-                  : ''
-              }
-              ${
-                safeUsed > 0
-                  ? `<span class="tag-pill tabular" aria-label="Context window usage">${fmtCompact(safeUsed)} / ${fmtCompact(limTok)} · ${ctxPct}%</span>`
-                  : ''
-              }
-              ${bgPillHtml}
-              <span>· ${timeAgo(getRowLastWorkedMs(r))}</span>
-              ${isSessionOpenTab(r) ? `<span class="tag-pill" style="color:var(--brass)">Open Tab</span>` : ''}
-            </div>
-          </div>
-        </div>
-        <div class="sess-right">
-          ${
-            r.status === 'working' || r.dot === 'running' || r.bgTask?.state === 'running'
-              ? `<button type="button" class="sess-act-btn stop-btn" data-sess-act="stop" data-id="${esc(r.id || '')}" aria-label="Stop / interrupt running session">■ Stop</button>`
-              : ''
-          }
-          ${
-            !r.archived && r.id
-              ? `<button type="button" class="sess-act-btn pin-btn${isPinnedCard ? ' active' : ''}" data-sess-act="pin" data-id="${esc(r.id)}" data-val="${!isPinnedCard}" aria-pressed="${isPinnedCard}" aria-label="${isPinnedCard ? 'Unpin chat' : 'Pin chat'}">${isPinnedCard ? PIN_FILLED_SVG : PIN_OUTLINE_SVG}<span>${isPinnedCard ? 'Pinned' : 'Pin'}</span></button>`
-              : ''
-          }
-          <button type="button" class="sess-act-btn" data-sess-act="group" data-id="${esc(r.id || '')}" aria-label="Assign or move session to a group">
-            ${esc(grpObj ? grpObj.name : 'Group')}
-          </button>
-          ${
-            grpObj && !r.archived
-              ? `<button type="button" class="sess-act-btn" data-sess-act="group-remove" data-id="${esc(r.id || '')}" aria-label="Remove from ${esc(grpObj.name)}">✕</button>`
-              : ''
-          }
-          <button type="button" class="sess-act-btn" data-sess-act="unread" data-id="${esc(r.id || '')}" data-val="${!r.unread}" aria-label="Toggle unread">
-            ${r.unread ? '● Unread' : '○ Read'}
-          </button>
-          <button type="button" class="sess-act-btn" data-sess-act="archive" data-id="${esc(r.id || '')}" data-val="${!r.archived}" aria-label="${r.archived ? 'Unarchive' : 'Archive'}">
-            ${r.archived ? 'Restore' : 'Archive'}
-          </button>
-        </div>
-      </div>
-    `;
-  }
-
-  function isSessionGroupCollapsed(groupId, defaultCollapsed = false) {
-    if (
-      prefs.collapsedSessionGroups &&
-      typeof prefs.collapsedSessionGroups === 'object' &&
-      groupId in prefs.collapsedSessionGroups
-    ) {
-      return Boolean(prefs.collapsedSessionGroups[groupId]);
-    }
-    return Boolean(defaultCollapsed);
-  }
-
-  function renderSessionGroupSectionHtml({
-    id,
-    name,
-    color = 'brass',
-    items = [],
-    isCollapsed = false,
-    isCustomGroup = false,
-    archivableIds = []
-  }) {
-    const bodyHtml = items.length
-      ? items.map((r) => renderSessionCardHtml(r)).join('')
-      : `<div class="meta-timestamp" style="padding:8px 10px">No sessions in <strong>${esc(name)}</strong> yet. Use <strong>Group</strong> on any session card to move it here.</div>`;
-
-    const actionsHtml = isCustomGroup
-      ? `
-        <button type="button" class="group-act-btn" data-group-act="new-in-group" data-group-id="${esc(id)}" data-micro-tip="Start new session in group" aria-label="Start new session">+ New</button>
-        <button type="button" class="group-act-btn" data-group-act="rename" data-group-id="${esc(id)}" data-group-name="${esc(name)}" data-micro-tip="Rename group" aria-label="Rename group">✎</button>
-        <button type="button" class="group-act-btn" data-group-act="delete" data-group-id="${esc(id)}" data-group-name="${esc(name)}" data-micro-tip="Delete group" aria-label="Delete group">✕</button>
-      `
-      : archivableIds.length > 0
-        ? `<button type="button" class="group-act-btn" data-group-act="archive-closed" data-micro-tip="Archive ${archivableIds.length} closed idle sessions" aria-label="Archive ${archivableIds.length} closed idle sessions">Archive closed (${archivableIds.length})</button>`
-        : '';
-
-    const pinBadgeHtml = renderCollapsedGroupPinBadgeHtml(items, isCollapsed, 'group-pin-badge');
-
-    return `
-      <div class="session-group-block ${isCollapsed ? 'collapsed' : ''}" data-session-group="${esc(id)}">
-        <div class="session-group-header">
-          <button type="button" class="session-group-toggle" data-group-act="toggle" data-group-id="${esc(id)}" aria-expanded="${!isCollapsed}">
-            <svg class="group-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg>
-            <span class="group-color-dot ${esc(color)}"></span>
-            <span class="group-title">${esc(name)}</span>
-            ${pinBadgeHtml}<span class="group-count-pill tabular">${items.length}</span>
-          </button>
-          <div class="session-group-actions">
-            ${actionsHtml}
-          </div>
-        </div>
-        <div class="session-group-body">
-          ${bodyHtml}
-        </div>
-      </div>
-    `;
-  }
-
-  // VIEW 2: Render Sessions List
-  function renderSessionsView() {
-    syncProviderNewSessionButtons();
-    const container = $('sessions-full-list');
-    if (!container) return;
-    const hideDesktop = isClaudeDesktopHidden();
-    const rows = (appState?.rows || []).filter(
-      (r) => r.id && (!hideDesktop || !isClaudeDesktopRow(r))
-    );
-    const groups = Array.isArray(appState?.groups) ? appState.groups : [];
-    const groupIds = new Set(groups.map((g) => g.id));
-    const q = ($('sess-search-input')?.value || '').trim().toLowerCase();
-
-    const activeTotalAll = rows.filter((r) => !r.archived).length;
-    const runningNowCount = rows.filter((r) => !r.archived && r.status === 'working').length;
-    const sumPill = $('sess-header-summary-pill');
-    if (sumPill) {
-      const runPart = runningNowCount > 0 ? `${runningNowCount} Running · ` : '';
-      const grpPart =
-        groups.length > 0 ? ` · ${groups.length} Group${groups.length === 1 ? '' : 's'}` : '';
-      sumPill.textContent = `${runPart}${activeTotalAll} Sessions${grpPart}`;
-    }
-
-    // Sync active state & live counts on provider segmented buttons
-    const provCounts = {
-      all: rows.filter((r) => !r.archived).length,
-      antigravity: rows.filter((r) => !r.archived && r.provider !== 'claude').length,
-      claude: rows.filter((r) => !r.archived && r.provider === 'claude').length
-    };
-    const showAgySeg = provCounts.antigravity > 0;
-    const showClaudeSeg = provCounts.claude > 0;
-    if (
-      (prefs.sessProvider === 'claude' && !showClaudeSeg) ||
-      (prefs.sessProvider === 'antigravity' && !showAgySeg)
-    ) {
-      prefs.sessProvider = 'all';
-      saveJson(STORAGE_KEYS.PREFS, prefs);
-    }
-    const provSegEl = $('sess-provider-seg');
-    if (provSegEl) {
-      provSegEl.hidden = !(showAgySeg && showClaudeSeg);
-    }
-    document.querySelectorAll('#sess-provider-seg .seg-btn').forEach((b) => {
-      const p = b.dataset.prov;
-      b.classList.toggle('active', p === prefs.sessProvider);
-      const cnt = provCounts[p] ?? 0;
-      if (p === 'all') {
-        b.innerHTML = `<span>All</span><span class="seg-count tabular">${cnt}</span>`;
-      } else if (p === 'antigravity') {
-        b.innerHTML = `<span class="prov-glyph">${PROVIDER_ICONS.antigravity}</span><span>Antigravity</span><span class="seg-count tabular">${cnt}</span>`;
-      } else if (p === 'claude') {
-        b.innerHTML = `<span class="prov-glyph">${PROVIDER_ICONS.claude}</span><span>Claude</span><span class="seg-count tabular">${cnt}</span>`;
-      }
-    });
-
-    const provOnlyRows = rows.filter(
-      (r) => prefs.sessProvider === 'all' || r.provider === prefs.sessProvider
-    );
-    const fleetDevices = getUnifiedFleetDevices();
-    const devChipsEl = $('sess-device-chips');
-    if (devChipsEl) {
-      if (fleetDevices.length <= 1) {
-        devChipsEl.hidden = true;
-      } else {
-        devChipsEl.hidden = false;
-        const allDevCnt = provOnlyRows.filter((r) => !r.archived).length;
-        devChipsEl.innerHTML =
-          `<button type="button" class="chip ${prefs.selectedDeviceFilter === 'all' ? 'active' : ''}" data-fleet-filter="all"><span class="chip-label">All Hosts</span><span class="chip-count tabular">${allDevCnt}</span></button>` +
-          fleetDevices
-            .map((d) => {
-              const cnt = provOnlyRows.filter((r) => !r.archived && r.deviceId === d.id).length;
-              return `<button type="button" class="chip ${prefs.selectedDeviceFilter === d.id ? 'active' : ''}" data-fleet-filter="${esc(d.id)}"><span class="chip-label">${d.online ? '● ' : ''}${esc(d.name || d.id)}</span><span class="chip-count tabular">${cnt}</span></button>`;
-            })
-            .join('');
-      }
-    }
-
-    const provRows =
-      prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
-        ? provOnlyRows.filter((r) => !r.deviceId || r.deviceId === prefs.selectedDeviceFilter)
-        : provOnlyRows;
-    const chipCounts = {
-      all: provRows.filter((r) => !r.archived).length,
-      needs_input: provRows.filter((r) => !r.archived && r.status === 'waiting').length,
-      working: provRows.filter((r) => !r.archived && r.status === 'working').length,
-      unread: provRows.filter((r) => !r.archived && r.unread).length,
-      open: provRows.filter((r) => !r.archived && isSessionOpenTab(r)).length,
-      archived: provRows.filter((r) => r.archived).length
-    };
-    const chipLabels = {
-      all: 'All Sessions',
-      needs_input: 'Needs Input',
-      working: 'Running Now',
-      unread: 'Unread',
-      open: 'Open Tabs',
-      archived: 'Archived'
-    };
-    document.querySelectorAll('#sess-status-chips .chip').forEach((c) => {
-      const k = c.dataset.statusFilter;
-      c.classList.toggle('active', k === prefs.sessStatus);
-      if (chipLabels[k] !== undefined) {
-        c.innerHTML = `<span class="chip-label">${esc(chipLabels[k])}</span><span class="chip-count tabular">${chipCounts[k] ?? 0}</span>`;
-      }
-    });
-
-    const rawFiltered = provRows.filter((r) => {
-      if (prefs.sessStatus === 'archived') {
-        if (!r.archived) return false;
-      } else {
-        if (r.archived) return false;
-        if (prefs.sessStatus === 'needs_input' && r.status !== 'waiting') return false;
-        if (prefs.sessStatus === 'working' && r.status !== 'working') return false;
-        if (prefs.sessStatus === 'unread' && !r.unread) return false;
-        if (prefs.sessStatus === 'open' && !isSessionOpenTab(r)) return false;
-      }
-      if (q) {
-        const grpName = r.group ? groups.find((g) => g.id === r.group)?.name || '' : '';
-        const hay = `${r.title} ${r.folder} ${r.branch} ${r.model} ${r.provider} ${r.deviceName || ''} ${grpName}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    });
-    const filtered = q
-      ? rankSearchMatchesWithPinnedFirst(
-          rawFiltered,
-          q,
-          (r) =>
-            (r.status === 'working' ? 500 : r.status === 'waiting' ? 400 : 0) +
-            Math.max(0, 299 - Math.min(299, Math.floor(Math.max(0, Date.now() - getRowLastWorkedMs(r)) / 3600000)))
-        )
-      : [...rawFiltered].sort(
-          (a, b) =>
-            (isRowPinned(b) ? 1 : 0) - (isRowPinned(a) ? 1 : 0) ||
-            (isSessionActivelyRunning(b.id) ? 1 : 0) - (isSessionActivelyRunning(a.id) ? 1 : 0) ||
-            getRowLastWorkedMs(b) - getRowLastWorkedMs(a) ||
-            Number(b.pinnedAt || 0) - Number(a.pinnedAt || 0)
-        );
-
-    if (isFocusInsideContainerInputs(container)) return;
-    const unpairedBannerHtml =
-      !hasAnyPairingCredentials() &&
-      connMode !== 'local' &&
-      connMode !== 'edge' &&
-      connMode !== 'cloud'
-        ? renderQuickPairOnboardingCardHtml('sessions')
-        : '';
-
-    if (rows.length === 0 && unpairedBannerHtml) {
-      container.innerHTML = unpairedBannerHtml;
-      reconcileIdeMicroTip();
-      return;
-    }
-
-    if (filtered.length === 0 && (q || prefs.sessStatus !== 'all' || groups.length === 0)) {
-      const hasActiveFilters = prefs.sessProvider !== 'all' || prefs.sessStatus !== 'all' || Boolean(q);
-      container.innerHTML = `${unpairedBannerHtml}
-        <div class="ledger-panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-          <div class="meta-timestamp">
-            ${
-              rows.length === 0
-                ? 'Syncing live sessions from your PC…'
-                : 'No sessions match the current filter.'
-            }
-          </div>
-          <div style="display:flex;gap:8px">
-            ${
-              hasActiveFilters
-                ? `<button type="button" class="btn-ghost-sm" id="btn-reset-sess-filters">Reset Filters (Show All ${rows.filter((r) => !r.archived).length} Sessions)</button>`
-                : ''
-            }
-            <button type="button" class="btn-brass-sm" id="btn-empty-sync-now">↻ Sync now</button>
-          </div>
-        </div>
-      `;
-      reconcileIdeMicroTip();
-      return;
-    }
-
-    // Render collapsible Group sections at top when not searching and not in Archived-only mode
-    if (!q && groups.length > 0 && prefs.sessStatus !== 'archived') {
-      const groupPalette = ['blue', 'green', 'amber', 'purple', 'steel'];
-      let sectionsHtml = unpairedBannerHtml;
-      groups.forEach((g, idx) => {
-        const gItems = filtered.filter((r) => r.group === g.id);
-        if ((q || prefs.sessStatus !== 'all') && gItems.length === 0) {
-          return;
-        }
-        const isCollapsed =
-          q || prefs.sessStatus !== 'all'
-            ? false
-            : isSessionGroupCollapsed(g.id, gItems.length === 0 ? true : Boolean(g.collapsed));
-        sectionsHtml += renderSessionGroupSectionHtml({
-          id: g.id,
-          name: g.name || 'Group',
-          color: g.color || groupPalette[idx % groupPalette.length],
-          items: gItems,
-          isCollapsed,
-          isCustomGroup: true
-        });
-      });
-
-      const ungroupedItems = filtered.filter((r) => !r.group || !groupIds.has(r.group));
-      if (ungroupedItems.length > 0) {
-        const archivableIds = ungroupedItems
-          .filter(
-            (r) =>
-              r.id &&
-              !isRowPinned(r) &&
-              !isSessionOpenTab(r) &&
-              r.status !== 'working' &&
-              r.status !== 'waiting' &&
-              !r.unread
-          )
-          .map((r) => r.id);
-        const isUngroupedCollapsed =
-          q || prefs.sessStatus !== 'all'
-            ? false
-            : isSessionGroupCollapsed('ungrouped', false);
-        sectionsHtml += renderSessionGroupSectionHtml({
-          id: 'ungrouped',
-          name: 'Ungrouped',
-          color: 'brass',
-          items: ungroupedItems,
-          isCollapsed: isUngroupedCollapsed,
-          isCustomGroup: false,
-          archivableIds
-        });
-      }
-
-      container.innerHTML = sectionsHtml;
-      reconcileIdeMicroTip();
-      return;
-    }
-
-    container.innerHTML =
-      unpairedBannerHtml + filtered.map((r) => renderSessionCardHtml(r)).join('');
-    reconcileIdeMicroTip();
-  }
-
-  function coalesceThreadMessages(rawMessages) {
-    if (!Array.isArray(rawMessages) || rawMessages.length === 0) return [];
-    const merged = [];
-    for (const m of rawMessages) {
-      if (!m) continue;
-      if (m.role === 'checkpoint') {
-        merged.push({ ...m, toolCalls: [], questions: [], artifacts: [], thoughtBlocks: [] });
-        continue;
-      }
-      const prev = merged[merged.length - 1];
-      const prevHasAnsweredQuestion =
-        Array.isArray(prev?.questions) && prev.questions.some((q) => q && q.answered);
-      if (prev && prev.role === 'assistant' && m.role === 'assistant' && !prevHasAnsweredQuestion) {
-        const prevBlocks =
-          Array.isArray(prev.thoughtBlocks) && prev.thoughtBlocks.length
-            ? [...prev.thoughtBlocks]
-            : prev.thinking
-              ? [{ text: prev.thinking, durationSec: Number(prev.thinkingDurationSec || 0) }]
-              : [];
-        const nextBlocks =
-          Array.isArray(m.thoughtBlocks) && m.thoughtBlocks.length
-            ? m.thoughtBlocks.map((b) => ({ ...b }))
-            : m.thinking
-              ? [{ text: m.thinking, durationSec: Number(m.thinkingDurationSec || 0) }]
-              : [];
-        if (nextBlocks.length) {
-          prev.thoughtBlocks = [...prevBlocks, ...nextBlocks].slice(-18);
-        }
-        if (m.text) {
-          prev.text = prev.text ? `${prev.text}\n\n${m.text}` : m.text;
-        }
-        if (m.thinking) {
-          prev.thinking = prev.thinking ? `${prev.thinking}\n\n${m.thinking}` : m.thinking;
-        }
-        if (m.latestThinking) {
-          prev.latestThinking = m.latestThinking;
-        }
-        prev.thinkingDurationSec =
-          Number(prev.thinkingDurationSec || 0) + Number(m.thinkingDurationSec || 0);
-        prev.turnDurationSec =
-          Number(prev.turnDurationSec || 0) + Number(m.turnDurationSec || 0);
-        if (Array.isArray(m.toolCalls) && m.toolCalls.length) {
-          prev.toolCalls = [...(prev.toolCalls || []), ...m.toolCalls].slice(-32);
-        }
-        if (Array.isArray(m.questions) && m.questions.length) {
-          prev.questions = [...(prev.questions || []), ...m.questions];
-        }
-        if (Array.isArray(m.artifacts) && m.artifacts.length) {
-          const nextArts = [...(prev.artifacts || [])];
-          for (const art of m.artifacts) {
-            if (!art) continue;
-            const idx = nextArts.findIndex((a) => a && a.file === art.file);
-            if (idx >= 0) nextArts[idx] = art;
-            else nextArts.push(art);
-          }
-          prev.artifacts = nextArts.slice(-6);
-        }
-        if (m.createdAt) prev.createdAt = m.createdAt;
-      } else {
-        merged.push({
-          ...m,
-          thoughtBlocks: Array.isArray(m.thoughtBlocks)
-            ? m.thoughtBlocks.map((b) => ({ ...b }))
-            : m.thinking
-              ? [{ text: m.thinking, durationSec: Number(m.thinkingDurationSec || 0) }]
-              : [],
-          toolCalls: Array.isArray(m.toolCalls) ? [...m.toolCalls] : [],
-          questions: Array.isArray(m.questions) ? [...m.questions] : [],
-          artifacts: Array.isArray(m.artifacts) ? [...m.artifacts] : []
-        });
-      }
-    }
-    return merged;
-  }
-
-  const chatOpenDetailsByThread = new Map();
-  const filePreviewCache = new Map();
-  const deliverablePreviewCache = new Map();
-  const deliverablePageCache = new Map();
-  const deliverableInFlightKeys = new Set();
-  const activeDeliverableBlobUrls = new Set();
-  const activeDockStepByCardKey = new Map();
-  let activeInspectorFileTarget = '';
-  let activeInspectorSessionId = '';
-  let activeInspectorAgentId = '';
-  let lastScrolledInspectorHlKey = '';
-  let inspectorFetchSeq = 0;
-  let activeDeliverablePage = 1;
-  let activeDeliverableDeckMode = 'single';
-  let activeDeliverableZoomPct = 0;
-  let activeDeliverableSheetIdx = 0;
-
-  function revokeActiveDeliverableBlobs() {
-    for (const u of activeDeliverableBlobUrls) {
-      try { URL.revokeObjectURL(u); } catch {}
-    }
-    activeDeliverableBlobUrls.clear();
-    for (const entry of deliverablePreviewCache.values()) {
-      if (entry && entry.blobUrl) entry.blobUrl = '';
-    }
-    for (const entry of deliverablePageCache.values()) {
-      if (entry && entry.blobUrl) entry.blobUrl = '';
-    }
-  }
-
-  function teardownDeliverableInspectorFrames() {
-    const bodyEl = $('ide-inspector-body');
-    if (bodyEl) {
-      bodyEl.querySelectorAll('iframe.insp-html-frame').forEach((fr) => {
-        try { fr.removeAttribute('srcdoc'); } catch {}
-        try { fr.src = 'about:blank'; } catch {}
-      });
-    }
-    revokeActiveDeliverableBlobs();
-  }
-
-  function getDeliverableKindClient(filePath) {
-    const s = String(filePath || '').trim().split(/[?#]/)[0];
-    if (!s) return '';
-    if (/\.(html?|xhtml)$/i.test(s)) return 'html';
-    if (/\.pdf$/i.test(s)) return 'pdf';
-    if (/\.(pptx|ppsx|pptm)$/i.test(s)) return 'pptx';
-    if (/\.(xlsx|xlsm|xls|xlsb|csv|tsv)$/i.test(s)) return 'spreadsheet';
-    return '';
-  }
-
-  function injectOpaqueStorageShimClient(rawHtml) {
-    const html = String(rawHtml || '');
-    if (html.includes('data-theo-storage-shim="1"')) return html;
-    const shim =
-      '(function(){function mk(){var d=Object.create(null);return{get length(){return Object.keys(d).length;},clear:function(){d=Object.create(null);},getItem:function(k){k=String(k);return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null;},key:function(i){var ks=Object.keys(d);return i>=0&&i<ks.length?ks[i]:null;},removeItem:function(k){delete d[String(k)];},setItem:function(k,v){d[String(k)]=String(v);}};}["localStorage","sessionStorage"].forEach(function(p){try{var s=window[p];s.setItem("__t","1");s.removeItem("__t");}catch(_e){try{Object.defineProperty(window,p,{value:mk(),configurable:true});}catch(_e2){}}});})();';
-    const tag = `<script data-theo-storage-shim="1">${shim}</script>`;
-    if (/<head(?:\s[^>]*)?>/i.test(html)) return html.replace(/<head(?:\s[^>]*)?>/i, (m) => m + tag);
-    if (/<html(?:\s[^>]*)?>/i.test(html)) return html.replace(/<html(?:\s[^>]*)?>/i, (m) => m + tag);
-    return tag + html;
-  }
-
-  function mapMemoryPathForVaultR2(rawTarget, activeRow = null) {
-    const parsed = parsePreviewTargetClient(rawTarget);
-    let clean = String(parsed.filePath || '').replace(/\\/g, '/').trim();
-    if (!clean) return '';
-    const memIdx = clean.toLowerCase().indexOf('/bhfirms/memory/');
-    if (memIdx >= 0) {
-      clean = clean.slice(memIdx + '/bhfirms/memory/'.length);
-    } else if (/^[A-Za-z]:\//.test(clean) || clean.startsWith('/')) {
-      return '';
-    } else {
-      const wsId = resolveStudioWorkspaceId(activeRow);
-      if (wsId && wsId !== 'theo-memory' && wsId !== 'memory') {
-        // Still allow well-known memory subfolders when mentioned without full path
-        if (!/^(AEG-boxMind|ISABI|Docs|Reports|memory|Phases)\//i.test(clean)) return '';
-      }
-    }
-    clean = clean.replace(/^\/+/, '');
-    const low = clean.toLowerCase();
-    if (!clean || low.startsWith('private/') || low === 'private' || low.includes('..')) return '';
-    if (low.includes('bank-kyc-ali-bdeir') || low.includes('user-passports-antigua-lebanon')) return '';
-    return clean;
-  }
-
-  function hasPdfMagicHeaderClient(bytes) {
-    if (!(bytes instanceof Uint8Array) || bytes.length < 5) return false;
-    const maxScan = Math.min(bytes.length - 5, 1024);
-    for (let i = 0; i <= maxScan; i++) {
-      if (bytes[i] === 0x25 && bytes[i + 1] === 0x50 && bytes[i + 2] === 0x44 && bytes[i + 3] === 0x46 && bytes[i + 4] === 0x2d) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  async function fetchDeliverableFromVaultR2(rawTarget, kind, activeRow = null) {
-    if (isHeadlessBrowser) return null;
-    refreshCloudConfig();
-    if (!cloudCfg.edgeAccessKey) return null;
-    const rel = mapMemoryPathForVaultR2(rawTarget, activeRow);
-    if (!rel) return null;
-    const vaultBase = String(
-      window.THEO_CLOUD_CFG?.memoryVaultUrl || 'https://memory.husseinbdeir.workers.dev'
-    ).replace(/\/+$/, '');
-    const token = getEdgeStoreKeyHex(cloudCfg.edgeAccessKey);
-    if (!token) return null;
-
-    const tryVaultRaw = async (vaultPath) => {
-      const res = await fetch(`${vaultBase}/api/file/raw?path=${encodeURIComponent(vaultPath)}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (!res.ok) return null;
-      const metaHdr = res.headers.get('X-Vault-File-Meta') || '';
-      let meta = null;
-      try { meta = metaHdr ? JSON.parse(decodeURIComponent(metaHdr)) : null; } catch {}
-      if (meta && meta.encrypted) return null;
-      const buf = new Uint8Array(await res.arrayBuffer());
-      return { buf, meta, vaultPath };
-    };
-
-    try {
-      if (kind === 'html') {
-        const got = await tryVaultRaw(rel);
-        if (!got) return null;
-        const sourceHtml = new TextDecoder('utf-8', { fatal: false }).decode(got.buf);
-        return {
-          ok: true,
-          kind: 'html',
-          sourceKind: 'vault-r2',
-          file: rel.split('/').pop() || rel,
-          relPath: rel,
-          size: got.buf.length,
-          sourceHtml,
-          sandboxedHtml: injectOpaqueStorageShimClient(sourceHtml)
-        };
-      }
-      if (kind === 'pdf' || kind === 'pptx') {
-        const probeRel = kind === 'pptx' ? rel.replace(/\.(pptx|ppsx|pptm)$/i, '.pdf') : rel;
-        const got = await tryVaultRaw(probeRel);
-        if (got && hasPdfMagicHeaderClient(got.buf)) {
-          const blob = new Blob([got.buf], { type: 'application/pdf' });
-          const blobUrl = URL.createObjectURL(blob);
-          activeDeliverableBlobUrls.add(blobUrl);
-          return {
-            ok: true,
-            kind,
-            sourceKind: 'vault-r2-pdf',
-            file: rel.split('/').pop() || rel,
-            downloadFile: probeRel.split('/').pop() || probeRel,
-            rawMime: 'application/pdf',
-            relPath: probeRel,
-            size: got.buf.length,
-            blobUrl,
-            rawBytes: got.buf
-          };
-        }
-        if (kind === 'pptx') {
-          const rawPpt = await tryVaultRaw(rel);
-          if (rawPpt) {
-            return {
-              ok: true,
-              kind: 'pptx',
-              sourceKind: 'vault-r2-download',
-              file: rel.split('/').pop() || rel,
-              downloadFile: rel.split('/').pop() || rel,
-              rawMime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-              relPath: rel,
-              size: rawPpt.buf.length,
-              rawBytes: rawPpt.buf
-            };
-          }
-        }
-      }
-    } catch {}
-    return null;
-  }
-
-  function getThreadOpenDetailsMap(threadId, create = false) {
-    const clean = String(threadId || '').trim();
-    if (!clean) return null;
-    let map = chatOpenDetailsByThread.get(clean);
-    if (!map && create) {
-      map = new Map();
-      chatOpenDetailsByThread.set(clean, map);
-    }
-    return map || null;
-  }
-
-  function parsePreviewTargetClient(rawTarget) {
-    let raw = String(rawTarget || '').trim();
-    if (!raw) return { filePath: '', startLine: 0, endLine: 0, displayBase: '' };
-    if (/^file:\/\//i.test(raw)) {
-      raw = raw.replace(/^file:\/\/\/?/i, '');
-      try {
-        raw = decodeURIComponent(raw);
-      } catch {}
-      if (/^[a-zA-Z]:\//.test(raw) === false && /^[a-zA-Z]:\\/.test(raw) === false && /^\/[a-zA-Z]:\//.test(`/${raw}`)) {
-        raw = raw.replace(/^\/+/, '');
-      }
-    }
-    let filePath = raw;
-    let startLine = 0;
-    let endLine = 0;
-    const hashIdx = raw.indexOf('#');
-    if (hashIdx >= 0) {
-      filePath = raw.slice(0, hashIdx).trim();
-      const frag = raw.slice(hashIdx + 1).trim();
-      const m = frag.match(/^L?(\d+)(?:\s*-\s*L?(\d+))?$/i);
-      if (m) {
-        startLine = Math.max(1, Number(m[1]) || 0);
-        endLine = Math.max(startLine, Number(m[2] || m[1]) || startLine);
-      }
-    } else {
-      const colMatch = raw.match(/:(\d+)(?:-(\d+))?$/);
-      if (colMatch && !/^[a-zA-Z]:$/.test(raw.slice(0, colMatch.index + 1))) {
-        filePath = raw.slice(0, colMatch.index).trim();
-        startLine = Math.max(1, Number(colMatch[1]) || 0);
-        endLine = Math.max(startLine, Number(colMatch[2] || colMatch[1]) || startLine);
-      }
-    }
-    const displayBase = filePath.split(/[\\/]/).pop() || filePath;
-    return { filePath, startLine, endLine, displayBase };
-  }
-
-  function collectSessionTouchedFiles(messages) {
-    const map = new Map();
-    for (const m of messages || []) {
-      if (!m) continue;
-      for (const tc of m.toolCalls || []) {
-        if (!tc) continue;
-        const targetRaw = String(tc.relPath || tc.file || '').trim();
-        if (!targetRaw) continue;
-        const parsed = parsePreviewTargetClient(
-          tc.lineRange && !targetRaw.includes('#') ? `${targetRaw}#${tc.lineRange}` : targetRaw
-        );
-        if (!parsed.filePath) continue;
-        const key = parsed.filePath.replace(/\\/g, '/').toLowerCase();
-        const isEdit = tc.kind === 'edit' || tc.kind === 'write';
-        const prev = map.get(key);
-        map.set(key, {
-          key,
-          target: parsed.startLine
-            ? `${parsed.filePath}#L${parsed.startLine}${parsed.endLine > parsed.startLine ? `-L${parsed.endLine}` : ''}`
-            : parsed.filePath,
-          filePath: parsed.filePath,
-          displayBase: parsed.displayBase,
-          isEdit: Boolean(prev?.isEdit || isEdit),
-          snippet: String(tc.snippet || tc.diff || prev?.snippet || '').trim(),
-          added: Number(tc.addedLines ?? tc.added ?? prev?.added ?? 0),
-          removed: Number(tc.removedLines ?? tc.removed ?? prev?.removed ?? 0)
-        });
-      }
-      const txt = String(m.text || '');
-      const linkRe = /\[`?([^`\]\n]+)`?\]\((file:\/\/[^)\s]+)\)/gi;
-      let lm;
-      while ((lm = linkRe.exec(txt)) !== null) {
-        const parsed = parsePreviewTargetClient(lm[2]);
-        if (!parsed.filePath) continue;
-        const key = parsed.filePath.replace(/\\/g, '/').toLowerCase();
-        if (!map.has(key)) {
-          map.set(key, {
-            key,
-            target: lm[2],
-            filePath: parsed.filePath,
-            displayBase: parsed.displayBase || lm[1],
-            isEdit: false,
-            snippet: '',
-            added: 0,
-            removed: 0
-          });
-        }
-      }
-    }
-    return Array.from(map.values()).sort((a, b) => Number(b.isEdit) - Number(a.isEdit));
-  }
-
-  function buildOfflinePreviewFallback(parsed, activeRow) {
-    const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
-    const msgs = coalesceThreadMessages(threadsCache[sid]?.messages || []);
-    const touched = collectSessionTouchedFiles(msgs);
-    const normWant = parsed.filePath.replace(/\\/g, '/').toLowerCase();
-    const baseWant = parsed.displayBase.toLowerCase();
-    const match = touched.find(
-      (t) =>
-        t.key === normWant ||
-        t.key.endsWith(`/${normWant}`) ||
-        normWant.endsWith(`/${t.key}`) ||
-        t.displayBase.toLowerCase() === baseWant
-    );
-    if (match?.snippet) {
-      return {
-        ok: true,
-        relPath: match.filePath,
-        content: '',
-        diffPatch: match.snippet,
-        lineCount: 0,
-        startLine: parsed.startLine || 0,
-        endLine: parsed.endLine || 0,
-        fallbackOnly: true
-      };
-    }
-    return {
-      ok: false,
-      relPath: parsed.filePath,
-      error: isHeadlessBrowser
-        ? 'Live workstation bridge preview ready when connected to :4318 or Edge WS.'
-        : 'Connect to workstation bridge (:4318 or Edge WS) to stream full file contents.'
-    };
-  }
-
-  const filePreviewInFlightKeys = new Set();
-
-  async function reassembleChunkedDeliverable(firstPayload, rawTarget, sid, wsId, effectiveLocalBase, allowProbeHttp, targetDeviceId) {
-    const chunks = [];
-    const firstBytes = Uint8Array.from(atob(firstPayload.chunkBase64 || ''), (c) => c.charCodeAt(0));
-    chunks.push(firstBytes);
-    let offset = Number(firstPayload.nextOffset || firstBytes.length);
-    const total = Number(firstPayload.totalBytes || firstBytes.length);
-    let safety = 0;
-    while (offset < total && safety < 24) {
-      safety += 1;
-      let part = null;
-      if (!isHeadlessBrowser && edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
-        const rpcOut = await sendWsRpc(
-          edgeWs,
-          {
-            type: 'rpc_cmd',
-            targetDeviceId,
-            cmd: {
-              type: 'getDeliverableChunk',
-              path: rawTarget,
-              sessionId: sid,
-              workspaceId: wsId,
-              offset,
-              length: 512 * 1024,
-              channel: firstPayload.channel || 'sandboxed'
-            }
-          },
-          15000
-        );
-        part = rpcOut?.result && typeof rpcOut.result === 'object' ? rpcOut.result : rpcOut;
-      }
-      if (!part || !part.ok || !part.chunkBase64) break;
-      const b = Uint8Array.from(atob(part.chunkBase64), (c) => c.charCodeAt(0));
-      chunks.push(b);
-      offset = Number(part.nextOffset || offset + b.length);
-      if (part.done || b.length === 0) break;
-    }
-    const mergedLen = chunks.reduce((a, b) => a + b.length, 0);
-    const merged = new Uint8Array(mergedLen);
-    let pos = 0;
-    for (const c of chunks) {
-      merged.set(c, pos);
-      pos += c.length;
-    }
-    const decoded = new TextDecoder('utf-8', { fatal: false }).decode(merged);
-    return {
-      ...firstPayload,
-      chunked: false,
-      sandboxedHtml: decoded,
-      sourceHtml: firstPayload.sourceHtml || decoded
-    };
-  }
-
-  async function fetchDeliverablePreview(rawTarget, activeRow = null, opts = {}) {
-    const parsed = parsePreviewTargetClient(rawTarget);
-    const kind = getDeliverableKindClient(parsed.filePath);
-    if (!parsed.filePath || !kind) return null;
-    const page = Math.max(1, Number(opts.page || 1));
-    const forceRefresh = Boolean(opts.forceRefresh);
-    const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
-    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid) || null;
-    const wsCtx = resolveSessionWorkspaceContext(matchedRow, threadsCache[sid] || null);
-    const wsId = wsCtx.wsId;
-    const rpcWsId = wsCtx.rpcWsId;
-    const cacheKey = `${sid || wsId || 'global'}::${parsed.filePath.replace(/\\/g, '/')}`;
-    const pageKey = `${cacheKey}::p${page}`;
-
-    if (!forceRefresh) {
-      if (kind === 'pdf' || kind === 'pptx') {
-        const cachedPage = deliverablePageCache.get(pageKey);
-        if (cachedPage && cachedPage.ok) return cachedPage;
-      } else {
-        const cachedDoc = deliverablePreviewCache.get(cacheKey);
-        if (cachedDoc && cachedDoc.ok) return cachedDoc;
-      }
-    }
-
-    const seq = (opts.backgroundPrefetch || opts.batchRender) ? inspectorFetchSeq : ++inspectorFetchSeq;
-    const targetDeviceId = matchedRow?.deviceId || '';
-    const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
-    const effectiveLocalBase =
-      connMode === 'local' && localBridgeBase && !isRemote
-        ? localBridgeBase
-        : !isRemote && prefs.customBridgeUrl
-          ? String(prefs.customBridgeUrl).trim().replace(/\/+$/, '')
-          : '';
-    const allowProbeHttp =
-      !isHeadlessBrowser || Boolean(prefs.customBridgeUrl) || Boolean(window.__THEO_ALLOW_PROBE_MOCK_FETCH);
-
-    deliverableInFlightKeys.add(pageKey);
-    let result = null;
-    try {
-      if (effectiveLocalBase && allowProbeHttp) {
-        try {
-          const q = `path=${encodeURIComponent(parsed.filePath)}&sessionId=${encodeURIComponent(sid)}&workspaceId=${encodeURIComponent(rpcWsId)}&page=${page}`;
-          const res = await authFetchLocal(`${effectiveLocalBase}/api/deliverable-preview?${q}`);
-          const data = await res.json().catch(() => null);
-          if (data && typeof data === 'object') result = data;
-        } catch {}
-      }
-
-      if (!result && !isHeadlessBrowser && edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
-        try {
-          const rpcOut = await sendWsRpc(
-            edgeWs,
-            {
-              type: 'rpc_cmd',
-              targetDeviceId,
-              cmd: {
-                type: 'getDeliverablePreview',
-                path: parsed.filePath,
-                sessionId: sid,
-                workspaceId: rpcWsId,
-                page,
-                transport: 'ws'
-              }
-            },
-            28000
-          );
-          const payload = rpcOut?.result && typeof rpcOut.result === 'object' ? rpcOut.result : rpcOut;
-          if (payload && typeof payload === 'object' && ('ok' in payload || 'error' in payload)) {
-            if (payload.ok && payload.chunked && payload.kind === 'html') {
-              result = await reassembleChunkedDeliverable(
-                payload,
-                parsed.filePath,
-                sid,
-                rpcWsId,
-                effectiveLocalBase,
-                allowProbeHttp,
-                targetDeviceId
-              );
-            } else {
-              result = payload;
-            }
-          }
-        } catch {}
-      }
-
-      if ((!result || !result.ok) && !opts.backgroundPrefetch) {
-        const vaultRes = await fetchDeliverableFromVaultR2(parsed.filePath, kind, matchedRow);
-        if (vaultRes && vaultRes.ok) {
-          result = vaultRes;
-        }
-      }
-
-      if (!result) {
-        result = {
-          ok: false,
-          kind,
-          file: parsed.displayBase,
-          relPath: parsed.filePath,
-          error: isHeadlessBrowser
-            ? 'Live deliverable preview ready when connected to :4318 or Edge WS.'
-            : 'Connect to workstation bridge (:4318 or Edge WS) or sync to Memory Vault to preview.'
-        };
-      }
-    } finally {
-      deliverableInFlightKeys.delete(pageKey);
-    }
-
-    if (result) {
-      if (result.ok || !deliverablePreviewCache.has(cacheKey)) {
-        if (deliverablePreviewCache.size >= 24 && !deliverablePreviewCache.has(cacheKey)) {
-          const oldest = deliverablePreviewCache.keys().next().value;
-          if (oldest) deliverablePreviewCache.delete(oldest);
-        }
-        deliverablePreviewCache.set(cacheKey, result);
-      }
-      if (kind === 'pdf' || kind === 'pptx') {
-        if (deliverablePageCache.size >= 80 && !deliverablePageCache.has(pageKey)) {
-          const oldestP = deliverablePageCache.keys().next().value;
-          if (oldestP) deliverablePageCache.delete(oldestP);
-        }
-        deliverablePageCache.set(pageKey, result);
-      }
-    }
-
-    if (
-      !opts.backgroundPrefetch &&
-      (seq === inspectorFetchSeq || opts.batchRender) &&
-      prefs.inspectorOpen &&
-      prefs.activeTab === 'chat' &&
-      sid === String(prefs.selectedThreadId || '').trim()
-    ) {
-      const activeParsed = parsePreviewTargetClient(activeInspectorFileTarget);
-      if (activeParsed.filePath.replace(/\\/g, '/').toLowerCase() === parsed.filePath.replace(/\\/g, '/').toLowerCase()) {
-        const td = threadsCache[sid] || null;
-        const msgs = coalesceThreadMessages(td?.messages || []);
-        const provKey = (td?.provider || matchedRow?.provider) === 'claude' ? 'claude' : 'antigravity';
-        renderSplitInspector(matchedRow, td, msgs, provKey, isNewSessionMode(), true);
-      }
-    }
-
-    if (
-      !opts.backgroundPrefetch &&
-      !opts.batchRender &&
-      result &&
-      result.ok &&
-      (kind === 'pdf' || kind === 'pptx') &&
-      Number(result.pageCount || 0) > page &&
-      !result.blobUrl &&
-      !deliverablePageCache.has(`${cacheKey}::p${page + 1}`) &&
-      !deliverableInFlightKeys.has(`${cacheKey}::p${page + 1}`)
-    ) {
-      fetchDeliverablePreview(rawTarget, matchedRow, { page: page + 1, backgroundPrefetch: true }).catch(() => {});
-    }
-
-    return result;
-  }
-
-  async function openActiveDeliverableInApp(rawTarget, activeRow = null) {
-    const parsed = parsePreviewTargetClient(rawTarget);
-    if (!parsed.filePath) return;
-    const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
-    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid) || null;
-    const rpcWsId = resolveSessionWorkspaceContext(matchedRow, threadsCache[sid] || null).rpcWsId;
-    const targetDeviceId = matchedRow?.deviceId || '';
-    const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
-    const effectiveLocalBase =
-      connMode === 'local' && localBridgeBase && !isRemote
-        ? localBridgeBase
-        : !isRemote && prefs.customBridgeUrl
-          ? String(prefs.customBridgeUrl).trim().replace(/\/+$/, '')
-          : '';
-    let out = null;
-    if (effectiveLocalBase) {
-      try {
-        const res = await authFetchLocal(`${effectiveLocalBase}/api/open-deliverable-app`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: parsed.filePath, sessionId: sid, workspaceId: rpcWsId })
-        });
-        out = await res.json().catch(() => null);
-      } catch {}
-    } else if (!isHeadlessBrowser && edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
-      try {
-        const rpcOut = await sendWsRpc(
-          edgeWs,
-          {
-            type: 'rpc_cmd',
-            targetDeviceId,
-            cmd: { type: 'openDeliverableApp', path: parsed.filePath, sessionId: sid, workspaceId: rpcWsId }
-          },
-          10000
-        );
-        out = rpcOut?.result && typeof rpcOut.result === 'object' ? rpcOut.result : rpcOut;
-      } catch {}
-    }
-    if (out && out.ok) {
-      showToast(`Opened ${out.file || parsed.displayBase} on host`);
-    } else {
-      showToast(out?.error || 'Connect to workstation bridge to open desktop app');
-    }
-  }
-
-  async function exportActiveDeliverable(rawTarget, activeRow = null) {
-    const parsed = parsePreviewTargetClient(rawTarget);
-    if (!parsed.filePath) return;
-    const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
-    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid) || null;
-    const wsCtx = resolveSessionWorkspaceContext(matchedRow, threadsCache[sid] || null);
-    const wsId = wsCtx.wsId;
-    const rpcWsId = wsCtx.rpcWsId;
-    const cacheKey = `${sid || wsId || 'global'}::${parsed.filePath.replace(/\\/g, '/')}`;
-    const cached = deliverablePreviewCache.get(cacheKey);
-    const targetDeviceId = matchedRow?.deviceId || '';
-    const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
-    const effectiveLocalBase =
-      connMode === 'local' && localBridgeBase && !isRemote
-        ? localBridgeBase
-        : !isRemote && prefs.customBridgeUrl
-          ? String(prefs.customBridgeUrl).trim().replace(/\/+$/, '')
-          : '';
-
-    let blob = null;
-    let fileName = cached?.file || parsed.displayBase || 'deliverable';
-    if (cached?.rawBytes instanceof Uint8Array) {
-      fileName = cached?.downloadFile || cached?.file || parsed.displayBase || 'deliverable';
-      blob = new Blob([cached.rawBytes], { type: cached?.rawMime || 'application/octet-stream' });
-    } else if (effectiveLocalBase) {
-      try {
-        const q = `path=${encodeURIComponent(parsed.filePath)}&sessionId=${encodeURIComponent(sid)}&workspaceId=${encodeURIComponent(rpcWsId)}`;
-        const res = await authFetchLocal(`${effectiveLocalBase}/api/deliverable-raw?${q}`);
-        if (res.ok) {
-          blob = await res.blob();
-        }
-      } catch {}
-    } else if (!isHeadlessBrowser && edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
-      try {
-        const chunks = [];
-        let offset = 0;
-        for (let i = 0; i < 48; i++) {
-          const rpcOut = await sendWsRpc(
-            edgeWs,
-            {
-              type: 'rpc_cmd',
-              targetDeviceId,
-              cmd: { type: 'getDeliverableChunk', path: parsed.filePath, sessionId: sid, workspaceId: rpcWsId, offset, length: 512 * 1024, channel: 'raw' }
-            },
-            15000
-          );
-          const part = rpcOut?.result && typeof rpcOut.result === 'object' ? rpcOut.result : rpcOut;
-          if (!part || !part.ok || !part.chunkBase64) break;
-          const b = Uint8Array.from(atob(part.chunkBase64), (c) => c.charCodeAt(0));
-          chunks.push(b);
-          offset = Number(part.nextOffset || offset + b.length);
-          if (part.done || b.length === 0) break;
-        }
-        if (chunks.length) blob = new Blob(chunks, { type: 'application/octet-stream' });
-      } catch {}
-    }
-    if (!blob && cached?.sourceHtml) {
-      blob = new Blob([cached.sourceHtml], { type: 'text/html;charset=utf-8' });
-    }
-    if (!blob) {
-      showToast('Connect to bridge or Vault to download this file');
-      return;
-    }
-
-    const prefersShare =
-      Boolean(window.navigator?.standalone) ||
-      Boolean(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
-      Boolean(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
-    if (prefersShare && typeof navigator.share === 'function') {
-      try {
-        const fileObj = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
-        if (!navigator.canShare || navigator.canShare({ files: [fileObj] })) {
-          await navigator.share({ files: [fileObj], title: fileName });
-          return;
-        }
-      } catch (err) {
-        if (err && err.name === 'AbortError') return;
-      }
-    }
-
-    const u = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = u;
-    a.download = fileName;
-    a.rel = 'noopener';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => { try { URL.revokeObjectURL(u); } catch {} }, 1500);
-  }
-
-  async function fetchSafeFilePreview(rawTarget, activeRow = null, forceRefresh = false) {
-    const parsed = parsePreviewTargetClient(rawTarget);
-    if (!parsed.filePath) return null;
-    const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
-    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid) || null;
-    const wsCtx = resolveSessionWorkspaceContext(matchedRow, threadsCache[sid] || null);
-    const wsId = wsCtx.wsId;
-    const rpcWsId = wsCtx.rpcWsId;
-    const cacheKey = `${sid || wsId || 'global'}::${parsed.filePath.replace(/\\/g, '/')}`;
-    const seq = ++inspectorFetchSeq;
-    if (!forceRefresh && filePreviewCache.has(cacheKey)) {
-      return filePreviewCache.get(cacheKey);
-    }
-
-    const targetDeviceId = matchedRow?.deviceId || '';
-    const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
-    let result = null;
-
-    const effectiveLocalBase =
-      connMode === 'local' && localBridgeBase && !isRemote
-        ? localBridgeBase
-        : !isRemote && prefs.customBridgeUrl
-          ? String(prefs.customBridgeUrl).trim().replace(/\/+$/, '')
-          : '';
-    const allowProbeHttp =
-      !isHeadlessBrowser || Boolean(prefs.customBridgeUrl) || Boolean(window.__THEO_ALLOW_PROBE_MOCK_FETCH);
-
-    filePreviewInFlightKeys.add(cacheKey);
-    try {
-      if (effectiveLocalBase && allowProbeHttp) {
-        try {
-          const q = `path=${encodeURIComponent(rawTarget)}&sessionId=${encodeURIComponent(sid)}&workspaceId=${encodeURIComponent(rpcWsId)}`;
-          const res = await authFetchLocal(`${effectiveLocalBase}/api/file-preview?${q}`);
-          const data = await res.json().catch(() => null);
-          if (data && typeof data === 'object') {
-            result = data;
-          }
-        } catch {}
-      }
-
-      if (!result && !isHeadlessBrowser && edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
-        try {
-          const rpcOut = await sendWsRpc(
-            edgeWs,
-            {
-              type: 'rpc_cmd',
-              targetDeviceId,
-              cmd: { type: 'getFilePreview', path: rawTarget, sessionId: sid, workspaceId: rpcWsId }
-            },
-            6500
-          );
-          const payload = rpcOut?.result && typeof rpcOut.result === 'object' ? rpcOut.result : rpcOut;
-          if (payload && typeof payload === 'object' && ('ok' in payload || 'content' in payload || 'error' in payload)) {
-            result = payload;
-          }
-        } catch {}
-      }
-
-      if (!result) {
-        result = buildOfflinePreviewFallback(parsed, matchedRow);
-      }
-    } finally {
-      filePreviewInFlightKeys.delete(cacheKey);
-    }
-
-    if (seq === inspectorFetchSeq || !filePreviewCache.has(cacheKey)) {
-      if (filePreviewCache.size >= 40 && !filePreviewCache.has(cacheKey)) {
-        const oldest = filePreviewCache.keys().next().value;
-        if (oldest) filePreviewCache.delete(oldest);
-      }
-      filePreviewCache.set(cacheKey, result);
-    }
-
-    const activeParsed = parsePreviewTargetClient(activeInspectorFileTarget);
-    if (
-      seq === inspectorFetchSeq &&
-      prefs.inspectorOpen &&
-      prefs.activeTab === 'chat' &&
-      sid === String(prefs.selectedThreadId || '').trim() &&
-      activeParsed.filePath.replace(/\\/g, '/').toLowerCase() === parsed.filePath.replace(/\\/g, '/').toLowerCase()
-    ) {
-      const td = threadsCache[sid] || null;
-      const msgs = coalesceThreadMessages(td?.messages || []);
-      const provKey = (td?.provider || matchedRow?.provider) === 'claude' ? 'claude' : 'antigravity';
-      renderSplitInspector(matchedRow, td, msgs, provKey, isNewSessionMode(), true);
-    }
-    return result;
-  }
-
-  const studioCapabilitiesCache = new Map();
-  const studioCapInFlightKeys = new Set();
-  const studioCheckResultsById = new Map();
-  let studioCapFetchSeq = 0;
-  let studioCheckBusy = false;
-
-  function resolveSessionWorkspaceContext(activeRow = null, threadDetail = null) {
-    const wsList = Array.isArray(appState?.workspaces) ? appState.workspaces : [];
-    const activeWorkspaces = wsList.filter(
-      (w) => w && !w.retired && !RETIRED_WORKSPACE_IDS.has(String(w.id || ''))
-    );
-    const pool = activeWorkspaces.length ? activeWorkspaces : wsList;
-    const normSlashes = (p) => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-    const matchWsByHint = (hint) => {
-      const raw = String(hint || '').replace(/^Scope:\s*/i, '').trim();
-      if (!raw) return null;
-      const low = raw.toLowerCase();
-      if (['workspace', 'bhfirms workspace', 'session', 'task session', 'claude desktop', 'default', 'auto'].includes(low)) {
-        return null;
-      }
-      const normRaw = normSlashes(raw);
-      // 1. Direct id / name / full path match
-      let matched = pool.find((w) => {
-        const wPath = normSlashes(w.path);
-        return (
-          String(w.id || '').toLowerCase() === low ||
-          String(w.name || '').toLowerCase() === low ||
-          (wPath && (normRaw === wPath || normRaw.startsWith(`${wPath}/`) || wPath.endsWith(`/${low}`)))
-        );
-      });
-      if (matched) return matched;
-      // 2. Match /bhfirms/<dir> segment from cwd strings even across host junctions (e.g. ~/bhfirms/theo-hub)
-      const bhMatch = normRaw.match(/(?:^|\/)bhfirms\/([^/]+)/i);
-      if (bhMatch && bhMatch[1]) {
-        const seg = bhMatch[1].toLowerCase();
-        const alias = seg === 'memory' ? 'theo-memory' : seg === 'command' ? 'planner' : seg;
-        matched = pool.find(
-          (w) =>
-            String(w.id || '').toLowerCase() === alias ||
-            String(w.id || '').toLowerCase() === seg ||
-            normSlashes(w.path).endsWith(`/${seg}`)
-        );
-        if (matched) return matched;
-        if (!RETIRED_WORKSPACE_IDS.has(alias)) {
-          return { id: alias, name: alias, branch: 'main', dirtyCount: 0, modifiedFiles: [], recentCommits: [] };
-        }
-      }
-      return null;
-    };
-
-    const isDraft = activeRow ? activeRow.id === '__new__' : isNewSessionMode();
-    if (isDraft) {
-      const mPref = matchWsByHint(prefs.composerRepoPrefix);
-      const fb = mPref || pool.find((w) => w.id === 'isabi-app') || pool[0] || null;
-      const id = fb?.id || String(prefs.composerRepoPrefix || '').trim() || 'isabi-app';
-      return { wsId: id, rpcWsId: id, matchedWs: fb };
-    }
-
-    const sid = cleanTargetThreadId(activeRow?.id || prefs.selectedThreadId || '');
-    const td = threadDetail || (sid ? threadsCache[sid] : null);
-    const candidates = [
-      activeRow?.workspaceId,
-      td?.workspaceId,
-      activeRow?.cwd,
-      td?.cwd,
-      activeRow?.folder,
-      td?.folder
-    ];
-    // Pass 1: resolve against registered active workspaces across all metadata fields first.
-    for (const cand of candidates) {
-      const m = matchWsByHint(cand);
-      if (m && m.id && !RETIRED_WORKSPACE_IDS.has(m.id)) {
-        return { wsId: m.id, rpcWsId: m.id, matchedWs: m };
-      }
-    }
-    // Pass 2: accept a clean single-token workspace slug only when no registered workspace matched.
-    for (const cand of candidates) {
-      const cleanCand = String(cand || '').replace(/^Scope:\s*/i, '').trim();
-      if (
-        cleanCand &&
-        /^[a-z0-9][a-z0-9._-]{0,63}$/i.test(cleanCand) &&
-        !['workspace', 'session', 'default', 'auto'].includes(cleanCand.toLowerCase()) &&
-        !RETIRED_WORKSPACE_IDS.has(cleanCand.toLowerCase())
-      ) {
-        return { wsId: cleanCand, rpcWsId: cleanCand, matchedWs: null };
-      }
-    }
-
-    // No client-side workspace hint on this session: pass empty workspaceId so the host resolves thread.cwd directly.
-    return { wsId: 'auto', rpcWsId: '', matchedWs: null };
-  }
-
-  function resolveStudioWorkspaceId(activeRow = null) {
-    return resolveSessionWorkspaceContext(activeRow, null).wsId;
-  }
-
-  function buildOfflineStudioCapabilitiesFallback(wsId, activeRow = null) {
-    const wsList = Array.isArray(appState?.workspaces) ? appState.workspaces : [];
-    const activeList = wsList.filter(
-      (w) => w && !w.retired && !RETIRED_WORKSPACE_IDS.has(String(w.id || ''))
-    );
-    const pool = activeList.length ? activeList : wsList;
-    const cleanWs = wsId && wsId !== 'auto' ? wsId : '';
-    const folderClean = String(activeRow?.folder || '').replace(/^Scope:\s*/i, '').trim();
-    const wsObj =
-      (cleanWs && pool.find((w) => w && (w.id === cleanWs || w.name === cleanWs))) ||
-      pool.find((w) => w && w.id === 'isabi-app') ||
-      pool[0] || {
-        id: cleanWs || 'theo',
-        name: folderClean || cleanWs || 'Workspace',
-        branch: 'main',
-        dirtyCount: 0,
-        modifiedFiles: [],
-        recentCommits: []
-      };
-    return {
-      ok: true,
-      workspace: wsObj,
-      checks: [
-        { id: 'git:status', label: 'Git Status & Branch', category: 'git', commandPreview: 'git status --short --branch' },
-        { id: 'git:diff-stat', label: 'Git Diff Summary', category: 'git', commandPreview: 'git diff --stat' },
-        { id: 'syntax:js/app.js', label: 'Syntax Check · js/app.js', category: 'lint', commandPreview: 'node --check js/app.js' }
-      ],
-      ports: [],
-      fallbackOnly: true
-    };
-  }
-
-  async function fetchStudioCapabilities(activeRow = null, forceRefresh = false) {
-    const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
-    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid) || null;
-    const wsCtx = resolveSessionWorkspaceContext(matchedRow, threadsCache[sid] || null);
-    const wsId = wsCtx.wsId;
-    const rpcWsId = wsCtx.rpcWsId;
-    const cacheKey = `${sid || 'global'}::${wsId}`;
-    const seq = ++studioCapFetchSeq;
-    if (!forceRefresh && studioCapabilitiesCache.has(cacheKey)) {
-      return studioCapabilitiesCache.get(cacheKey);
-    }
-
-    const targetDeviceId = matchedRow?.deviceId || '';
-    const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
-    const effectiveLocalBase =
-      connMode === 'local' && localBridgeBase && !isRemote
-        ? localBridgeBase
-        : !isRemote && prefs.customBridgeUrl
-          ? String(prefs.customBridgeUrl).trim().replace(/\/+$/, '')
-          : '';
-    const allowProbeHttp =
-      !isHeadlessBrowser || Boolean(prefs.customBridgeUrl) || Boolean(window.__THEO_ALLOW_PROBE_MOCK_FETCH);
-
-    let result = null;
-    studioCapInFlightKeys.add(cacheKey);
-    try {
-      if (effectiveLocalBase && allowProbeHttp) {
-        try {
-          const q = `workspaceId=${encodeURIComponent(rpcWsId)}&sessionId=${encodeURIComponent(sid)}&diff=1`;
-          const res = await authFetchLocal(`${effectiveLocalBase}/api/studio-capabilities?${q}`);
-          const data = await res.json().catch(() => null);
-          if (data && typeof data === 'object' && data.ok) {
-            result = data;
-          }
-        } catch {}
-      }
-
-      if (!result && !isHeadlessBrowser && edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
-        try {
-          const rpcOut = await sendWsRpc(
-            edgeWs,
-            {
-              type: 'rpc_cmd',
-              targetDeviceId,
-              cmd: { type: 'getStudioCapabilities', workspaceId: rpcWsId, sessionId: sid, includeDiff: true }
-            },
-            7000
-          );
-          const payload = rpcOut?.result && typeof rpcOut.result === 'object' ? rpcOut.result : rpcOut;
-          if (payload && typeof payload === 'object' && payload.ok) {
-            result = payload;
-          }
-        } catch {}
-      }
-
-      if (!result) {
-        result = buildOfflineStudioCapabilitiesFallback(wsId, matchedRow);
-      }
-    } finally {
-      studioCapInFlightKeys.delete(cacheKey);
-    }
-
-    if (seq === studioCapFetchSeq || !studioCapabilitiesCache.has(cacheKey)) {
-      if (studioCapabilitiesCache.size >= 24 && !studioCapabilitiesCache.has(cacheKey)) {
-        const oldest = studioCapabilitiesCache.keys().next().value;
-        if (oldest) studioCapabilitiesCache.delete(oldest);
-      }
-      studioCapabilitiesCache.set(cacheKey, result);
-    }
-
-    if (
-      seq === studioCapFetchSeq &&
-      prefs.inspectorOpen &&
-      prefs.activeTab === 'chat' &&
-      sid === String(prefs.selectedThreadId || '').trim() &&
-      ['files', 'git', 'tasks'].includes(prefs.inspectorTab)
-    ) {
-      const td = threadsCache[sid] || null;
-      const msgs = coalesceThreadMessages(td?.messages || []);
-      const provKey = (td?.provider || matchedRow?.provider) === 'claude' ? 'claude' : 'antigravity';
-      renderSplitInspector(matchedRow, td, msgs, provKey, isNewSessionMode(), true);
-    }
-    return result;
-  }
-
-  async function executeStudioCheck(checkId, activeRow = null) {
-    if (isPinLocked() || studioCheckBusy) return null;
-    const cleanId = String(checkId || '').trim();
-    if (!cleanId) return null;
-    recordFreqUsage('checks', cleanId);
-    const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
-    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid) || null;
-    const wsCtx = resolveSessionWorkspaceContext(matchedRow, threadsCache[sid] || null);
-    const wsId = wsCtx.wsId;
-    const rpcWsId = wsCtx.rpcWsId;
-    const checkResKey = `${wsId}::${cleanId}`;
-    const targetDeviceId = matchedRow?.deviceId || '';
-    const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
-    const effectiveLocalBase =
-      connMode === 'local' && localBridgeBase && !isRemote
-        ? localBridgeBase
-        : !isRemote && prefs.customBridgeUrl
-          ? String(prefs.customBridgeUrl).trim().replace(/\/+$/, '')
-          : '';
-    const allowProbeHttp =
-      !isHeadlessBrowser || Boolean(prefs.customBridgeUrl) || Boolean(window.__THEO_ALLOW_PROBE_MOCK_FETCH);
-
-    studioCheckBusy = true;
-    studioCheckResultsById.set(checkResKey, { running: true, checkId: cleanId, output: 'Running check…' });
-    renderChatView(false);
-
-    try {
-      let result = null;
-      if (effectiveLocalBase && allowProbeHttp) {
-        try {
-          const res = await authFetchLocal(`${effectiveLocalBase}/api/studio-check`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ workspaceId: rpcWsId, sessionId: sid, checkId: cleanId })
-          });
-          const data = await res.json().catch(() => null);
-          result = data || { ok: false, status: res.status, error: `HTTP ${res.status}` };
-        } catch (err) {
-          result = { ok: false, error: err?.message || 'Check request failed' };
-        }
-      } else if (!isHeadlessBrowser && edgeWsAuthed && edgeWs && edgeWs.readyState === 1) {
-        try {
-          const rpcOut = await sendWsRpc(
-            edgeWs,
-            {
-              type: 'rpc_cmd',
-              targetDeviceId,
-              cmd: { type: 'runStudioCheck', workspaceId: rpcWsId, sessionId: sid, checkId: cleanId }
-            },
-            22000
-          );
-          result = rpcOut?.result && typeof rpcOut.result === 'object' ? rpcOut.result : rpcOut;
-        } catch (err) {
-          result = { ok: false, error: err?.message || 'Edge RPC check failed' };
-        }
-      } else {
-        result = {
-          ok: false,
-          error: 'Connect to workstation bridge (:4318 or Edge WS) to execute live checks.'
-        };
-      }
-      studioCheckResultsById.set(checkResKey, result);
-      return result;
-    } finally {
-      studioCheckBusy = false;
-      renderChatView(false);
-    }
-  }
-
-  function renderSplitWatchPane() {
-    const paneEl = $('chat-split-watch-pane');
-    const btnEl = $('btn-split-watch');
-    if (btnEl) {
-      btnEl.classList.toggle('active', Boolean(prefs.splitWatchOpen));
-      btnEl.setAttribute('aria-pressed', prefs.splitWatchOpen ? 'true' : 'false');
-    }
-    if (!paneEl) return;
-    if (!prefs.splitWatchOpen) {
-      paneEl.hidden = true;
-      return;
-    }
-
-    const allRows = (appState?.rows || []).filter((r) => r && r.id && !r.archived && r.id !== prefs.selectedThreadId);
-    const rankedRows = rankByFreq(
-      allRows,
-      'threads',
-      (r) => r.id,
-      (r) => (isSessionActivelyRunning(r.id) ? 500 : r.status === 'waiting' ? 350 : 0)
-    );
-    if (!prefs.splitWatchThreadId || prefs.splitWatchThreadId === prefs.selectedThreadId || !rankedRows.some((r) => r.id === prefs.splitWatchThreadId)) {
-      prefs.splitWatchThreadId = rankedRows[0]?.id || '';
-    }
-    const watchedId = prefs.splitWatchThreadId;
-    const watchedRow = rankedRows.find((r) => r.id === watchedId) || null;
-    const watchedDetail = watchedId ? threadsCache[watchedId] || null : null;
-    if (watchedId && !watchedDetail) {
-      fetchThreadDetail(watchedId, watchedRow?.provider || '').catch(() => {});
-    }
-    const watchedMsgs = coalesceThreadMessages(watchedDetail?.messages || []);
-    const isRunning = watchedId ? isSessionActivelyRunning(watchedId) : false;
-
-    const optsHtml = rankedRows.length
-      ? rankedRows
-          .map(
-            (r) =>
-              `<option value="${esc(r.id)}" ${r.id === watchedId ? 'selected' : ''}>${isSessionActivelyRunning(r.id) ? '◎ ' : ''}${esc(r.title || r.id)} (${r.provider === 'claude' ? 'Claude' : 'AGY'})</option>`
-          )
-          .join('')
-      : `<option value="">No secondary session available</option>`;
-
-    const turnsHtml = watchedMsgs.length
-      ? watchedMsgs
-          .slice(-6)
-          .map((m) => {
-            const roleLbl = m.role === 'user' ? 'You' : watchedRow?.provider === 'claude' ? 'Claude' : 'Antigravity';
-            const rawSnippet =
-              m.role === 'user'
-                ? cleanUserPromptPreview(m.text)
-                : m.role === 'checkpoint'
-                  ? cleanCheckpointPreview(m.text)
-                  : String(m.text || m.thinking || '');
-            const snippet = String(rawSnippet || '')
-              .replace(/\s+/g, ' ')
-              .trim()
-              .slice(0, 260);
-            const stepsCnt = Array.isArray(m.toolCalls) ? m.toolCalls.length : 0;
-            return `
-              <div class="split-watch-turn${m.role === 'user' ? ' is-user' : ''}">
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:3px">
-                  <strong style="font-size:11px;color:var(--text-heading)">${esc(roleLbl)}</strong>
-                  ${stepsCnt > 0 ? `<span class="meta-timestamp tabular">${stepsCnt} step${stepsCnt === 1 ? '' : 's'}</span>` : ''}
-                </div>
-                <div style="color:var(--text-secondary)">${esc(snippet || (stepsCnt > 0 ? 'Executing workspace tool steps…' : 'Ready.'))}</div>
-              </div>
-            `;
-          })
-          .join('')
-      : `<div class="insp-empty">Monitoring <strong style="color:var(--text-heading)">${esc(watchedRow?.title || 'Secondary Session')}</strong>.${isRunning ? ' Active turn in progress…' : ''}</div>`;
-
-    paneEl.hidden = false;
-    const existingBody = paneEl.querySelector('.split-watch-body');
-    if (document.activeElement?.id === 'split-watch-session-select' && existingBody) {
-      existingBody.innerHTML = turnsHtml;
-      return;
-    }
-    paneEl.innerHTML = `
-      <div class="split-watch-head">
-        <select id="split-watch-session-select" class="split-watch-select" aria-label="Select secondary session to monitor">${optsHtml}</select>
-        ${watchedId ? `<button type="button" class="insp-mini-btn" id="btn-split-watch-swap" data-split-watch-swap="${esc(watchedId)}">⇄ Swap</button>` : ''}
-        <button type="button" class="icon-btn-sm" id="btn-split-watch-close" data-split-watch-close="1" aria-label="Close Split Watch">✕</button>
-      </div>
-      <div class="split-watch-body">${turnsHtml}</div>
-    `;
-  }
-
-  function setInspectorOpen(openBool, tab = '', opts = {}) {
-    if (isPinLocked()) return;
-    prefs.inspectorOpen = Boolean(openBool);
-    if (!prefs.inspectorOpen || opts.fileTarget !== undefined) {
-      ++inspectorFetchSeq;
-      teardownDeliverableInspectorFrames();
-    }
-    if (tab) {
-      const normTab = normalizeInspectorTab(tab);
-      if (prefs.inspectorTab === 'files' && normTab !== 'files') {
-        teardownDeliverableInspectorFrames();
-      }
-      prefs.inspectorTab = normTab;
-    } else {
-      prefs.inspectorTab = normalizeInspectorTab(prefs.inspectorTab);
-    }
-    if (!prefs.inspectorOpen || prefs.inspectorTab !== 'files') {
-      prefs.inspectorFullStage = false;
-    }
-    if (opts.fileTarget !== undefined) {
-      activeInspectorFileTarget = String(opts.fileTarget || '');
-      activeDeliverablePage = 1;
-      activeDeliverableDeckMode = 'single';
-      activeDeliverableZoomPct = 0;
-      activeDeliverableSheetIdx = 0;
-      if (opts.viewMode && ['preview', 'source', 'diff'].includes(opts.viewMode)) {
-        prefs.inspectorViewMode = opts.viewMode;
-      }
-    } else if (
-      prefs.inspectorOpen &&
-      prefs.inspectorTab === 'files' &&
-      activeInspectorFileTarget &&
-      prefs.inspectorViewMode !== 'diff'
-    ) {
-      const parsedCur = parsePreviewTargetClient(activeInspectorFileTarget);
-      if (getDeliverableKindClient(parsedCur.filePath) && !parsedCur.startLine && prefs.inspectorViewMode === 'source') {
-        prefs.inspectorViewMode = 'preview';
-      }
-    }
-    if (opts.agentId !== undefined) {
-      activeInspectorAgentId = String(opts.agentId || '');
-    }
-    saveJson(STORAGE_KEYS.PREFS, prefs);
-    const sid = prefs.selectedThreadId || '';
-    const cleanSid = cleanTargetThreadId(sid);
-    const inspSessKey = isNewSessionMode() ? '__new__' : cleanSid || sid;
-    if (opts.fileTarget === undefined && inspSessKey && activeInspectorSessionId && inspSessKey !== activeInspectorSessionId) {
-      activeInspectorFileTarget = '';
-      activeDeliverablePage = 1;
-      activeDeliverableDeckMode = 'single';
-      activeDeliverableZoomPct = 0;
-      activeDeliverableSheetIdx = 0;
-      teardownDeliverableInspectorFrames();
-      ++inspectorFetchSeq;
-    }
-    if (inspSessKey) {
-      activeInspectorSessionId = inspSessKey;
-    }
-    const row = (appState?.rows || []).find((r) => r && r.id === sid) || null;
-    const td = isNewSessionMode() ? null : threadsCache[sid] || null;
-    const msgs = coalesceThreadMessages(td?.messages || []);
-    const provKey = (td?.provider || row?.provider) === 'claude' ? 'claude' : 'antigravity';
-    renderSplitInspector(row, td, msgs, provKey, isNewSessionMode(), true);
-    if (prefs.inspectorOpen && prefs.inspectorTab === 'files' && activeInspectorFileTarget) {
-      const parsedTgt = parsePreviewTargetClient(activeInspectorFileTarget);
-      const dKind = getDeliverableKindClient(parsedTgt.filePath);
-      if (dKind && prefs.inspectorViewMode === 'preview') {
-        fetchDeliverablePreview(activeInspectorFileTarget, row, {
-          page: activeDeliverablePage,
-          forceRefresh: Boolean(opts.forceRefresh)
-        }).catch(() => {});
-      } else {
-        fetchSafeFilePreview(activeInspectorFileTarget, row, Boolean(opts.forceRefresh)).catch(() => {});
-      }
-    }
-    if (prefs.inspectorOpen && ['files', 'git', 'tasks'].includes(prefs.inspectorTab)) {
-      fetchStudioCapabilities(row, Boolean(opts.forceRefresh)).catch(() => {});
-    }
-    if (prefs.inspectorOpen && prefs.inspectorTab === 'tasks' && sid && activeInspectorAgentId) {
-      fetchBgTaskLiveLog(sid, activeInspectorAgentId, provKey).catch(() => {});
-    }
-    if (prefs.inspectorOpen && sid && !isNewSessionMode()) {
-      emitPrewarmHint(sid, { provider: provKey, source: 'inspector' });
-    }
-  }
-
-  function formatInspectorDiffHtml(diffText) {
-    return String(diffText || '')
-      .split('\n')
-      .map((ln) => {
-        const cls =
-          ln.startsWith('+') && !ln.startsWith('+++')
-            ? 'add'
-            : ln.startsWith('-') && !ln.startsWith('---')
-              ? 'del'
-              : ln.startsWith('@@')
-                ? 'hunk'
-                : '';
-        return `<span class="insp-diff-ln${cls ? ` ${cls}` : ''}">${esc(ln)}</span>`;
-      })
-      .join('');
-  }
-
-  function renderSplitInspector(activeRow, threadDetail, messages, provKey, isNewDraft, skipAutoFetch = false) {
-    const paneEl = $('ide-inspector-pane');
-    const backdropEl = $('ide-inspector-backdrop');
-    const toggleBtn = $('btn-toggle-inspector');
-    const pillBadge = $('inspector-pill-count');
-    const agentsBadge = $('insp-agents-badge');
-    const subbarEl = $('ide-inspector-subbar');
-    const bodyEl = $('ide-inspector-body');
-    if (!paneEl || !bodyEl) return;
-
-    prefs.inspectorTab = normalizeInspectorTab(prefs.inspectorTab);
-    const { allTasks, runningCount } = isNewDraft
-      ? { allTasks: [], runningCount: 0 }
-      : getSessionBackgroundTasks(activeRow, threadDetail);
-    const touchedFiles = isNewDraft ? [] : collectSessionTouchedFiles(messages);
-
-    const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
-    const cleanSid = cleanTargetThreadId(sid);
-    const inspSessKey = isNewDraft ? '__new__' : cleanSid || sid;
-    if (inspSessKey && activeInspectorSessionId && inspSessKey !== activeInspectorSessionId) {
-      activeInspectorFileTarget = '';
-      activeDeliverablePage = 1;
-      activeDeliverableDeckMode = 'single';
-      activeDeliverableZoomPct = 0;
-      activeDeliverableSheetIdx = 0;
-      teardownDeliverableInspectorFrames();
-      ++inspectorFetchSeq;
-    }
-    if (inspSessKey) {
-      activeInspectorSessionId = inspSessKey;
-    }
-    const wsCtx = resolveSessionWorkspaceContext(activeRow, threadDetail);
-    const wsId = wsCtx.wsId;
-    const capCacheKey = `${sid || 'global'}::${wsId}`;
-    const studioCap = studioCapabilitiesCache.get(capCacheKey) || null;
-    const liveWsFiles = Array.isArray(studioCap?.workspace?.modifiedFiles)
-      ? studioCap.workspace.modifiedFiles
-      : Array.isArray(wsCtx.matchedWs?.modifiedFiles)
-        ? wsCtx.matchedWs.modifiedFiles
-        : [];
-    const mergedFiles = [...touchedFiles];
-    const seenFileKeys = new Set(mergedFiles.map((f) => f.key));
-    for (const mf of liveWsFiles) {
-      const mPath = String(mf?.path || '').trim();
-      if (!mPath) continue;
-      const parsedMf = parsePreviewTargetClient(mPath);
-      if (!parsedMf.filePath) continue;
-      const key = parsedMf.filePath.replace(/\\/g, '/').toLowerCase();
-      if (seenFileKeys.has(key)) continue;
-      seenFileKeys.add(key);
-      mergedFiles.push({
-        key,
-        target: parsedMf.filePath,
-        filePath: parsedMf.filePath,
-        displayBase: parsedMf.displayBase,
-        isEdit: true,
-        gitStatus: String(mf.status || 'M'),
-        added: 0,
-        removed: 0
-      });
-    }
-
-    if (toggleBtn) {
-      toggleBtn.setAttribute('aria-expanded', prefs.inspectorOpen ? 'true' : 'false');
-    }
-    if (pillBadge) {
-      const badgeNum = runningCount > 0 ? runningCount : allTasks.length > 0 ? allTasks.length : mergedFiles.length;
-      if (badgeNum > 0) {
-        pillBadge.hidden = false;
-        pillBadge.textContent = String(badgeNum);
-      } else {
-        pillBadge.hidden = true;
-      }
-    }
-    if (agentsBadge) {
-      if (allTasks.length > 0) {
-        agentsBadge.hidden = false;
-        agentsBadge.textContent = String(runningCount > 0 ? runningCount : allTasks.length);
-      } else {
-        agentsBadge.hidden = true;
-      }
-    }
-
-    document.querySelectorAll('#ide-inspector-tabs [data-insp-tab]').forEach((btn) => {
-      const isAct = btn.dataset.inspTab === prefs.inspectorTab;
-      btn.classList.toggle('active', isAct);
-      btn.setAttribute('aria-selected', isAct ? 'true' : 'false');
-    });
-
-    if (!prefs.inspectorOpen) {
-      teardownDeliverableInspectorFrames();
-      paneEl.classList.remove('is-deliverable-wide', 'is-full-stage');
-      paneEl.hidden = true;
-      if (backdropEl) backdropEl.hidden = true;
-      if (subbarEl) subbarEl.hidden = true;
-      return;
-    }
-
-    paneEl.hidden = false;
-    if (prefs.inspectorTab !== 'files') {
-      paneEl.classList.remove('is-deliverable-wide', 'is-full-stage');
-    }
-    if (backdropEl) {
-      backdropEl.hidden = window.innerWidth > 1024;
-    }
-
-    if (
-      !skipAutoFetch &&
-      !studioCap &&
-      !studioCapInFlightKeys.has(capCacheKey) &&
-      ['files', 'git', 'tasks'].includes(prefs.inspectorTab)
-    ) {
-      fetchStudioCapabilities(activeRow).catch(() => {});
-    }
-
-    if (prefs.inspectorTab === 'files') {
-      if (!activeInspectorFileTarget && mergedFiles.length > 0) {
-        activeInspectorFileTarget = mergedFiles[0].target;
-      }
-      const parsed = parsePreviewTargetClient(activeInspectorFileTarget);
-      const cacheKey = parsed.filePath
-        ? `${sid || wsId || 'global'}::${parsed.filePath.replace(/\\/g, '/')}`
-        : '';
-      const deliverableKind = getDeliverableKindClient(parsed.filePath);
-      const pageCacheKey = `${cacheKey}::p${activeDeliverablePage}`;
-      const cached = cacheKey ? filePreviewCache.get(cacheKey) : null;
-      const delivCached =
-        deliverableKind === 'pdf' || deliverableKind === 'pptx'
-          ? deliverablePageCache.get(pageCacheKey) || deliverablePreviewCache.get(cacheKey)
-          : deliverablePreviewCache.get(cacheKey);
-
-      const pillsHtml = mergedFiles.length
-        ? `<div class="insp-file-pills">${mergedFiles
-            .slice(0, 18)
-            .map((tf) => {
-              const isCur =
-                parsed.filePath &&
-                tf.filePath.replace(/\\/g, '/').toLowerCase() ===
-                  parsed.filePath.replace(/\\/g, '/').toLowerCase();
-              const statSuffix = tf.added || tf.removed
-                ? ` <span class="tabular" style="opacity:0.8">${tf.added ? `+${tf.added}` : ''}${tf.removed ? ` -${tf.removed}` : ''}</span>`
-                : tf.gitStatus
-                  ? ` <span class="tabular" style="opacity:0.75">${esc(tf.gitStatus)}</span>`
-                  : '';
-              return `<button type="button" class="insp-mini-btn${isCur ? ' active' : ''}" data-preview-file="${esc(tf.target)}">${esc(tf.displayBase)}${statSuffix}</button>`;
-            })
-            .join('')}</div>`
-        : '';
-
-      if (!parsed.filePath) {
-        paneEl.classList.remove('is-deliverable-wide', 'is-full-stage');
-        if (subbarEl) subbarEl.hidden = true;
-        bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">Click any file chip in the conversation, change-set strip, or Git tab to inspect deliverables (HTML, PDF, PPTX, Excel), view source with <code class="md-inline-code">@L</code> line quoting, or review diffs.</div>`;
-        return;
-      }
-
-      const displayPath = String(delivCached?.relPath || cached?.relPath || parsed.filePath);
-      const rangeSuffix = parsed.startLine
-        ? `#L${parsed.startLine}${parsed.endLine > parsed.startLine ? `-L${parsed.endLine}` : ''}`
-        : '';
-      const diffText = String(cached?.gitDiff ?? cached?.diffPatch ?? cached?.diff ?? '');
-      const hasDiff = Boolean(diffText.trim());
-      const hasSource = Boolean(
-        (cached && cached.ok && typeof cached.content === 'string' && !cached.fallbackOnly) ||
-          (delivCached && delivCached.ok && typeof delivCached.sourceHtml === 'string')
-      );
-      const allowSourceTab = !deliverableKind || deliverableKind === 'html';
-      const effectiveMode =
-        prefs.inspectorViewMode === 'diff' && hasDiff
-          ? 'diff'
-          : deliverableKind && prefs.inspectorViewMode === 'preview'
-            ? 'preview'
-            : hasSource && allowSourceTab
-              ? 'source'
-              : hasDiff
-                ? 'diff'
-                : deliverableKind
-                  ? 'preview'
-                  : 'source';
-
-      paneEl.classList.toggle('is-deliverable-wide', Boolean(deliverableKind && effectiveMode === 'preview'));
-      paneEl.classList.toggle('is-full-stage', Boolean(deliverableKind && effectiveMode === 'preview' && prefs.inspectorFullStage));
-
-      if (!skipAutoFetch) {
-        if (effectiveMode === 'preview' && deliverableKind) {
-          if (!delivCached && !deliverableInFlightKeys.has(pageCacheKey)) {
-            fetchDeliverablePreview(activeInspectorFileTarget, activeRow, { page: activeDeliverablePage }).catch(() => {});
-          }
-        } else if (!cached && !filePreviewInFlightKeys.has(cacheKey)) {
-          fetchSafeFilePreview(activeInspectorFileTarget, activeRow).catch(() => {});
-        }
-      }
-
-      if (subbarEl) {
-        subbarEl.hidden = false;
-        const previewBtnHtml = deliverableKind
-          ? `<button type="button" class="insp-mini-btn${effectiveMode === 'preview' ? ' active' : ''}" data-insp-view-mode="preview">Preview</button>`
-          : '';
-        const sourceBtnHtml = allowSourceTab
-          ? `<button type="button" class="insp-mini-btn${effectiveMode === 'source' ? ' active' : ''}" data-insp-view-mode="source">Source</button>`
-          : '';
-        const fullStageBtnHtml = deliverableKind
-          ? `<button type="button" class="insp-mini-btn${prefs.inspectorFullStage ? ' active' : ''}" data-insp-full-stage="1">${prefs.inspectorFullStage ? 'Split' : 'Full Stage'}</button>`
-          : '';
-        const copyOrShareHtml = deliverableKind
-          ? `<button type="button" class="insp-mini-btn" data-insp-dlv-export="${esc(parsed.filePath)}">${window.navigator?.standalone ? 'Share' : 'Download'}</button>`
-          : `<button type="button" class="insp-mini-btn" data-insp-copy-code="${esc(cacheKey)}">Copy</button>`;
-        subbarEl.innerHTML = `
-          <span class="insp-sub-path">
-            <span class="insp-sub-path-txt">${esc(displayPath)}${esc(rangeSuffix)}</span>
-          </span>
-          <span class="insp-sub-actions">
-            ${previewBtnHtml}
-            ${sourceBtnHtml}
-            <button type="button" class="insp-mini-btn${effectiveMode === 'diff' ? ' active' : ''}" data-insp-view-mode="diff" ${hasDiff ? '' : 'disabled'}>Diff</button>
-            ${fullStageBtnHtml}
-            <button type="button" class="insp-mini-btn" data-step-mention-file="${esc(displayPath)}">@ Mention</button>
-            ${!deliverableKind ? `<button type="button" class="insp-mini-btn" data-insp-ask-review="${esc(displayPath)}">Ask AI Review</button>` : ''}
-            ${copyOrShareHtml}
-          </span>
-        `;
-      }
-
-      if (effectiveMode === 'preview' && deliverableKind) {
-        if (!delivCached) {
-          bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">Rendering <span class="mono">${esc(displayPath)}</span>…</div>`;
-          return;
-        }
-        const docMeta = deliverablePreviewCache.get(cacheKey);
-        if (!delivCached.ok && !(docMeta && docMeta.ok && (deliverableKind === 'pdf' || deliverableKind === 'pptx'))) {
-          bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">${esc(delivCached.error || 'Unable to preview deliverable.')}</div>`;
-          return;
-        }
-        if (deliverableKind === 'html') {
-          const existingFrame = bodyEl.querySelector('iframe.insp-html-frame');
-          if (existingFrame && existingFrame.dataset.dlvKey === cacheKey) {
-            return;
-          }
-          teardownDeliverableInspectorFrames();
-          bodyEl.innerHTML = `${pillsHtml}<div class="insp-deliverable-stage"><iframe class="insp-html-frame" sandbox="allow-scripts allow-forms allow-modals" referrerpolicy="no-referrer"></iframe></div>`;
-          const fr = bodyEl.querySelector('iframe.insp-html-frame');
-          if (fr) {
-            fr.dataset.dlvKey = cacheKey;
-            fr.srcdoc = String(delivCached.sandboxedHtml || delivCached.sourceHtml || '');
-          }
-          return;
-        }
-        if (deliverableKind === 'spreadsheet') {
-          const sheets = Array.isArray(delivCached.sheets) ? delivCached.sheets : [];
-          if (!sheets.length) {
-            bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">${delivCached.unsupportedBinary ? 'Legacy binary workbook — open in Excel to view.' : 'Empty workbook.'}</div>`;
-            return;
-          }
-          const idx = Math.max(0, Math.min(sheets.length - 1, activeDeliverableSheetIdx));
-          const sh = sheets[idx];
-          const tabsHtml = sheets
-            .map((s, si) => `<button type="button" class="insp-thumb-btn${si === idx ? ' active' : ''}" data-insp-sheet-idx="${si}">${esc(s.name || `Sheet${si + 1}`)}</button>`)
-            .join('');
-          const maxRows = Math.min(sh.grid?.length || 0, 200);
-          const maxCols = Math.min(sh.colCount || 0, 32);
-          let hdrCols = '<tr><th>#</th>';
-          for (let c = 0; c < maxCols; c++) {
-            let n = c + 1;
-            let colLbl = '';
-            while (n > 0) {
-              const rem = (n - 1) % 26;
-              colLbl = String.fromCharCode(65 + rem) + colLbl;
-              n = Math.floor((n - 1) / 26);
-            }
-            hdrCols += `<th>${colLbl}</th>`;
-          }
-          hdrCols += '</tr>';
-          let bodyRowsHtml = '';
-          for (let r = 0; r < maxRows; r++) {
-            const rowArr = sh.grid[r] || [];
-            let tds = `<td class="num">${r + 1}</td>`;
-            for (let c = 0; c < maxCols; c++) {
-              const cell = rowArr[c];
-              const cls = cell && cell.a === 'right' ? ' class="num"' : '';
-              tds += `<td${cls}>${esc(cell ? cell.t : '')}</td>`;
-            }
-            bodyRowsHtml += `<tr>${tds}</tr>`;
-          }
-          bodyEl.innerHTML = `${pillsHtml}<div class="insp-deliverable-stage"><div class="insp-deliverable-bar"><span class="insp-deliverable-label">${esc(delivCached.file || displayPath)} · ${sh.totalRowsInSheet || maxRows} rows</span><span class="insp-deliverable-grp"><button type="button" class="insp-mini-btn" data-insp-dlv-app="${esc(parsed.filePath)}">Open in Excel</button></span></div><div class="insp-sheet-tabs">${tabsHtml}</div><div class="insp-sheet-grid-wrap"><table class="insp-sheet-grid"><thead>${hdrCols}</thead><tbody>${bodyRowsHtml}</tbody></table></div></div>`;
-          return;
-        }
-        // PDF or PPTX deck stage
-        const unitLabel = deliverableKind === 'pptx' ? 'Slide' : 'Page';
-        const pageMetaSrc = delivCached.ok ? delivCached : (deliverablePreviewCache.get(cacheKey) || delivCached);
-        const pageCount = Math.max(1, Number(pageMetaSrc.pageCount || (Array.isArray(pageMetaSrc.slides) ? pageMetaSrc.slides.length : 1) || 1));
-        const curPage = Math.max(1, Math.min(pageCount, activeDeliverablePage));
-        activeDeliverablePage = curPage;
-        const canOpenBridgeApp = Boolean(
-          (connMode === 'local' && localBridgeBase) ||
-            prefs.customBridgeUrl ||
-            (edgeWsAuthed && edgeWs && edgeWs.readyState === 1)
-        );
-        if (!delivCached.blobUrl && delivCached.rawBytes instanceof Uint8Array && (delivCached.sourceKind === 'vault-r2-pdf' || deliverableKind === 'pdf')) {
-          const freshBlob = new Blob([delivCached.rawBytes], { type: delivCached.rawMime || 'application/pdf' });
-          delivCached.blobUrl = URL.createObjectURL(freshBlob);
-          activeDeliverableBlobUrls.add(delivCached.blobUrl);
-        }
-        const appBtnLabel = deliverableKind === 'pptx' ? 'PowerPoint' : 'Open App';
-        const barHtml = `
-          <div class="insp-deliverable-bar">
-            <span class="insp-deliverable-grp">
-              <button type="button" class="insp-mini-btn" data-insp-dlv-page="${curPage - 1}" ${curPage <= 1 ? 'disabled' : ''}>←</button>
-              <span class="insp-deliverable-label tabular">${unitLabel} ${curPage} / ${pageCount}</span>
-              <button type="button" class="insp-mini-btn" data-insp-dlv-page="${curPage + 1}" ${curPage >= pageCount ? 'disabled' : ''}>→</button>
-              ${delivCached.blobUrl ? '' : `<button type="button" class="insp-mini-btn${activeDeliverableDeckMode === 'single' ? ' active' : ''}" data-insp-dlv-deck-mode="single">Single</button><button type="button" class="insp-mini-btn${activeDeliverableDeckMode === 'all' ? ' active' : ''}" data-insp-dlv-deck-mode="all">All</button>`}
-            </span>
-            <span class="insp-deliverable-grp">
-              ${delivCached.blobUrl ? '' : `<button type="button" class="insp-mini-btn" data-insp-dlv-zoom="out">−</button><button type="button" class="insp-mini-btn${activeDeliverableZoomPct === 0 ? ' active' : ''}" data-insp-dlv-zoom="fit">${activeDeliverableZoomPct === 0 ? 'Fit' : `${activeDeliverableZoomPct}%`}</button><button type="button" class="insp-mini-btn" data-insp-dlv-zoom="in">+</button>`}
-              ${canOpenBridgeApp ? `<button type="button" class="insp-mini-btn" data-insp-dlv-app="${esc(parsed.filePath)}">${appBtnLabel}</button>` : ''}
-            </span>
-          </div>
-        `;
-
-        let stageHtml = '';
-        if (delivCached.blobUrl) {
-          const isStandaloneTouch = Boolean(window.navigator?.standalone);
-          if (isStandaloneTouch) {
-            stageHtml = `<div class="insp-empty">PDF ready from Memory Vault (${esc(delivCached.file)}). Tap <strong>Share</strong> above to open full-screen in iOS QuickLook or Files.</div>`;
-          } else {
-            stageHtml = `<iframe class="insp-html-frame" src="${esc(delivCached.blobUrl)}"></iframe>`;
-          }
-        } else if (delivCached.sourceKind === 'vault-r2-download') {
-          stageHtml = `<div class="insp-empty">${esc(delivCached.file)} (${Math.round((delivCached.size || 0) / 1024)} KB) is stored in Memory Vault without a PDF twin. Connect to workstation or tap Download / Share above to open in PowerPoint.</div>`;
-        } else if (Array.isArray(delivCached.slides) && !delivCached.pageImageBase64) {
-          if (delivCached.slides.length === 0) {
-            stageHtml = `<div class="insp-empty">No slides found in this presentation.</div>`;
-          } else {
-            const indices = activeDeliverableDeckMode === 'all' ? delivCached.slides.map((_, i) => i + 1) : [curPage];
-            stageHtml = `<div class="insp-deck-stage">${indices.map((pNum) => {
-              const s = delivCached.slides[pNum - 1];
-              if (!s) return '';
-              const bulletsHtml = (s.bullets || []).map((b) => `<li dir="auto">${esc(b)}</li>`).join('');
-              const imgHtml = s.imageDataUri ? `<img src="${esc(s.imageDataUri)}" alt="Slide ${pNum}" style="max-width:100%;border-radius:6px">` : '';
-              return `<div class="insp-ooxml-card"><div class="insp-ooxml-title" dir="auto">${esc(s.title || `Slide ${pNum}`)}</div>${bulletsHtml ? `<ul class="insp-ooxml-bullets">${bulletsHtml}</ul>` : ''}${imgHtml}</div>`;
-            }).join('')}</div>`;
-          }
-        } else {
-          const pagesToRender = activeDeliverableDeckMode === 'all'
-            ? Array.from({ length: Math.min(pageCount, 30) }, (_, i) => i + 1)
-            : [curPage];
-          const cardsHtml = pagesToRender.map((pNum) => {
-            const pObj = pNum === curPage && delivCached.page === curPage
-              ? delivCached
-              : deliverablePageCache.get(`${cacheKey}::p${pNum}`);
-            if (!pObj) {
-              if (!deliverableInFlightKeys.has(`${cacheKey}::p${pNum}`)) {
-                fetchDeliverablePreview(activeInspectorFileTarget, activeRow, { page: pNum, batchRender: true }).catch(() => {});
-              }
-              return `<div class="insp-empty">Rendering ${unitLabel} ${pNum}…</div>`;
-            }
-            if (!pObj.ok || !pObj.pageImageBase64) {
-              return `<div class="insp-empty">${esc(pObj.error || `Unable to render ${unitLabel} ${pNum}.`)}</div>`;
-            }
-            const widthStyle = activeDeliverableZoomPct > 0 ? ` style="width:${activeDeliverableZoomPct}%"` : '';
-            const imgStyle = activeDeliverableZoomPct > 0 ? ' style="width:100%"' : '';
-            return `<div class="insp-page-card"${widthStyle}><img src="data:${esc(pObj.pageMime || 'image/png')};base64,${pObj.pageImageBase64}" alt="${unitLabel} ${pNum}"${imgStyle}><div class="insp-page-cap">${unitLabel} ${pNum} of ${pageCount}</div></div>`;
-          }).join('');
-          stageHtml = `<div class="insp-deck-stage">${cardsHtml}</div>`;
-        }
-
-        const thumbsHtml = !delivCached.blobUrl && pageCount > 1
-          ? `<div class="insp-thumb-strip">${Array.from({ length: pageCount }, (_, i) => i + 1).map((pNum) => `<button type="button" class="insp-thumb-btn${pNum === curPage ? ' active' : ''}" data-insp-dlv-page="${pNum}">${pNum}</button>`).join('')}</div>`
-          : '';
-        bodyEl.innerHTML = `${pillsHtml}<div class="insp-deliverable-stage">${barHtml}${stageHtml}${thumbsHtml}</div>`;
-        return;
-      }
-
-      if (!cached) {
-        if (deliverableKind === 'html' && delivCached && delivCached.ok && delivCached.sourceHtml) {
-          // Allow instant Source view from already-loaded HTML deliverable
-        } else {
-          bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">Loading preview for <span class="mono">${esc(displayPath)}</span>…</div>`;
-          return;
-        }
-      }
-
-      if (cached && !cached.ok && !hasDiff) {
-        bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">${esc(cached.error || 'Unable to preview this file path.')}</div>`;
-        return;
-      }
-
-      if (effectiveMode === 'diff' && hasDiff) {
-        bodyEl.innerHTML = `${pillsHtml}<div class="insp-code-surface"><pre class="insp-diff-pre mono">${formatInspectorDiffHtml(diffText)}</pre></div>`;
-        return;
-      }
-
-      const sourceContent = cached && typeof cached.content === 'string' && !cached.fallbackOnly
-        ? cached.content
-        : (delivCached?.sourceHtml || '');
-      const rawLines = String(sourceContent).replace(/\r\n/g, '\n').split('\n');
-      const maxRenderLines = 900;
-      const hlStart = Number(parsed.startLine || cached?.startLine || 0);
-      const hlEnd = Math.max(hlStart, Number(parsed.endLine || cached?.endLine || hlStart));
-      let sliceStart = 0;
-      if (rawLines.length > maxRenderLines && hlStart > maxRenderLines - 80) {
-        sliceStart = Math.max(0, hlStart - 120);
-      }
-      const visibleLines = rawLines.slice(sliceStart, sliceStart + maxRenderLines);
-      const rowsHtml = visibleLines
-        .map((txt, idx) => {
-          const ln = sliceStart + idx + 1;
-          const isHl = hlStart > 0 && ln >= hlStart && ln <= hlEnd;
-          return `<div class="insp-code-row${isHl ? ' is-hl' : ''}" data-ln="${ln}"><button type="button" class="insp-quote-line-btn" data-quote-line="${esc(displayPath)}#L${ln}" aria-label="Quote ${esc(displayPath)} line ${ln} in chat">@L${ln}</button><span class="insp-ln tabular">${ln}</span><span class="insp-code-txt">${esc(txt)}</span></div>`;
-        })
-        .join('');
-      const truncNote =
-        cached?.truncated || rawLines.length > maxRenderLines
-          ? `<div class="meta-timestamp tabular" style="padding:2px 4px">Showing lines ${sliceStart + 1}–${sliceStart + visibleLines.length} of ${cached?.lineCount || rawLines.length}</div>`
-          : '';
-      bodyEl.innerHTML = `${pillsHtml}<div class="insp-code-surface">${rowsHtml}</div>${truncNote}`;
-
-      const hlScrollKey = `${cacheKey}#${hlStart}-${hlEnd}`;
-      if (hlStart > 0 && lastScrolledInspectorHlKey !== hlScrollKey) {
-        lastScrolledInspectorHlKey = hlScrollKey;
-        const firstHl = bodyEl.querySelector('.insp-code-row.is-hl');
-        if (firstHl) {
-          firstHl.scrollIntoView({ block: 'center' });
-        }
-      }
-      return;
-    }
-
-    if (prefs.inspectorTab === 'git') {
-      const wsInfo = studioCap?.workspace ||
-        wsCtx.matchedWs || {
-          name: (activeRow?.folder && !/^workspace$/i.test(activeRow.folder) ? activeRow.folder : '') || (wsId !== 'auto' ? wsId : 'Workspace'),
-          branch: 'main',
-          dirtyCount: touchedFiles.length,
-          modifiedFiles: touchedFiles.map((tf) => ({ status: 'M', path: tf.filePath })),
-          recentCommits: []
-        };
-      const isNoGitWs = Boolean(wsInfo?.noGit || wsInfo?.id === 'theo-memory');
-      const modFiles = isNoGitWs
-        ? []
-        : Array.isArray(wsInfo.modifiedFiles) && wsInfo.modifiedFiles.length
-          ? wsInfo.modifiedFiles
-          : touchedFiles.map((tf) => ({ status: tf.isEdit ? 'M' : 'R', path: tf.filePath }));
-      const commits = isNoGitWs ? [] : Array.isArray(wsInfo.recentCommits) ? wsInfo.recentCommits : [];
-
-      if (subbarEl) {
-        subbarEl.hidden = false;
-        subbarEl.innerHTML = `
-          <span class="insp-sub-path"><span class="insp-sub-path-txt">${esc(wsInfo.name || wsId)} · <code class="md-inline-code">${esc(isNoGitWs ? 'Vault Sync' : wsInfo.branch || 'main')}</code>${isNoGitWs ? '' : ` · ${modFiles.length} changed`}</span></span>
-          <span class="insp-sub-actions">
-            <button type="button" class="insp-mini-btn" data-studio-cap-refresh="1">↻ Refresh</button>
-            ${isNoGitWs ? '' : `<button type="button" class="insp-mini-btn" data-git-prompt-action="commit">Summarize &amp; Commit</button>`}
-          </span>
-        `;
-      }
-
-      if (isNoGitWs) {
-        bodyEl.innerHTML = `
-          <div class="studio-lens-section">
-            <div class="studio-lens-head"><span class="studio-lens-title">Memory Vault Workspace</span></div>
-            <div class="meta-timestamp">Synced two-way via Cloudflare Memory Vault (git history retired for <code class="md-inline-code">bhfirms/memory</code>).</div>
-          </div>
-        `;
-        return;
-      }
-
-      const modHtml = modFiles.length
-        ? modFiles
-            .slice(0, 24)
-            .map(
-              (f) => `
-              <div class="studio-git-file-row">
-                <span style="display:inline-flex;align-items:center;gap:6px;min-width:0;flex:1">
-                  <span class="studio-git-status">${esc(f.status || 'M')}</span>
-                  <span class="mono" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.path)}</span>
-                </span>
-                <span style="display:inline-flex;gap:4px;flex-shrink:0">
-                  <button type="button" class="insp-mini-btn" data-preview-file="${esc(f.path)}" data-preview-mode="diff">Diff</button>
-                  <button type="button" class="insp-mini-btn" data-step-mention-file="${esc(f.path)}">@ Mention</button>
-                </span>
-              </div>
-            `
-            )
-            .join('')
-        : `<div class="meta-timestamp">Working tree clean — zero uncommitted files.</div>`;
-
-      const commitsHtml = commits.length
-        ? commits
-            .slice(0, 6)
-            .map(
-              (c) => `
-              <div class="studio-git-file-row">
-                <span class="mono" style="color:var(--brass);font-size:10.5px">${esc(c.hash || '')}</span>
-                <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.subject || '')}</span>
-                <span class="meta-timestamp tabular">${esc(c.relativeTime || '')}</span>
-              </div>
-            `
-            )
-            .join('')
-        : `<div class="meta-timestamp">Connect to workstation bridge to inspect commit history.</div>`;
-
-      bodyEl.innerHTML = `
-        <div class="studio-lens-section">
-          <div class="studio-lens-head">
-            <span class="studio-lens-title">Working Tree Changes (${modFiles.length})</span>
-            <button type="button" class="insp-mini-btn" data-git-prompt-action="review">Ask AI to Review All</button>
-          </div>
-          ${modHtml}
-        </div>
-        <div class="studio-lens-section">
-          <div class="studio-lens-head">
-            <span class="studio-lens-title">Recent Commits</span>
-          </div>
-          ${commitsHtml}
-        </div>
-      `;
-      return;
-    }
-
-    // Tab 3: Tasks & Outline (Turn/Artifact Outline + Side Agents/Bg Tasks + Allowlisted Checks)
-    const rawChecks = Array.isArray(studioCap?.checks) ? studioCap.checks : [];
-    const rankedChecks = rankByFreq(rawChecks, 'checks', (c) => c.id);
-    const outlineItems = [];
-    let promptNum = 0;
-    (messages || []).forEach((m, idx) => {
-      if (!m) return;
-      const anchor = String(m.id || `turn-${idx}`);
-      if (m.role === 'user') {
-        promptNum += 1;
-        outlineItems.push({
-          kicker: `Prompt #${promptNum}`,
-          title: cleanUserPromptPreview(m.text).slice(0, 140) || 'User prompt',
-          anchor,
-          detailKey: ''
-        });
-      } else if (m.role === 'checkpoint') {
-        outlineItems.push({
-          kicker: '✂ compact',
-          title: cleanCheckpointPreview(m.text).slice(0, 140),
-          anchor,
-          detailKey: `${anchor}:checkpoint`
-        });
-      } else if (Array.isArray(m.artifacts) && m.artifacts.length > 0) {
-        m.artifacts.forEach((art, aIdx) => {
-          if (!art) return;
-          outlineItems.push({
-            kicker: 'Artifact',
-            title: String(art.title || art.file || 'Walkthrough').trim(),
-            anchor,
-            detailKey: `${anchor}:art:${aIdx}`
-          });
-        });
-      }
-    });
-
-    if (subbarEl) {
-      subbarEl.hidden = false;
-      subbarEl.innerHTML = `
-        <span class="insp-sub-path"><span class="insp-sub-path-txt">${allTasks.length} Task${allTasks.length === 1 ? '' : 's'}${runningCount > 0 ? ` (${runningCount} Live)` : ''} · ${outlineItems.length} Outline · ${rankedChecks.length} Check${rankedChecks.length === 1 ? '' : 's'}</span></span>
-        <span class="insp-sub-actions">
-          <button type="button" class="insp-mini-btn" data-insp-refresh-agents="1">↻ Refresh</button>
-          ${runningCount > 0 && sid ? `<button type="button" class="insp-mini-btn" style="color:var(--crimson)" data-bg-act="stop-session-all" data-sess-id="${esc(sid)}" data-prov="${provKey}">■ Stop All</button>` : ''}
-        </span>
-      `;
-    }
-
-    const outlineHtml = outlineItems.length === 0
-      ? `<div class="meta-timestamp">Prompts, <code class="md-inline-code">/compact</code> checkpoints, and artifacts appear here for 1-click navigation.</div>`
-      : outlineItems
-          .map(
-            (it) => `
-            <button type="button" class="insp-outline-item" data-outline-jump="${esc(it.anchor)}" ${it.detailKey ? `data-outline-detail="${esc(it.detailKey)}"` : ''}>
-              <span class="insp-outline-kicker tabular">${esc(it.kicker)}</span>
-              <span class="insp-outline-title">${esc(it.title)}</span>
-            </button>
-          `
-          )
-          .join('');
-
-    const agentsHtml =
-      allTasks.length === 0
-        ? `<div class="meta-timestamp">No Side Agents or background tasks recorded in this session yet.</div>`
-        : allTasks
-            .map((t) => {
-              const stInfo = getBgStateBadgeInfo(t.state);
-              const cacheKey = `${sid}:${t.id}`;
-              const isFocused = activeInspectorAgentId && (t.id === activeInspectorAgentId || t.fullId === activeInspectorAgentId);
-              const titleTxt = t.subagentRole || t.summary || t.command || t.id || 'Side Agent';
-              const liveOut =
-                bgTaskLogsCache.get(cacheKey) ||
-                t.outputPreview ||
-                (t.state === 'running'
-                  ? 'Agent/task is running — click Tail to load live output.'
-                  : 'Completed cleanly.');
-              const linkedConvId = String(t.subagentConversationId || '').trim();
-              const hasLinkedSession = Boolean(
-                linkedConvId && (appState?.rows || []).some((r) => r && r.id === linkedConvId)
-              );
-              return `
-                <div class="insp-agent-card${t.state === 'running' ? ' is-running' : ''}" ${isFocused ? 'style="border-color:var(--brass)"' : ''}>
-                  <div class="insp-agent-head">
-                    <span class="insp-agent-title">${esc(titleTxt)}</span>
-                    <span class="bg-kind-badge ${stInfo.cls}">${esc(getBgKindLabel(t.kind))} · ${esc(stInfo.label)}</span>
-                  </div>
-                  ${t.command ? `<div class="meta-timestamp mono" style="white-space:pre-wrap;word-break:break-word">${esc(String(t.command).slice(0, 260))}</div>` : ''}
-                  <pre class="insp-agent-log mono" data-bg-log-key="${esc(cacheKey)}">${esc(liveOut)}</pre>
-                  <div style="display:flex;align-items:center;justify-content:space-between;gap:6px">
-                    <span class="meta-timestamp tabular">${esc(t.id)}${t.startedAt ? ` · ${esc(timeAgo(t.startedAt))}` : ''}</span>
-                    <span style="display:inline-flex;gap:5px">
-                      <button type="button" class="insp-mini-btn" data-bg-act="refresh-log" data-sess-id="${esc(sid)}" data-task-id="${esc(t.id)}" data-prov="${provKey}">↻ Tail</button>
-                      ${hasLinkedSession ? `<button type="button" class="insp-mini-btn" data-open-conv="${esc(linkedConvId)}">Open Thread</button>` : ''}
-                      ${t.state === 'running' ? `<button type="button" class="ide-bg-stop" style="display:inline-flex" data-bg-act="stop-task" data-sess-id="${esc(sid)}" data-task-id="${esc(t.fullId || t.id)}" data-prov="${provKey}">■ Stop</button>` : ''}
-                    </span>
-                  </div>
-                </div>
-              `;
-            })
-            .join('');
-
-    const checksHtml = rankedChecks.length
-      ? rankedChecks
-          .map((chk) => {
-            const res = studioCheckResultsById.get(`${wsId}::${chk.id}`);
-            const diags = Array.isArray(res?.diagnostics) ? res.diagnostics : [];
-            const statusBadge = res
-              ? res.running
-                ? `<span class="meta-timestamp">Running…</span>`
-                : res.ok && res.passed
-                  ? `<span style="color:var(--emerald);font-weight:600;font-size:11px">✓ Passed (${res.durationMs || 1}ms)</span>`
-                  : `<span style="color:var(--crimson);font-weight:600;font-size:11px">✕ Failed</span>`
-              : '';
-            const diagsHtml = diags.length
-              ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:5px">${diags
-                  .map(
-                    (d) =>
-                      `<button type="button" class="studio-diag-pill" data-preview-file="${esc(d.relPath)}#L${d.line}">⚠ ${esc(d.relPath)}:${d.line} · ${esc(String(d.message || '').slice(0, 64))}</button>`
-                  )
-                  .join('')}</div>`
-              : '';
-            return `
-              <div style="display:flex;flex-direction:column;gap:4px">
-                <div class="studio-check-row">
-                  <div style="min-width:0;flex:1">
-                    <div style="font-weight:600;color:var(--text-heading)">${esc(chk.label)}</div>
-                    <div class="meta-timestamp mono">${esc(chk.commandPreview || chk.id)}</div>
-                  </div>
-                  ${statusBadge}
-                  <button type="button" class="insp-mini-btn" data-run-studio-check="${esc(chk.id)}" ${studioCheckBusy ? 'disabled' : ''}>▶ Run</button>
-                </div>
-                ${diagsHtml}
-                ${res && (res.output || res.error) ? `<pre class="studio-check-output">${esc(res.output || res.error)}</pre>` : ''}
-              </div>
-            `;
-          })
-          .join('')
-      : `<div class="meta-timestamp">Discovering allowlisted workspace checks…</div>`;
-
-    bodyEl.innerHTML = `
-      <div class="studio-lens-section">
-        <div class="studio-lens-head"><span class="studio-lens-title">Turn &amp; Artifact Outline (${outlineItems.length})</span></div>
-        ${outlineHtml}
-      </div>
-      <div class="studio-lens-section">
-        <div class="studio-lens-head"><span class="studio-lens-title">Background Tasks &amp; Subagents (${allTasks.length})</span></div>
-        ${agentsHtml}
-      </div>
-      <div class="studio-lens-section">
-        <div class="studio-lens-head"><span class="studio-lens-title">Workspace Verification Checks (${rankedChecks.length})</span></div>
-        ${checksHtml}
-      </div>
-    `;
-  }
-
-  function extractThoughtStepTitle(rawText) {
-    const firstLine = String(rawText || '')
-      .replace(/```[\s\S]*?```/g, '')
-      .split(/\r?\n/)
-      .map((l) => l.replace(/^[#>*\-\d.)\s`]+/, '').replace(/[*`_~]+/g, '').trim())
-      .find((l) => l.length >= 4);
-    if (!firstLine) return '';
-    const clause = firstLine.split(/(?<=[.!?])\s+|\s+—\s+|\s+-\s+/)[0] || firstLine;
-    return clause.length > 56 ? `${clause.slice(0, 54).trim()}…` : clause;
-  }
-
-  function cleanCheckpointPreview(rawText) {
-    let s = String(rawText || '').trim();
-    if (!s) return 'Context compacted';
-    s = s
-      .replace(/^#+\s*Resuming from a compaction\b[^\r\n]*/im, '')
-      .replace(/You are continuing work on the task described above,?\s*but your[^\r\n.]*\.?/gi, '')
-      .replace(/The following is a summary of the conversation history[^\r\n.]*\.?/gi, '')
-      .replace(/This summary was generated at[^\r\n.]*\.?/gi, '')
-      .replace(/^#+\s*(?:User Requests|Previous Session Summary|Task Overview|Progress|Active Context|Next Steps)\s*:?/gim, '')
-      .replace(/<\/?summary>/gi, '')
-      .replace(/[*`#_>]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (!s || s.length < 3) return 'Context compacted';
-    return s.slice(0, 76);
-  }
-
-  function cleanUserPromptPreview(rawText) {
-    let text = String(rawText || '').trim();
-    if (!text) return '';
-    if (/^\/compact\b/i.test(text) && text.length <= 24) return '/compact';
-    const ctxMatch = text.match(/^\[LIVE WORKSTATION CONTEXT(?:\s*[—-]\s*([^\]]+))?\]\s*\r?\n([\s\S]*?)(?:\r?\n\s*\r?\n|$)/i);
-    if (ctxMatch) {
-      text = text.slice(ctxMatch[0].length).trim();
-    }
-    const attachMatch = text.match(/\r?\n*\[Attached Files saved on workstation\]:\s*((?:\r?\n\s*-\s*[^\r\n]+)+)\s*$/i);
-    if (attachMatch) {
-      text = text.slice(0, text.length - attachMatch[0].length).trim();
-    }
-    return text.replace(/\s+/g, ' ').trim() || 'Workstation context prompt';
-  }
-
-  function renderUserTurnContentHtml(rawText, turnIdKey, createdAt = '', savedOpenMap = null) {
-    let text = String(rawText || '').trim();
-    const relTime = createdAt ? timeAgo(Date.parse(createdAt)) : '';
-    if (/^\/compact\b/i.test(text) && text.length <= 24) {
-      return `
-        <div class="user-compact-cmd-wrap">
-          ${relTime ? `<span class="user-turn-time tabular">${esc(relTime)}</span>` : ''}
-          <span class="user-compact-cmd-pill mono">/compact</span>
-        </div>
-      `;
-    }
-
-    let ctxHeader = '';
-    let ctxBody = '';
-    const ctxMatch = text.match(/^\[LIVE WORKSTATION CONTEXT(?:\s*[—-]\s*([^\]]+))?\]\s*\r?\n([\s\S]*?)(?:\r?\n\s*\r?\n|$)/i);
-    if (ctxMatch) {
-      ctxHeader = String(ctxMatch[1] || 'Live').trim();
-      ctxBody = String(ctxMatch[2] || '').trim();
-      text = text.slice(ctxMatch[0].length).trim();
-    }
-
-    const attachedFiles = [];
-    const attachMatch = text.match(/\r?\n*\[Attached Files saved on workstation\]:\s*((?:\r?\n\s*-\s*[^\r\n]+)+)\s*$/i);
-    if (attachMatch) {
-      const rawList = String(attachMatch[1] || '').split(/\r?\n/);
-      for (const line of rawList) {
-        const mFile = line.match(/^\s*-\s*([^:]+):\s*['"]?([^'"]+)['"]?\s*$/);
-        if (mFile) {
-          attachedFiles.push({
-            name: mFile[1].trim(),
-            path: mFile[2].trim()
-          });
-        }
-      }
-      text = text.slice(0, text.length - attachMatch[0].length).trim();
-    }
-
-    const ctxKey = `${turnIdKey}:userctx`;
-    const isCtxOpen = Boolean(savedOpenMap && savedOpenMap.get(ctxKey) === true);
-    const ctxHtml = ctxBody
-      ? `<details class="user-ctx-chip" data-chat-detail-key="${esc(ctxKey)}" data-rendered-open="${isCtxOpen ? '1' : '0'}"${isCtxOpen ? ' open' : ''}>
-          <summary class="user-ctx-summary">
-            <span>Workstation Context${ctxHeader ? ` · ${esc(ctxHeader)}` : ''}</span>
-            <span class="vs-thought-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>
-          </summary>
-          <div class="user-ctx-body mono">${esc(ctxBody)}</div>
-        </details>`
-      : '';
-
-    const attachHtml = attachedFiles.length
-      ? `<div class="user-attach-strip">${attachedFiles
-          .map(
-            (af) =>
-              `<span class="user-attach-chip"><span class="mono">${esc(af.name)}</span></span>`
-          )
-          .join('')}</div>`
-      : '';
-
-    return `
-      ${relTime ? `<div class="user-turn-meta tabular">${esc(relTime)}</div>` : ''}
-      ${text ? `<div class="turn-text">${esc(text)}</div>` : ''}
-      ${attachHtml}
-      ${ctxHtml}
-    `;
-  }
-
-  function deriveClientLiveActivity(m, stepToolCalls, threadDetail, isThreadActivelyWorking) {
-    if (!isThreadActivelyWorking) return null;
-    const srv = threadDetail?.liveActivity;
-    const tools = Array.isArray(stepToolCalls) ? stepToolCalls : [];
-    const lastTool = tools.length > 0 ? tools[tools.length - 1] : null;
-    const rawThinking = String(m?.latestThinking || m?.thinking || '').trim();
-    const lastThoughtLine =
-      (rawThinking.replace(/```[\s\S]*?```/g, '').split(/\r?\n/).filter(Boolean).pop() || '')
-        .replace(/[*`#_>]+/g, '')
-        .trim()
-        .slice(0, 120);
-
-    let verb = srv?.active && srv?.verb ? String(srv.verb) : 'Thinking…';
-    let target = srv?.active && srv?.target ? String(srv.target) : '';
-    let file = srv?.active && srv?.file ? String(srv.file) : '';
-    let relPath = srv?.active && srv?.relPath ? String(srv.relPath) : '';
-    let lineRange = srv?.active && srv?.lineRange ? String(srv.lineRange) : '';
-    let kind = srv?.active && srv?.kind ? String(srv.kind) : 'thinking';
-
-    if (lastTool) {
-      const k = String(lastTool.kind || 'tool').toLowerCase();
-      kind = k;
-      file = String(lastTool.file || file || '').trim();
-      relPath = String(lastTool.relPath || file || relPath || '').trim();
-      lineRange = String(lastTool.lineRange || lineRange || '').trim();
-      if (k === 'read' || /view|read/i.test(String(lastTool.name || ''))) {
-        verb = 'Reading';
-        target = file || lastTool.summary || 'file';
-      } else if (k === 'edit' || /edit|replace/i.test(String(lastTool.name || ''))) {
-        verb = 'Editing';
-        target = file || lastTool.summary || 'file';
-      } else if (k === 'write' || /write|create/i.test(String(lastTool.name || ''))) {
-        verb = 'Creating';
-        target = file || lastTool.summary || 'file';
-      } else if (k === 'command' || k === 'cmd' || /command|bash/i.test(String(lastTool.name || ''))) {
-        verb = 'Running';
-        target = lastTool.summary || lastTool.command || 'command';
-      } else if (k === 'search' || /grep|find|search/i.test(String(lastTool.name || ''))) {
-        verb = 'Searching';
-        target = lastTool.summary || 'workspace';
-      } else {
-        verb = 'Working on';
-        target = file || lastTool.summary || lastTool.label || 'step';
-      }
-    } else if (m?.activeTool) {
-      verb = 'Running';
-      target = String(m.activeTool);
-      kind = 'command';
-    }
-
-    const cleanTarget = String(target || '')
-      .replace(/^(?:Read|Viewed|Analyzed|Updated|Wrote|Pattern)\s+/i, '')
-      .trim()
-      .slice(0, 96);
-    const startIso = m?.startedAt || m?.createdAt || srv?.startedAt || '';
-    const parsedStart = startIso ? Date.parse(startIso) : 0;
-    const startMs =
-      Number.isFinite(parsedStart) && parsedStart > 0 && Date.now() - parsedStart < 3600000
-        ? parsedStart
-        : Date.now() - Math.max(1, Number(m?.turnDurationSec || m?.thinkingDurationSec || 2)) * 1000;
-    const elapsedSec = Math.max(1, Math.round((Date.now() - startMs) / 1000));
-    const elapsedLabel =
-      elapsedSec >= 60
-        ? `${Math.floor(elapsedSec / 60)}m ${String(elapsedSec % 60).padStart(2, '0')}s`
-        : `${elapsedSec}s`;
-
-    return {
-      verb,
-      target: cleanTarget,
-      file,
-      relPath,
-      lineRange,
-      kind,
-      thoughtPreview: srv?.thoughtPreview || lastThoughtLine,
-      stepCount: Math.max(Number(m?.totalTurnTools || 0), tools.length, Number(srv?.stepCount || 0)),
-      startMs,
-      elapsedLabel
-    };
-  }
-
-  function renderLiveActivityBarHtml(liveAct, turnIdKey, isExpanded = false) {
-    if (!liveAct) return '';
-    const activeDotIdx = Math.min(5, Math.max(1, (Number(liveAct.stepCount || 1) % 6)));
-    const railDotsHtml = [0, 1, 2, 3, 4, 5]
-      .map(
-        (idx) =>
-          `<span class="vs-rail-dot${idx === activeDotIdx ? ' is-active' : idx < activeDotIdx ? ' is-done' : ''}"></span>`
-      )
-      .join('');
-    const targetBadgeHtml = liveAct.file
-      ? `<span class="vs-live-target-chip mono" data-preview-file="${esc(liveAct.relPath || liveAct.file)}">${esc(liveAct.file)}${liveAct.lineRange ? `<span class="vs-live-range">#${esc(liveAct.lineRange)}</span>` : ''}</span>`
-      : liveAct.target
-        ? `<span class="vs-live-target-text mono">${esc(liveAct.target)}</span>`
-        : '';
-    const subPreview =
-      !liveAct.file && !liveAct.target && liveAct.thoughtPreview
-        ? `<span class="vs-live-thought-sub">${esc(liveAct.thoughtPreview)}</span>`
-        : '';
-
-    return `
-      <div class="vs-live-activity-row" data-live-activity-row="1">
-        <div class="vs-live-step-rail" aria-hidden="true">${railDotsHtml}</div>
-        <button type="button" class="vs-live-activity-bar${isExpanded ? ' is-expanded' : ''}" aria-expanded="${isExpanded ? 'true' : 'false'}" data-toggle-live-trace="${esc(turnIdKey)}">
-          <span class="vs-live-pulse-dot" aria-hidden="true"></span>
-          <span class="vs-live-verb vs-shimmer-text">${esc(liveAct.verb)}</span>
-          ${targetBadgeHtml}
-          ${subPreview}
-          <span class="vs-live-meta tabular">
-            ${liveAct.stepCount > 0 ? `<span class="vs-live-step-count">${liveAct.stepCount} ${liveAct.stepCount === 1 ? 'step' : 'steps'}</span>` : ''}
-            <span class="vs-live-elapsed" data-live-elapsed-start="${Number(liveAct.startMs || Date.now())}">${esc(liveAct.elapsedLabel)}</span>
-          </span>
-          <span class="vs-thought-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>
-        </button>
-      </div>
-    `;
-  }
-
-  function renderCompactedThoughtHtml({ m, turnIdKey, isLastTurn, isActivelyWorking, cleanedText, hasTurnQuestions, savedOpenMap, isStreamingTurn = false }) {
-    const rawBlocks =
-      Array.isArray(m?.thoughtBlocks) && m.thoughtBlocks.length
-        ? m.thoughtBlocks.filter((b) => b && String(b.text || '').trim())
-        : m?.thinking
-          ? [{ text: String(m.thinking), durationSec: Number(m.thinkingDurationSec || 0) }]
-          : !cleanedText && !hasTurnQuestions && m?.latestThinking
-            ? [{ text: String(m.latestThinking), durationSec: 0 }]
-            : [];
-    if (!rawBlocks.length) return '';
-
-    const thinkKey = `${turnIdKey}:think`;
-    const isThinkOpen = Boolean(savedOpenMap && savedOpenMap.get(thinkKey) === true);
-    const isLiveThinking = Boolean(isLastTurn && isActivelyWorking && !cleanedText && !hasTurnQuestions);
-    const totalSec = Math.max(
-      0,
-      Math.round(
-        Number(
-          m?.thinkingDurationSec ||
-            rawBlocks.reduce((acc, b) => acc + Number(b.durationSec || 0), 0) ||
-            0
-        )
-      )
-    );
-    const labelTxt = isLiveThinking
-      ? 'Thinking…'
-      : totalSec > 0
-        ? `Thought for ${totalSec}s`
-        : rawBlocks.length > 1
-          ? `Thought (${rawBlocks.length} steps)`
-          : 'Thought process';
-
-    const lastBlockTxt = String(rawBlocks[rawBlocks.length - 1]?.text || '').trim();
-    const previewLine = (lastBlockTxt.split(/\n+/).filter(Boolean).pop() || '')
-      .replace(/[*`#_>]+/g, '')
-      .trim()
-      .slice(0, 96);
-
-    const stepsBodyHtml =
-      rawBlocks.length > 1
-        ? rawBlocks
-            .map((b, idx) => {
-              const stepTitle = extractThoughtStepTitle(b.text);
-              return `
-                <div class="vs-thought-step">
-                  <div class="vs-thought-step-head">
-                    <span class="vs-thought-step-dot" aria-hidden="true"></span>
-                    <span class="vs-thought-step-meta tabular">Step ${idx + 1}${stepTitle ? ` · ${esc(stepTitle)}` : ''}${b.durationSec ? ` · ${Math.round(Number(b.durationSec))}s` : ''}</span>
-                  </div>
-                  <div class="vs-thought-step-text md-rich"${idx === rawBlocks.length - 1 && isStreamingTurn ? ' data-stream-think-body="1"' : ''}>${formatTurnMarkdown(String(b.text || '').trim())}</div>
-                </div>
-              `;
-            })
-            .join('')
-        : `<div class="vs-thought-step-text md-rich"${isStreamingTurn ? ' data-stream-think-body="1"' : ''}>${formatTurnMarkdown(lastBlockTxt)}</div>`;
-
-    return `
-      <details class="vs-thought-card thinking-details${isStreamingTurn ? ' is-streaming' : ''}" data-chat-detail-key="${esc(thinkKey)}" data-rendered-open="${isThinkOpen ? '1' : '0'}"${isStreamingTurn ? ' data-stream-think-wrap="1"' : ''}${isThinkOpen ? ' open' : ''}>
-        <summary class="vs-thought-summary">
-          ${
-            isLiveThinking
-              ? '<span class="vs-thought-live-dot" aria-hidden="true"></span>'
-              : '<svg class="vs-thought-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.8v3.4l2.2 1.3"/></svg>'
-          }
-          <span class="vs-thought-lbl tabular">${esc(labelTxt)}</span>
-          ${rawBlocks.length > 1 ? `<span class="vs-thought-step-pill tabular">${rawBlocks.length} steps</span>` : ''}
-          ${previewLine ? `<span class="vs-thought-preview"${isStreamingTurn ? ' data-stream-think-preview="1"' : ''}>${esc(previewLine)}</span>` : ''}
-          <span class="vs-thought-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>
-        </summary>
-        <div class="vs-thought-body">${stepsBodyHtml}</div>
-      </details>
-    `;
-  }
-
-  function renderInlineSubagentsHtml(toolCalls, sessionBgTasks, sessionId, provKey) {
-    const subCalls = (Array.isArray(toolCalls) ? toolCalls : []).filter(
-      (tc) => tc && tc.kind === 'subagent'
-    );
-    if (!subCalls.length) return '';
-    const allTasks = sessionBgTasks?.allTasks || [];
-    const cards = subCalls
-      .map((sc, idx) => {
-        const rawName = String(sc.name || '').toLowerCase();
-        const isDefine = rawName === 'define_subagent';
-        const isSendMsg = rawName === 'send_message';
-        const convId = String(sc.subagentConversationId || '').trim();
-        const matchedTask = allTasks.find(
-          (t) =>
-            (convId && (t.id === convId || t.subagentConversationId === convId)) ||
-            (sc.id && t.id === sc.id) ||
-            (sc.subagentRole && t.subagentRole === sc.subagentRole)
-        );
-        const isRunning = matchedTask?.state === 'running';
-        const roleTitle =
-          sc.subagentRole ||
-          matchedTask?.subagentRole ||
-          sc.summary ||
-          sc.label ||
-          (isDefine ? 'Defined Subagent' : 'Side Agent');
-        const agentType = sc.subagentType || matchedTask?.subagentType || '';
-        const promptPreview = String(sc.subagentPrompt || sc.command || matchedTask?.command || '')
-          .replace(/\s+/g, ' ')
-          .trim()
-          .slice(0, 190);
-        const inspectTargetId = String(matchedTask?.id || convId || sc.id || `subagent-${idx}`);
-        const hasLinkedThread = Boolean(
-          convId && (appState?.rows || []).some((r) => r && r.id === convId)
-        );
-        const badgeLbl = isDefine
-          ? 'Defined'
-          : isSendMsg
-            ? 'Message'
-            : isRunning
-              ? '● Running'
-              : 'Side Agent';
-        return `
-          <div class="vs-subagent-card${isRunning ? ' is-running' : ''}">
-            <div class="vs-subagent-top">
-              <span class="vs-subagent-left">
-                <span class="vs-subagent-badge">${esc(badgeLbl)}</span>
-                <span class="vs-subagent-role">${esc(roleTitle)}</span>
-                ${agentType ? `<span class="vs-subagent-type">${esc(agentType)}</span>` : ''}
-              </span>
-              <span class="vs-subagent-actions">
-                <button type="button" class="insp-mini-btn" data-insp-open-agent="${esc(inspectTargetId)}" data-sess-id="${esc(sessionId)}" data-session-prov="${provKey}">Inspect Trace</button>
-                ${hasLinkedThread ? `<button type="button" class="insp-mini-btn" data-open-conv="${esc(convId)}">Open Thread</button>` : ''}
-                ${isRunning && matchedTask?.id ? `<button type="button" class="ide-bg-stop" style="display:inline-flex" data-bg-act="stop-task" data-sess-id="${esc(sessionId)}" data-task-id="${esc(matchedTask.fullId || matchedTask.id)}" data-prov="${provKey}">■ Stop</button>` : ''}
-              </span>
-            </div>
-            ${promptPreview ? `<div class="vs-subagent-prompt">${esc(promptPreview)}</div>` : ''}
-          </div>
-        `;
-      })
-      .join('');
-    return `<div class="vs-subagents-stack">${cards}</div>`;
-  }
-
-  function renderChatQuestionDock(activeRow, messages, matchingQuestionApproval, provKey, isNewDraft) {
-    const dockEl = $('chat-question-dock');
-    if (!dockEl) return false;
-    if (isNewDraft || !activeRow?.id || activeRow.id === '__new__') {
-      dockEl.hidden = true;
-      dockEl.innerHTML = '';
-      return false;
-    }
-
-    const sid = activeRow.id;
-    const lastTurn = messages.length > 0 ? messages[messages.length - 1] : null;
-    const lastTurnId = lastTurn && lastTurn.role === 'assistant' ? String(lastTurn.id || `turn-${messages.length - 1}`) : '';
-    let qList = [];
-    let effectiveApproval = matchingQuestionApproval || null;
-
-    if (lastTurn && lastTurn.role === 'assistant') {
-      const srvAns = Array.isArray(lastTurn.questions) && lastTurn.questions.some((q) => Boolean(q?.answered));
-      if (!srvAns) {
-        qList = resolveQuestionsForTurn(lastTurn, effectiveApproval).questions;
-      }
-    }
-    if (!qList.length && effectiveApproval) {
-      qList = resolveQuestionsForApproval(effectiveApproval, messages);
-    }
-    if (!qList.length && activeRow?.pendingQuestion?.questions?.length) {
-      qList = normalizeFrontendQuestions(activeRow.pendingQuestion.questions);
-    }
-
-    if (!qList.length) {
-      dockEl.hidden = true;
-      dockEl.innerHTML = '';
-      return false;
-    }
-
-    const answered = lookupAnsweredQuestionState({
-      sessionId: sid,
-      approvalId: effectiveApproval?.approvalId || '',
-      turnId: lastTurnId,
-      questions: qList,
-      isLastTurn: true
-    });
-    const cardKey = `q-dock-${sid}-${effectiveApproval?.approvalId || lastTurnId || 'active'}`;
-    const draft = getQuestionDraft(cardKey);
-    if (answered?.answered || draft.submitted) {
-      dockEl.hidden = true;
-      dockEl.innerHTML = '';
-      return false;
-    }
-
-    renderedQuestionsByCardKey.set(cardKey, {
-      cardKey,
-      sessionId: sid,
-      provider: provKey,
-      approvalId: effectiveApproval?.approvalId || sid,
-      turnId: lastTurnId,
-      stepIndex: extractQuestionsStepIndex(qList, effectiveApproval?.stepIndex ?? null),
-      selector: effectiveApproval?.selector || '',
-      questions: qList,
-      plainQuestionFallback: !effectiveApproval && (!Array.isArray(lastTurn?.questions) || lastTurn.questions.length === 0)
-    });
-
-    if (
-      document.activeElement &&
-      dockEl.contains(document.activeElement) &&
-      document.activeElement.matches('[data-q-writein-input]') &&
-      document.activeElement.dataset.cardKey === cardKey
-    ) {
-      dockEl.hidden = false;
-      return true;
-    }
-
-    let stepIdx = Number(activeDockStepByCardKey.get(cardKey) || 0);
-    if (!Number.isFinite(stepIdx) || stepIdx < 0 || stepIdx >= qList.length) {
-      stepIdx = 0;
-    }
-    const curQ = qList[stepIdx];
-    const selSet = draft.selectedByQ[stepIdx] || new Set();
-    const writeVal = String(draft.writeInByQ[stepIdx] || '');
-    const opts = Array.isArray(curQ?.options) ? curQ.options : [];
-    const anyToolPerm = qList.some((q) => q.isToolPermission);
-    const totalSelected = countDraftSelections(draft, qList.length);
-
-    const stepsHtml =
-      qList.length > 1
-        ? `<span class="q-dock-steps">${qList
-            .map((_, idx) => {
-              const hasAns =
-                Boolean(draft.selectedByQ[idx]?.size) ||
-                Boolean(String(draft.writeInByQ[idx] || '').trim());
-              return `<button type="button" class="q-step-pill tabular${idx === stepIdx ? ' active' : hasAns ? ' done' : ''}" data-q-dock-step="${idx}" data-card-key="${esc(cardKey)}">Q${idx + 1}</button>`;
-            })
-            .join('')}</span>`
-        : '';
-
-    const optsHtml = opts
-      .map((opt, oIdx) => {
-        const isSel = selSet.has(String(oIdx));
-        return `
-          <button type="button" class="q-dock-opt${isSel ? ' selected is-selected' : ''}" data-q-opt-toggle="1" data-card-key="${esc(cardKey)}" data-q-idx="${stepIdx}" data-opt-idx="${oIdx}" aria-pressed="${isSel ? 'true' : 'false'}">
-            <span class="q-dock-kbd">${oIdx + 1}</span>
-            <span style="min-width:0;flex:1">${esc(opt.cleanText || opt.text)}</span>
-            ${opt.isRecommended && !curQ.isToolPermission ? `<span class="sb-q-rec">★ Rec</span>` : ''}
-          </button>
-        `;
-      })
-      .join('');
-
-    dockEl.hidden = false;
-    dockEl.innerHTML = `
-      <div class="q-dock-card" data-q-card="${esc(cardKey)}" data-q-active-step="${stepIdx}">
-        <div class="q-dock-top">
-          <span class="q-dock-kicker">
-            <span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>
-            <span>${anyToolPerm ? 'Tool Permission Required' : qList.length > 1 ? `Question ${stepIdx + 1} of ${qList.length}` : 'Question Waiting for Your Choice'}</span>
-          </span>
-          ${stepsHtml}
-        </div>
-        <div data-q-block="${stepIdx}" style="display:flex;flex-direction:column;gap:6px">
-          <div class="q-dock-prompt">${esc(curQ?.question || 'Select an option')}</div>
-          ${opts.length > 0 ? `<div class="q-dock-options">${optsHtml}</div>` : ''}
-          <div class="q-dock-foot">
-            <input type="text" class="q-dock-other" data-q-writein-input="1" data-card-key="${esc(cardKey)}" data-q-idx="${stepIdx}" placeholder="${esc(opts.length > 0 ? 'Or type custom answer…' : 'Type your answer…')}" value="${esc(writeVal)}" autocomplete="off">
-            <button type="button" class="sb-q-btn" data-q-skip="1" data-card-key="${esc(cardKey)}">${anyToolPerm ? '✕ Deny' : 'Skip'}</button>
-            ${
-              qList.length > 1 && stepIdx < qList.length - 1
-                ? `<button type="button" class="sb-q-btn" data-q-dock-step="${stepIdx + 1}" data-card-key="${esc(cardKey)}">Next ›</button>`
-                : ''
-            }
-            <button type="button" class="sb-q-btn primary" data-q-submit="1" data-card-key="${esc(cardKey)}">✓ ${anyToolPerm ? (totalSelected > 0 ? `Confirm (${totalSelected})` : 'Yes (Allow)') : `Submit Answer${totalSelected > 0 ? ` (${totalSelected})` : ''}`}</button>
-          </div>
-        </div>
-      </div>
-    `;
-    return true;
-  }
-
-  function renderToolCallCardHtml(tc, detailKey = '', savedOpenMap = null, activeKindFilter = 'all') {
-    const rawName = String(tc?.name || 'tool').trim();
-    const low = rawName.toLowerCase();
-    let kind = tc?.kind || 'tool';
-    let label = tc?.label || rawName;
-    if (!tc?.kind) {
-      if (low.includes('replace') || low.includes('edit') || low === 'multiedit') {
-        kind = 'edit';
-        label = 'Edited';
-      } else if (low.includes('write') || low.includes('create')) {
-        kind = 'write';
-        label = 'Created';
-      } else if (low.includes('view') || low.includes('read')) {
-        kind = 'read';
-        label = 'Analyzed';
-      } else if (low.includes('command') || low === 'bash') {
-        kind = 'command';
-        label = 'Ran';
-      } else if (low.includes('grep') || low.includes('find') || low.includes('glob') || low.includes('search')) {
-        kind = 'search';
-        label = 'Searched';
-      }
-    } else {
-      if (kind === 'read' && /^viewed$/i.test(label)) label = 'Analyzed';
-      if ((kind === 'command' || kind === 'cmd') && /^ran command$/i.test(label)) label = 'Ran';
-    }
-    const filterCat =
-      kind === 'edit' || kind === 'write'
-        ? 'edit'
-        : kind === 'read'
-          ? 'read'
-          : kind === 'command' || kind === 'cmd'
-            ? 'cmd'
-            : kind === 'search'
-              ? 'search'
-              : 'other';
-    const isFilteredOut =
-      Boolean(activeKindFilter && activeKindFilter !== 'all' && activeKindFilter !== filterCat);
-
-    const fileBase = String(tc?.file || '').trim();
-    const fileStem = fileBase.split('#')[0].trim();
-    const relPath = String(tc?.relPath || fileStem || '').trim();
-    const lineRange = String(tc?.lineRange || (fileBase.includes('#') ? fileBase.split('#')[1] : '') || '').trim();
-    const added = Number(tc?.addedLines ?? tc?.added ?? 0);
-    const removed = Number(tc?.removedLines ?? tc?.removed ?? 0);
-    const summaryText = String(tc?.summary || '').trim();
-    const commandText = String(tc?.command || '').trim();
-    const snippet = String(tc?.snippet || tc?.diff || '').trim();
-
-    const chipLabel = lineRange && !fileBase.includes('#') ? `${fileBase}#${lineRange}` : fileBase;
-    const chipTarget = relPath
-      ? lineRange && !relPath.includes('#')
-        ? `${relPath}#${lineRange}`
-        : relPath
-      : chipLabel;
-    const fileChip = fileBase ? renderFileChipHtml(chipLabel, chipTarget) : '';
-    const diffBadge =
-      added > 0 || removed > 0
-        ? `<span class="code-diff-stat tabular">${added > 0 ? `<span class="diff-add">+${added}</span>` : ''}${removed > 0 ? `<span class="diff-del">-${removed}</span>` : ''}</span>`
-        : '';
-
-    const redundantReadSummary =
-      fileStem &&
-      (summaryText === fileBase ||
-        summaryText === fileStem ||
-        new RegExp(`^(?:read|view|viewed|analyzed)\\s+${fileStem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i').test(summaryText));
-    const displaySummary = redundantReadSummary ? '' : summaryText.slice(0, 115);
-
-    const hasInspectableBody = Boolean(snippet || commandText || relPath || summaryText);
-    const isStepOpen = Boolean(detailKey && savedOpenMap && savedOpenMap.get(detailKey) === true);
-    const detailKeyAttrs = `${
-      detailKey
-        ? ` data-chat-detail-key="${esc(detailKey)}" data-rendered-open="${isStepOpen ? '1' : '0'}"${isStepOpen ? ' open' : ''}`
-        : ''
-    } data-step-kind="${esc(filterCat)}"${isFilteredOut ? ' hidden' : ''}`;
-
-    const headInner = `
-      <div class="code-step-head">
-        <span class="code-step-badge kind-${esc(kind)}">${esc(label)}</span>
-        ${fileChip}
-        ${displaySummary ? `<span class="code-step-summary${kind === 'command' || kind === 'cmd' ? ' mono' : ''}">${esc(displaySummary)}</span>` : ''}
-        ${diffBadge}
-        ${hasInspectableBody ? `<span class="code-step-chevron" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>` : ''}
-      </div>
-    `;
-
-    if (snippet) {
-      return `
-        <details class="code-step-card has-snippet is-interactive"${detailKeyAttrs}>
-          <summary>${headInner}</summary>
-          <div class="code-step-detail-box">
-            ${relPath ? `<div class="code-step-detail-bar"><span class="mono">${esc(relPath)}${lineRange ? `#${esc(lineRange)}` : ''}</span><span style="display:inline-flex;gap:5px"><button type="button" class="ide-step-mention-btn" data-preview-file="${esc(chipTarget)}">Inspect</button><button type="button" class="ide-step-mention-btn" data-step-mention-file="${esc(relPath)}">@ Mention</button></span></div>` : ''}
-            <pre class="code-step-snippet mono">${formatGitDiffHtml(snippet)}</pre>
-          </div>
-        </details>
-      `;
-    }
-
-    if (hasInspectableBody) {
-      const detailLine = commandText || (relPath ? `${relPath}${lineRange ? ` (${lineRange})` : ''}` : '') || summaryText;
-      return `
-        <details class="code-step-card is-interactive"${detailKeyAttrs}>
-          <summary>${headInner}</summary>
-          <div class="code-step-detail-box">
-            <div class="code-step-detail-bar">
-              <span class="mono">${esc(detailLine)}</span>
-              ${relPath ? `<span style="display:inline-flex;gap:5px"><button type="button" class="ide-step-mention-btn" data-preview-file="${esc(chipTarget)}">Inspect</button><button type="button" class="ide-step-mention-btn" data-step-mention-file="${esc(relPath)}">@ Mention</button></span>` : ''}
-            </div>
-            ${summaryText && summaryText !== detailLine ? `<div class="code-step-detail-note">${esc(summaryText)}</div>` : ''}
-          </div>
-        </details>
-      `;
-    }
-
-    return `<div class="code-step-card" data-step-kind="${esc(filterCat)}"${isFilteredOut ? ' hidden' : ''}>${headInner}</div>`;
-  }
-
-  function syncComposerRoutingSelectors(activeRow, isNewDraft) {
-    const devSel = $('composer-device-select');
-    const repoSel = $('composer-repo-select');
-    const directBtn = $('composer-direct-toggle');
-    const fleetDevices = getUnifiedFleetDevices();
-
-    if (devSel && document.activeElement !== devSel) {
-      const wantDev = !isNewDraft && activeRow?.deviceId
-        ? activeRow.deviceId
-        : prefs.composerTargetDevice || 'auto';
-      const opts = [
-        `<option value="auto" ${wantDev === 'auto' ? 'selected' : ''}>Auto (${esc(localWsDevice?.name || 'Active Host')})</option>`
-      ];
-      for (const d of fleetDevices) {
-        const sel = wantDev === d.id ? 'selected' : '';
-        opts.push(
-          `<option value="${esc(d.id)}" ${sel}>${d.online ? '● ' : '◐ '}${esc(d.name || d.id)}</option>`
-        );
-      }
-      devSel.innerHTML = opts.join('');
-      devSel.disabled = Boolean(!isNewDraft && activeRow?.deviceId);
-    }
-
-    if (repoSel && document.activeElement !== repoSel) {
-      const rawWorkspaces = Array.isArray(appState?.workspaces) ? appState.workspaces : [];
-      const rankedWorkspaces = rankByFreq(
-        rawWorkspaces,
-        'repos',
-        (w) => w.name || w.id,
-        (w) => Number(w.dirtyCount || 0) * 10
-      );
-      const curRepo = String(prefs.composerRepoPrefix || '').trim();
-      const repoOpts = [
-        `<option value="" ${!curRepo ? 'selected' : ''}>Default Workspace</option>`
-      ];
-      for (const w of rankedWorkspaces) {
-        const val = w.name || w.id;
-        const sel = curRepo.toLowerCase() === String(val).toLowerCase() ? 'selected' : '';
-        repoOpts.push(
-          `<option value="${esc(val)}" ${sel}>${esc(w.name)}${w.branch ? ` (${esc(w.branch)})` : ''}</option>`
-        );
-      }
-      repoSel.innerHTML = repoOpts.join('');
-    }
-
-    if (directBtn) {
-      const isDirect = prefs.composerDirectStream !== false;
-      directBtn.classList.toggle('active', isDirect);
-      directBtn.textContent = isDirect ? 'Direct' : 'IDE Tab';
-    }
-  }
-
-  function getEffectiveSessionModelConfig(activeRow = null, provKey = 'antigravity', isNewDraft = false) {
-    const cleanProv = provKey === 'claude' ? 'claude' : 'antigravity';
-    const catalog = getEffectiveModelCatalog(cleanProv);
-    const tid = !isNewDraft ? String(activeRow?.id || prefs.selectedThreadId || '').trim() : '';
-    const rawSavedThreadCfg =
-      tid && tid !== '__new__' && prefs.threadModelConfig && typeof prefs.threadModelConfig === 'object'
-        ? prefs.threadModelConfig[tid] || null
-        : null;
-    const serverModelAt = !isNewDraft ? Number(activeRow?.modelUpdatedAt || 0) : 0;
-    const savedAt = Number(rawSavedThreadCfg?.updatedAt || 0);
-    const savedThreadCfg =
-      rawSavedThreadCfg && !(serverModelAt > 0 && serverModelAt > savedAt) ? rawSavedThreadCfg : null;
-    const savedCatalogMatch = Boolean(
-      savedThreadCfg && catalog.some((m) => m.id === savedThreadCfg.modelId)
-    );
-    const savedCustomModel = String(savedThreadCfg?.customModel || '').trim();
-
-    const rawRowModel = savedCustomModel || String(activeRow?.model || '').trim();
-    const inferredRowModelId = inferModelIdFromRaw(rawRowModel, cleanProv);
-    const inferredRowEffort = inferEffortIdFromRaw(rawRowModel, activeRow?.effort || '');
-
-    const isNonCatalogSessionModel =
-      !isNewDraft &&
-      !savedCatalogMatch &&
-      (Boolean(savedCustomModel) ||
-        (!inferredRowModelId &&
-          Boolean(rawRowModel) &&
-          !/gemini\s*3\.1|antigravity|^gemini$/i.test(rawRowModel)));
-
-    const defaultModelObj = catalog.find((m) => m.isDefault) || catalog[0];
-    let modelId =
-      (savedCatalogMatch && savedThreadCfg.modelId) ||
-      (inferredRowModelId && catalog.some((m) => m.id === inferredRowModelId) && inferredRowModelId) ||
-      (prefs.selectedModelByProvider &&
-        catalog.some((m) => m.id === prefs.selectedModelByProvider[cleanProv]) &&
-        prefs.selectedModelByProvider[cleanProv]) ||
-      defaultModelObj.id;
-
-    // If the user explicitly changed their thread config (and server isn't newer), honor it over generic server defaults
-    if (savedCatalogMatch) {
-      modelId = savedThreadCfg.modelId;
-    } else if (
-      isNewDraft ||
-      !rawRowModel ||
-      /gemini\s*3\.1|antigravity|^gemini$/i.test(rawRowModel)
-    ) {
-      const prefMod = prefs.selectedModelByProvider?.[cleanProv];
-      if (prefMod && catalog.some((m) => m.id === prefMod)) {
-        modelId = prefMod;
-      } else {
-        modelId = defaultModelObj.id;
-      }
-    }
-
-    const modelEntry = catalog.find((m) => m.id === modelId) || defaultModelObj;
-    const modelSupportsEffort =
-      isNonCatalogSessionModel ||
-      (modelEntry?.supportsEffort !== false &&
-        (!Array.isArray(modelEntry?.efforts) || modelEntry.efforts.length > 0));
-    const allowedEfforts =
-      !isNonCatalogSessionModel && Array.isArray(modelEntry?.efforts) && modelEntry.efforts.length > 0
-        ? modelEntry.efforts
-        : ['low', 'medium', 'high', 'xhigh'];
-
-    let effort = '';
-    if (modelSupportsEffort) {
-      const validEffs = new Set(allowedEfforts);
-      const savedEff = String(savedThreadCfg?.effort || '').toLowerCase();
-      const prefEff = String(prefs.selectedThinkingEffort?.[cleanProv] || '').toLowerCase();
-      effort = isNonCatalogSessionModel
-        ? (validEffs.has(savedEff) && savedEff) ||
-          (validEffs.has(inferredRowEffort) && inferredRowEffort) ||
-          (validEffs.has(prefEff) && prefEff) ||
-          'high'
-        : (validEffs.has(savedEff) && savedEff) ||
-          (validEffs.has(inferredRowEffort) && inferredRowEffort) ||
-          (validEffs.has(prefEff) && prefEff) ||
-          (validEffs.has('high') ? 'high' : allowedEfforts[allowedEfforts.length - 1] || 'high');
-    }
-
-    const effortEntry = modelSupportsEffort
-      ? THINKING_EFFORT_LEVELS.find((e) => e.id === effort) || THINKING_EFFORT_LEVELS[2]
-      : null;
-    const displayLabel = isNonCatalogSessionModel
-      ? normalizeDisplayModel(rawRowModel, cleanProv, effortEntry?.id || 'high')
-      : !modelSupportsEffort
-        ? modelEntry.label
-        : `${modelEntry.label} (${effortEntry.label})`;
-    const compactLabel = isNonCatalogSessionModel
-      ? displayLabel.replace(/\s*\((Low|Medium|High|XHigh)\)$/i, ' · $1')
-      : !modelSupportsEffort
-        ? modelEntry.shortLabel || modelEntry.label
-        : `${modelEntry.shortLabel || modelEntry.label} · ${effortEntry.label}`;
-    return {
-      provider: cleanProv,
-      isNonCatalog: isNonCatalogSessionModel,
-      customModel: isNonCatalogSessionModel ? rawRowModel : '',
-      modelId: isNonCatalogSessionModel ? '' : modelEntry.id,
-      cliModel: isNonCatalogSessionModel
-        ? displayLabel || rawRowModel
-        : !modelSupportsEffort
-          ? modelEntry.cliModel || modelEntry.id
-          : (modelEntry.effortModelIds && modelEntry.effortModelIds[effortEntry.id]) ||
-            modelEntry.cliModel ||
-            modelEntry.id,
-      supportsEffort: modelSupportsEffort,
-      efforts: modelSupportsEffort ? allowedEfforts : [],
-      effort: effortEntry ? effortEntry.id : '',
-      effortLabel: effortEntry ? effortEntry.label : '',
-      modelEntry: isNonCatalogSessionModel ? null : modelEntry,
-      displayLabel,
-      compactLabel
-    };
-  }
-
-  function setSessionModelConfig({ modelId, effort, provider, threadId } = {}) {
-    const targetTidArg = String(threadId || '').trim();
-    const isNewDraft = !targetTidArg && isNewSessionMode();
-    const lookupTid = targetTidArg || prefs.selectedThreadId;
-    const activeRow = !isNewDraft
-      ? (appState?.rows || []).find((r) => r && r.id === lookupTid)
-      : null;
-    const cleanProv =
-      (provider || (isNewDraft ? (prefs.composerMode === 'new-claude' ? 'claude' : 'antigravity') : activeRow?.provider)) ===
-      'claude'
-        ? 'claude'
-        : 'antigravity';
-    const current = getEffectiveSessionModelConfig(activeRow, cleanProv, isNewDraft);
-    const catalog = getEffectiveModelCatalog(cleanProv);
-    const explicitCatalogModelId =
-      modelId && catalog.some((m) => m.id === modelId) ? modelId : '';
-    const keepNonCatalog = Boolean(!explicitCatalogModelId && current.isNonCatalog && !isNewDraft);
-    const defaultMod = catalog.find((m) => m.isDefault) || catalog[0];
-    const nextModelId = explicitCatalogModelId || (keepNonCatalog ? '' : current.modelId || defaultMod.id);
-    const nextModelObj = catalog.find((m) => m.id === nextModelId) || defaultMod;
-    const nextSupportsEffort =
-      keepNonCatalog ||
-      (nextModelObj?.supportsEffort !== false &&
-        (!Array.isArray(nextModelObj?.efforts) || nextModelObj.efforts.length > 0));
-    const nextCustomModel = keepNonCatalog
-      ? String(current.customModel || current.displayLabel || '').trim()
-      : '';
-    const allowedNextEfforts =
-      !keepNonCatalog && Array.isArray(nextModelObj?.efforts) && nextModelObj.efforts.length > 0
-        ? nextModelObj.efforts
-        : ['low', 'medium', 'high', 'xhigh'];
-    const reqEff = String(effort ?? '').trim().toLowerCase();
-    let nextEffort = '';
-    if (nextSupportsEffort) {
-      if (reqEff && ['low', 'medium', 'high', 'xhigh'].includes(reqEff) && allowedNextEfforts.includes(reqEff)) {
-        nextEffort = reqEff;
-      } else if (reqEff === 'xhigh' && !allowedNextEfforts.includes('xhigh')) {
-        nextEffort = allowedNextEfforts.includes('high')
-          ? 'high'
-          : allowedNextEfforts[allowedNextEfforts.length - 1] || 'high';
-      } else if (current.effort && allowedNextEfforts.includes(current.effort)) {
-        nextEffort = current.effort;
-      } else {
-        nextEffort = allowedNextEfforts.includes('high')
-          ? 'high'
-          : allowedNextEfforts[allowedNextEfforts.length - 1] || 'high';
-      }
-    }
-
-    if (!prefs.selectedModelByProvider || typeof prefs.selectedModelByProvider !== 'object') {
-      prefs.selectedModelByProvider = { antigravity: defaultAgyModelId, claude: defaultClaudeModelId };
-    }
-    if (!prefs.selectedThinkingEffort || typeof prefs.selectedThinkingEffort !== 'object') {
-      prefs.selectedThinkingEffort = { antigravity: 'high', claude: 'high' };
-    }
-    if (!prefs.threadModelConfig || typeof prefs.threadModelConfig !== 'object') {
-      prefs.threadModelConfig = {};
-    }
-
-    if (nextModelId) {
-      prefs.selectedModelByProvider[cleanProv] = nextModelId;
-      if (explicitCatalogModelId) {
-        if (!prefs.modelSelectionExplicit || typeof prefs.modelSelectionExplicit !== 'object') {
-          prefs.modelSelectionExplicit = { antigravity: false, claude: false };
-        }
-        prefs.modelSelectionExplicit[cleanProv] = true;
-      }
-    }
-    if (nextEffort) {
-      prefs.selectedThinkingEffort[cleanProv] = nextEffort;
-    }
-
-    const nowAt = Date.now();
-    const targetTid = !isNewDraft ? String(targetTidArg || prefs.selectedThreadId || '').trim() : '';
-    if (targetTid && targetTid !== '__new__') {
-      prefs.threadModelConfig[targetTid] = {
-        modelId: nextModelId,
-        ...(nextCustomModel ? { customModel: nextCustomModel } : {}),
-        effort: nextEffort,
-        provider: cleanProv,
-        updatedAt: nowAt
-      };
-      const keys = Object.keys(prefs.threadModelConfig);
-      if (keys.length > 120) {
-        keys
-          .sort(
-            (a, b) =>
-              Number(prefs.threadModelConfig[a]?.updatedAt || 0) -
-              Number(prefs.threadModelConfig[b]?.updatedAt || 0)
-          )
-          .slice(0, keys.length - 120)
-          .forEach((k) => delete prefs.threadModelConfig[k]);
-      }
-    }
-    saveJson(STORAGE_KEYS.PREFS, prefs);
-
-    const updatedCfg = getEffectiveSessionModelConfig(activeRow, cleanProv, isNewDraft);
-    const nextLimit = inferDefaultContextLimit(cleanProv, updatedCfg.displayLabel);
-    if (activeRow) {
-      activeRow.model = updatedCfg.displayLabel;
-      activeRow.effort = updatedCfg.effort;
-      activeRow.modelUpdatedAt = nowAt;
-      activeRow.neonWarning = Boolean(
-        !activeRow.archived && cleanProv !== 'claude' && /neon/i.test(updatedCfg.displayLabel)
-      );
-      if (nextLimit > 0) {
-        activeRow.limitTokens = nextLimit;
-        const rowUsed = Math.max(0, Math.round(Number(activeRow.usedTokens || 0)));
-        activeRow.contextPct =
-          rowUsed > 0 ? Math.min(100, Math.max(1, Math.round((rowUsed / nextLimit) * 100))) : 0;
-      }
-      noteRowOverride(activeRow.id, {
-        model: updatedCfg.displayLabel,
-        effort: updatedCfg.effort,
-        modelUpdatedAt: nowAt,
-        neonWarning: activeRow.neonWarning,
-        ...(nextLimit > 0 ? { limitTokens: nextLimit } : {})
-      });
-    }
-    if (targetTid && threadsCache[targetTid]) {
-      threadsCache[targetTid].model = updatedCfg.displayLabel;
-      threadsCache[targetTid].modelUpdatedAt = nowAt;
-      if (threadsCache[targetTid].contextWindow) {
-        const cw = threadsCache[targetTid].contextWindow;
-        cw.modelLabel = updatedCfg.displayLabel;
-        if (nextLimit > 0) {
-          const cwUsed = Math.max(0, Math.round(Number(cw.usedTokens || 0)));
-          cw.limitTokens = nextLimit;
-          cw.maxContextTokens = nextLimit;
-          cw.remainingTokens = Math.max(0, nextLimit - cwUsed);
-          cw.overrunTokens = Math.max(0, cwUsed - nextLimit);
-          cw.pct =
-            cwUsed > 0 ? Math.min(100, Math.max(1, Math.round((cwUsed / nextLimit) * 100))) : 0;
-        }
-      }
-    }
-    persistCache();
-    renderChatView(false);
-    renderIdeSidebar();
-    renderSessionsView();
-    renderPulseView();
-
-    if (targetTid && targetTid !== '__new__' && !targetTid.startsWith('draft-new-')) {
-      dispatchRemoteCommand({
-        type: 'sessionAction',
-        action: 'setModel',
-        subAction: 'setModel',
-        id: targetTid,
-        sessionId: targetTid,
-        provider: cleanProv,
-        model: updatedCfg.cliModel,
-        effort: updatedCfg.effort,
-        displayModel: updatedCfg.displayLabel
-      }).catch(() => {});
-    }
-    return updatedCfg;
-  }
-
-  let lastModelAnchorEl = null;
-  let modelPickerAdjustEffortOpen = false;
-
-  function positionModelPickerPopover(anchorEl = null) {
-    const modPop = $('model-picker-popover');
-    if (!modPop) return;
-    if (anchorEl) {
-      lastModelAnchorEl = anchorEl;
-    }
-    const trigger = anchorEl || lastModelAnchorEl || $('composer-model-btn');
-    if (!trigger || typeof trigger.getBoundingClientRect !== 'function') return;
-    const rect = trigger.getBoundingClientRect();
-    const vw = Math.max(280, window.innerWidth || 1280);
-    const vh = Math.max(320, window.innerHeight || 800);
-    const menuW = Math.min(280, vw - 16);
-    const clampedLeft = Math.max(8, Math.min(Math.round(rect.left), vw - menuW - 8));
-    modPop.style.width = `${menuW}px`;
-    modPop.style.left = `${clampedLeft}px`;
-    modPop.style.right = 'auto';
-    if (rect.top > vh * 0.52) {
-      const bottomPx = Math.max(10, Math.round(vh - rect.top + 6));
-      modPop.style.bottom = `${bottomPx}px`;
-      modPop.style.top = 'auto';
-      modPop.style.maxHeight = `${Math.max(160, vh - bottomPx - 10)}px`;
-    } else {
-      const topPx = Math.max(8, Math.round(rect.bottom + 6));
-      modPop.style.top = `${topPx}px`;
-      modPop.style.bottom = 'auto';
-      modPop.style.maxHeight = `${Math.max(160, vh - topPx - 10)}px`;
-    }
-  }
-
-  window.addEventListener(
-    'resize',
-    () => {
-      const modPop = $('model-picker-popover');
-      if (modPop && !modPop.hidden) {
-        positionModelPickerPopover();
-      }
-      const palPop = $('theme-palette-popover');
-      if (palPop && !palPop.hidden) {
-        positionPalettePopover();
-      }
-    },
-    { passive: true }
-  );
-
-  function renderModelPickerPopover(provKey, modelCfg) {
-    const bodyEl = $('model-picker-body');
-    const titleEl = $('model-popover-title');
-    if (!bodyEl) return;
-    const cleanProv = provKey === 'claude' ? 'claude' : 'antigravity';
-    const catalog = getEffectiveModelCatalog(cleanProv);
-    if (titleEl) {
-      titleEl.textContent = cleanProv === 'claude' ? 'Claude Code Model' : 'Model Selection';
-    }
-    const effortOrder = ['xhigh', 'high', 'medium', 'low'];
-    const tagClassFor = (txt) => {
-      const l = String(txt || '').toLowerCase();
-      if (l.includes('leaving')) return ' tag-leaving';
-      if (l.includes('new')) return ' tag-new';
-      if (l.includes('1m')) return ' tag-1m';
-      if (l.includes('notice') || l.includes('neon')) return ' tag-notice';
-      return '';
-    };
-    const familyGroupsHtml = catalog
-      .map((m, famIdx) => {
-        const tagTxt = String(
-          m.tagTitle ||
-            (cleanProv === 'antigravity'
-              ? m.id.includes('flash')
-                ? 'Fast'
-                : m.badge === 'Live' || m.badge === 'Recommended'
-                  ? m.badge
-                  : ''
-              : m.badge) ||
-            ''
-        ).trim();
-        const tagHtml = tagTxt ? `<span class="vs-model-item-tag${tagClassFor(tagTxt)}">${esc(tagTxt)}</span>` : '';
-        const quotaPct =
-          typeof m.quotaRemainingFraction === 'number' && Number.isFinite(m.quotaRemainingFraction)
-            ? Math.max(0, Math.min(100, Math.round(m.quotaRemainingFraction * 100)))
-            : null;
-        const quotaCls = quotaPct == null ? '' : quotaPct <= 10 ? ' is-crit' : quotaPct <= 25 ? ' is-low' : '';
-        const quotaBarHtml =
-          quotaPct == null
-            ? ''
-            : `<span class="vs-model-quota${quotaCls}" aria-hidden="true"><span class="vs-model-quota-bar"><i style="width:${quotaPct}%"></i></span><span class="vs-model-quota-pct tabular">${quotaPct}%</span></span>`;
-        const quotaAttr =
-          quotaPct != null
-            ? ` data-micro-tip="Quota remaining: ${quotaPct}%"`
-            : '';
-        const modelSupportsEff =
-          m.supportsEffort !== false && (!Array.isArray(m.efforts) || m.efforts.length > 0);
-        if (!modelSupportsEff) {
-          const isSel = m.id === modelCfg.modelId;
-          return `${famIdx > 0 ? '<div class="vs-model-menu-sep" role="separator"></div>' : ''}
-            <button type="button" role="menuitemradio" aria-checked="${isSel ? 'true' : 'false'}" class="vs-model-menu-item${isSel ? ' active' : ''}" data-select-model-combo="${esc(`${m.id}:`)}" data-select-ai-model="${esc(m.id)}" data-model-prov="${cleanProv}"${quotaAttr}>
-              <span class="vs-model-item-check">${isSel ? CHECK_MARK_SVG : ''}</span>
-              <span class="vs-model-item-name">${esc(m.label)}</span>
-              ${quotaBarHtml}
-              ${tagHtml}
-            </button>
-          `;
-        }
-        const mEffs = Array.isArray(m.efforts) && m.efforts.length ? m.efforts : ['low', 'medium', 'high'];
-        const visibleEffs = effortOrder.filter((e) => mEffs.includes(e));
-        const rowsHtml = visibleEffs
-          .map((effId) => {
-            const effObj =
-              THINKING_EFFORT_LEVELS.find((e) => e.id === effId) || THINKING_EFFORT_LEVELS[2];
-            const isSel = m.id === modelCfg.modelId && effObj.id === modelCfg.effort;
-            const isPrimaryFamilyMatch = effObj.id === modelCfg.effort;
-            return `
-              <button type="button" role="menuitemradio" aria-checked="${isSel ? 'true' : 'false'}" class="vs-model-menu-item${isSel ? ' active' : ''}" data-select-model-combo="${esc(`${m.id}:${effObj.id}`)}"${isPrimaryFamilyMatch ? ` data-select-ai-model="${esc(m.id)}"` : ''} data-model-prov="${cleanProv}"${quotaAttr}>
-                <span class="vs-model-item-check">${isSel ? CHECK_MARK_SVG : ''}</span>
-                <span class="vs-model-item-name">${esc(`${m.label} (${effObj.label})`)}</span>
-                ${quotaBarHtml}
-                ${tagHtml}
-              </button>
-            `;
-          })
-          .join('');
-        return `${famIdx > 0 ? '<div class="vs-model-menu-sep" role="separator"></div>' : ''}${rowsHtml}`;
-      })
-      .join('');
-
-    const showEffortBar = modelCfg?.supportsEffort !== false;
-    const activeInCatalog = catalog.some((m) => m.id === modelCfg.modelId);
-    const barEfforts = Array.isArray(modelCfg?.efforts) && modelCfg.efforts.length
-      ? THINKING_EFFORT_LEVELS.filter((e) => modelCfg.efforts.includes(e.id))
-      : THINKING_EFFORT_LEVELS;
-    const effortsBarHtml = barEfforts
-      .map((eff) => {
-        const isSel = eff.id === modelCfg.effort;
-        return `<button type="button" class="vs-effort-pill${isSel ? ' active' : ''}" data-select-ai-effort="${esc(eff.id)}" data-model-prov="${cleanProv}" aria-pressed="${isSel ? 'true' : 'false'}">${esc(eff.label)}</button>`;
-      })
-      .join('');
-
-    const effortFooterHtml = !showEffortBar
-      ? ''
-      : !activeInCatalog || modelPickerAdjustEffortOpen
-        ? `<div class="vs-model-menu-sep" role="separator"></div>
-           <div class="vs-model-effort-bar" role="group" aria-label="Thinking Level">
-             <span class="vs-model-effort-lbl">Thinking</span>
-             <div class="vs-model-effort-pills">${effortsBarHtml}</div>
-           </div>`
-        : `<div class="vs-model-menu-sep" role="separator"></div>
-           <div class="vs-model-effort-toggle-row">
-             <button type="button" class="vs-effort-adjust-btn" data-toggle-model-effort-bar="1">Thinking: ${esc(modelCfg.effortLabel || 'High')} · Adjust</button>
-           </div>`;
-
-    bodyEl.innerHTML = `
-      <div class="vs-model-menu-list">${familyGroupsHtml}</div>
-      ${effortFooterHtml}
-    `;
-  }
-
-  function renderNewSessionLaunchpadHtml(provKey, modelCfg, grpObj) {
-    const cleanProv = provKey === 'claude' ? 'claude' : 'antigravity';
-    const rawWorkspaces = Array.isArray(appState?.workspaces) ? appState.workspaces : [];
-    const rankedWorkspaces = rankByFreq(
-      rawWorkspaces,
-      'repos',
-      (w) => w.name || w.id,
-      (w) => Number(w.dirtyCount || 0) * 10
-    ).slice(0, 5);
-    const curScope = String(prefs.composerRepoPrefix || '').trim();
-
-    const scopeChips = [
-      `<button type="button" class="lp-scope-chip${!curScope ? ' active' : ''}" data-launchpad-scope="">Default Workspace</button>`,
-      ...rankedWorkspaces.map((w) => {
-        const name = String(w.name || w.id || '').trim();
-        const isSel = curScope.toLowerCase() === name.toLowerCase();
-        return `<button type="button" class="lp-scope-chip${isSel ? ' active' : ''}" data-launchpad-scope="${esc(name)}">${esc(name)}</button>`;
-      })
-    ].join('');
-
-    return `
-      <div class="new-session-launchpad is-minimal" data-launchpad-prov="${cleanProv}">
-        <div class="lp-head">
-          <div class="lp-prov-switch" role="group" aria-label="Select AI Provider">
-            <button type="button" class="lp-prov-btn${cleanProv === 'antigravity' ? ' active' : ''}" data-comp-mode="new-antigravity">
-              <span class="prov-glyph">${PROVIDER_ICONS.antigravity}</span>
-              <span>Antigravity</span>
-            </button>
-            <button type="button" class="lp-prov-btn${cleanProv === 'claude' ? ' active' : ''}" data-comp-mode="new-claude">
-              <span class="prov-glyph">${PROVIDER_ICONS.claude}</span>
-              <span>Claude Code</span>
-            </button>
-          </div>
-          ${
-            grpObj
-              ? `<div class="lp-title">
-                   <span class="lp-group-chip">
-                     <span class="lp-group-chip-lbl">${esc(grpObj.name)}</span>
-                     <button type="button" class="lp-group-clear-btn" data-clear-new-session-group="1" data-micro-tip="Open in Ungrouped instead" aria-label="Open in Ungrouped instead of ${esc(grpObj.name)}">× Ungrouped</button>
-                   </span>
-                 </div>`
-              : ''
-          }
-        </div>
-        ${
-          rankedWorkspaces.length > 0
-            ? `<div class="lp-scope-row" role="group" aria-label="Workspace scope">${scopeChips}</div>`
-            : ''
-        }
-      </div>
-    `;
-  }
-
-  function resolveSessionHostDevice(activeRow = null, isNewDraft = false) {
-    if ((typeof navigator !== 'undefined' && navigator.onLine === false) || connMode === 'offline') {
-      return null;
-    }
-    const fleet = getUnifiedFleetDevices();
-    let hostDev = null;
-    if (!isNewDraft && activeRow?.deviceId) {
-      hostDev = fleet.find((d) => d && d.id === activeRow.deviceId) || null;
-    } else if (isNewDraft) {
-      const targetDev =
-        prefs.composerTargetDevice && prefs.composerTargetDevice !== 'auto'
-          ? String(prefs.composerTargetDevice).trim()
-          : prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
-            ? String(prefs.selectedDeviceFilter).trim()
-            : '';
-      if (targetDev) {
-        hostDev = fleet.find((d) => d && d.id === targetDev) || null;
-      }
-      const fallbackNewDevId = localWsDevice?.id || appState?.device?.id || '';
-      if (!hostDev && fallbackNewDevId) {
-        hostDev = fleet.find((d) => d && d.id === fallbackNewDevId) || null;
-      }
-      if (!hostDev) {
-        hostDev = fleet.find((d) => d && d.isSelf) || fleet.find((d) => d && d.online) || null;
-      }
-    } else {
-      const fallbackDevId = localWsDevice?.id || appState?.device?.id || '';
-      if (fallbackDevId) {
-        hostDev = fleet.find((d) => d && d.id === fallbackDevId) || null;
-      }
-      if (!hostDev) {
-        hostDev = fleet.find((d) => d && d.isSelf) || fleet.find((d) => d && d.online) || null;
-      }
-    }
-    return hostDev;
-  }
-
-  function isHostVsCodeOpenForSession(activeRow = null, isNewDraft = false) {
-    const hostDev = resolveSessionHostDevice(activeRow, isNewDraft);
-    return Boolean(hostDev && hostDev.online !== false && hostDev.pwaReady && hostDev.pwaReady.vscodeOpen === true);
-  }
-
-  const pendingCompactByThread = new Map();
-  const compactionWatermarkByThread = new Map();
-
-  function clearPendingCompactState(tid) {
-    const entry = pendingCompactByThread.get(tid);
-    if (!entry) return;
-    for (const tm of entry.timers || []) {
-      clearTimeout(tm);
-    }
-    pendingCompactByThread.delete(tid);
-  }
-
-  function reconcileCompactionContextTokens(tid, activeRow, threadDetail) {
-    const rawCtx = threadDetail?.contextWindow || {};
-    const msgs = Array.isArray(threadDetail?.messages) ? threadDetail.messages : [];
-    const nonOptMsgs = msgs.filter((m) => m && !m.optimistic);
-    let cpCount = 0;
-    let lastCpIdx = -1;
-    for (let i = 0; i < nonOptMsgs.length; i++) {
-      if (nonOptMsgs[i].role === 'checkpoint') {
-        cpCount += 1;
-        lastCpIdx = i;
-      }
-    }
-    const lastNonOptIsCp = lastCpIdx >= 0 && lastCpIdx === nonOptMsgs.length - 1;
-    const afterCpMsgs = lastCpIdx >= 0 ? nonOptMsgs.slice(lastCpIdx + 1) : [];
-    const hasUserAfterCp = afterCpMsgs.some((m) => m.role === 'user');
-    const ctxUsedNum = Number(rawCtx.usedTokens);
-    const rowUsedNum = Number(activeRow?.usedTokens ?? activeRow?.contextTokens);
-    const hasCtxUsed = rawCtx.usedTokens != null && rawCtx.usedTokens !== '' && Number.isFinite(ctxUsedNum);
-    const hasRowUsed = (activeRow?.usedTokens != null || activeRow?.contextTokens != null) && Number.isFinite(rowUsedNum);
-
-    let justCompacted = false;
-    const pending = tid ? pendingCompactByThread.get(tid) : null;
-    if (pending && tid) {
-      const cpIncreased = cpCount > pending.baselineCheckpoints;
-      const tokensDropped =
-        (hasCtxUsed && pending.prevUsedTokens > 0 && ctxUsedNum < pending.prevUsedTokens * 0.88) ||
-        (hasRowUsed && pending.prevUsedTokens > 0 && rowUsedNum < pending.prevUsedTokens * 0.88);
-      if (cpIncreased || tokensDropped) {
-        justCompacted = true;
-        clearPendingCompactState(tid);
-      } else if (Date.now() - pending.startedAt > 90000) {
-        clearPendingCompactState(tid);
-      }
-    }
-
-    if (hasCtxUsed && hasRowUsed && ctxUsedNum !== rowUsedNum) {
-      const wm = tid ? compactionWatermarkByThread.get(tid) : null;
-      const atBoundary =
-        justCompacted ||
-        lastNonOptIsCp ||
-        (lastCpIdx >= 0 &&
-          !hasUserAfterCp &&
-          (!wm || wm.cpCount !== cpCount || ctxUsedNum < rowUsedNum * 0.88 || rowUsedNum < ctxUsedNum * 0.88));
-      if (atBoundary) {
-        const minUsed = Math.min(ctxUsedNum, rowUsedNum);
-        if (tid) compactionWatermarkByThread.set(tid, { cpCount, baselineTokens: minUsed });
-        if (activeRow) activeRow.usedTokens = minUsed;
-        if (threadDetail?.contextWindow) threadDetail.contextWindow.usedTokens = minUsed;
-        return minUsed;
-      }
-      // Once subsequent turns run after the checkpoint, trust the higher (newer) token count
-      if (cpCount > 0) {
-        return Math.max(ctxUsedNum, rowUsedNum);
-      }
-    }
-    if (hasCtxUsed) return ctxUsedNum;
-    if (hasRowUsed) return rowUsedNum;
-    return 0;
-  }
-
-  async function triggerActiveSessionCompact() {
-    if (isPinLocked()) return;
-    const tid = cleanTargetThreadId(prefs.selectedThreadId);
-    if (isNewSessionMode() || !tid) {
-      showToast('Select an active session first to run /compact');
-      return;
-    }
-    const existing = pendingCompactByThread.get(tid);
-    if (existing && Date.now() - existing.startedAt < 4000) {
-      showToast('Compaction already dispatched for this session');
-      return;
-    }
-
-    const activeRow = (appState?.rows || []).find((r) => r && r.id === tid) || null;
-    const td = threadsCache[tid] || null;
-    const prov = activeRow?.provider || td?.provider || 'antigravity';
-    const prevUsedTokens = reconcileCompactionContextTokens(tid, activeRow, td);
-    const msgs = Array.isArray(td?.messages) ? td.messages : [];
-    const baselineCheckpoints = msgs.filter((m) => m && m.role === 'checkpoint').length;
-
-    const ctxPop = $('ctx-popover');
-    if (ctxPop) ctxPop.hidden = true;
-    const moreMenu = $('chat-more-menu');
-    if (moreMenu) moreMenu.hidden = true;
-    $('btn-chat-more')?.setAttribute('aria-expanded', 'false');
-
-    const optMsgId = `local-compact-${Date.now()}`;
-    if (!threadsCache[tid]) {
-      threadsCache[tid] = { id: tid, provider: prov, messages: [] };
-    }
-    const curMsgs = Array.isArray(threadsCache[tid].messages) ? threadsCache[tid].messages : [];
-    const lastMsg = curMsgs[curMsgs.length - 1];
-    let pushedOpt = false;
-    if (!lastMsg || !(lastMsg.role === 'user' && /^\/compact\b/i.test(String(lastMsg.text || '').trim()))) {
-      curMsgs.push({
-        id: optMsgId,
-        role: 'user',
-        createdAt: new Date().toISOString(),
-        text: '/compact',
-        toolCalls: [],
-        optimistic: true,
-        optimisticAt: Date.now()
-      });
-      threadsCache[tid].messages = curMsgs;
-      pushedOpt = true;
-    }
-
-    clearPendingCompactState(tid);
-    const timers = [];
-    pendingCompactByThread.set(tid, {
-      startedAt: Date.now(),
-      prevUsedTokens,
-      baselineCheckpoints,
-      timers
-    });
-    renderChatView(true);
-
-    const res = await dispatchRemoteCommand({
-      type: 'sessionAction',
-      action: 'compact',
-      subAction: 'compact',
-      id: tid,
-      provider: prov
-    });
-    const innerFailed = res?.ok === false || res?.out?.ok === false || res?.out?.result?.ok === false;
-    if (innerFailed) {
-      clearPendingCompactState(tid);
-      if (pushedOpt && threadsCache[tid]?.messages) {
-        threadsCache[tid].messages = threadsCache[tid].messages.filter((m) => m && m.id !== optMsgId);
-      }
-      renderChatView(false);
-      showToast(res?.out?.error || res?.error || 'Unable to dispatch /compact to session');
-      return;
-    }
-
-    if (!isHeadlessBrowser) {
-      for (const delay of [1800, 4500, 9000, 16000]) {
-        const tm = setTimeout(() => {
-          if (!pendingCompactByThread.has(tid)) return;
-          syncData().catch(() => {});
-          fetchThreadDetail(tid, prov).catch(() => {});
-        }, delay);
-        timers.push(tm);
-      }
-    }
-
-    showToast(
-      res?.mode === 'quarantined'
-        ? 'Sent /compact to active session'
-        : res?.mode === 'cloud'
-          ? 'Queued /compact via Cloud Store (refreshes on sync)'
-          : res?.mode === 'queued'
-            ? 'Offline: /compact queued in outbox'
-            : 'Compacting context window…'
-    );
-  }
-
-  // VIEW 3: Render Live Chat Workbench
-  function renderChatView(forceScroll = false) {
-    ensureSelectedThread();
-    syncAndRenderEditorTabs();
-    updateComposerModePills();
-    const rows = (appState?.rows || []).filter((r) => r.id && !r.draft);
-    const isNewDraft = isNewSessionMode();
-    const newProv = prefs.composerMode === 'new-claude' ? 'claude' : 'antigravity';
-    const threadDetail = isNewDraft ? null : threadsCache[prefs.selectedThreadId] || null;
-    const matchedRow = isNewDraft ? null : rows.find((r) => r.id === prefs.selectedThreadId);
-    syncComposerRoutingSelectors(matchedRow, isNewDraft);
-    const initialDraftModelCfg = getEffectiveSessionModelConfig(null, newProv, true);
-    const activeRow = isNewDraft
-      ? {
-          id: '__new__',
-          title: `New ${newProv === 'claude' ? 'Claude Code' : 'Antigravity'} Session`,
-          provider: newProv,
-          folder: prefs.composerRepoPrefix
-            ? `Scope: ${prefs.composerRepoPrefix}`
-            : 'Workspace',
-          model: initialDraftModelCfg.displayLabel,
-          effort: initialDraftModelCfg.effort,
-          status: 'idle',
-          at: Date.now()
-        }
-      : matchedRow ||
-        (prefs.selectedThreadId
-          ? {
-              id: prefs.selectedThreadId,
-              title:
-                threadDetail?.title ||
-                pinnedNavTitle ||
-                'Task Session',
-              provider:
-                threadDetail?.provider ||
-                pinnedNavProvider ||
-                'antigravity',
-              folder: threadDetail?.folder || '',
-              model: threadDetail?.model || '',
-              modelUpdatedAt: Number(threadDetail?.modelUpdatedAt || 0),
-              status: 'done',
-              at: Date.now()
-            }
-          : rows[0]);
-
-    const titleEl = $('chat-session-title');
-    const editingHeaderTitle = Boolean(
-      activeIdeRename &&
-        activeIdeRename.kind === 'chat-session' &&
-        activeRow?.id &&
-        activeIdeRename.id === activeRow.id
-    );
-    if (titleEl && !editingHeaderTitle) {
-      titleEl.textContent = String(activeRow?.title || 'New Session');
-    }
-    const renameBtn = $('btn-chat-rename-title');
-    if (renameBtn) {
-      renameBtn.hidden = Boolean(isNewDraft || !activeRow?.id || activeRow.id === '__new__');
-    }
-
-    const provKey = isNewDraft
-      ? newProv
-      : (threadDetail?.provider || activeRow?.provider) === 'claude'
-        ? 'claude'
-        : 'antigravity';
-
-    const badgeEl = $('chat-prov-badge');
-    if (badgeEl) {
-      badgeEl.innerHTML = `<span class="prov-glyph">${PROVIDER_ICONS[provKey]}</span>`;
-    }
-    const folderLabel = isNewDraft
-      ? prefs.composerRepoPrefix
-        ? `Scope: ${prefs.composerRepoPrefix}`
-        : 'Workspace'
-      : threadDetail?.folder ||
-        activeRow?.folder ||
-        (prefs.composerRepoPrefix ? `Scope: ${prefs.composerRepoPrefix}` : 'Workspace');
-    const folderEl = $('chat-folder-pill');
-    if (folderEl) {
-      folderEl.textContent = folderLabel;
-    }
-
-    const activeTidForCompact = cleanTargetThreadId(activeRow?.id || prefs.selectedThreadId);
-    const openIdeBtn = $('btn-chat-open-vscode');
-    if (openIdeBtn) {
-      openIdeBtn.hidden = !isHostVsCodeOpenForSession(activeRow, isNewDraft);
-    }
-    const moreCompactBtn = $('btn-chat-more-compact');
-    if (moreCompactBtn) {
-      moreCompactBtn.hidden = Boolean(isNewDraft || !activeTidForCompact);
-    }
-    const moreBtn = $('btn-chat-more');
-    if (moreBtn) {
-      moreBtn.classList.toggle('is-active', Boolean(prefs.splitWatchOpen));
-    }
-    const splitStateEl = $('chat-more-split-state');
-    if (splitStateEl) {
-      splitStateEl.textContent = prefs.splitWatchOpen ? 'On' : 'Off';
-    }
-    const splitWatchMenuBtn = $('btn-split-watch');
-    if (splitWatchMenuBtn) {
-      splitWatchMenuBtn.classList.toggle('active', Boolean(prefs.splitWatchOpen));
-      splitWatchMenuBtn.setAttribute('aria-pressed', prefs.splitWatchOpen ? 'true' : 'false');
-      splitWatchMenuBtn.setAttribute('aria-checked', prefs.splitWatchOpen ? 'true' : 'false');
-    }
-    const ctxCompactBtn = $('btn-ctx-compact');
-    if (ctxCompactBtn) {
-      const isCompacting = Boolean(activeTidForCompact && pendingCompactByThread.has(activeTidForCompact));
-      ctxCompactBtn.disabled = isCompacting;
-      ctxCompactBtn.innerHTML = isCompacting ? 'Compacting…' : 'Run <code>/compact</code>';
-    }
-
-    const rawCtx = threadDetail?.contextWindow || {};
-    const effectiveRowForModel =
-      !isNewDraft &&
-      activeRow &&
-      (!activeRow.model || /^gemini$/i.test(String(activeRow.model).trim())) &&
-      (rawCtx.modelLabel || threadDetail?.model)
-        ? { ...activeRow, model: rawCtx.modelLabel || threadDetail.model }
-        : activeRow;
-    const modelCfg = getEffectiveSessionModelConfig(effectiveRowForModel, provKey, isNewDraft);
-    const resolvedModelLabel = modelCfg.displayLabel;
-    const compModelEl = $('composer-model-label');
-    if (compModelEl) {
-      compModelEl.textContent = resolvedModelLabel;
-    }
-    const chatNeonPill = $('chat-neon-pill');
-    if (chatNeonPill) {
-      const showChatNeon = Boolean(
-        !isNewDraft &&
-          activeRow?.id &&
-          !activeRow?.archived &&
-          provKey === 'antigravity' &&
-          (activeRow?.neonWarning || /neon/i.test(String(resolvedModelLabel || '')))
-      );
-      chatNeonPill.hidden = !showChatNeon;
-      chatNeonPill.dataset.switchNeonCarbon = showChatNeon ? String(activeRow.id) : '';
-    }
-    renderModelPickerPopover(provKey, modelCfg);
-
-    // Context Window Pill & Popover (512k / 840k on Antigravity, 1M / 200k on Claude Code)
-    const activeTidForOv = activeRow?.id || prefs.selectedThreadId || '';
-    const savedHeaderOv = !isNewDraft && activeTidForOv ? prefs.threadModelConfig?.[activeTidForOv] : null;
-    const hasThreadModelOverride = Boolean(
-      savedHeaderOv && !(Number(activeRow?.modelUpdatedAt || 0) > Number(savedHeaderOv.updatedAt || 0))
-    );
-    const modelForLimit =
-      !isNewDraft && !hasThreadModelOverride
-        ? rawCtx.modelLabel || rawCtx.modelName || threadDetail?.model || activeRow?.model || resolvedModelLabel
-        : resolvedModelLabel;
-    const rawUsed = isNewDraft
-      ? 0
-      : reconcileCompactionContextTokens(activeTidForCompact, activeRow, threadDetail);
-    const rawLimit = hasThreadModelOverride
-      ? inferDefaultContextLimit(provKey, resolvedModelLabel)
-      : Number(
-          rawCtx.limitTokens ||
-            rawCtx.maxContextTokens ||
-            (!isNewDraft ? activeRow?.limitTokens || activeRow?.contextLimit : 0) ||
-            0
-        );
-    const rawHardMax = hasThreadModelOverride ? 0 : Number(rawCtx.hardMaxTokens || activeRow?.hardMaxTokens || 0);
-    const {
-      usedTokens,
-      limitTokens,
-      hardMaxTokens,
-      pct,
-      remainingTokens,
-      overrunTokens,
-      isSoftOverrun,
-      overrunArcPct
-    } = resolveDisplayContextMetrics(provKey, modelForLimit, rawUsed, rawLimit, isNewDraft, rawHardMax);
-    const breakdownArr =
-      isNewDraft || usedTokens <= 0
-        ? [
-            { label: 'System Prompt & Rules', tokens: 0, color: '#D9A54A' },
-            { label: 'Tool I/O & Files', tokens: 0, color: '#10B981' },
-            { label: 'Conversation & Responses', tokens: 0, color: '#4F8FD6' }
-          ]
-        : Array.isArray(rawCtx.breakdown)
-          ? rawCtx.breakdown
-          : [
-              { label: 'System Prompt & Rules', tokens: Math.round(usedTokens * 0.35), color: '#D9A54A' },
-              { label: 'Tool I/O & Files', tokens: Math.round(usedTokens * 0.45), color: '#10B981' },
-              { label: 'Conversation & Responses', tokens: Math.max(0, usedTokens - Math.round(usedTokens * 0.8)), color: '#4F8FD6' }
-            ];
-    const ctx = {
-      usedTokens,
-      limitTokens,
-      hardMaxTokens,
-      pct,
-      remainingTokens,
-      overrunTokens,
-      isSoftOverrun,
-      overrunArcPct,
-      modelLabel: resolvedModelLabel,
-      breakdown: breakdownArr
-    };
-    const pillBtn = $('btn-ctx-window');
-    if (pillBtn) {
-      pillBtn.classList.toggle('is-soft-overrun', Boolean(ctx.isSoftOverrun));
-    }
-    const pillLbl = $('ctx-pill-label');
-    if (pillLbl) {
-      pillLbl.textContent = `${fmtCompact(ctx.usedTokens)} / ${fmtCompact(ctx.limitTokens)} · ${ctx.pct}%`;
-    }
-    const circle = $('ctx-ring-circle');
-    if (circle) {
-      const circum = 56.5;
-      const offset = circum - (Math.min(100, Math.max(isNewDraft ? 0 : 2, ctx.pct)) / 100) * circum;
-      circle.setAttribute('stroke-dashoffset', String(offset));
-    }
-    const overrunCircle = $('ctx-ring-overrun-circle');
-    if (overrunCircle) {
-      if (ctx.isSoftOverrun) {
-        const circum = 56.5;
-        const arcOffset = circum - (Math.min(100, Math.max(6, ctx.overrunArcPct)) / 100) * circum;
-        overrunCircle.setAttribute('stroke-dashoffset', String(arcOffset));
-        overrunCircle.hidden = false;
-      } else {
-        overrunCircle.setAttribute('stroke-dashoffset', '56.5');
-        overrunCircle.hidden = true;
-      }
-    }
-    const overrunPill = $('ctx-overrun-pill');
-    if (overrunPill) {
-      if (ctx.isSoftOverrun) {
-        overrunPill.textContent = `+${fmtCompact(ctx.overrunTokens)}`;
-        overrunPill.hidden = false;
-      } else {
-        overrunPill.textContent = '';
-        overrunPill.hidden = true;
-      }
-    }
-
-    renderContextPopover(ctx);
-    renderChatBgTasks(activeRow, threadDetail, provKey, isNewDraft);
-
-    const messages = isNewDraft ? [] : coalesceThreadMessages(threadDetail?.messages || []);
-    const sessionApprovals = isNewDraft
-      ? []
-      : (appState?.approvals || []).filter((a) => a && a.sessionId === prefs.selectedThreadId);
-    const matchingQuestionApproval = sessionApprovals.find(
-      (a) =>
-        a.kind === 'question' ||
-        Boolean(a.isToolPermission) ||
-        /question/i.test(String(a.toolName || '')) ||
-        (Array.isArray(a.questions) && a.questions.length > 0) ||
-        (Array.isArray(a.options) && a.options.length > 0)
-    );
-
-    renderChatQuestionDock(activeRow, messages, matchingQuestionApproval, provKey, isNewDraft);
-    renderSplitWatchPane();
-    renderSplitInspector(activeRow, threadDetail, messages, provKey, isNewDraft);
-
-    // Conversation Stream
-    const streamEl = $('chat-stream');
-    if (!streamEl) return;
-    if (isNewDraft) {
-      const grpObj = prefs.newSessionGroupId
-        ? (appState?.groups || []).find((g) => g && g.id === prefs.newSessionGroupId)
-        : null;
-      streamEl.innerHTML = renderNewSessionLaunchpadHtml(provKey, modelCfg, grpObj);
-      lastRenderedThreadId = '__new__';
-      lastRenderedMsgCount = 0;
-      updateComposerActionButton();
-      return;
-    }
-    if (
-      document.activeElement &&
-      streamEl.contains(document.activeElement) &&
-      document.activeElement.matches('[data-q-writein-input]')
-    ) {
-      updateComposerActionButton();
-      return;
-    }
-    const wasNearBottom =
-      streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight < 100;
-    const isSyncingThread =
-      connMode === 'cloud' &&
-      prefs.selectedThreadId &&
-      pendingThreadRequests.has(prefs.selectedThreadId);
-    let questionRenderedInTurn = false;
-
-    const buildSessionApprovalHtml = (skipQuestionApprovals = false) =>
-      sessionApprovals
-        .map((a) => {
-          const aProv = a.provider === 'claude' ? 'claude' : 'antigravity';
-          const isQ =
-            a.kind === 'question' ||
-            Boolean(a.isToolPermission) ||
-            /question/i.test(String(a.toolName || '')) ||
-            (Array.isArray(a.questions) && a.questions.length > 0) ||
-            (Array.isArray(a.options) && a.options.length > 0);
-          if (isQ) {
-            if (skipQuestionApprovals) return '';
-            const qList = resolveQuestionsForApproval(a, messages);
-            if (qList.length > 0) {
-              return renderInteractiveQuestionCardHtml({
-                cardKey: `q-chat-${prefs.selectedThreadId}-${a.approvalId || 'active'}`,
-                sessionId: prefs.selectedThreadId,
-                provider: aProv,
-                approvalId: a.approvalId || prefs.selectedThreadId,
-                selector: a.selector || '',
-                questions: qList
-              });
-            }
-          }
-          if (a.kind === 'waiting_session' && skipQuestionApprovals) {
-            return '';
-          }
-          return `
-            <div class="approval-card" data-approval-id="${esc(a.id)}" style="margin-top:8px">
-              <div class="approval-top">
-                <span class="approval-prov">
-                  <span class="prov-glyph">${PROVIDER_ICONS[aProv]}</span>
-                  <span>${aProv === 'claude' ? 'Claude Code' : 'Antigravity'} · Action Required</span>
-                </span>
-                <span class="approval-tool-badge tabular">${esc(a.toolName || 'Permission')}</span>
-              </div>
-              <div class="approval-title">${esc(a.title || activeRow?.title || 'Session')}</div>
-              <div class="approval-detail mono">${esc(a.detail || '')}</div>
-              ${
-                a.kind === 'waiting_session'
-                  ? `<div class="meta-timestamp" style="margin-top:6px">Waiting for your response — type your reply in the composer below.</div>`
-                  : `<div class="approval-actions">
-                      <button type="button" class="btn-approve" data-approve-act="approve" data-app-id="${esc(a.approvalId)}" data-sess-id="${esc(a.sessionId)}" data-prov="${aProv}" data-sel="${esc(a.selector || '')}" data-lbl="${esc(a.toolName || 'Accept')}">✓ Approve</button>
-                      <button type="button" class="btn-reject" data-approve-act="reject" data-app-id="${esc(a.approvalId)}" data-sess-id="${esc(a.sessionId)}" data-prov="${aProv}" data-sel="${esc(a.selector || '')}">✕ Deny</button>
-                    </div>`
-              }
-            </div>
-          `;
-        })
-        .join('');
-
-    if (messages.length === 0) {
-      streamEl.innerHTML = `
-        <div class="turn-bubble">
-          <div class="turn-head">
-            <span class="turn-role">${isSyncingThread ? 'Syncing Transcript…' : 'THEO Bridge'}</span>
-            <span>${isSyncingThread ? 'Cloud Relay' : 'Ready'}</span>
-          </div>
-          <div class="turn-text">
-            ${
-              isSyncingThread
-                ? `Requesting live transcript for <strong>${esc(activeRow?.title || 'Session')}</strong> from the PC…`
-                : `Select any session from the sidebar or ⌘K to view the live transcript from <strong>${esc(activeRow?.title || 'your PC')}</strong>.`
-            }
-          </div>
-        </div>
-        ${buildSessionApprovalHtml(false)}
-      `;
-      lastRenderedThreadId = prefs.selectedThreadId;
-      lastRenderedMsgCount = 0;
-    } else {
-      const savedOpenMap = getThreadOpenDetailsMap(prefs.selectedThreadId, false);
-      const sessionBgTasks = getSessionBackgroundTasks(activeRow, threadDetail);
-      const isThreadActivelyWorking = isSessionActivelyRunning(prefs.selectedThreadId);
-      const turnsHtml = messages
-        .map((m, msgIdx) => {
-          const isUser = m.role === 'user';
-          const isLastTurn = msgIdx === messages.length - 1;
-          const turnIdKey = String(m.id || `turn-${msgIdx}`);
-
-          if (m.role === 'checkpoint') {
-            const cpKey = `${turnIdKey}:checkpoint`;
-            const isCpOpen = Boolean(savedOpenMap && savedOpenMap.get(cpKey) === true);
-            const cpPreview = cleanCheckpointPreview(m.text);
-            return `
-              <details class="vs-checkpoint-divider" data-turn-anchor="${esc(turnIdKey)}" data-chat-detail-key="${esc(cpKey)}" data-rendered-open="${isCpOpen ? '1' : '0'}"${isCpOpen ? ' open' : ''}>
-                <summary class="vs-checkpoint-summary">
-                  <span class="vs-checkpoint-pill">
-                    <span class="vs-compact-badge"><svg class="vs-compact-scissors" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4.5" cy="4.5" r="2"/><circle cx="4.5" cy="11.5" r="2"/><path d="M13.5 3.5L6.2 10.2M6.2 5.8l7.3 6.7"/></svg><span>compact</span></span>
-                    <span class="vs-checkpoint-topic">${esc(cpPreview)}</span>
-                    <span class="vs-thought-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>
-                  </span>
-                </summary>
-                <div class="vs-checkpoint-body turn-text md-rich">${formatTurnMarkdown(m.text || 'Context compacted.')}</div>
-              </details>
-            `;
-          }
-
-          if (isUser) {
-            return `
-              <div class="turn-bubble user" data-turn-anchor="${esc(turnIdKey)}">
-                ${renderUserTurnContentHtml(m.text || '', turnIdKey, m.createdAt || '', savedOpenMap)}
-              </div>
-            `;
-          }
-
-          const toolCalls = Array.isArray(m.toolCalls) ? m.toolCalls : [];
-          const stepToolCalls = toolCalls.filter((t) => t && t.kind !== 'subagent');
-          const subagentsHtml = renderInlineSubagentsHtml(
-            toolCalls,
-            sessionBgTasks,
-            prefs.selectedThreadId,
-            provKey
-          );
-          const toolCount = Number(m.totalTurnTools || stepToolCalls.length);
-          const editTools = stepToolCalls.filter((t) => t.kind === 'edit' || t.kind === 'write');
-          const readTools = stepToolCalls.filter((t) => t.kind === 'read');
-          const cmdTools = stepToolCalls.filter((t) => t.kind === 'command' || t.kind === 'cmd');
-          const searchTools = stepToolCalls.filter((t) => t.kind === 'search');
-          const changedFilesSet = new Set(
-            editTools.map((t) => t.relPath || t.file || t.summary).filter(Boolean)
-          );
-          const filesChangedCount = changedFilesSet.size || editTools.length;
-          const totalAdded = editTools.reduce((acc, t) => acc + Number(t.addedLines || 0), 0);
-          const totalRemoved = editTools.reduce((acc, t) => acc + Number(t.removedLines || 0), 0);
-
-          const summaryHtmlParts = [];
-          const lastTool = stepToolCalls[stepToolCalls.length - 1];
-          if (filesChangedCount > 0) {
-            const diffHtml =
-              totalAdded > 0 || totalRemoved > 0
-                ? ` <span class="tabular"><span class="diff-add">+${totalAdded}</span> <span class="diff-del">-${totalRemoved}</span></span>`
-                : '';
-            summaryHtmlParts.push(
-              `<span>${filesChangedCount} ${filesChangedCount === 1 ? 'file' : 'files'} changed${diffHtml}</span>`
-            );
-          } else if (readTools.length > 0) {
-            summaryHtmlParts.push(
-              `<span>Analyzed ${readTools.length} ${readTools.length === 1 ? 'file' : 'files'}</span>`
-            );
-          }
-          if (cmdTools.length > 0 && filesChangedCount === 0) {
-            summaryHtmlParts.push(
-              `<span>${cmdTools.length} ${cmdTools.length === 1 ? 'command' : 'commands'}</span>`
-            );
-          }
-          summaryHtmlParts.push(
-            `<span>${toolCount} ${toolCount === 1 ? 'step' : 'steps'}</span>`
-          );
-          const summaryLabelHtml = `<span class="tools-summary-left">${summaryHtmlParts.join(' <span style="opacity:0.45">·</span> ')}</span><span class="tools-summary-chevron" aria-hidden="true">${CHEVRON_DOWN_SVG}</span>`;
-
-          const activeKindFilter = stepKindFilterByTurnKey.get(turnIdKey) || 'all';
-          const filterPills = [];
-          if (stepToolCalls.length >= 2) {
-            filterPills.push({ key: 'all', label: `All (${stepToolCalls.length})` });
-            if (editTools.length > 0) filterPills.push({ key: 'edit', label: `Edits (${editTools.length})` });
-            if (readTools.length > 0) filterPills.push({ key: 'read', label: `Reads (${readTools.length})` });
-            if (cmdTools.length > 0) filterPills.push({ key: 'cmd', label: `Cmds (${cmdTools.length})` });
-            if (searchTools.length > 0) filterPills.push({ key: 'search', label: `Search (${searchTools.length})` });
-          }
-          const filterBarHtml =
-            filterPills.length > 2
-              ? `<div class="code-steps-filters">${filterPills
-                  .map(
-                    (fp) =>
-                      `<button type="button" class="ide-step-filter-pill${activeKindFilter === fp.key ? ' is-active' : ''}" data-step-kind-filter="${esc(fp.key)}" data-step-turn-key="${esc(turnIdKey)}">${esc(fp.label)}</button>`
-                  )
-                  .join('')}</div>`
-              : '<span></span>';
-
-          const allStepsSavedOpen =
-            stepToolCalls.length >= 2 &&
-            Boolean(savedOpenMap) &&
-            stepToolCalls.every((_, sIdx) => savedOpenMap.get(`${turnIdKey}:step:${sIdx}`) === true);
-          const stepsToolbarHtml =
-            stepToolCalls.length >= 2
-              ? `<div class="code-steps-toolbar">${filterBarHtml}<button type="button" class="ide-steps-toggle-all" data-toggle-all-steps="1">${allStepsSavedOpen ? 'Collapse all' : 'Expand all'}</button></div>`
-              : '';
-          const toolCardsHtml = stepToolCalls.length
-            ? `<div class="code-steps-stack" data-steps-stack-turn="${esc(turnIdKey)}">${stepsToolbarHtml}${stepToolCalls.map((tc, sIdx) => renderToolCallCardHtml(tc, `${turnIdKey}:step:${sIdx}`, savedOpenMap, activeKindFilter)).join('')}</div>`
-            : '';
-
-          const artifacts = Array.isArray(m.artifacts) ? m.artifacts : [];
-          const artifactsHtml = artifacts
-            .map((art, aIdx) => {
-              const artKey = `${turnIdKey}:art:${aIdx}`;
-              const isArtOpen = Boolean(savedOpenMap && savedOpenMap.get(artKey) === true);
-              return `
-                <details class="vs-artifact-card" data-chat-detail-key="${esc(artKey)}" data-rendered-open="${isArtOpen ? '1' : '0'}"${isArtOpen ? ' open' : ''}>
-                  <summary class="vs-artifact-summary">
-                    <div class="vs-artifact-head">
-                      <svg class="vs-artifact-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M2 3.5A1.5 1.5 0 0 1 3.5 2H7a1.5 1.5 0 0 1 1.5 1.5v10A1.5 1.5 0 0 0 7 12H3.5A1.5 1.5 0 0 1 2 10.5v-7z"/>
-                        <path d="M14 3.5A1.5 1.5 0 0 0 12.5 2H9a1.5 1.5 0 0 0-1.5 1.5v10A1.5 1.5 0 0 1 9 12h3.5a1.5 1.5 0 0 0 1.5-1.5v-7z"/>
-                      </svg>
-                      <span>${esc(art.title || 'Walkthrough')}</span>
-                    </div>
-                    ${art.summary ? `<div class="vs-artifact-desc">${formatTurnMarkdown(art.summary)}</div>` : ''}
-                  </summary>
-                  ${art.content ? `<div class="vs-artifact-body turn-text md-rich">${formatTurnMarkdown(art.content)}</div>` : ''}
-                </details>
-              `;
-            })
-            .join('');
-
-          const timeLabel = m.createdAt ? timeAgo(Date.parse(m.createdAt)) : '';
-
-          const turnQuestionsAlreadyServerAnswered =
-            Array.isArray(m.questions) && m.questions.length > 0 && m.questions.some((q) => Boolean(q?.answered));
-          const effectiveTurnApproval =
-            isLastTurn && !turnQuestionsAlreadyServerAnswered ? matchingQuestionApproval : null;
-          const { questions: turnQuestions, cleanedText } = resolveQuestionsForTurn(
-            m,
-            effectiveTurnApproval
-          );
-          const hasTurnQuestions = turnQuestions.length > 0;
-          const turnAnsweredState = hasTurnQuestions
-            ? lookupAnsweredQuestionState({
-                sessionId: prefs.selectedThreadId,
-                approvalId: effectiveTurnApproval?.approvalId || '',
-                turnId: turnIdKey,
-                questions: turnQuestions,
-                isLastTurn
-              })
-            : null;
-          if (isLastTurn && hasTurnQuestions && !turnAnsweredState?.answered) {
-            questionRenderedInTurn = true;
-          }
-
-          const toolsKey = `${turnIdKey}:tools`;
-          const defaultToolsOpen = false;
-          const isToolsOpen =
-            savedOpenMap && savedOpenMap.has(toolsKey)
-              ? savedOpenMap.get(toolsKey)
-              : defaultToolsOpen;
-          const toolsPanelCls =
-            cleanedText || hasTurnQuestions ? 'tools-details' : 'tools-details active-tools-panel';
-
-          const changedMap = new Map();
-          for (const et of editTools) {
-            const fp = String(et.relPath || et.file || '').split('#')[0].trim();
-            if (!fp) continue;
-            const k = fp.replace(/\\/g, '/').toLowerCase();
-            const prev = changedMap.get(k);
-            changedMap.set(k, {
-              target: fp,
-              base: fp.split(/[\\/]/).pop() || fp,
-              added: Number(prev?.added || 0) + Number(et.addedLines ?? et.added ?? 0),
-              removed: Number(prev?.removed || 0) + Number(et.removedLines ?? et.removed ?? 0)
-            });
-          }
-          const changedChips = Array.from(changedMap.values()).slice(0, 6);
-          const isTurnActivelyWorking = Boolean(isLastTurn && isThreadActivelyWorking && lastTool);
-          const changeSetStripHtml =
-            changedChips.length > 0
-              ? `<div class="turn-changeset-strip">
-                  <div class="turn-cs-files"><span class="turn-cs-kicker">Changed</span>${changedChips
-                    .map(
-                      (cf) =>
-                        `<button type="button" class="turn-cs-chip" data-preview-file="${esc(cf.target)}" data-preview-mode="diff"><span>${esc(cf.base)}</span>${cf.added > 0 ? `<span class="turn-cs-add tabular">+${cf.added}</span>` : ''}${cf.removed > 0 ? `<span class="turn-cs-del tabular">-${cf.removed}</span>` : ''}</button>`
-                    )
-                    .join('')}</div>
-                  ${
-                    isTurnActivelyWorking
-                      ? `<span class="turn-cs-live"><span class="turn-cs-pulse"></span><span>${esc(lastTool.label || 'Running')} ${esc(lastTool.file || lastTool.summary || lastTool.command || '')}</span></span>`
-                      : ''
-                  }
-                </div>`
-              : '';
-
-          const toolsHtml = stepToolCalls.length
-            ? `${changeSetStripHtml}<details class="${toolsPanelCls}" data-chat-detail-key="${esc(toolsKey)}" data-rendered-open="${isToolsOpen ? '1' : '0'}"${isToolsOpen ? ' open' : ''}><summary>${summaryLabelHtml}</summary>${toolCardsHtml}</details>`
-            : '';
-
-          const isLiveStreamingTurn = Boolean(isLastTurn && m.isStreaming);
-          const liveAct =
-            isLastTurn && isThreadActivelyWorking
-              ? deriveClientLiveActivity(m, stepToolCalls, threadDetail, isThreadActivelyWorking)
-              : null;
-          const isLiveTraceExpanded = Boolean(
-            savedOpenMap?.get(`${turnIdKey}:think`) === true || savedOpenMap?.get(`${turnIdKey}:tools`) === true
-          );
-          const liveActivityHtml = liveAct ? renderLiveActivityBarHtml(liveAct, turnIdKey, isLiveTraceExpanded) : '';
-
-          const streamThinkHtml = renderCompactedThoughtHtml({
-            m,
-            turnIdKey,
-            isLastTurn,
-            isActivelyWorking: isThreadActivelyWorking,
-            cleanedText,
-            hasTurnQuestions,
-            savedOpenMap,
-            isStreamingTurn: isLiveStreamingTurn
-          });
-
-          const questionCardHtml = hasTurnQuestions
-            ? renderInteractiveQuestionCardHtml({
-                cardKey:
-                  isLastTurn && effectiveTurnApproval
-                    ? `q-chat-${prefs.selectedThreadId}-${effectiveTurnApproval.approvalId || 'active'}`
-                    : `q-turn-${prefs.selectedThreadId}-${turnIdKey}`,
-                sessionId: prefs.selectedThreadId,
-                provider: provKey,
-                approvalId:
-                  (isLastTurn && effectiveTurnApproval?.approvalId) || prefs.selectedThreadId,
-                turnId: turnIdKey,
-                stepIndex: effectiveTurnApproval?.stepIndex ?? null,
-                selector: (isLastTurn && effectiveTurnApproval?.selector) || '',
-                isLastTurn,
-                hasFollowingTurn: !isLastTurn,
-                answeredState: turnAnsweredState,
-                plainQuestionFallback:
-                  !effectiveTurnApproval && (!Array.isArray(m.questions) || m.questions.length === 0),
-                questions: turnQuestions
-              })
-            : '';
-
-          const liveHeadHtml = isLiveStreamingTurn
-            ? `<div class="stream-live-head"><span data-stream-status-lbl="1">Live Stream${m.deviceName ? ` · ${esc(m.deviceName)}` : ''}</span></div>`
-            : '';
-          const liveToolHtml = isLiveStreamingTurn
-            ? `<div class="live-tool-chip mono" data-stream-tool-slot="1" ${m.activeTool ? '' : 'hidden'}>${m.activeTool ? `${esc(m.activeTool)}` : ''}</div>`
-            : '';
-          const streamTextHtml = isLiveStreamingTurn
-            ? `<div class="turn-text md-rich" data-stream-text-body="1">${cleanedText ? formatTurnMarkdown(cleanedText) : ''}<span class="stream-cursor"></span></div>`
-            : cleanedText
-              ? `<div class="turn-text md-rich">${formatTurnMarkdown(cleanedText)}</div>`
-              : '';
-          const showTurnFoot = Boolean(timeLabel && !(liveAct && !cleanedText));
-
-          return `
-            <div class="turn-bubble assistant ${isLiveStreamingTurn ? 'is-streaming' : ''}${liveAct ? ' is-live-working' : ''}" data-turn-anchor="${esc(turnIdKey)}" ${isLiveStreamingTurn ? 'data-streaming-turn="1"' : ''}>
-              ${liveHeadHtml}
-              ${liveActivityHtml}
-              ${streamThinkHtml}
-              ${liveToolHtml}
-              ${subagentsHtml}
-              ${toolsHtml}
-              ${streamTextHtml}
-              ${artifactsHtml}
-              ${questionCardHtml}
-              ${showTurnFoot ? `<div class="turn-foot tabular">${esc(timeLabel)}</div>` : ''}
-            </div>
-          `;
-        })
-        .join('');
-
-      streamEl.innerHTML = turnsHtml + buildSessionApprovalHtml(questionRenderedInTurn);
-
-      if (
-        forceScroll ||
-        prefs.selectedThreadId !== lastRenderedThreadId ||
-        messages.length > lastRenderedMsgCount ||
-        wasNearBottom
-      ) {
-        streamEl.scrollTop = streamEl.scrollHeight;
-      }
-      lastRenderedThreadId = prefs.selectedThreadId;
-      lastRenderedMsgCount = messages.length;
-    }
-    updateComposerActionButton();
-  }
-
-  function renderFileChipHtml(rawLabel, rawTargetHref = '') {
-    const clean = String(rawLabel || '')
-      .trim()
-      .replace(/^`+|`+$/g, '');
-    const href = String(rawTargetHref || '').trim();
-    if (/^conversation:\/\//i.test(href)) {
-      const convId = href
-        .replace(/^conversation:\/\/+/i, '')
-        .replace(/[)\s]+$/g, '')
-        .trim();
-      return `<span class="md-file-chip is-clickable" role="button" tabindex="0" data-open-conv="${esc(convId)}"><span class="md-chip-ico">⇄</span><span>${esc(clean)}</span></span>`;
-    }
-
-    let ico = 'File';
-    let icoCls = '';
-    const extProbe = `${clean} ${href.split('?')[0]}`;
-    if (/\.md(#|$|\s)/i.test(extProbe)) {
-      ico = 'M↓';
-      icoCls = ' md';
-    } else if (/\.py(#|$|\s)/i.test(extProbe)) {
-      ico = 'py';
-      icoCls = ' py';
-    } else if (/\.(ts|tsx)(#|$|\s)/i.test(extProbe)) {
-      ico = 'TS';
-      icoCls = ' ts';
-    } else if (/\.(js|jsx|cjs|mjs)(#|$|\s)/i.test(extProbe)) {
-      ico = 'JS';
-      icoCls = ' js';
-    } else if (/\.cs(#|$|\s)/i.test(extProbe)) {
-      ico = 'C#';
-      icoCls = ' cs';
-    } else if (/\.(sh|ps1|bat|cmd)(#|$|\s)/i.test(extProbe)) {
-      ico = '>_';
-      icoCls = ' sh';
-    } else if (/\.json(#|$|\s)/i.test(extProbe)) {
-      ico = '{}';
-      icoCls = ' json';
-    } else if (/\.pdf(#|$|\s)/i.test(extProbe)) {
-      ico = 'PDF';
-      icoCls = ' pdf';
-    } else if (/\.(pptx|ppsx|pptm)(#|$|\s)/i.test(extProbe)) {
-      ico = 'PPT';
-      icoCls = ' ppt';
-    } else if (/\.(xlsx|xlsm|xls|xlsb|csv|tsv)(#|$|\s)/i.test(extProbe)) {
-      ico = 'XLS';
-      icoCls = ' xls';
-    } else if (/\.(docx?)(#|$|\s)/i.test(extProbe)) {
-      ico = 'DOC';
-      icoCls = ' doc';
-    } else if (/\.(html?|xhtml)(#|$|\s)/i.test(extProbe)) {
-      ico = 'HTML';
-      icoCls = ' html';
-    } else if (/\.(css|svg)(#|$|\s)/i.test(extProbe)) {
-      ico = '<>';
-      icoCls = ' css';
-    }
-
-    let previewTarget = '';
-    if (/^file:\/\//i.test(href)) {
-      const stripped = href.replace(/^file:\/\/\/?/i, '').replace(/[)\s]+$/g, '');
-      try {
-        previewTarget = decodeURIComponent(stripped);
-      } catch {
-        previewTarget = stripped;
-      }
-    } else if (href) {
-      previewTarget = href;
-    } else if (
-      /\.(md|py|js|jsx|ts|tsx|cjs|mjs|json|css|html?|xhtml|svg|ps1|sh|bat|cmd|cs|sql|yml|yaml|toml|xml|pdf|pptx|ppsx|pptm|xlsx|xlsm|xls|xlsb|csv|tsv|docx?|png|jpe?g|webp)(#L?\d+(?:-L?\d+)?|:\d+(?:-\d+)?|$)/i.test(
-        clean
-      )
-    ) {
-      previewTarget = clean;
-    }
-
-    if (previewTarget) {
-      return `<span class="md-file-chip is-clickable" role="button" tabindex="0" data-preview-file="${esc(previewTarget)}"><span class="md-chip-ico${icoCls}">${ico}</span><span>${esc(clean)}</span></span>`;
-    }
-    return `<span class="md-file-chip"><span class="md-chip-ico${icoCls}">${ico}</span><span>${esc(clean)}</span></span>`;
-  }
-
-  function formatTurnMarkdown(rawText) {
-    if (!rawText) return '';
-    let src = String(rawText)
-      .replace(/\r\n/g, '\n')
-      .replace(/<truncated\s+\d+\s+bytes>/gi, '…');
-
-    const codeBlocks = [];
-    src = src.replace(/```(\w*)\n([\s\S]*?)```/g, (_, _lang, code) => {
-      const idx = codeBlocks.length;
-      codeBlocks.push(`<pre><code>${esc(code.replace(/\n$/, ''))}</code></pre>`);
-      return `\n\x00CODEBLOCK_${idx}\x00\n`;
-    });
-
-    const chips = [];
-    const pushChip = (label, targetHref = '') => {
-      const idx = chips.length;
-      chips.push(renderFileChipHtml(label, targetHref));
-      return `\x00CHIP_${idx}\x00`;
-    };
-
-    // Convert [label](file:///...) or [`label`](file:///...) or [label](conversation://...) (even if truncated mid-URL) into VS Code file chips
-    src = src.replace(
-      /\[`?([^`\]\n]+)`?\]\(((?:file|conversation):\/\/[^)\s]*)\)?/gi,
-      (_, label, targetUrl) => pushChip(label, targetUrl)
-    );
-    // Convert any bare file:/// URLs into compact basename chips
-    src = src.replace(/(^|[\s(])file:\/\/\/([^\s)]+)/gi, (_, prefix, rawPath) => {
-      let base = rawPath;
-      try {
-        base = decodeURIComponent(rawPath).split(/[\\/]/).pop() || rawPath;
-      } catch {
-        base = rawPath.split(/[\\/]/).pop() || rawPath;
-      }
-      return `${prefix}${pushChip(base, `file:///${rawPath}`)}`;
-    });
-
-    const inlineCodes = [];
-    src = src.replace(/`([^`\n]+)`/g, (_, code) => {
-      const trimmedCode = String(code || '').trim();
-      if (
-        !/[\s"'`<>|;&$]/.test(trimmedCode) &&
-        /\.(html?|xhtml|pdf|pptx|ppsx|pptm|xlsx|xlsm|xls|xlsb|csv|tsv|docx?)(#L?\d+(?:-L?\d+)?|:\d+(?:-\d+)?)?$/i.test(
-          trimmedCode
-        )
-      ) {
-        return pushChip(trimmedCode, trimmedCode);
-      }
-      const idx = inlineCodes.length;
-      inlineCodes.push(`<code class="md-inline-code">${esc(code)}</code>`);
-      return `\x00INLINECODE_${idx}\x00`;
-    });
-
-    // Convert bare deliverable filenames (e.g. "open aeg_clerk_assistant_prototype.html.") into clickable chips
-    src = src.replace(
-      /(^|[\s(])(?!https?:\/\/|file:\/\/\/)([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*\.(?:html?|xhtml|pdf|pptx|ppsx|pptm|xlsx|xlsm|xls|xlsb))(?=$|[\s.,;:!?)\n])/gi,
-      (_, prefix, fileName) => `${prefix}${pushChip(fileName, fileName)}`
-    );
-
-    const formatInline = (lineStr) => {
-      let s = esc(lineStr);
-      s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
-      s = s.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s.,;:!?)]|$)/g, '$1<em>$2</em>');
-      s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (full, labelHtml, rawHref) => {
-        const cleanHref = String(rawHref || '')
-          .replace(/\x00(?:INLINECODE|CHIP)_\d+\x00/g, '')
-          .replace(/&amp;/g, '&')
-          .trim();
-        if (!/^(https?:|mailto:)/i.test(cleanHref)) {
-          return labelHtml;
-        }
-        return `<a href="${esc(cleanHref)}" target="_blank" rel="noopener noreferrer">${labelHtml}</a>`;
-      });
-      s = s.replace(/\x00INLINECODE_(\d+)\x00/g, (_, i) => inlineCodes[Number(i)] || '');
-      s = s.replace(/\x00CHIP_(\d+)\x00/g, (_, i) => chips[Number(i)] || '');
-      return s;
-    };
-
-    const lines = src.split('\n');
-    const out = [];
-    let paraBuf = [];
-    const flushPara = () => {
-      if (!paraBuf.length) return;
-      out.push(`<p class="md-p">${paraBuf.join('<br>')}</p>`);
-      paraBuf = [];
-    };
-
-    const splitTableRow = (rowLine) =>
-      rowLine
-        .trim()
-        .replace(/^\||\|$/g, '')
-        .split('|')
-        .map((c) => formatInline(c.trim()));
-
-    for (let i = 0; i < lines.length; i++) {
-      const rawLine = lines[i];
-      const trimmed = rawLine.trim();
-
-      if (!trimmed) {
-        flushPara();
-        continue;
-      }
-
-      const cbMatch = trimmed.match(/^\x00CODEBLOCK_(\d+)\x00$/);
-      if (cbMatch) {
-        flushPara();
-        out.push(codeBlocks[Number(cbMatch[1])] || '');
-        continue;
-      }
-
-      if (/^(?:---|\*\*\*|___)$/.test(trimmed)) {
-        flushPara();
-        out.push('<hr class="md-hr">');
-        continue;
-      }
-
-      const hMatch = trimmed.match(/^(#{1,4})\s+(.+)$/);
-      if (hMatch) {
-        flushPara();
-        const lvl = hMatch[1].length;
-        const cls = lvl <= 3 ? 'md-h3' : 'md-h4';
-        const tag = lvl <= 3 ? 'h3' : 'h4';
-        out.push(`<${tag} class="${cls}">${formatInline(hMatch[2])}</${tag}>`);
-        continue;
-      }
-
-      // Markdown table detection
-      if (
-        trimmed.includes('|') &&
-        i + 1 < lines.length &&
-        /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1]) &&
-        lines[i + 1].includes('-')
-      ) {
-        flushPara();
-        const headers = splitTableRow(trimmed);
-        i += 2; // skip header + separator
-        const bodyRows = [];
-        while (i < lines.length && lines[i].trim().includes('|')) {
-          bodyRows.push(splitTableRow(lines[i]));
-          i++;
-        }
-        i--; // step back so outer loop increments properly
-        const thHtml = headers.map((h) => `<th>${h}</th>`).join('');
-        const tbHtml = bodyRows
-          .map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`)
-          .join('');
-        out.push(
-          `<div class="md-table-wrap"><table class="md-table"><thead><tr>${thHtml}</tr></thead><tbody>${tbHtml}</tbody></table></div>`
-        );
-        continue;
-      }
-
-      const ulMatch = rawLine.match(/^(\s*)[-*•]\s+(.+)$/);
-      if (ulMatch) {
-        flushPara();
-        const isNested = (ulMatch[1] || '').length >= 2;
-        out.push(
-          `<div class="md-list-item${isNested ? ' nested' : ''}"><span class="md-bullet">•</span><div class="md-list-body">${formatInline(ulMatch[2])}</div></div>`
-        );
-        continue;
-      }
-
-      const olMatch = rawLine.match(/^(\s*)(\d+\.)\s+(.+)$/);
-      if (olMatch) {
-        flushPara();
-        const isNested = (olMatch[1] || '').length >= 2;
-        out.push(
-          `<div class="md-list-item${isNested ? ' nested' : ''}"><span class="md-bullet tabular">${esc(olMatch[2])}</span><div class="md-list-body">${formatInline(olMatch[3])}</div></div>`
-        );
-        continue;
-      }
-
-      paraBuf.push(formatInline(trimmed));
-    }
-    flushPara();
-
-    return out.join('');
-  }
-
-  function renderContextPopover(ctx) {
-    const sumEl = $('ctx-meter-summary');
-    const barEl = $('ctx-stacked-bar');
-    const listEl = $('ctx-breakdown-list');
-    if (!sumEl || !barEl || !listEl) return;
-
-    const overrun = Math.max(0, Number(ctx.usedTokens || 0) - Number(ctx.limitTokens || 0));
-    const rem = Math.max(
-      0,
-      Number.isFinite(Number(ctx.remainingTokens))
-        ? Number(ctx.remainingTokens)
-        : Number(ctx.limitTokens || 0) - Number(ctx.usedTokens || 0)
-    );
-    sumEl.innerHTML =
-      overrun > 0
-        ? `<strong>${fmtInt(ctx.usedTokens)}</strong> tokens used of <strong>${fmtInt(ctx.limitTokens)}</strong> (${ctx.pct}%) · <span>+${fmtInt(overrun)} over soft target (auto-compacts next turn)</span>`
-        : `<strong>${fmtInt(ctx.usedTokens)}</strong> tokens used of <strong>${fmtInt(ctx.limitTokens)}</strong> (${ctx.pct}%) · <span>${fmtInt(rem)} remaining</span>`;
-    const bannerEl = $('ctx-overrun-banner');
-    if (bannerEl) {
-      if (ctx.isSoftOverrun && Number(ctx.hardMaxTokens || 0) > Number(ctx.limitTokens || 0)) {
-        bannerEl.textContent = `Soft compaction target ${fmtCompact(ctx.limitTokens)} · Hard context ceiling ${fmtCompact(ctx.hardMaxTokens)} (+${fmtInt(overrun)} headroom before wall)`;
-        bannerEl.hidden = false;
-      } else {
-        bannerEl.textContent = '';
-        bannerEl.hidden = true;
-      }
-    }
-    const bd = Array.isArray(ctx.breakdown) ? ctx.breakdown : [];
-    const totalBd = Math.max(1, bd.reduce((acc, item) => acc + Number(item.tokens || 0), 0));
-    const safeCssColor = (c) => (/^(#[0-9a-fA-F]{3,8}|[a-zA-Z]+)$/.test(String(c || '').trim()) ? String(c).trim() : '#D9A54A');
-    barEl.innerHTML = bd
-      .map((item) => {
-        const w = Math.max(4, Math.round((Number(item.tokens || 0) / totalBd) * 100));
-        return `<div style="width:${w}%;background:${safeCssColor(item.color)}" aria-label="${esc(item.label)}"></div>`;
-      })
-      .join('');
-    listEl.innerHTML = bd
-      .map(
-        (item) => `
-        <div class="ctx-bd-item">
-          <span style="display:flex;align-items:center;gap:6px">
-            <span style="width:8px;height:8px;border-radius:50%;background:${safeCssColor(item.color)}"></span>
-            <span>${esc(item.label)}</span>
-          </span>
-          <strong>${fmtCompact(item.tokens)}</strong>
-        </div>
-      `
-      )
-      .join('');
-  }
-
-  // Unsaved work per PC, at the top of Workspaces (the evening digest's unsaved-work notification opens here).
-  // Each PC: every unsaved git working folder (repo, branch, owner, idle time), folders idle past the report's
-  // threshold (24 h) marked amber; a PC with none shows one quiet "all saved" line; a report older than 2 h
-  // says when it was last checked.
-  const uwExpandedPcs = new Set();
-  const UW_VISIBLE_ROWS = 8;
-  function fmtUnsavedIdle(h) {
-    if (h == null || !Number.isFinite(Number(h))) return 'idle ?';
-    const n = Number(h);
-    if (n < 1) return 'idle <1 h';
-    if (n < 48) return `idle ${Math.round(n)} h`;
-    return `idle ${Math.round(n / 24)} d`;
-  }
-  function fmtStalledAge(h) {
-    if (h == null || !Number.isFinite(Number(h))) return '? h old';
-    const n = Number(h);
-    if (n < 1) return '<1 h old';
-    if (n < 48) return `${Math.round(n)} h old`;
-    return `${Math.round(n / 24)} d old`;
-  }
-  function buildUnsavedWorkPanelHtml(now = Date.now()) {
-    const pcs = getUnifiedFleetDevices()
-      .map((d) => ({ d, uw: d && d.unsavedWork ? sanitizeFleetUnsavedWork(d.unsavedWork, now, { age: true }) : null }))
-      .filter((x) => x.uw);
-    if (!pcs.length) return '';
-    pcs.sort(
-      (a, b) =>
-        b.uw.staleCount - a.uw.staleCount ||
-        b.uw.unsavedCount - a.uw.unsavedCount ||
-        String(a.d.name || a.d.id).localeCompare(String(b.d.name || b.d.id))
-    );
-    // Collect and deduplicate unshipped remote origin/wt/* branches across all hosts (shared GitHub remote).
-    const stalledMap = new Map();
-    let maxCutoffHours = 24;
-    for (const { d, uw } of pcs) {
-      const sw = uw && uw.stalledWt;
-      if (!sw || !Array.isArray(sw.items)) continue;
-      if (Number.isFinite(sw.cutoffHours)) maxCutoffHours = Math.max(maxCutoffHours, sw.cutoffHours);
-      const checked = Number(sw.checkedAt || uw.checkedAt || 0);
-      const reporter = String(d.name || d.hostname || d.id || 'PC');
-      for (const it of sw.items) {
-        const key = `${it.repo}::${it.branch}`;
-        const prev = stalledMap.get(key);
-        if (!prev) {
-          stalledMap.set(key, { ...it, checkedAt: checked, reporters: [reporter] });
-        } else {
-          const reps = prev.reporters.includes(reporter) ? prev.reporters : prev.reporters.concat(reporter);
-          if (checked > prev.checkedAt || (checked === prev.checkedAt && Number(it.ageHours || 0) > Number(prev.ageHours || 0))) {
-            stalledMap.set(key, { ...it, checkedAt: checked, reporters: reps });
-          } else {
-            prev.reporters = reps;
-          }
-        }
-      }
-    }
-    const stalledItems = Array.from(stalledMap.values()).sort(
-      (a, b) => Number(b.ageHours || 0) - Number(a.ageHours || 0) || a.repo.localeCompare(b.repo) || a.branch.localeCompare(b.branch)
-    );
-    const totalUnsaved = pcs.reduce((s, x) => s + x.uw.unsavedCount, 0);
-    const totalStale = pcs.reduce((s, x) => s + x.uw.staleCount, 0);
-    const pcsWithWork = pcs.filter((x) => x.uw.unsavedCount > 0).length;
-    const thr = Math.round(pcs[0].uw.staleHours || 24);
-    const stalledHeadSuffix = stalledItems.length > 0 ? ` · ${stalledItems.length} stalled wt/*` : '';
-    const headTxt =
-      totalUnsaved === 0
-        ? `All saved on ${pcs.length} PC${pcs.length === 1 ? '' : 's'}${stalledHeadSuffix}`
-        : `${totalUnsaved} folder${totalUnsaved === 1 ? '' : 's'} on ${pcsWithWork} PC${pcsWithWork === 1 ? '' : 's'}` +
-          (totalStale > 0 ? ` · ${totalStale} idle ${thr} h+` : '') +
-          stalledHeadSuffix;
-    const itemHtml = (it, hrs) => `
-      <li class="uw-item${it.stale ? ' is-stale' : ''}">
-        <div class="uw-line1">
-          <span class="uw-repo">${esc(it.repo)}</span>
-          <span class="uw-branch mono">⎇ ${esc(it.branch)}</span>
-          ${it.stale ? `<span class="uw-stale-pill tabular">${hrs} h+</span>` : ''}
-          <span class="uw-idle tabular">${esc(fmtUnsavedIdle(it.idleHours))}</span>
-        </div>
-        <div class="uw-line2">${esc(it.where || 'owner unknown')}${it.why ? ` · ${esc(it.why)}` : ''}</div>
-        ${it.path ? `<div class="uw-path mono">${esc(it.path)}</div>` : ''}
-      </li>`;
-    const pcHtml = pcs
-      .map(({ d, uw }) => {
-        const pcId = String(d.id || '');
-        const name = String(d.name || d.hostname || d.id || 'PC');
-        const hrs = Math.round(uw.staleHours || 24);
-        const ageMs = Math.max(0, now - uw.checkedAt);
-        const old = ageMs > UNSAVED_WORK_OLD_AFTER_MS;
-        const checkedHtml = old
-          ? `<span class="uw-checked is-old tabular">last checked ${esc(timeAgo(uw.checkedAt))}</span>`
-          : '';
-        const uncheckedTxt = uw.unchecked > 0 ? ` · ${uw.unchecked} not checked` : '';
-        if (uw.unsavedCount === 0) {
-          return `
-          <div class="uw-pc is-clean" data-uw-pc="${esc(pcId)}">
-            <div class="uw-pc-head">
-              <span class="uw-pc-name">${esc(name)}</span>
-              <span class="uw-pc-meta">all saved${esc(uncheckedTxt)}</span>
-              ${checkedHtml}
-            </div>
-          </div>`;
-        }
-        const shown = uw.items.slice(0, UW_VISIBLE_ROWS);
-        const rest = uw.items.slice(UW_VISIBLE_ROWS);
-        const notSent = Math.max(0, uw.unsavedCount - uw.items.length);
-        const meta =
-          `${uw.unsavedCount} unsaved` + (uw.staleCount > 0 ? ` · ${uw.staleCount} idle ${hrs} h+` : '') + uncheckedTxt;
-        return `
-          <div class="uw-pc${uw.staleCount > 0 ? ' has-stale' : ''}" data-uw-pc="${esc(pcId)}">
-            <div class="uw-pc-head">
-              <span class="uw-pc-name">${esc(name)}</span>
-              <span class="uw-pc-meta tabular">${esc(meta)}</span>
-              ${checkedHtml}
-            </div>
-            <ul class="uw-list">${shown.map((it) => itemHtml(it, hrs)).join('')}</ul>
-            ${
-              rest.length
-                ? `<details class="uw-more" data-uw-more="${esc(pcId)}"${uwExpandedPcs.has(pcId) ? ' open' : ''}>
-                    <summary class="uw-more-sum">Show ${rest.length} more</summary>
-                    <ul class="uw-list">${rest.map((it) => itemHtml(it, hrs)).join('')}</ul>
-                  </details>`
-                : ''
-            }
-            ${notSent > 0 ? `<div class="uw-overflow tabular">+${notSent} more on ${esc(name)} (not listed)</div>` : ''}
-          </div>`;
-      })
-      .join('');
-    const stalledItemHtml = (it) => `
-      <li class="uw-item is-stale uw-stalled-item">
-        <div class="uw-line1">
-          <span class="uw-repo">${esc(it.repo)}</span>
-          <span class="uw-branch mono">⎇ ${esc(it.branch)}</span>
-          ${it.ahead > 0 ? `<span class="uw-stale-pill tabular">+${it.ahead}</span>` : ''}
-          <span class="uw-idle tabular">${esc(fmtStalledAge(it.ageHours))}</span>
-        </div>
-        <div class="uw-line2">${it.sha ? `<span class="mono">${esc(it.sha)}</span> · ` : ''}${esc(it.subject || 'unshipped commits')}</div>
-      </li>`;
-    const stalledShown = stalledItems.slice(0, UW_VISIBLE_ROWS);
-    const stalledRest = stalledItems.slice(UW_VISIBLE_ROWS);
-    const stalledSectionHtml = stalledItems.length
-      ? `
-      <div class="uw-stalled" id="uw-stalled-section">
-        <div class="uw-stalled-head">
-          <span class="eyebrow">Stalled wt/* Branches</span>
-          <span class="uw-pc-meta tabular">${stalledItems.length} unshipped · ${Math.round(maxCutoffHours)} h+</span>
-        </div>
-        <ul class="uw-list">${stalledShown.map(stalledItemHtml).join('')}</ul>
-        ${
-          stalledRest.length
-            ? `<details class="uw-more" data-uw-more="__stalled_wt__"${uwExpandedPcs.has('__stalled_wt__') ? ' open' : ''}>
-                <summary class="uw-more-sum">Show ${stalledRest.length} more</summary>
-                <ul class="uw-list">${stalledRest.map(stalledItemHtml).join('')}</ul>
-              </details>`
-            : ''
-        }
-      </div>`
-      : '';
-    return `
-      <div class="uw-head">
-        <span class="eyebrow">Unsaved Work</span>
-        <span class="uw-total tabular">${esc(headTxt)}</span>
-      </div>
-      <div class="uw-pcs">${pcHtml}</div>${stalledSectionHtml}`;
-  }
-  function renderUnsavedWorkPanel() {
-    const el = $('unsaved-work-panel');
-    if (!el) return;
-    const html = buildUnsavedWorkPanelHtml();
-    if (!html) {
-      el.hidden = true;
-      if (el.__uwHtml) {
-        el.innerHTML = '';
-        el.__uwHtml = '';
-      }
-      return;
-    }
-    el.hidden = false;
-    // Patch only when the content changed, so an open "Show N more" and the scroll position survive syncs.
-    if (el.__uwHtml !== html) {
-      el.innerHTML = html;
-      el.__uwHtml = html;
-    }
-    if (!el.__uwBound) {
-      el.__uwBound = true;
-      el.addEventListener(
-        'toggle',
-        (ev) => {
-          const det = ev.target;
-          const id = det && det.dataset ? det.dataset.uwMore : '';
-          if (!id) return;
-          if (det.open) uwExpandedPcs.add(id);
-          else uwExpandedPcs.delete(id);
-          el.__uwHtml = '';
-        },
-        true
-      );
-    }
-  }
-
-  // VIEW 4: Render Workspaces & Git Inspector
-  async function renderWorkspacesView() {
-    const listEl = $('repo-selector-list');
-    const detailEl = $('repo-detail-panel');
-    renderUnsavedWorkPanel();
-    if (!listEl || !detailEl) return;
-
-    const workspaces = appState?.workspaces || [];
-    if (!workspaces.length) {
-      listEl.innerHTML = `<div class="meta-timestamp">Loading repositories…</div>`;
-      return;
-    }
-
-    if (!workspaces.some((w) => w.id === prefs.selectedRepoId)) {
-      const preferredDefault =
-        workspaces.find((w) => w && !w.retired && !RETIRED_WORKSPACE_IDS.has(w.id)) || workspaces[0];
-      prefs.selectedRepoId = preferredDefault.id;
-    }
-
-    listEl.innerHTML = workspaces
-      .map(
-        (w) => `
-        <button type="button" class="repo-item-btn ${w.id === prefs.selectedRepoId ? 'active' : ''}" data-select-repo="${esc(w.id)}">
-          <div>
-            <div style="font-weight:700;font-size:13px">${esc(w.name)}</div>
-            <div class="meta-timestamp tabular">⎇ ${esc(w.branch || 'main')}</div>
-          </div>
-          <span class="tag-pill tabular" style="color:${w.dirtyCount > 0 ? 'var(--amber)' : 'var(--emerald)'}">
-            ${w.dirtyCount > 0 ? `${w.dirtyCount}Δ` : 'Clean'}
-          </span>
-        </button>
-      `
-      )
-      .join('');
-
-    const reqSeq = ++wsRenderSeq;
-    const requestedRepoId = prefs.selectedRepoId;
-    const fetched = await fetchWorkspaceDetail(requestedRepoId);
-    if (reqSeq !== wsRenderSeq || prefs.selectedRepoId !== requestedRepoId) return;
-    const repo =
-      fetched?.workspace ||
-      workspacesDetailCache[requestedRepoId] ||
-      workspaces.find((w) => w.id === requestedRepoId);
-
-    if (!repo) return;
-
-    const modFiles = repo.modifiedFiles || [];
-    const commits = repo.recentCommits || [];
-    const diffHtml = formatGitDiffHtml(repo.diffPatch || '');
-
-    detailEl.innerHTML = `
-      <div class="section-head">
-        <div>
-          <div class="eyebrow">${esc(repo.group || 'Repository')}</div>
-          <h2 class="section-title" style="font-size:18px">${esc(repo.name)} <span class="tag-pill tabular">⎇ ${esc(repo.branch)}</span></h2>
-          <div class="meta-timestamp mono">${esc(repo.path || '')}</div>
-        </div>
-        <button type="button" class="btn-brass-sm" data-launch-repo="${esc(repo.id)}" data-launch-name="${esc(repo.name)}">
-          + Prompt in Repo
-        </button>
-      </div>
-
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:14px;margin:14px 0">
-        <div class="pairing-card">
-          <div class="eyebrow" style="margin-bottom:6px">Working Tree (${modFiles.length} modified)</div>
-          ${
-            modFiles.length === 0
-              ? `<div class="meta-timestamp">Working tree is clean.</div>`
-              : modFiles
-                  .slice(0, 12)
-                  .map(
-                    (f) =>
-                      `<div class="mono" style="font-size:11.5px;padding:3px 0;display:flex;justify-content:space-between"><span>${esc(f.path)}</span><strong style="color:var(--amber)">${esc(f.status)}</strong></div>`
-                  )
-                  .join('')
-          }
-        </div>
-        <div class="pairing-card">
-          <div class="eyebrow" style="margin-bottom:6px">Recent Commits</div>
-          ${commits
-            .slice(0, 5)
-            .map(
-              (c) =>
-                `<div style="font-size:12px;padding:4px 0;border-bottom:1px solid var(--border-subtle)"><code style="color:var(--brass)">${esc(c.hash)}</code> ${esc(c.subject)} <span class="meta-timestamp">(${esc(c.relativeTime)})</span></div>`
-            )
-            .join('')}
-        </div>
-      </div>
-
-      <div class="eyebrow" style="margin:14px 0 6px">Git Diff Inspector</div>
-      <pre class="diff-viewer mono">${diffHtml || 'No uncommitted diff lines in working tree.'}</pre>
-    `;
-  }
-
-  function formatGitDiffHtml(patch) {
-    if (!patch) return '';
-    return patch
-      .split(/\r?\n/)
-      .slice(0, 260)
-      .map((line) => {
-        if (line.startsWith('+') && !line.startsWith('+++')) {
-          return `<span class="diff-line-add">${esc(line)}</span>`;
-        }
-        if (line.startsWith('-') && !line.startsWith('---')) {
-          return `<span class="diff-line-del">${esc(line)}</span>`;
-        }
-        if (line.startsWith('@@') || line.startsWith('diff --git')) {
-          return `<span class="diff-line-hdr">${esc(line)}</span>`;
-        }
-        return esc(line);
-      })
-      .join('\n');
-  }
-
-  // VIEW 5: Render Telemetry & Pairing
-  function renderAnalyticsView() {
-    const prov = prefs.telemetryProv || 'all';
-    const summaryObj = appState?.summaryByProvider?.[prov] || appState?.summary || {
-      today: { tokens: 0, turns: 0, sessions: 0, input: 0, cached: 0, output: 0 },
-      week: { tokens: 0, turns: 0, sessions: 0, input: 0, cached: 0, output: 0 },
-      days: []
-    };
-
-    const kpiGrid = $('telemetry-kpi-grid');
-    if (kpiGrid) {
-      kpiGrid.innerHTML = `
-        <div class="ledger-panel">
-          <div class="eyebrow">Today (5-Hour / Daily)</div>
-          <div class="hero-headline" style="color:var(--brass)">${fmtCompact(summaryObj.today?.tokens)} <span style="font-size:13px;color:var(--text-muted)">tokens</span></div>
-          <div class="meta-timestamp">${fmtInt(summaryObj.today?.turns)} turns · ${fmtInt(summaryObj.today?.sessions)} sessions</div>
-          <div class="meta-timestamp" style="margin-top:6px">In: ${fmtCompact(summaryObj.today?.input)} · Cache: ${fmtCompact(summaryObj.today?.cached)} · Out: ${fmtCompact(summaryObj.today?.output)}</div>
-        </div>
-        <div class="ledger-panel">
-          <div class="eyebrow">7-Day Usage</div>
-          <div class="hero-headline" style="color:var(--steel)">${fmtCompact(summaryObj.week?.tokens)} <span style="font-size:13px;color:var(--text-muted)">tokens</span></div>
-          <div class="meta-timestamp">${fmtInt(summaryObj.week?.turns)} turns · ${fmtInt(summaryObj.week?.sessions)} active sessions</div>
-          <div class="meta-timestamp" style="margin-top:6px">In: ${fmtCompact(summaryObj.week?.input)} · Cache: ${fmtCompact(summaryObj.week?.cached)} · Out: ${fmtCompact(summaryObj.week?.output)}</div>
-        </div>
-      `;
-    }
-
-    // 7-Day Bar Chart
-    const days = Array.isArray(summaryObj.days) ? summaryObj.days : [];
-    const maxTok = Math.max(1, ...days.map((d) => Number(d.tokens || 0)));
-    const chartStage = $('telemetry-chart-stage');
-    const chartLbl = $('chart-total-label');
-    if (chartLbl) {
-      chartLbl.textContent = `Peak day: ${fmtCompact(maxTok)} tokens`;
-    }
-    if (chartStage) {
-      chartStage.innerHTML = `
-        <div class="chart-bars tabular">
-          ${days
-            .map((d) => {
-              const hPct = Math.max(5, Math.round((Number(d.tokens || 0) / maxTok) * 100));
-              return `
-                <div class="chart-col">
-                  <span class="meta-timestamp" style="font-size:10.5px">${fmtCompact(d.tokens)}</span>
-                  <div class="chart-bar-wrap">
-                    <div class="chart-bar-fill" style="height:${hPct}%"></div>
-                  </div>
-                  <span style="font-size:11px;font-weight:600">${esc(d.label || d.key)}</span>
-                </div>
-              `;
-            })
-            .join('')}
-        </div>
-      `;
-    }
-
-    // Top Sessions Ledger Table
-    const topTable = $('telemetry-top-table');
-    if (topTable) {
-      const topList = (
-        Array.isArray(appState?.topSessions) && appState.topSessions.length
-          ? appState.topSessions
-          : appState?.rows || []
-      ).slice(0, 8);
-      topTable.innerHTML = `
-        <table class="ledger-table">
-          <thead>
-            <tr>
-              <th>Session</th>
-              <th>Provider</th>
-              <th>Workspace</th>
-              <th style="text-align:right">Activity</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${topList
-              .slice(0, 8)
-              .map(
-                (t) => `
-                <tr data-open-chat="${esc(t.id || '')}" style="cursor:pointer">
-                  <td><strong>${esc(t.title || 'Session')}</strong></td>
-                  <td>${t.provider === 'claude' ? 'Claude Code' : 'Antigravity'}</td>
-                  <td>${esc(t.workspaceLabel || t.folder || 'BHFIRMS')}</td>
-                  <td style="text-align:right">${t.totalTokens ? fmtCompact(t.totalTokens) + ' tok' : timeAgo(t.at || (t.updatedAt ? t.updatedAt * 1000 : 0))}</td>
-                </tr>
-              `
-              )
-              .join('')}
-          </tbody>
-        </table>
-      `;
-    }
-
-    // Web Push Notifications Settings Card
-    const pushPanel = $('push-settings-panel');
-    if (pushPanel) {
-      pushPanel.innerHTML = renderPushSettingsCardHtml();
-    }
-
-    // Pairing & Security Configuration (#16, #17.5, #30.2)
-    const pairingGrid = $('pairing-grid');
-    if (
-      pairingGrid &&
-      !(document.activeElement && pairingGrid.contains(document.activeElement) && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName))
-    ) {
-      if (localBridgeBase && !cachedPairingInfo) {
-        fetchPairingInfoFromBridge().then((info) => {
-          if (info && prefs.activeTab === 'analytics') renderAnalyticsView();
-        });
-      }
-      const conn = appState?.connection || {};
-      const lanUrl = conn.lanUrl || `http://127.0.0.1:${cloudCfg.port}/`;
-      const pwaUrl = conn.pwaUrl || 'https://theo.husseinbdeir.workers.dev/';
-      const hasPin = Boolean(
-        localStorage.getItem(STORAGE_KEYS.PIN_HASH) || localStorage.getItem(STORAGE_KEYS.PIN)
-      );
-      const isPaired = hasAnyPairingCredentials();
-
-      const fleetDevices = getUnifiedFleetDevices();
-      const effectiveEdgeUrl = prefs.edgeRelayUrl || discoveredEdgeUrl || '';
-      const liveCode =
-        activeGeneratedPairCode && Number(activeGeneratedPairCode.expiresAt || 0) > Date.now()
-          ? activeGeneratedPairCode
-          : null;
-
-      const hide3pSettings = isThirdPartyQuotaHidden();
-      pairingGrid.innerHTML = `
-        <div class="pairing-card claude-fleet-mode-card" id="settings-claude-mode-card">
-          <div class="eyebrow">Fleet Claude Permission Mode</div>
-          <p class="meta-timestamp" style="margin:6px 0">One tap switches Claude Code across every paired PC, phone CLI run, and open tab through THEO Store on Cloudflare. A PC that is offline picks up the new mode as soon as it reconnects.</p>
-          ${renderClaudeModeSelectorHtml('settings')}
-        </div>
-
-        <div class="pairing-card" id="settings-agy-3p-quota-card">
-          <div class="eyebrow">Antigravity Quota Display</div>
-          <p class="meta-timestamp" style="margin:6px 0">Show Gemini models together with the separate Claude &amp; GPT third-party quota pool, or hide the third-party pool across all THEO views.</p>
-          <div class="claude-mode-seg is-wide" role="group" aria-label="Antigravity third-party quota visibility">
-            <button type="button" class="claude-mode-seg-btn${!hide3pSettings ? ' is-active' : ''}" data-toggle-3p-quota="show" aria-pressed="${!hide3pSettings ? 'true' : 'false'}">Gemini + Claude &amp; GPT</button>
-            <button type="button" class="claude-mode-seg-btn${hide3pSettings ? ' is-active' : ''}" data-toggle-3p-quota="hide" aria-pressed="${hide3pSettings ? 'true' : 'false'}">Gemini Only</button>
-          </div>
-        </div>
-
-        <div class="pairing-card">
-          <div class="eyebrow">Fleet &amp; Device Pairing</div>
-          <p class="meta-timestamp" style="margin:6px 0">Zero secrets in git/bundle. Pair iOS Home Screen apps via 6-digit code, browsers via 1-tap hash link, or new PCs via the visual <strong>Set Up This PC</strong> app.</p>
-          <div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0">
-            ${
-              fleetDevices.length > 0
-                ? fleetDevices
-                    .map(
-                      (d) =>
-                        `<span class="sess-device-badge ${d.online ? 'is-online' : ''}">${d.online ? '●' : '◐'} ${esc(d.name || d.id)}${d.sessionCount ? ` (${d.sessionCount})` : ''}${renderFleetPcSetupPillHtml(d)}${renderFleetStalledWtPillHtml(d)}</span>`
-                    )
-                    .join('')
-                : `<span class="meta-timestamp">${isPaired ? 'Probing connected hosts…' : 'Not paired yet: enter 6-digit code or paste Pair Link below'}</span>`
-            }
-          </div>
-          ${
-            liveCode
-              ? `<div class="pair-code-live-banner mono">6-Digit Fleet Code: <strong>${esc(liveCode.formatted)}</strong> <span class="meta-timestamp">(10m single-use)</span></div>`
-              : ''
-          }
-          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-            <button type="button" class="btn-brass-sm" id="btn-gen-pair-code" aria-label="Generate 6-digit pairing code for iPhone or PC">6-Digit Pair Code</button>
-            <button type="button" class="btn-ghost-sm" id="btn-download-pc-setup" data-download-pc-setup="1" aria-label="Download double-clickable Windows PC Setup app with single-use 6-digit code">Download PC Setup</button>
-            <button type="button" class="btn-ghost-sm" id="btn-copy-mobile-pair" aria-label="Copy 1-tap mobile pairing URL">Copy Mobile Pair URL</button>
-          </div>
-          <label style="display:block;font-size:11.5px;margin-top:10px;color:var(--text-muted)">
-            Pair via 6-Digit Code (from PC):
-            <div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap">
-              <input type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="24" class="input-field mono" id="input-pair-six-code" style="flex:1;min-width:140px" value="" placeholder="e.g. 482-917">
-              <button type="button" class="btn-brass-sm" id="btn-claim-six-code">Connect Code</button>
-            </div>
-          </label>
-          <label style="display:block;font-size:11.5px;margin-top:10px;color:var(--text-muted)">
-            Or Paste <code>#pair=...</code> URL / Access Key:
-            <input type="text" class="input-field mono pin-masked" id="input-pair-token" value="" placeholder="${isPaired ? 'Paired (paste new link to rotate)' : 'Paste #pair=... link or 64-hex key'}" autocomplete="off" spellcheck="false">
-          </label>
-          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-            <button type="button" class="btn-ghost-sm" id="btn-apply-pair-token">Apply Pair Token</button>
-            <button type="button" class="btn-ghost-sm" id="btn-copy-edge-deploy" aria-label="Copy Cloudflare Worker deploy command">Copy Edge Deploy Cmd</button>
-          </div>
-          <label style="display:block;font-size:11.5px;margin-top:10px;color:var(--text-muted)">
-            Cloudflare Edge Relay URL (<code>wss://...</code>):
-            <input type="url" class="input-field mono" id="input-edge-relay-url" value="${esc(effectiveEdgeUrl)}" placeholder="wss://theo-edge-relay.husseinbdeir.workers.dev/ws">
-          </label>
-          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-            <button type="button" class="btn-ghost-sm" id="btn-save-edge-relay">Save Edge URL</button>
-          </div>
-        </div>
-
-        <div class="pairing-card">
-          <div class="eyebrow">Bridge Endpoints</div>
-          <p class="meta-timestamp" style="margin:6px 0">Loopback WebSocket (<code>127.0.0.1:4318/ws</code>), Cloudflare Edge WS, and Cloud Relay backstop.</p>
-          <div class="mono" style="font-size:11.5px;margin-top:8px">
-            <div><strong>Hosted PWA:</strong> ${esc(pwaUrl)}</div>
-            <div style="margin-top:4px"><strong>Local Bridge:</strong> ${esc(lanUrl)}</div>
-          </div>
-          <label style="display:block;font-size:11.5px;margin-top:10px;color:var(--text-muted)">
-            Custom Direct Bridge URL (optional opt-in LAN / Tunnel):
-            <input type="url" class="input-field mono" id="input-custom-bridge" value="${esc(prefs.customBridgeUrl || '')}" placeholder="http://127.0.0.1:4318">
-          </label>
-          <button type="button" class="btn-brass-sm" id="btn-save-bridge" style="margin-top:8px">Save &amp; Probe Bridge</button>
-        </div>
-
-        <div class="pairing-card">
-          <div class="eyebrow">Security &amp; Cache</div>
-          <p class="meta-timestamp" style="margin:6px 0">Protect remote mobile access with a SHA-256 4-digit PIN lock on launch.</p>
-          <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
-            <button type="button" class="btn-ghost-sm" id="btn-set-pin">${hasPin ? 'Change / Clear 4-Digit PIN' : 'Enable 4-Digit PIN Lock'}</button>
-            <a href="reset.html" class="btn-ghost-sm" style="text-decoration:none;display:inline-flex;align-items:center">Reset PWA Cache</a>
-          </div>
-          <div id="pin-inline-editor" class="pin-inline-editor" hidden>
-            ${
-              hasPin
-                ? `<label style="font-size:11.5px;color:var(--text-muted)">Current 4-digit PIN (required):<input type="text" inputmode="numeric" maxlength="4" class="input-field pin-masked" id="input-pin-current" placeholder="••••" autocomplete="off"></label>`
-                : ''
-            }
-            <label style="font-size:11.5px;color:var(--text-muted)">New 4-digit PIN ${hasPin ? '(leave empty to disable PIN)' : ''}:<input type="text" inputmode="numeric" maxlength="4" class="input-field pin-masked" id="input-pin-next" placeholder="4 digits" autocomplete="off"></label>
-            <div class="pin-editor-row">
-              <button type="button" class="btn-brass-sm" id="btn-pin-editor-save">Save PIN</button>
-              <button type="button" class="btn-ghost-sm" id="btn-pin-editor-cancel">Cancel</button>
-            </div>
-          </div>
-        </div>
-      `;
-    }
+    S.renderIdeSidebar();
   }
 
   function renderAll() {
     seedUncheckedTheoNotifications();
     updateAppBadgeCount(false);
-    updateConnectionBanner();
-    renderOutboxBadge();
-    renderPulseView();
-    renderSessionsView();
-    renderIdeSidebar();
-    syncAndRenderEditorTabs();
-    if (prefs.activeTab === 'chat') renderChatView();
-    if (prefs.activeTab === 'workspaces') renderWorkspacesView();
-    if (prefs.activeTab === 'analytics') renderAnalyticsView();
-  }
-
-  let cmdPaletteMode = 'default';
-  let composerAttachments = [];
-  let slashPopoverItems = [];
-  let slashPopoverActiveIdx = 0;
-  let slashPopoverTrigger = null;
-
-  const SLASH_COMMAND_CATALOG = [
-    { id: '/compact', label: '/compact', desc: 'Summarize context window & free tokens', kind: 'action', act: 'compact', baseWeight: 95 },
-    { id: '/plan', label: '/plan', desc: 'Draft a step-by-step architecture & implementation plan', kind: 'prompt', insert: '/plan ', baseWeight: 88 },
-    { id: '/boost', label: '/boost', desc: 'Deep multi-perspective reasoning & rigorous verification', kind: 'prompt', insert: '/boost ', baseWeight: 84 },
-    { id: '/goal', label: '/goal', desc: 'Autonomous thorough execution until goal is achieved', kind: 'prompt', insert: '/goal ', baseWeight: 80 },
-    { id: '/new-agy', label: '/new-agy', desc: 'Start a fresh Google Antigravity session tab', kind: 'action', act: 'new-agy', baseWeight: 76 },
-    { id: '/new-claude', label: '/new-claude', desc: 'Start a fresh Claude Code session tab', kind: 'action', act: 'new-claude', baseWeight: 74 },
-    { id: '/mode-bypass', label: '/mode-bypass', desc: 'Fleet Claude Mode: Bypass (full control across every PC)', kind: 'action', act: 'claude-mode-bypass', baseWeight: 73 },
-    { id: '/mode-auto', label: '/mode-auto', desc: 'Fleet Claude Mode: Auto (classifier safety check across every PC)', kind: 'action', act: 'claude-mode-auto', baseWeight: 71 },
-    { id: '/mode-plan', label: '/mode-plan', desc: 'Fleet Claude Mode: Plan (read-only planning across every PC)', kind: 'action', act: 'claude-mode-plan', baseWeight: 70 },
-    { id: '/inspector', label: '/inspector', desc: 'Toggle Split Inspector (Files & Preview, Git, Tasks & Outline)', kind: 'action', act: 'inspector', baseWeight: 72 },
-    { id: '/bgtasks', label: '/bgtasks', desc: 'Inspect live background tasks & subagents', kind: 'action', act: 'bgtasks', baseWeight: 68 },
-    { id: '/stop', label: '/stop', desc: 'Interrupt the currently running session', kind: 'action', act: 'stop', baseWeight: 64 },
-    { id: '/sync', label: '/sync', desc: 'Force immediate Bridge & Cloud Relay sync', kind: 'action', act: 'sync', baseWeight: 60 },
-    { id: '/palette', label: '/palette', desc: 'Switch Color Palette (Graphite, Velvet, Espresso, Daylight)', kind: 'action', act: 'palette', baseWeight: 56 },
-    { id: '/theme', label: '/theme', desc: 'Toggle between Dark and Daylight themes', kind: 'action', act: 'theme', baseWeight: 52 }
-  ];
-
-  function closeSlashPopover() {
-    const pop = $('composer-slash-popover');
-    if (pop) {
-      pop.hidden = true;
-      pop.innerHTML = '';
-    }
-    slashPopoverItems = [];
-    slashPopoverActiveIdx = 0;
-    slashPopoverTrigger = null;
-  }
-
-  function attachMentionItemToComposer({ name, repoPath = '', kind = 'repo', sizeLabel = 'workspace' }) {
-    const cleanName = String(name || '').trim();
-    if (!cleanName) return;
-    const exists = composerAttachments.some(
-      (a) => a && a.kind === kind && String(a.name || '').toLowerCase() === cleanName.toLowerCase()
-    );
-    if (!exists) {
-      composerAttachments.push({
-        id: `att-mention-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        kind,
-        name: cleanName,
-        repoPath: repoPath || cleanName,
-        sizeLabel
-      });
-      renderComposerAttachments();
-    }
-  }
-
-  function detectComposerTrigger(inp) {
-    if (!inp) return null;
-    const val = String(inp.value || '');
-    const caret = typeof inp.selectionStart === 'number' ? inp.selectionStart : val.length;
-    const before = val.slice(0, caret);
-
-    // Leading slash command: "/..." at very start of input (no spaces yet)
-    const slashMatch = before.match(/^\/([^\s/]*)$/);
-    if (slashMatch && !val.slice(caret).startsWith('/')) {
-      return {
-        mode: 'slash',
-        query: slashMatch[1].toLowerCase(),
-        startIdx: 0,
-        endIdx: caret
-      };
-    }
-
-    // Inline @workspace or @file mention right before caret
-    const atMatch = before.match(/(?:^|\s)@([^\s@]*)$/);
-    if (atMatch) {
-      const tokenLen = atMatch[1].length + 1;
-      return {
-        mode: 'mention',
-        query: atMatch[1].toLowerCase(),
-        startIdx: caret - tokenLen,
-        endIdx: caret
-      };
-    }
-    return null;
-  }
-
-  function updateComposerSlashPopover() {
-    const inp = $('composer-input');
-    const pop = $('composer-slash-popover');
-    if (!inp || !pop || isPinLocked()) {
-      closeSlashPopover();
-      return;
-    }
-    const trig = detectComposerTrigger(inp);
-    if (!trig) {
-      closeSlashPopover();
-      return;
-    }
-
-    let items = [];
-    if (trig.mode === 'slash') {
-      const q = trig.query;
-      const matches = SLASH_COMMAND_CATALOG.filter(
-        (c) => !q || c.id.slice(1).includes(q) || c.desc.toLowerCase().includes(q)
-      );
-      const exact = q ? matches.filter((c) => c.id.slice(1) === q) : [];
-      const rest = q ? matches.filter((c) => c.id.slice(1) !== q) : matches;
-      items = exact
-        .concat(rankByFreq(rest, 'commands', (c) => c.id, (c) => c.baseWeight))
-        .slice(0, 8);
-    } else if (trig.mode === 'mention') {
-      const q = trig.query;
-      const candidates = [];
-      const seenKeys = new Set();
-      for (const w of appState?.workspaces || []) {
-        if (!w || !w.name) continue;
-        const key = String(w.name);
-        if (seenKeys.has(key.toLowerCase())) continue;
-        seenKeys.add(key.toLowerCase());
-        candidates.push({
-          id: `ws:${key}`,
-          freqKey: key,
-          label: `@${key}`,
-          desc: `${w.group || 'Workspace'} · ⎇ ${w.branch || 'main'}${w.dirtyCount ? ` · ${w.dirtyCount} modified` : ''}`,
-          kind: 'mention-repo',
-          attachName: `[${key}]`,
-          repoPath: w.path || key,
-          repoPrefix: key,
-          baseWeight: 50 + Number(w.dirtyCount || 0) * 8
-        });
-        const det = workspacesDetailCache[w.id];
-        const modList = det?.modifiedFiles || det?.statusFiles || det?.files || [];
-        if (Array.isArray(modList) && modList.length > 0) {
-          for (const f of modList.slice(0, 12)) {
-            const fp = String(f?.path || f?.file || '').trim();
-            if (!fp) continue;
-            const fKey = `${key}/${fp}`;
-            if (seenKeys.has(fKey.toLowerCase())) continue;
-            seenKeys.add(fKey.toLowerCase());
-            candidates.push({
-              id: `file:${fKey}`,
-              freqKey: fKey,
-              label: `@${fp}`,
-              desc: `${key} · Modified file`,
-              kind: 'mention-file',
-              attachName: fKey,
-              repoPath: fKey,
-              baseWeight: 35
-            });
-          }
-        }
-      }
-      const activeTd = threadsCache[prefs.selectedThreadId];
-      if (activeTd && Array.isArray(activeTd.messages)) {
-        for (const m of activeTd.messages) {
-          for (const tc of m?.toolCalls || []) {
-            const fp = String(tc?.relPath || String(tc?.file || '').split('#')[0] || '').trim();
-            if (!fp || seenKeys.has(fp.toLowerCase())) continue;
-            seenKeys.add(fp.toLowerCase());
-            candidates.push({
-              id: `tfile:${fp}`,
-              freqKey: fp,
-              label: `@${fp}`,
-              desc: 'Session touched file',
-              kind: 'mention-file',
-              attachName: fp,
-              repoPath: fp,
-              baseWeight: 42
-            });
-          }
-        }
-      }
-      const matches = candidates.filter(
-        (m) =>
-          !q ||
-          m.freqKey.toLowerCase().includes(q) ||
-          m.label.toLowerCase().includes(q) ||
-          m.desc.toLowerCase().includes(q)
-      );
-      const exact = q
-        ? matches.filter(
-            (m) => m.freqKey.toLowerCase() === q || m.label.slice(1).toLowerCase() === q
-          )
-        : [];
-      const rest = q
-        ? matches.filter(
-            (m) => m.freqKey.toLowerCase() !== q && m.label.slice(1).toLowerCase() !== q
-          )
-        : matches;
-      items = exact
-        .concat(rankByFreq(rest, 'repos', (m) => m.freqKey, (m) => m.baseWeight))
-        .slice(0, 8);
-    }
-
-    if (!items.length) {
-      closeSlashPopover();
-      return;
-    }
-
-    slashPopoverItems = items;
-    slashPopoverTrigger = trig;
-    if (slashPopoverActiveIdx >= items.length || slashPopoverActiveIdx < 0) {
-      slashPopoverActiveIdx = 0;
-    }
-
-    pop.hidden = false;
-    pop.innerHTML = items
-      .map(
-        (it, idx) => `
-          <button type="button" class="slash-pop-item${idx === slashPopoverActiveIdx ? ' active' : ''}" role="option" aria-selected="${idx === slashPopoverActiveIdx}" data-slash-pick="${idx}">
-            <span class="slash-pop-lbl mono">${esc(it.label)}</span>
-            <span class="slash-pop-desc">${esc(it.desc)}</span>
-          </button>
-        `
-      )
-      .join('');
-  }
-
-  async function applySlashPopoverSelection(idx) {
-    const item = slashPopoverItems[idx];
-    const trig = slashPopoverTrigger;
-    const inp = $('composer-input');
-    closeSlashPopover();
-    if (!item || !inp) return;
-
-    const val = String(inp.value || '');
-    const before = trig ? val.slice(0, trig.startIdx) : '';
-    const after = trig ? val.slice(trig.endIdx) : '';
-
-    if (item.kind === 'prompt') {
-      recordFreqUsage('commands', item.id);
-      const nextVal = `${item.insert}${after.replace(/^\s+/, '')}`;
-      inp.value = nextVal;
-      inp.focus();
-      inp.setSelectionRange(item.insert.length, item.insert.length);
-      updateComposerActionButton();
-      return;
-    }
-
-    if (item.kind === 'action') {
-      recordFreqUsage('commands', item.id);
-      inp.value = after.trim();
-      inp.style.height = 'auto';
-      updateComposerActionButton();
-      if (item.act === 'compact') {
-        await triggerActiveSessionCompact();
-      } else if (item.act === 'new-agy') {
-        enterNewSessionMode('antigravity');
-      } else if (item.act === 'new-claude') {
-        enterNewSessionMode('claude');
-      } else if (item.act === 'claude-mode-bypass') {
-        await setFleetClaudeModeRemote('bypassPermissions');
-      } else if (item.act === 'claude-mode-auto') {
-        await setFleetClaudeModeRemote('auto');
-      } else if (item.act === 'claude-mode-plan') {
-        await setFleetClaudeModeRemote('plan');
-      } else if (item.act === 'bgtasks') {
-        const ctxPop = $('ctx-popover');
-        if (ctxPop) ctxPop.hidden = true;
-        const bgPop = $('bg-tasks-popover');
-        if (bgPop) bgPop.hidden = false;
-        renderChatView();
-      } else if (item.act === 'inspector') {
-        if (prefs.activeTab !== 'chat') switchTab('chat');
-        setInspectorOpen(!prefs.inspectorOpen);
-      } else if (item.act === 'toggle-3p-quota') {
-        await setHideThirdPartyQuota(!isThirdPartyQuotaHidden());
-      } else if (item.act === 'palette') {
-        const pPop = $('theme-palette-popover');
-        if (pPop) {
-          syncPalettePickerUi();
-          pPop.hidden = false;
-          positionPalettePopover($('btn-palette-picker'));
-        }
-      } else if (item.act === 'stop') {
-        await stopActiveSession(prefs.selectedThreadId);
-      } else if (item.act === 'sync') {
-        await syncData({ toast: true });
-      } else if (item.act === 'theme') {
-        applyTheme(prefs.theme === 'dark' ? 'light' : 'dark', true);
-      }
-      return;
-    }
-
-    if (item.kind === 'mention-repo' || item.kind === 'mention-file') {
-      recordFreqUsage('repos', item.freqKey);
-      attachMentionItemToComposer({
-        name: item.attachName,
-        repoPath: item.repoPath,
-        kind: 'repo',
-        sizeLabel: item.kind === 'mention-repo' ? 'workspace' : 'file ref'
-      });
-      if (item.kind === 'mention-repo' && item.repoPrefix && isNewSessionMode()) {
-        prefs.composerRepoPrefix = item.repoPrefix;
-        saveJson(STORAGE_KEYS.PREFS, prefs);
-        syncComposerRoutingSelectors(null, true);
-      }
-      const nextText = `${before}${after}`.replace(/\s{2,}/g, ' ');
-      inp.value = nextText;
-      inp.focus();
-      const pos = Math.min(nextText.length, before.length);
-      inp.setSelectionRange(pos, pos);
-      updateComposerActionButton();
-    }
-  }
-
-  function fmtFileBytes(bytes) {
-    const n = Number(bytes || 0);
-    if (n < 1024) return `${n} B`;
-    if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} KB`;
-    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  }
-
-  function renderComposerAttachments() {
-    const tray = $('composer-attachments');
-    if (!tray) return;
-    if (!composerAttachments.length) {
-      tray.hidden = true;
-      tray.innerHTML = '';
-      updateComposerActionButton();
-      return;
-    }
-    const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId) || null;
-    const targetDev =
-      activeRow?.deviceId ||
-      (prefs.composerTargetDevice && prefs.composerTargetDevice !== 'auto' ? prefs.composerTargetDevice : '');
-    const liveWs = hasLiveAttachmentTransport(targetDev);
-    const fileAtts = composerAttachments.filter((a) => a && a.kind !== 'repo');
-    const cloudChars = calcAttachmentsPayloadChars(compactAttachmentsForCloudFallback(fileAtts));
-    const cloudExceeded = !liveWs && fileAtts.length > 0 && cloudChars > MAX_CLOUD_FALLBACK_CHARS;
-
-    tray.hidden = false;
-    tray.innerHTML =
-      composerAttachments
-        .map((a) => {
-          const iconHtml =
-            a.kind === 'image' && a.dataUrl
-              ? `<img src="${esc(a.dataUrl)}" class="composer-attach-thumb" alt="">`
-              : a.kind === 'repo'
-                ? `<span class="composer-attach-kind">Repo</span>`
-                : `<span class="composer-attach-kind">File</span>`;
-          const isLargeChunk = liveWs && String(a.dataUrl || '').length > 520000;
-          const isOverCloud = !liveWs && a.kind !== 'repo' && !a.textContent && String(a.dataUrl || '').length > MAX_CLOUD_FALLBACK_CHARS;
-          const metaTxt = [a.sizeLabel, isLargeChunk ? 'chunked WS' : ''].filter(Boolean).join(' · ');
-          return `
-          <span class="composer-attach-pill${isOverCloud ? ' is-over-cloud-cap' : ''}">
-            ${iconHtml}
-            <span class="composer-attach-name">${esc(a.name)}</span>
-            ${metaTxt ? `<span class="composer-attach-meta tabular">${esc(metaTxt)}</span>` : ''}
-            <button type="button" class="composer-attach-remove" data-remove-attach="${esc(a.id)}" aria-label="Remove attachment">✕</button>
-          </span>
-        `;
-        })
-        .join('') +
-      (cloudExceeded
-        ? `<div class="composer-attach-warn">Cloud Store fallback limits attachments to ~250 KB total. Connect live Edge WS for chunked uploads up to 8 MB, or remove large files.</div>`
-        : '');
-    updateComposerActionButton();
-  }
-
-  function readFileAsDataUrl(file) {
-    return new Promise((resolve, reject) => {
-      const fr = new FileReader();
-      fr.onload = () => resolve(String(fr.result || ''));
-      fr.onerror = () => reject(fr.error);
-      fr.readAsDataURL(file);
-    });
-  }
-
-  async function compressImageFile(file, opts = {}) {
-    const rawDataUrl = await readFileAsDataUrl(file);
-    const maxDim = Number(opts.maxDim || 1440);
-    const quality = Number(opts.quality || 0.82);
-    if (file.size <= 220 * 1024 && !opts.force) return rawDataUrl;
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        try {
-          let w = img.naturalWidth || img.width || 800;
-          let h = img.naturalHeight || img.height || 600;
-          if (w > maxDim || h > maxDim) {
-            if (w >= h) {
-              h = Math.round((h * maxDim) / w);
-              w = maxDim;
-            } else {
-              w = Math.round((w * maxDim) / h);
-              h = maxDim;
-            }
-          }
-          const canvas = document.createElement('canvas');
-          canvas.width = w;
-          canvas.height = h;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, w, h);
-          resolve(canvas.toDataURL('image/jpeg', quality));
-        } catch {
-          resolve(rawDataUrl);
-        }
-      };
-      img.onerror = () => resolve(rawDataUrl);
-      img.src = rawDataUrl;
-    });
-  }
-
-  async function handleComposerFiles(fileList) {
-    const files = Array.from(fileList || []);
-    if (!files.length) return;
-    let addedCount = 0;
-    const isNewFileCtx = Boolean(isNewSessionMode() || !prefs.selectedThreadId || prefs.selectedThreadId === '__new__');
-    const activeFileRow = !isNewFileCtx ? (appState?.rows || []).find((r) => r && r.id === prefs.selectedThreadId) || null : null;
-    const targetFileDev = isNewFileCtx
-      ? (prefs.composerTargetDevice && prefs.composerTargetDevice !== 'auto' ? prefs.composerTargetDevice : '')
-      : activeFileRow?.deviceId || '';
-    const liveWs = hasLiveAttachmentTransport(targetFileDev);
-    for (const file of files) {
-      if (composerAttachments.length >= 8) {
-        showToast('Maximum 8 attachments per message');
-        break;
-      }
-      if (Number(file.size || 0) > MAX_LIVE_WS_ATTACHMENT_BYTES) {
-        showToast(`${file.name || 'File'} (${fmtFileBytes(file.size)}) exceeds the 8 MB limit`);
-        continue;
-      }
-      const isImg = String(file.type || '').startsWith('image/');
-      const isText =
-        /\.(txt|md|json|csv|py|js|ts|tsx|jsx|html|css|sql|xml|yaml|yml|ps1|sh|log|ini|env|toml)$/i.test(
-          file.name || ''
-        ) || String(file.type || '').startsWith('text/');
-      let dataUrl = '';
-      let textContent = '';
-      try {
-        if (isImg) {
-          dataUrl = await compressImageFile(file);
-          if (!liveWs && dataUrl.length > MAX_CLOUD_FALLBACK_CHARS) {
-            const smaller = await compressImageFile(file, { maxDim: 1024, quality: 0.72, force: true });
-            if (smaller && smaller.length < dataUrl.length) dataUrl = smaller;
-          }
-        } else {
-          if (isText && file.size <= 512 * 1024 && typeof file.text === 'function') {
-            textContent = (await file.text()).slice(0, 64000);
-          }
-          dataUrl = await readFileAsDataUrl(file);
-        }
-        if (!dataUrl && !textContent) {
-          showToast(`Unable to read ${file.name || 'file'}`);
-          continue;
-        }
-        composerAttachments.push({
-          id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          kind: isImg ? 'image' : 'file',
-          name: file.name || 'attachment',
-          mime: file.type || 'application/octet-stream',
-          size: file.size || 0,
-          sizeLabel: fmtFileBytes(file.size || 0),
-          dataUrl,
-          textContent
-        });
-        addedCount += 1;
-      } catch {}
-    }
-    renderComposerAttachments();
-    if (addedCount > 0) {
-      showToast(`Attached ${addedCount} file${addedCount === 1 ? '' : 's'}`);
-    }
-    $('composer-input')?.focus();
-  }
-
-  function openRepoFilePicker() {
-    if (isPinLocked()) return;
-    cmdPaletteMode = 'repo-file';
-    const modal = $('cmd-modal');
-    const input = $('cmd-input');
-    if (!modal || !input) return;
-    const wasHidden = modal.hidden;
-    modal.hidden = false;
-    if (wasHidden) pushUiHistoryState('cmd-modal');
-    input.placeholder = 'Filter BHFIRMS workspace or modified git file to attach…';
-    input.value = '';
-    renderCommandPaletteResults('');
-    setTimeout(() => input.focus(), 30);
-  }
-
-  // Command Palette (⌘K)
-  function openCommandPalette() {
-    if (isPinLocked()) return;
-    cmdPaletteMode = 'default';
-    const modal = $('cmd-modal');
-    const input = $('cmd-input');
-    if (!modal || !input) return;
-    const wasHidden = modal.hidden;
-    modal.hidden = false;
-    if (wasHidden) pushUiHistoryState('cmd-modal');
-    input.placeholder = 'Jump to session, repo, or run a remote THEO command…';
-    input.value = '';
-    renderCommandPaletteResults('');
-    setTimeout(() => input.focus(), 30);
-  }
-
-  function closeCommandPalette() {
-    const modal = $('cmd-modal');
-    if (modal) modal.hidden = true;
-    cmdPaletteMode = 'default';
-  }
-
-  function renderCommandPaletteResults(query) {
-    const resEl = $('cmd-results');
-    if (!resEl) return;
-    const q = query.trim().toLowerCase();
-
-    if (cmdPaletteMode === 'repo-file') {
-      const repoItems = [];
-      for (const w of appState?.workspaces || []) {
-        repoItems.push({
-          title: `[${w.name}] Workspace Root`,
-          sub: `${w.group || 'BHFIRMS'} · ⎇ ${w.branch || 'main'}${w.dirtyCount ? ` · ${w.dirtyCount} modified` : ''}`,
-          repoLabel: `[${w.name}]`,
-          repoPath: w.path || w.name
-        });
-        const det = workspacesDetailCache[w.id];
-        if (det && Array.isArray(det.files)) {
-          for (const f of det.files.slice(0, 20)) {
-            const fPath = f.path || f.file || '';
-            if (fPath) {
-              repoItems.push({
-                title: `[${w.name}] ${fPath}`,
-                sub: `Modified (${f.status || 'M'}) · ⎇ ${w.branch || 'main'}`,
-                repoLabel: `[${w.name}] ${fPath}`,
-                repoPath: `${w.path ? w.path + '/' : ''}${fPath}`
-              });
-            }
-          }
-        }
-      }
-      const rawMatchedRepos = repoItems.filter(
-        (it) => !q || `${it.title} ${it.sub}`.toLowerCase().includes(q)
-      );
-      const matchedRepos = rankByFreq(
-        rawMatchedRepos,
-        'repos',
-        (it) => String(it.repoLabel || '').replace(/^[\[]|[\]]$/g, '').split(' ')[0]
-      );
-      resEl.innerHTML = matchedRepos
-        .slice(0, 16)
-        .map(
-          (it) => `
-          <button type="button" class="cmd-item" data-cmd-attach-repo="${esc(it.repoLabel)}" data-cmd-repo-path="${esc(it.repoPath)}">
-            <strong>${esc(it.title)}</strong>
-            <span class="meta-timestamp">${esc(it.sub)}</span>
-          </button>
-        `
-        )
-        .join('');
-      return;
-    }
-
-    const items = [
-      { title: 'Attach File or Photo to Prompt', sub: 'Workbench Composer', act: 'attach-file' },
-      { title: 'Attach Workspace / Modified Git File (@Repo)', sub: 'Workbench Composer', act: 'pick-repo-file' },
-      ...(hasSignedInProviderRemote('antigravity')
-        ? [{ title: '+ New Google Antigravity Session', sub: 'Action', act: 'new-agy' }]
-        : []),
-      ...(hasSignedInProviderRemote('claude')
-        ? [{ title: '+ New Claude Code Session', sub: 'Action', act: 'new-claude' }]
-        : []),
-      { title: 'Open Pulse Overview (Approvals, Accounts & Quotas)', sub: 'View', act: 'tab-pulse' },
-      { title: 'Open All Sessions (Filter, Search & Bulk Archive)', sub: 'View', act: 'tab-sessions' },
-      { title: 'Open Repos & Git Inspector', sub: 'View', act: 'tab-workspaces' },
-      { title: 'Open Settings & Fleet Pairing', sub: 'View', act: 'tab-analytics' },
-      ...(() => {
-        const curMode = getEffectiveClaudePermissionMode();
-        return CLAUDE_PERM_MODES.map((m) => ({
-          title: `${curMode === m.id ? '✓ ' : ''}Fleet Claude Mode: ${m.label}`,
-          sub: `${curMode === m.id ? 'Active across all PCs · ' : ''}${m.desc}`,
-          act: `claude-mode-${m.id === 'bypassPermissions' ? 'bypass' : m.id}`
-        }));
-      })(),
-      { title: 'Sync with the PC & Cloud Relay Now', sub: 'Connectivity', act: 'sync' },
-      { title: 'Open THEO Memory Vault (Reports, Notes & Docs)', sub: 'Cloudflare Vault · memory.husseinbdeir.workers.dev', act: 'open-memory-vault' },
-      { title: `${isThirdPartyQuotaHidden() ? 'Show' : 'Hide'} Antigravity Claude & GPT Quota Pool`, sub: 'Quota Display', act: 'toggle-3p-quota' },
-      { title: 'Toggle Split Inspector (Files & Preview, Git, Tasks & Outline)', sub: 'Workbench · ⌘I', act: 'inspector' },
-      { title: 'Switch Color Palette (Graphite · Velvet · Espresso · Daylight)', sub: 'Appearance', act: 'palette' },
-      { title: 'Enable / Test Web Push Notifications', sub: 'Notifications', act: 'push-test' },
-      { title: 'Inspect Background Tasks & Subagents', sub: 'Workbench Overview', act: 'bgtasks' },
-      { title: 'Run /compact on Active Session', sub: 'Context Window', act: 'compact' },
-      { title: 'Pin / Unpin Active Chat in Session List', sub: 'Sessions', act: 'pin-chat' },
-      { title: 'Switch Dark / Daylight Theme', sub: 'Appearance', act: 'theme' }
-    ];
-
-    for (const r of (appState?.rows || []).slice(0, 20)) {
-      if (r.id) {
-        items.push({
-          title: r.title,
-          sub: `${r.provider === 'claude' ? 'Claude Code' : 'Antigravity'} · ${r.folder || 'Session'}`,
-          threadId: r.id
-        });
-      }
-    }
-
-    const CMD_VIEW_ROUTE_ACTS = new Set([
-      'tab-pulse',
-      'tab-sessions',
-      'tab-workspaces',
-      'tab-analytics'
-    ]);
-    const rawMatched = items.filter(
-      (it) => !q || `${it.title} ${it.sub}`.toLowerCase().includes(q)
-    );
-    const matched = q
-      ? (() => {
-          const exact = rawMatched.filter((it) => String(it.title || '').toLowerCase() === q);
-          const rest = rawMatched.filter((it) => String(it.title || '').toLowerCase() !== q);
-          const freqOrdered = rankByFreq(
-            rest,
-            'threads',
-            (it) => it.threadId || it.act || it.title
-          );
-          return exact.concat(freqOrdered).slice(0, 12);
-        })()
-      : (() => {
-          const viewRoutes = rankByFreq(
-            rawMatched.filter((it) => CMD_VIEW_ROUTE_ACTS.has(it.act)),
-            'commands',
-            (it) => it.act
-          );
-          const restItems = rankByFreq(
-            rawMatched.filter((it) => !CMD_VIEW_ROUTE_ACTS.has(it.act)),
-            'threads',
-            (it) => it.threadId || it.act || it.title,
-            (it) => Number(prefs.freqUsage?.commands?.[it.act] || 0) * 10
-          );
-          return viewRoutes.concat(restItems.slice(0, 10));
-        })();
-
-    resEl.innerHTML = matched
-      .map(
-        (it) => `
-        <button type="button" class="cmd-item" data-cmd-act="${esc(it.act || '')}" data-cmd-thread="${esc(it.threadId || '')}">
-          <strong>${esc(it.title)}</strong>
-          <span class="meta-timestamp">${esc(it.sub)}</span>
-        </button>
-      `
-      )
-      .join('');
+    S.updateConnectionBanner();
+    S.renderOutboxBadge();
+    S.renderPulseView();
+    S.renderSessionsView();
+    S.renderIdeSidebar();
+    S.syncAndRenderEditorTabs();
+    if (prefs.activeTab === 'chat') S.renderChatView();
+    if (prefs.activeTab === 'workspaces') S.renderWorkspacesView();
+    if (prefs.activeTab === 'analytics') S.renderAnalyticsView();
   }
 
   async function hashPinCode(pinStr) {
@@ -18796,7 +3709,7 @@
       if (pendingPinPairPayload) {
         const deferred = pendingPinPairPayload;
         pendingPinPairPayload = null;
-        finalizeInteractivePairSuccess(deferred).catch(() => {});
+        S.finalizeInteractivePairSuccess(deferred).catch(() => {});
       }
       if (pendingPinMigratePayload) {
         const defMig = pendingPinMigratePayload;
@@ -18806,7 +3719,7 @@
           applyTheme(prefs.theme);
           loadPersonalLedgerFromLocal();
           renderAll();
-          syncData({ force: true }).catch(() => {});
+          S.syncData({ force: true }).catch(() => {});
         } else {
           showToast(
             applied.reason === 'key-mismatch'
@@ -18818,7 +3731,7 @@
       return;
     }
     overlay.hidden = false;
-    teardownDeliverableInspectorFrames();
+    S.teardownDeliverableInspectorFrames();
     if (appShell) appShell.inert = true;
     closeFloatingUiMenus();
     document.documentElement.classList.remove('pin-locked-boot');
@@ -18848,7 +3761,7 @@
           if (pendingPinPairPayload) {
             const deferred = pendingPinPairPayload;
             pendingPinPairPayload = null;
-            await finalizeInteractivePairSuccess(deferred);
+            await S.finalizeInteractivePairSuccess(deferred);
           }
           if (pendingPinMigratePayload) {
             const defMig = pendingPinMigratePayload;
@@ -18858,7 +3771,7 @@
               applyTheme(prefs.theme);
               loadPersonalLedgerFromLocal();
               renderAll();
-              syncData({ force: true }).catch(() => {});
+              S.syncData({ force: true }).catch(() => {});
             } else {
               showToast(
                 applied.reason === 'key-mismatch'
@@ -18874,229 +3787,6 @@
         }
       }
     });
-  }
-
-  async function submitInteractiveQuestionCard(cardKey, skipped = false) {
-    const meta = renderedQuestionsByCardKey.get(cardKey);
-    if (!meta) return;
-    const draft = getQuestionDraft(cardKey);
-    const questions = Array.isArray(meta.questions) ? meta.questions : [];
-    const sessId = String(meta.sessionId || prefs.selectedThreadId || '').trim();
-    const provider = meta.provider === 'claude' ? 'claude' : 'antigravity';
-
-    const responses = [];
-    const allSelectedIds = [];
-    const allSelectedTexts = [];
-    const writeIns = [];
-    const answersMap = {};
-    const summaryParts = [];
-
-    if (!skipped) {
-      let totalChosen = countDraftSelections(draft, questions.length);
-      // If user clicked Submit Answer without selecting anything, auto-select Recommended option(s) if present
-      if (totalChosen === 0) {
-        questions.forEach((q, qIdx) => {
-          const opts = Array.isArray(q.options) ? q.options : [];
-          const recIndices = [];
-          opts.forEach((opt, oIdx) => {
-            if (opt.isRecommended) recIndices.push(String(oIdx));
-          });
-          if (recIndices.length > 0) {
-            draft.selectedByQ[qIdx] = new Set(
-              q.isMultiSelect ? recIndices : [recIndices[0]]
-            );
-          }
-        });
-        totalChosen = countDraftSelections(draft, questions.length);
-      }
-
-      if (totalChosen === 0 && questions.some((q) => Array.isArray(q.options) && q.options.length > 0)) {
-        showToast('Tap one or more options above (or type a custom answer) first');
-        return;
-      }
-
-      questions.forEach((q, qIdx) => {
-        const opts = Array.isArray(q.options) ? q.options : [];
-        const selSet = draft.selectedByQ[qIdx] || new Set();
-        const writeIn = String(draft.writeInByQ[qIdx] || '').trim();
-        const qSelIds = [];
-        const qSelTexts = [];
-        const qCleanTexts = [];
-
-        Array.from(selSet)
-          .map((idxStr) => Number(idxStr))
-          .filter((n) => Number.isFinite(n) && n >= 0 && n < opts.length)
-          .sort((a, b) => a - b)
-          .forEach((oIdx) => {
-            const opt = opts[oIdx];
-            qSelIds.push(String(opt.id || oIdx + 1));
-            qSelTexts.push(opt.text);
-            qCleanTexts.push(opt.cleanText || opt.text);
-            allSelectedIds.push(String(opt.id || oIdx + 1));
-            allSelectedTexts.push(opt.text);
-          });
-
-        if (writeIn) {
-          writeIns.push(writeIn);
-        }
-
-        const answerPieces = [...qCleanTexts];
-        if (writeIn) answerPieces.push(writeIn);
-        const answerText = answerPieces.join('; ');
-        if (q.question && answerText) {
-          answersMap[q.question] = answerText;
-        }
-        if (answerText) {
-          summaryParts.push(
-            questions.length > 1 ? `${q.question}: ${answerText}` : answerText
-          );
-        }
-
-        responses.push({
-          question: q.question || '',
-          isMultiSelect: Boolean(q.isMultiSelect),
-          options: opts.map((o, idx) => ({ id: String(o.id || idx + 1), text: o.text })),
-          selectedOptionIds: qSelIds,
-          selectedTexts: qSelTexts,
-          writeInResponse: writeIn,
-          answerText,
-          skipped: false
-        });
-      });
-    } else {
-      questions.forEach((q) => {
-        const opts = Array.isArray(q.options) ? q.options : [];
-        responses.push({
-          question: q.question || '',
-          isMultiSelect: Boolean(q.isMultiSelect),
-          options: opts.map((o, idx) => ({ id: String(o.id || idx + 1), text: o.text })),
-          selectedOptionIds: [],
-          selectedTexts: [],
-          writeInResponse: '',
-          answerText: '',
-          skipped: true
-        });
-      });
-    }
-
-    const humanSummary = skipped
-      ? 'Skipped question'
-      : summaryParts.join('\n') || writeIns.join('; ') || allSelectedTexts.join('; ') || 'Submitted answer';
-
-    draft.submitted = true;
-    draft.submittedSkipped = Boolean(skipped);
-    draft.submittedSummary = humanSummary;
-
-    const row = (appState?.rows || []).find((r) => r.id === sessId);
-    const resolvedStepIdx = extractQuestionsStepIndex(
-      questions,
-      meta.stepIndex ?? row?.pendingQuestion?.stepIndex ?? row?.stepCount ?? null
-    );
-
-    if (sessId) {
-      recordQuestionAnswered({
-        sessionId: sessId,
-        approvalId: meta.approvalId || '',
-        turnId: meta.turnId || '',
-        stepIndex: resolvedStepIdx,
-        questions,
-        summary: humanSummary,
-        skipped
-      });
-    }
-
-    haptic(20);
-    playChime('approve');
-
-    if (Array.isArray(appState?.approvals)) {
-      appState.approvals = appState.approvals.filter(
-        (a) => a.approvalId !== meta.approvalId && a.sessionId !== sessId
-      );
-    }
-    if (sessId) {
-      markNotificationsCheckedForSession(sessId);
-    }
-
-    if (row) {
-      row.pendingQuestion = null;
-      row.status = 'working';
-      row.statusLabel = 'Running';
-      row.dot = 'running';
-      row.at = Date.now();
-      noteRowOverride(row.id, { lastWorkedAt: row.at });
-      if (Array.isArray(appState?.rows)) {
-        appState.rows.sort(compareRowsPinnedFirst);
-      }
-    }
-
-    if (sessId && questions.length > 0 && Array.isArray(threadsCache[sessId]?.messages)) {
-      const lastAsstMsg = [...threadsCache[sessId].messages]
-        .reverse()
-        .find((m) => m && m.role === 'assistant');
-      if (lastAsstMsg) {
-        const stampedQs = questions.map((q) => ({
-          ...q,
-          answered: true,
-          skipped: Boolean(skipped),
-          answerSummary: humanSummary
-        }));
-        lastAsstMsg.questions = stampedQs;
-      }
-    }
-
-    if (sessId && !skipped) {
-      if (!threadsCache[sessId]) {
-        threadsCache[sessId] = {
-          id: sessId,
-          provider,
-          title: row?.title || 'Session',
-          messages: []
-        };
-      }
-      if (!Array.isArray(threadsCache[sessId].messages)) {
-        threadsCache[sessId].messages = [];
-      }
-      const baseCountBeforePush = threadsCache[sessId].messages.filter((m) => !m?.optimistic).length;
-      threadsCache[sessId].messages.push({
-        id: `opt-ans-${Date.now()}`,
-        role: 'user',
-        text: humanSummary,
-        createdAt: new Date().toISOString(),
-        optimistic: true,
-        optimisticQuestionAnswer: true,
-        baseMsgCount: baseCountBeforePush,
-        optimisticAt: Date.now()
-      });
-    }
-
-    persistCache();
-    renderAll();
-
-    await dispatchRemoteCommand({
-      type: 'answerQuestion',
-      kind: 'question',
-      decision: skipped ? 'skip' : 'answer',
-      skipped,
-      isToolPermission: Boolean(questions.some((q) => q.isToolPermission)),
-      approvalId: meta.approvalId || sessId,
-      sessionId: sessId,
-      threadId: sessId,
-      provider,
-      selector: meta.selector || '',
-      selectedOptionIds: allSelectedIds,
-      selectedTexts: allSelectedTexts,
-      writeInResponse: writeIns.join('\n'),
-      responses,
-      answers: answersMap,
-      answerText: humanSummary,
-      plainQuestionFallback: Boolean(meta.plainQuestionFallback)
-    });
-
-    showToast(
-      skipped
-        ? 'Skipped remote question'
-        : `✓ Answered: ${humanSummary.slice(0, 85)}${humanSummary.length > 85 ? '…' : ''}`
-    );
   }
 
   // Event Wiring
@@ -19121,30 +3811,30 @@
       if (qInput) {
         const cardKey = qInput.dataset.cardKey || '';
         const qIdx = Number(qInput.dataset.qIdx || 0);
-        const draft = getQuestionDraft(cardKey);
+        const draft = S.getQuestionDraft(cardKey);
         draft.writeInByQ[qIdx] = qInput.value;
-        const meta = renderedQuestionsByCardKey.get(cardKey);
+        const meta = S.renderedQuestionsByCardKey.get(cardKey);
         if (meta?.sessionId) {
-          for (const [sibKey, sibMeta] of renderedQuestionsByCardKey.entries()) {
+          for (const [sibKey, sibMeta] of S.renderedQuestionsByCardKey.entries()) {
             if (sibKey !== cardKey && sibMeta?.sessionId === meta.sessionId) {
-              const sibDraft = getQuestionDraft(sibKey);
+              const sibDraft = S.getQuestionDraft(sibKey);
               sibDraft.writeInByQ[qIdx] = qInput.value;
             }
           }
         }
         document.querySelectorAll('[data-q-card]').forEach((cardEl) => {
           const cKey = cardEl.dataset.qCard || '';
-          const cMeta = renderedQuestionsByCardKey.get(cKey);
+          const cMeta = S.renderedQuestionsByCardKey.get(cKey);
           if (cKey !== cardKey && (!meta?.sessionId || cMeta?.sessionId !== meta.sessionId)) return;
           cardEl.querySelectorAll(`[data-q-writein-input][data-q-idx="${qIdx}"]`).forEach((inp) => {
             if (inp !== qInput && document.activeElement !== inp && inp.value !== qInput.value) {
               inp.value = qInput.value;
             }
           });
-          const cDraft = getQuestionDraft(cKey);
+          const cDraft = S.getQuestionDraft(cKey);
           const qCount = cMeta?.questions?.length || meta?.questions?.length || 1;
           const anyToolPerm = Boolean((cMeta?.questions || meta?.questions)?.some((q) => q.isToolPermission));
-          const totalCount = countDraftSelections(cDraft, qCount);
+          const totalCount = S.countDraftSelections(cDraft, qCount);
           const subBtn = cardEl.querySelector('[data-q-submit]');
           if (subBtn) {
             const isShortSub = cardEl.classList.contains('sb-q-card');
@@ -19169,7 +3859,7 @@
         e.preventDefault();
         const cardKey = qInput.dataset.cardKey || '';
         if (cardKey) {
-          submitInteractiveQuestionCard(cardKey, false);
+          S.submitInteractiveQuestionCard(cardKey, false);
         }
       }
     });
@@ -19194,13 +3884,13 @@
         return;
       }
       if (
-        slashPopoverItems.length > 0 &&
+        S.slashPopoverItems.length > 0 &&
         !e.target?.closest?.('#composer-slash-popover') &&
         !e.target?.closest?.('#btn-composer-slash') &&
         !e.target?.closest?.('#btn-composer-mention') &&
         !e.target?.closest?.('#composer-input')
       ) {
-        closeSlashPopover();
+        S.closeSlashPopover();
       }
       const palPop = $('theme-palette-popover');
       if (
@@ -19221,7 +3911,7 @@
         !e.target?.closest?.('[data-group-ctx-menu]') &&
         !e.target?.closest?.('[data-acct-ctx-menu]')
       ) {
-        closeIdeContextMenu();
+        S.closeIdeContextMenu();
       }
       const chatMoreMenu = $('chat-more-menu');
       if (
@@ -19240,7 +3930,7 @@
         !e.target?.closest?.('#composer-model-btn')
       ) {
         modPop.hidden = true;
-        modelPickerAdjustEffortOpen = false;
+        S.modelPickerAdjustEffortOpen = false;
         $('composer-model-btn')?.setAttribute('aria-expanded', 'false');
       }
 
@@ -19249,17 +3939,17 @@
         e.preventDefault();
         e.stopPropagation();
         if (modPop) {
-          const nextOpen = modPop.hidden || modTriggerBtn !== lastModelAnchorEl;
+          const nextOpen = modPop.hidden || modTriggerBtn !== S.lastModelAnchorEl;
           const ctxPop = $('ctx-popover');
           if (ctxPop) ctxPop.hidden = true;
           const bgPop = $('bg-tasks-popover');
           if (bgPop) bgPop.hidden = true;
-          if (!nextOpen) modelPickerAdjustEffortOpen = false;
-          else if (modPop.hidden) modelPickerAdjustEffortOpen = false;
-          renderChatView(false);
+          if (!nextOpen) S.modelPickerAdjustEffortOpen = false;
+          else if (modPop.hidden) S.modelPickerAdjustEffortOpen = false;
+          S.renderChatView(false);
           modPop.hidden = !nextOpen;
           if (nextOpen) {
-            positionModelPickerPopover(modTriggerBtn);
+            S.positionModelPickerPopover(modTriggerBtn);
           }
           $('composer-model-btn')?.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
         }
@@ -19267,16 +3957,16 @@
       }
       if (e.target.closest('#btn-close-model-picker')) {
         if (modPop) modPop.hidden = true;
-        modelPickerAdjustEffortOpen = false;
+        S.modelPickerAdjustEffortOpen = false;
         $('composer-model-btn')?.setAttribute('aria-expanded', 'false');
         return;
       }
       if (e.target.closest('[data-toggle-model-effort-bar]')) {
         e.preventDefault();
         e.stopPropagation();
-        modelPickerAdjustEffortOpen = true;
-        renderChatView(false);
-        positionModelPickerPopover($('composer-model-btn'));
+        S.modelPickerAdjustEffortOpen = true;
+        S.renderChatView(false);
+        S.positionModelPickerPopover($('composer-model-btn'));
         return;
       }
       const neonSwitchBtn = e.target.closest('[data-switch-neon-carbon]');
@@ -19285,7 +3975,7 @@
         e.stopPropagation();
         haptic(8);
         const tid = String(neonSwitchBtn.dataset.switchNeonCarbon || prefs.selectedThreadId || '').trim();
-        const cat = getEffectiveModelCatalog('antigravity');
+        const cat = S.getEffectiveModelCatalog('antigravity');
         const rowObj = (appState?.rows || []).find((r) => r && r.id === tid);
         const curIsOrch = /orchestrator/i.test(String(rowObj?.model || ''));
         const targetCarbon =
@@ -19295,7 +3985,7 @@
           cat.find((m) => m.id.includes('argon')) ||
           cat[0];
         if (tid && targetCarbon) {
-          const cfg = setSessionModelConfig({
+          const cfg = S.setSessionModelConfig({
             threadId: tid,
             provider: 'antigravity',
             modelId: targetCarbon.id,
@@ -19314,8 +4004,8 @@
         const [mId, effId = ''] = rawCombo.split(':');
         const prov = selComboBtn.dataset.modelProv || '';
         if (mId) {
-          const cfg = setSessionModelConfig({ modelId: mId, effort: effId, provider: prov });
-          modelPickerAdjustEffortOpen = false;
+          const cfg = S.setSessionModelConfig({ modelId: mId, effort: effId, provider: prov });
+          S.modelPickerAdjustEffortOpen = false;
           if (modPop) modPop.hidden = true;
           $('composer-model-btn')?.setAttribute('aria-expanded', 'false');
           showToast(`Model set to ${cfg.displayLabel}`);
@@ -19332,7 +4022,7 @@
         const comboAttr = String(selModelBtn.dataset.selectModelCombo || '');
         const comboEff = comboAttr.includes(':') ? comboAttr.split(':')[1] : '';
         if (mId) {
-          const cfg = setSessionModelConfig({
+          const cfg = S.setSessionModelConfig({
             modelId: mId,
             effort: comboEff || undefined,
             provider: prov
@@ -19349,7 +4039,7 @@
         const effId = selEffortBtn.dataset.selectAiEffort || '';
         const prov = selEffortBtn.dataset.modelProv || '';
         if (effId) {
-          const cfg = setSessionModelConfig({ effort: effId, provider: prov });
+          const cfg = S.setSessionModelConfig({ effort: effId, provider: prov });
           showToast(`Thinking level set to ${cfg.effortLabel} (${cfg.displayLabel})`);
         }
         return;
@@ -19369,7 +4059,7 @@
           if (matchedWs?.id) prefs.selectedRepoId = matchedWs.id;
         }
         saveJson(STORAGE_KEYS.PREFS, prefs);
-        renderChatView(false);
+        S.renderChatView(false);
         return;
       }
 
@@ -19401,7 +4091,7 @@
       if (e.target.closest('#btn-toggle-composer-route')) {
         prefs.composerRouteExpanded = !prefs.composerRouteExpanded;
         saveJson(STORAGE_KEYS.PREFS, prefs);
-        updateComposerActionButton();
+        S.updateComposerActionButton();
         return;
       }
       if (e.target.closest('#btn-chat-more')) {
@@ -19418,7 +4108,7 @@
       if (e.target.closest('#btn-chat-more-compact')) {
         e.preventDefault();
         e.stopPropagation();
-        await triggerActiveSessionCompact();
+        await S.triggerActiveSessionCompact();
         return;
       }
       if (e.target.closest('#btn-split-watch')) {
@@ -19427,13 +4117,13 @@
         const menu = $('chat-more-menu');
         if (menu) menu.hidden = true;
         $('btn-chat-more')?.setAttribute('aria-expanded', 'false');
-        renderChatView(false);
+        S.renderChatView(false);
         return;
       }
       if (e.target.closest('[data-split-watch-close]')) {
         prefs.splitWatchOpen = false;
         saveJson(STORAGE_KEYS.PREFS, prefs);
-        renderChatView(false);
+        S.renderChatView(false);
         return;
       }
       const splitSwapBtn = e.target.closest('[data-split-watch-swap]');
@@ -19445,13 +4135,13 @@
           prefs.selectedThreadId = targetId;
           prefs.lastReplyThreadId = targetId;
           prefs.composerMode = 'reply';
-          ensureEditorTabOpen(targetId);
+          S.ensureEditorTabOpen(targetId);
           recordFreqUsage('threads', targetId);
           saveJson(STORAGE_KEYS.PREFS, prefs);
-          emitPrewarmHint(targetId, { source: 'split-watch-swap' });
-          renderChatView(true);
-          renderIdeSidebar();
-          fetchThreadDetail(targetId).catch(() => {});
+          S.emitPrewarmHint(targetId, { source: 'split-watch-swap' });
+          S.renderChatView(true);
+          S.renderIdeSidebar();
+          S.fetchThreadDetail(targetId).catch(() => {});
         }
         return;
       }
@@ -19466,7 +4156,7 @@
           const cur = inp.value || '';
           inp.value = cur && !cur.endsWith(' ') ? `${cur} ${token}` : `${cur}${token}`;
           inp.focus();
-          updateComposerActionButton();
+          S.updateComposerActionButton();
           showToast(`Quoted ${token.trim()} in composer`);
         }
         return;
@@ -19478,7 +4168,7 @@
         if (fp && inp) {
           inp.value = `Review changes in @${fp} for edge cases, regressions, and security invariants.`;
           inp.focus();
-          updateComposerActionButton();
+          S.updateComposerActionButton();
         }
         return;
       }
@@ -19492,13 +4182,13 @@
               ? 'Summarize all uncommitted working tree changes and stage a clean, verified commit.'
               : 'Review all modified files in the current git working tree and flag any potential issues.';
           inp.focus();
-          updateComposerActionButton();
+          S.updateComposerActionButton();
         }
         return;
       }
       if (e.target.closest('[data-studio-cap-refresh]')) {
         const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId) || null;
-        await fetchStudioCapabilities(activeRow, true);
+        await S.fetchStudioCapabilities(activeRow, true);
         showToast('Refreshed workspace capabilities');
         return;
       }
@@ -19507,22 +4197,22 @@
         const chkId = String(runCheckBtn.dataset.runStudioCheck || '').trim();
         const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId) || null;
         if (chkId) {
-          await executeStudioCheck(chkId, activeRow);
+          await S.executeStudioCheck(chkId, activeRow);
         }
         return;
       }
       if (e.target.closest('#btn-toggle-inspector')) {
         haptic(8);
-        setInspectorOpen(!prefs.inspectorOpen);
+        S.setInspectorOpen(!prefs.inspectorOpen);
         return;
       }
       if (e.target.closest('#btn-close-inspector') || e.target.closest('#ide-inspector-backdrop')) {
-        setInspectorOpen(false);
+        S.setInspectorOpen(false);
         return;
       }
       const inspTabBtn = e.target.closest('[data-insp-tab]');
       if (inspTabBtn) {
-        setInspectorOpen(true, inspTabBtn.dataset.inspTab || 'files');
+        S.setInspectorOpen(true, inspTabBtn.dataset.inspTab || 'files');
         return;
       }
       const inspModeBtn = e.target.closest('[data-insp-view-mode]');
@@ -19531,25 +4221,25 @@
         prefs.inspectorViewMode =
           nextMode === 'diff' ? 'diff' : nextMode === 'preview' ? 'preview' : 'source';
         if (prefs.inspectorViewMode !== 'preview') {
-          teardownDeliverableInspectorFrames();
+          S.teardownDeliverableInspectorFrames();
           prefs.inspectorFullStage = false;
         }
         saveJson(STORAGE_KEYS.PREFS, prefs);
-        renderChatView(false);
-        if (prefs.inspectorViewMode === 'preview' && activeInspectorFileTarget) {
-          const parsedCur = parsePreviewTargetClient(activeInspectorFileTarget);
-          const dKind = getDeliverableKindClient(parsedCur.filePath);
+        S.renderChatView(false);
+        if (prefs.inspectorViewMode === 'preview' && S.activeInspectorFileTarget) {
+          const parsedCur = S.parsePreviewTargetClient(S.activeInspectorFileTarget);
+          const dKind = S.getDeliverableKindClient(parsedCur.filePath);
           if (dKind) {
             const sid = String(prefs.selectedThreadId || '').trim();
             const activeRow = (appState?.rows || []).find((r) => r && r.id === sid) || null;
-            const wsId = resolveSessionWorkspaceContext(activeRow, threadsCache[sid] || null).wsId;
+            const wsId = S.resolveSessionWorkspaceContext(activeRow, threadsCache[sid] || null).wsId;
             const cacheKey = `${sid || wsId || 'global'}::${parsedCur.filePath.replace(/\\/g, '/')}`;
-            const pageKey = `${cacheKey}::p${activeDeliverablePage}`;
+            const pageKey = `${cacheKey}::p${S.activeDeliverablePage}`;
             const hasEntry = dKind === 'pdf' || dKind === 'pptx'
-              ? deliverablePageCache.has(pageKey)
-              : deliverablePreviewCache.has(cacheKey);
+              ? S.deliverablePageCache.has(pageKey)
+              : S.deliverablePreviewCache.has(cacheKey);
             if (!hasEntry) {
-              fetchDeliverablePreview(activeInspectorFileTarget, activeRow, { page: activeDeliverablePage }).catch(() => {});
+              S.fetchDeliverablePreview(S.activeInspectorFileTarget, activeRow, { page: S.activeDeliverablePage }).catch(() => {});
             }
           }
         }
@@ -19558,59 +4248,59 @@
       if (e.target.closest('[data-insp-full-stage]')) {
         prefs.inspectorFullStage = !prefs.inspectorFullStage;
         saveJson(STORAGE_KEYS.PREFS, prefs);
-        renderChatView(false);
+        S.renderChatView(false);
         return;
       }
       const inspSheetBtn = e.target.closest('[data-insp-sheet-idx]');
       if (inspSheetBtn) {
-        activeDeliverableSheetIdx = Math.max(0, Number(inspSheetBtn.dataset.inspSheetIdx || 0));
-        renderChatView(false);
+        S.activeDeliverableSheetIdx = Math.max(0, Number(inspSheetBtn.dataset.inspSheetIdx || 0));
+        S.renderChatView(false);
         return;
       }
       const inspPageBtn = e.target.closest('[data-insp-dlv-page]');
       if (inspPageBtn) {
         const nextP = Math.max(1, Number(inspPageBtn.dataset.inspDlvPage || 1));
-        if (nextP !== activeDeliverablePage) {
-          activeDeliverablePage = nextP;
+        if (nextP !== S.activeDeliverablePage) {
+          S.activeDeliverablePage = nextP;
           const activeRow = (appState?.rows || []).find((r) => r && r.id === prefs.selectedThreadId) || null;
-          renderChatView(false);
-          if (activeInspectorFileTarget) {
-            fetchDeliverablePreview(activeInspectorFileTarget, activeRow, { page: nextP }).catch(() => {});
+          S.renderChatView(false);
+          if (S.activeInspectorFileTarget) {
+            S.fetchDeliverablePreview(S.activeInspectorFileTarget, activeRow, { page: nextP }).catch(() => {});
           }
         }
         return;
       }
       const inspDeckModeBtn = e.target.closest('[data-insp-dlv-deck-mode]');
       if (inspDeckModeBtn) {
-        activeDeliverableDeckMode = inspDeckModeBtn.dataset.inspDlvDeckMode === 'all' ? 'all' : 'single';
-        renderChatView(false);
+        S.activeDeliverableDeckMode = inspDeckModeBtn.dataset.inspDlvDeckMode === 'all' ? 'all' : 'single';
+        S.renderChatView(false);
         return;
       }
       const inspZoomBtn = e.target.closest('[data-insp-dlv-zoom]');
       if (inspZoomBtn) {
         const act = inspZoomBtn.dataset.inspDlvZoom;
-        if (act === 'fit') activeDeliverableZoomPct = 0;
-        else if (act === 'in') activeDeliverableZoomPct = activeDeliverableZoomPct === 0 ? 115 : Math.min(200, activeDeliverableZoomPct + 20);
-        else if (act === 'out') activeDeliverableZoomPct = activeDeliverableZoomPct === 0 ? 80 : Math.max(40, activeDeliverableZoomPct - 20);
-        renderChatView(false);
+        if (act === 'fit') S.activeDeliverableZoomPct = 0;
+        else if (act === 'in') S.activeDeliverableZoomPct = S.activeDeliverableZoomPct === 0 ? 115 : Math.min(200, S.activeDeliverableZoomPct + 20);
+        else if (act === 'out') S.activeDeliverableZoomPct = S.activeDeliverableZoomPct === 0 ? 80 : Math.max(40, S.activeDeliverableZoomPct - 20);
+        S.renderChatView(false);
         return;
       }
       const inspDlvAppBtn = e.target.closest('[data-insp-dlv-app]');
       if (inspDlvAppBtn) {
         const activeRow = (appState?.rows || []).find((r) => r && r.id === prefs.selectedThreadId) || null;
-        await openActiveDeliverableInApp(inspDlvAppBtn.dataset.inspDlvApp || activeInspectorFileTarget, activeRow);
+        await S.openActiveDeliverableInApp(inspDlvAppBtn.dataset.inspDlvApp || S.activeInspectorFileTarget, activeRow);
         return;
       }
       const inspDlvExportBtn = e.target.closest('[data-insp-dlv-export]');
       if (inspDlvExportBtn) {
         const activeRow = (appState?.rows || []).find((r) => r && r.id === prefs.selectedThreadId) || null;
-        await exportActiveDeliverable(inspDlvExportBtn.dataset.inspDlvExport || activeInspectorFileTarget, activeRow);
+        await S.exportActiveDeliverable(inspDlvExportBtn.dataset.inspDlvExport || S.activeInspectorFileTarget, activeRow);
         return;
       }
       const inspCopyBtn = e.target.closest('[data-insp-copy-code]');
       if (inspCopyBtn) {
         const key = inspCopyBtn.dataset.inspCopyCode || '';
-        const cached = filePreviewCache.get(key);
+        const cached = S.filePreviewCache.get(key);
         const diffCopy = String(cached?.gitDiff ?? cached?.diffPatch ?? cached?.diff ?? '');
         const srcCopy = String(cached?.content || '');
         const textToCopy =
@@ -19627,17 +4317,17 @@
       }
       if (e.target.closest('[data-insp-refresh-agents]')) {
         const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId) || null;
-        fetchStudioCapabilities(activeRow, true).catch(() => {});
-        if (prefs.selectedThreadId && !isNewSessionMode()) {
+        S.fetchStudioCapabilities(activeRow, true).catch(() => {});
+        if (prefs.selectedThreadId && !S.isNewSessionMode()) {
           const prov = activeRow?.provider || pinnedNavProvider || 'antigravity';
-          await fetchThreadDetail(prefs.selectedThreadId, prov);
-          const { allTasks } = getSessionBackgroundTasks(activeRow, threadsCache[prefs.selectedThreadId]);
+          await S.fetchThreadDetail(prefs.selectedThreadId, prov);
+          const { allTasks } = S.getSessionBackgroundTasks(activeRow, threadsCache[prefs.selectedThreadId]);
           for (const t of allTasks.slice(0, 4)) {
             if (t?.id) {
-              await fetchBgTaskLiveLog(prefs.selectedThreadId, t.fullId || t.id, prov);
+              await S.fetchBgTaskLiveLog(prefs.selectedThreadId, t.fullId || t.id, prov);
             }
           }
-          renderChatView(false);
+          S.renderChatView(false);
           showToast('Refreshed Side Agents & Checks');
         }
         return;
@@ -19647,8 +4337,8 @@
         e.preventDefault();
         e.stopPropagation();
         const fileTarget = previewFileEl.dataset.previewFile || '';
-        const parsedClicked = parsePreviewTargetClient(fileTarget);
-        const dlvKind = getDeliverableKindClient(parsedClicked.filePath);
+        const parsedClicked = S.parsePreviewTargetClient(fileTarget);
+        const dlvKind = S.getDeliverableKindClient(parsedClicked.filePath);
         const viewMode =
           previewFileEl.dataset.previewMode === 'diff'
             ? 'diff'
@@ -19661,7 +4351,7 @@
                   : 'source';
         if (fileTarget) {
           if (prefs.activeTab !== 'chat') switchTab('chat');
-          setInspectorOpen(true, 'files', { fileTarget, viewMode });
+          S.setInspectorOpen(true, 'files', { fileTarget, viewMode });
         }
         return;
       }
@@ -19674,20 +4364,20 @@
         const prov = openAgentBtn.dataset.sessionProv || '';
         if (sid && sid !== prefs.selectedThreadId) {
           recentResumeUntil = 0;
-          ensureEditorTabOpen(sid);
+          S.ensureEditorTabOpen(sid);
           setPinnedNav({ threadId: sid, provider: prov, durationMs: 45000 });
           prefs.selectedThreadId = sid;
           prefs.lastReplyThreadId = sid;
           prefs.composerMode = 'reply';
           saveJson(STORAGE_KEYS.PREFS, prefs);
-          fetchThreadDetail(sid, prov).catch(() => {});
+          S.fetchThreadDetail(sid, prov).catch(() => {});
         }
         if (prefs.activeTab !== 'chat') switchTab('chat');
-        setInspectorOpen(true, 'tasks', { agentId });
+        S.setInspectorOpen(true, 'tasks', { agentId });
         if (sid && agentId) {
-          fetchBgTaskLiveLog(sid, agentId, prov).catch(() => {});
+          S.fetchBgTaskLiveLog(sid, agentId, prov).catch(() => {});
         }
-        renderIdeSidebar();
+        S.renderIdeSidebar();
         return;
       }
       const openConvEl = e.target.closest('[data-open-conv]');
@@ -19697,16 +4387,16 @@
         const convId = String(openConvEl.dataset.openConv || '').trim();
         if (convId) {
           recentResumeUntil = 0;
-          ensureEditorTabOpen(convId);
+          S.ensureEditorTabOpen(convId);
           setPinnedNav({ threadId: convId, durationMs: 45000 });
           prefs.selectedThreadId = convId;
           prefs.lastReplyThreadId = convId;
           prefs.composerMode = 'reply';
           saveJson(STORAGE_KEYS.PREFS, prefs);
           if (prefs.activeTab !== 'chat') switchTab('chat');
-          renderChatView(true);
-          renderIdeSidebar();
-          fetchThreadDetail(convId).catch(() => {});
+          S.renderChatView(true);
+          S.renderIdeSidebar();
+          S.fetchThreadDetail(convId).catch(() => {});
         }
         return;
       }
@@ -19726,12 +4416,12 @@
             if (detEl) {
               detEl.open = true;
               detEl.dataset.renderedOpen = '1';
-              const openMap = getThreadOpenDetailsMap(prefs.selectedThreadId, true);
+              const openMap = S.getThreadOpenDetailsMap(prefs.selectedThreadId, true);
               if (openMap) openMap.set(detailKey, true);
             }
           }
           if (window.innerWidth <= 1024) {
-            setInspectorOpen(false);
+            S.setInspectorOpen(false);
           }
           if (targetEl) {
             targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -19747,17 +4437,17 @@
         if (sideAct === 'unpin') {
           prefs.pinnedBgSessionId = '';
           saveJson(STORAGE_KEYS.PREFS, prefs);
-          renderIdeSidebar();
+          S.renderIdeSidebar();
         } else if (sideAct === 'stop-all') {
           if (prefs.pinnedBgSessionId) {
             const pinnedRow = (appState?.rows || []).find((r) => r.id === prefs.pinnedBgSessionId);
-            await cancelAllSessionBgTasks(prefs.pinnedBgSessionId, pinnedRow?.provider || 'antigravity');
+            await S.cancelAllSessionBgTasks(prefs.pinnedBgSessionId, pinnedRow?.provider || 'antigravity');
           } else {
             const rows = (appState?.rows || []).filter((r) => r && r.id && !r.archived);
             for (const r of rows) {
-              const { runningCount } = getSessionBackgroundTasks(r, threadsCache[r.id]);
+              const { runningCount } = S.getSessionBackgroundTasks(r, threadsCache[r.id]);
               if (runningCount > 0) {
-                await cancelAllSessionBgTasks(r.id, r.provider);
+                await S.cancelAllSessionBgTasks(r.id, r.provider);
               }
             }
           }
@@ -19769,21 +4459,21 @@
         e.preventDefault();
         e.stopPropagation();
         const rect = sessCtxBtn.getBoundingClientRect();
-        openSessionContextMenu(sessCtxBtn.dataset.sessCtxMenu || '', rect.right - 160, rect.bottom + 4);
+        S.openSessionContextMenu(sessCtxBtn.dataset.sessCtxMenu || '', rect.right - 160, rect.bottom + 4);
         return;
       }
       const ctxActBtn = e.target.closest('[data-ctx-menu-act]');
       if (ctxActBtn) {
         e.preventDefault();
         e.stopPropagation();
-        closeIdeContextMenu(ctxActBtn.dataset.ctxMenuAct === 'rename');
+        S.closeIdeContextMenu(ctxActBtn.dataset.ctxMenuAct === 'rename');
         const cAct = ctxActBtn.dataset.ctxMenuAct;
         const sid = ctxActBtn.dataset.id || '';
         const prov = ctxActBtn.dataset.prov || 'antigravity';
         if (!sid) return;
         if (cAct === 'open' || cAct === 'inspect-outline') {
           recentResumeUntil = 0;
-          ensureEditorTabOpen(sid);
+          S.ensureEditorTabOpen(sid);
           recordFreqUsage('threads', sid);
           setPinnedNav({ threadId: sid, provider: prov, durationMs: 45000 });
           prefs.selectedThreadId = sid;
@@ -19792,26 +4482,26 @@
           saveJson(STORAGE_KEYS.PREFS, prefs);
           switchTab('chat');
           if (cAct === 'inspect-outline') {
-            setInspectorOpen(true, 'tasks');
+            S.setInspectorOpen(true, 'tasks');
           }
-          renderIdeSidebar();
-          fetchThreadDetail(sid, prov).catch(() => {});
+          S.renderIdeSidebar();
+          S.fetchThreadDetail(sid, prov).catch(() => {});
         } else if (cAct === 'rename') {
-          beginIdeInlineRename('session', sid);
+          S.beginIdeInlineRename('session', sid);
         } else if (cAct === 'pin-bg') {
           prefs.pinnedBgSessionId = prefs.pinnedBgSessionId === sid ? '' : sid;
           saveJson(STORAGE_KEYS.PREFS, prefs);
-          renderIdeSidebar();
+          S.renderIdeSidebar();
           showToast(prefs.pinnedBgSessionId ? '📌 Pinned session Side Agents in sidebar' : 'Unpinned Side Agents');
         } else if (cAct === 'open-vscode') {
-          const revealRes = await dispatchRemoteCommand({
+          const revealRes = await S.dispatchRemoteCommand({
             type: 'sessionAction',
             action: 'open',
             subAction: 'open',
             id: sid,
             provider: prov
           });
-          showToast(describeVsCodeOpenReply(revealRes, 'Opened session tab in desktop VS Code'));
+          showToast(S.describeVsCodeOpenReply(revealRes, 'Opened session tab in desktop VS Code'));
         }
         return;
       }
@@ -19820,8 +4510,8 @@
         const cardKey = qDockStepBtn.dataset.cardKey || '';
         const nextStep = Number(qDockStepBtn.dataset.qDockStep || 0);
         if (cardKey && Number.isFinite(nextStep)) {
-          activeDockStepByCardKey.set(cardKey, nextStep);
-          renderChatView(false);
+          S.activeDockStepByCardKey.set(cardKey, nextStep);
+          S.renderChatView(false);
         }
         return;
       }
@@ -19833,8 +4523,8 @@
         const cardKey = qOptBtn.dataset.cardKey || '';
         const qIdx = Number(qOptBtn.dataset.qIdx || 0);
         const optIdx = String(qOptBtn.dataset.optIdx || '0');
-        const draft = getQuestionDraft(cardKey);
-        const meta = renderedQuestionsByCardKey.get(cardKey);
+        const draft = S.getQuestionDraft(cardKey);
+        const meta = S.renderedQuestionsByCardKey.get(cardKey);
         const qObj = meta?.questions?.[qIdx];
         const isMulti = Boolean(qObj?.isMultiSelect);
 
@@ -19856,9 +4546,9 @@
 
         // Mirror selection across sibling question cards (sidebar / dock / chat stream) for the same session
         if (meta?.sessionId) {
-          for (const [sibKey, sibMeta] of renderedQuestionsByCardKey.entries()) {
+          for (const [sibKey, sibMeta] of S.renderedQuestionsByCardKey.entries()) {
             if (sibKey !== cardKey && sibMeta?.sessionId === meta.sessionId) {
-              const sibDraft = getQuestionDraft(sibKey);
+              const sibDraft = S.getQuestionDraft(sibKey);
               sibDraft.selectedByQ[qIdx] = new Set(selSet);
             }
           }
@@ -19866,7 +4556,7 @@
 
         document.querySelectorAll('[data-q-card]').forEach((cardEl) => {
           const cKey = cardEl.dataset.qCard || '';
-          const cMeta = renderedQuestionsByCardKey.get(cKey);
+          const cMeta = S.renderedQuestionsByCardKey.get(cKey);
           if (cKey !== cardKey && (!meta?.sessionId || cMeta?.sessionId !== meta.sessionId)) return;
           const blockEl = cardEl.querySelector(`[data-q-block="${qIdx}"]`) || cardEl;
           blockEl.querySelectorAll(`[data-q-opt-toggle][data-q-idx="${qIdx}"]`).forEach((btn) => {
@@ -19878,10 +4568,10 @@
             const chk = btn.querySelector('.vs-q-check');
             if (chk) chk.textContent = active ? '✓' : '';
           });
-          const cDraft = getQuestionDraft(cKey);
+          const cDraft = S.getQuestionDraft(cKey);
           const qCount = cMeta?.questions?.length || meta?.questions?.length || 1;
           const anyToolPerm = Boolean((cMeta?.questions || meta?.questions)?.some((q) => q.isToolPermission));
-          const totalCount = countDraftSelections(cDraft, qCount);
+          const totalCount = S.countDraftSelections(cDraft, qCount);
           const subBtn = cardEl.querySelector('[data-q-submit]');
           if (subBtn) {
             const isShortSub = cardEl.classList.contains('sb-q-card');
@@ -19897,7 +4587,7 @@
       if (qSubmitBtn) {
         const cardKey = qSubmitBtn.dataset.cardKey || '';
         if (cardKey) {
-          await submitInteractiveQuestionCard(cardKey, false);
+          await S.submitInteractiveQuestionCard(cardKey, false);
         }
         return;
       }
@@ -19906,7 +4596,7 @@
       if (qSkipBtn) {
         const cardKey = qSkipBtn.dataset.cardKey || '';
         if (cardKey) {
-          await submitInteractiveQuestionCard(cardKey, true);
+          await S.submitInteractiveQuestionCard(cardKey, true);
         }
         return;
       }
@@ -19934,7 +4624,7 @@
         } else if (nAct === 'clear-checked') {
           clearCheckedNotifications();
         } else if (nAct === 'open-settings') {
-          closeNotifModal();
+          S.closeNotifModal();
           switchTab('analytics');
           setTimeout(() => {
             $('push-settings-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -19948,7 +4638,7 @@
         haptic(10);
         const act = pushBtn.dataset.pushAct;
         if (act === 'header-bell') {
-          openNotifModal();
+          S.openNotifModal();
           return;
         }
         if (act === 'enable' || act === 'reset') {
@@ -19968,7 +4658,7 @@
           if (pushBtn.disabled) return;
           pushBtn.disabled = true;
           try {
-            window.location.href = buildTheoMigrationUrl();
+            window.location.href = S.buildTheoMigrationUrl();
           } finally {
             pushBtn.disabled = false;
           }
@@ -19991,7 +4681,7 @@
       if (sideFilterBtn) {
         prefs.sidebarFilter = sideFilterBtn.dataset.sideFilter || 'all';
         saveJson(STORAGE_KEYS.PREFS, prefs);
-        renderIdeSidebar();
+        S.renderIdeSidebar();
         return;
       }
 
@@ -19999,7 +4689,7 @@
       if (closeTabBtn) {
         e.stopPropagation();
         haptic(8);
-        closeEditorTab(closeTabBtn.dataset.closeEditorTab || '');
+        S.closeEditorTab(closeTabBtn.dataset.closeEditorTab || '');
         return;
       }
 
@@ -20008,7 +4698,7 @@
         const tid = editorTabEl.dataset.editorTabId;
         if (tid === '__new__') return;
         recentResumeUntil = 0;
-        ensureEditorTabOpen(tid);
+        S.ensureEditorTabOpen(tid);
         recordFreqUsage('threads', tid);
         setPinnedNav({
           threadId: tid,
@@ -20021,9 +4711,9 @@
         prefs.newSessionGroupId = '';
         saveJson(STORAGE_KEYS.PREFS, prefs);
         markNotificationsCheckedForSession(tid);
-        renderChatView(true);
-        renderIdeSidebar();
-        fetchThreadDetail(tid, editorTabEl.dataset.sessionProv || '');
+        S.renderChatView(true);
+        S.renderIdeSidebar();
+        S.fetchThreadDetail(tid, editorTabEl.dataset.sessionProv || '');
         return;
       }
 
@@ -20036,7 +4726,7 @@
         const sid = ideOpenRow.dataset.ideOpenSession;
         const prov = ideOpenRow.dataset.sessionProv || '';
         recentResumeUntil = 0;
-        ensureEditorTabOpen(sid);
+        S.ensureEditorTabOpen(sid);
         recordFreqUsage('threads', sid);
         setPinnedNav({
           threadId: sid,
@@ -20050,8 +4740,8 @@
         saveJson(STORAGE_KEYS.PREFS, prefs);
         markNotificationsCheckedForSession(sid);
         switchTab('chat');
-        renderIdeSidebar();
-        fetchThreadDetail(sid, prov);
+        S.renderIdeSidebar();
+        S.fetchThreadDetail(sid, prov);
         return;
       }
 
@@ -20063,7 +4753,7 @@
         if (stack) {
           const detailsList = Array.from(stack.querySelectorAll('details.code-step-card'));
           const anyClosed = detailsList.some((d) => !d.open);
-          const openMap = getThreadOpenDetailsMap(prefs.selectedThreadId, true);
+          const openMap = S.getThreadOpenDetailsMap(prefs.selectedThreadId, true);
           detailsList.forEach((d) => {
             const key = d.dataset.chatDetailKey || '';
             d.dataset.renderedOpen = anyClosed ? '1' : '0';
@@ -20092,7 +4782,7 @@
         const kind = stepFilterBtn.dataset.stepKindFilter || 'all';
         const turnKey = stepFilterBtn.dataset.stepTurnKey || '';
         if (turnKey) {
-          setBoundedMap(stepKindFilterByTurnKey, turnKey, kind);
+          setBoundedMap(S.stepKindFilterByTurnKey, turnKey, kind);
         }
         const stack = stepFilterBtn.closest('.code-steps-stack');
         if (stack) {
@@ -20106,7 +4796,7 @@
           const parentTools = stack.closest('details.tools-details[data-chat-detail-key]');
           if (parentTools && !parentTools.open) {
             parentTools.open = true;
-            const openMap = getThreadOpenDetailsMap(prefs.selectedThreadId, true);
+            const openMap = S.getThreadOpenDetailsMap(prefs.selectedThreadId, true);
             if (openMap && parentTools.dataset.chatDetailKey) {
               parentTools.dataset.renderedOpen = '1';
               openMap.set(parentTools.dataset.chatDetailKey, true);
@@ -20125,7 +4815,7 @@
           const thinkEl = turnBubble.querySelector('details.vs-thought-card');
           const toolsEl = turnBubble.querySelector('details.tools-details');
           const anyClosed = Boolean((thinkEl && !thinkEl.open) || (toolsEl && !toolsEl.open));
-          const openMap = getThreadOpenDetailsMap(prefs.selectedThreadId, true);
+          const openMap = S.getThreadOpenDetailsMap(prefs.selectedThreadId, true);
           for (const d of [thinkEl, toolsEl]) {
             if (!d) continue;
             d.open = anyClosed;
@@ -20147,7 +4837,7 @@
         const fp = stepMentionBtn.dataset.stepMentionFile || '';
         if (fp) {
           recordFreqUsage('repos', fp);
-          attachMentionItemToComposer({ name: fp, repoPath: fp, kind: 'repo', sizeLabel: 'file ref' });
+          S.attachMentionItemToComposer({ name: fp, repoPath: fp, kind: 'repo', sizeLabel: 'file ref' });
           showToast(`Mentioned ${fp}`);
           $('composer-input')?.focus();
         }
@@ -20158,7 +4848,7 @@
       if (slashPickBtn) {
         e.preventDefault();
         e.stopPropagation();
-        await applySlashPopoverSelection(Number(slashPickBtn.dataset.slashPick || 0));
+        await S.applySlashPopoverSelection(Number(slashPickBtn.dataset.slashPick || 0));
         return;
       }
 
@@ -20176,23 +4866,23 @@
       if (e.target.closest('[data-open-conn-modal]')) {
         e.preventDefault();
         e.stopPropagation();
-        openConnModal();
-        syncData().catch(() => {});
+        S.openConnModal();
+        S.syncData().catch(() => {});
         return;
       }
 
       if (e.target.closest('[data-open-cmd-palette]')) {
         e.preventDefault();
         e.stopPropagation();
-        openCommandPalette();
+        S.openCommandPalette();
         return;
       }
 
       if (e.target.closest('[data-chat-rename-btn]')) {
         e.preventDefault();
         e.stopPropagation();
-        if (!isNewSessionMode() && cleanTargetThreadId(prefs.selectedThreadId)) {
-          beginIdeInlineRename('chat-session', prefs.selectedThreadId);
+        if (!S.isNewSessionMode() && S.cleanTargetThreadId(prefs.selectedThreadId)) {
+          S.beginIdeInlineRename('chat-session', prefs.selectedThreadId);
         }
         return;
       }
@@ -20210,7 +4900,7 @@
         e.preventDefault();
         e.stopPropagation();
         clearPinnedNav();
-        closeConnModal();
+        S.closeConnModal();
         switchTab(gotoBtn.dataset.gotoTab);
         return;
       }
@@ -20223,8 +4913,8 @@
         }
         prefs.collapsedQuotaCards[provKey] = !prefs.collapsedQuotaCards[provKey];
         saveJson(STORAGE_KEYS.PREFS, prefs);
-        renderPulseView();
-        renderIdeSidebar();
+        S.renderPulseView();
+        S.renderIdeSidebar();
         return;
       }
 
@@ -20238,11 +4928,11 @@
           for (const item of provList) {
             item.active = item.id === accountId;
           }
-          persistCache();
-          renderPulseView();
-          renderIdeSidebar();
+          S.persistCache();
+          S.renderPulseView();
+          S.renderIdeSidebar();
         }
-        await dispatchRemoteCommand({
+        await S.dispatchRemoteCommand({
           type: 'sessionAction',
           action: 'accountSwitch',
           subAction: 'accountSwitch',
@@ -20257,14 +4947,14 @@
       if (acctMoveBtn) {
         e.stopPropagation();
         if (ctxMenuEl && !ctxMenuEl.hidden && acctMoveBtn.closest('#ide-context-menu')) {
-          closeIdeContextMenu();
+          S.closeIdeContextMenu();
         }
         const dir = acctMoveBtn.dataset.accountMove;
         const accountId = acctMoveBtn.dataset.accountId;
         const provider = acctMoveBtn.dataset.accountProv === 'claude' ? 'claude' : 'antigravity';
         if (accountId && (dir === 'up' || dir === 'down')) {
-          await reorderPulseQuotaCard(accountId, { direction: dir, provider });
-          renderIdeSidebar();
+          await S.reorderPulseQuotaCard(accountId, { direction: dir, provider });
+          S.renderIdeSidebar();
         }
         return;
       }
@@ -20276,9 +4966,9 @@
         const provider = acctLabelBtn.dataset.accountProv === 'claude' ? 'claude' : 'antigravity';
         const curNick = acctLabelBtn.dataset.accountNick || '';
         const surface = acctLabelBtn.dataset.accountSurface === 'sidebar' ? 'sidebar' : 'pulse';
-        activeInlineAcctEdit = { accountId, provider, surface, value: curNick };
-        if (surface === 'sidebar') renderIdeSidebar();
-        else renderPulseView();
+        S.activeInlineAcctEdit = { accountId, provider, surface, value: curNick };
+        if (surface === 'sidebar') S.renderIdeSidebar();
+        else S.renderPulseView();
         setTimeout(() => {
           const inp = (surface === 'sidebar' ? $('ide-sidebar-accounts') : $('pulse-quota-grid'))?.querySelector('.ide-acct-inline-edit');
           inp?.focus();
@@ -20289,10 +4979,10 @@
 
       if (e.target.closest('[data-acct-label-cancel]')) {
         e.stopPropagation();
-        const prevSurf = activeInlineAcctEdit?.surface || 'sidebar';
-        activeInlineAcctEdit = null;
-        if (prevSurf === 'sidebar') renderIdeSidebar();
-        else renderPulseView();
+        const prevSurf = S.activeInlineAcctEdit?.surface || 'sidebar';
+        S.activeInlineAcctEdit = null;
+        if (prevSurf === 'sidebar') S.renderIdeSidebar();
+        else S.renderPulseView();
         return;
       }
 
@@ -20301,7 +4991,7 @@
         e.preventDefault();
         e.stopPropagation();
         const rect = acctCtxBtn.getBoundingClientRect();
-        openAccountContextMenu(
+        S.openAccountContextMenu(
           acctCtxBtn.dataset.acctCtxMenu || '',
           acctCtxBtn.dataset.acctProv || 'antigravity',
           rect.right - 180,
@@ -20314,7 +5004,7 @@
       if (acctMenuAct) {
         e.preventDefault();
         e.stopPropagation();
-        closeIdeContextMenu();
+        S.closeIdeContextMenu();
         const act = acctMenuAct.dataset.acctMenuAct;
         const accountId = acctMenuAct.dataset.accountId || '';
         const provider = acctMenuAct.dataset.accountProv === 'claude' ? 'claude' : 'antigravity';
@@ -20322,11 +5012,11 @@
           const provList = appState?.providers?.[provider]?.accounts;
           if (Array.isArray(provList)) {
             for (const item of provList) item.active = item.id === accountId;
-            persistCache();
-            renderPulseView();
-            renderIdeSidebar();
+            S.persistCache();
+            S.renderPulseView();
+            S.renderIdeSidebar();
           }
-          await dispatchRemoteCommand({
+          await S.dispatchRemoteCommand({
             type: 'sessionAction',
             action: 'accountSwitch',
             subAction: 'accountSwitch',
@@ -20335,8 +5025,8 @@
           });
           showToast(`⇄ Switched active ${provider === 'claude' ? 'Claude Code' : 'Antigravity'} account`);
         } else if (act === 'new-session' && accountId) {
-          const curGrp = resolveCurrentActiveSessionGroupId();
-          dispatchRemoteCommand({
+          const curGrp = S.resolveCurrentActiveSessionGroupId();
+          S.dispatchRemoteCommand({
             type: 'sessionAction',
             action: 'accountNewSession',
             subAction: 'accountNewSession',
@@ -20344,20 +5034,20 @@
             provider,
             group: curGrp
           }).catch(() => {});
-          enterNewSessionMode(provider, { groupId: curGrp });
+          S.enterNewSessionMode(provider, { groupId: curGrp });
           showToast(`+ Starting new ${provider === 'claude' ? 'Claude Code' : 'Antigravity'} session`);
         } else if (act === 'label' && accountId) {
           const curNick = acctMenuAct.dataset.accountNick || '';
-          activeInlineAcctEdit = { accountId, provider, surface: 'sidebar', value: curNick };
-          renderIdeSidebar();
+          S.activeInlineAcctEdit = { accountId, provider, surface: 'sidebar', value: curNick };
+          S.renderIdeSidebar();
           setTimeout(() => {
             const inp = $('ide-sidebar-accounts')?.querySelector('.ide-acct-inline-edit');
             inp?.focus();
             inp?.select();
           }, 20);
         } else if (act === 'refresh') {
-          const targetDeviceId = resolveLiveAccountHostForAdd()?.id || (prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all' ? prefs.selectedDeviceFilter : '');
-          await dispatchRemoteCommand({
+          const targetDeviceId = S.resolveLiveAccountHostForAdd()?.id || (prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all' ? prefs.selectedDeviceFilter : '');
+          await S.dispatchRemoteCommand({
             type: 'sessionAction',
             action: 'accountRefresh',
             subAction: 'accountRefresh',
@@ -20365,17 +5055,17 @@
             provider,
             ...(targetDeviceId ? { targetDeviceId } : {})
           }).catch(() => {});
-          syncData({ toast: false });
+          S.syncData({ toast: false });
           showToast('↻ Refreshing account quotas…');
         } else if (act === 'details') {
-          openAccountDetailsModal();
+          S.openAccountDetailsModal();
         }
         return;
       }
 
       const acctRemoveBtn = e.target.closest('[data-account-remove]');
       if (acctRemoveBtn && ctxMenuEl && !ctxMenuEl.hidden && acctRemoveBtn.closest('#ide-context-menu')) {
-        closeIdeContextMenu();
+        S.closeIdeContextMenu();
       }
       if (acctRemoveBtn) {
         e.stopPropagation();
@@ -20385,7 +5075,7 @@
         const provLabel = provider === 'claude' ? 'Claude Code' : 'Antigravity';
         const provList = appState?.providers?.[provider]?.accounts;
         const signedInCount = Array.isArray(provList)
-          ? provList.filter(isSignedInQuotaCard).length
+          ? provList.filter(S.isSignedInQuotaCard).length
           : 1;
         const okConfirm = confirm(
           signedInCount <= 1
@@ -20406,11 +5096,11 @@
               }
             ];
           }
-          persistCache();
-          renderPulseView();
-          renderIdeSidebar();
+          S.persistCache();
+          S.renderPulseView();
+          S.renderIdeSidebar();
         }
-        await dispatchRemoteCommand({
+        await S.dispatchRemoteCommand({
           type: 'sessionAction',
           action: 'accountRemove',
           subAction: 'accountRemove',
@@ -20426,29 +5116,29 @@
       if (addTrayBtn) {
         e.preventDefault();
         e.stopPropagation();
-        if (addAccountTrayState && addAccountTrayState.surface === 'tray') {
-          closeAddAccountTray();
+        if (S.addAccountTrayState && S.addAccountTrayState.surface === 'tray') {
+          S.closeAddAccountTray();
         } else {
-          openAddAccountTray('');
+          S.openAddAccountTray('');
         }
         return;
       }
 
       const addTrayProvTab = e.target.closest('[data-add-tray-prov]');
-      if (addTrayProvTab && addAccountTrayState) {
+      if (addTrayProvTab && S.addAccountTrayState) {
         e.preventDefault();
         e.stopPropagation();
         const inpEl =
-          addAccountTrayState.surface === 'modal'
+          S.addAccountTrayState.surface === 'modal'
             ? $('acct-modal-add-label')
             : $('ide-add-tray-label');
-        addAccountTrayState.label = String(inpEl?.value || addAccountTrayState.label || '');
-        addAccountTrayState.provider =
+        S.addAccountTrayState.label = String(inpEl?.value || S.addAccountTrayState.label || '');
+        S.addAccountTrayState.provider =
           addTrayProvTab.dataset.addTrayProv === 'claude' ? 'claude' : 'antigravity';
         const hostBox =
-          addAccountTrayState.surface === 'modal' ? $('acct-signin-body') : $('ide-add-account-tray');
+          S.addAccountTrayState.surface === 'modal' ? $('acct-signin-body') : $('ide-add-account-tray');
         if (hostBox) {
-          hostBox.innerHTML = renderAddAccountTrayHtml(addAccountTrayState.surface);
+          hostBox.innerHTML = S.renderAddAccountTrayHtml(S.addAccountTrayState.surface);
         }
         return;
       }
@@ -20456,7 +5146,7 @@
       if (e.target.closest('[data-add-tray-cancel]')) {
         e.preventDefault();
         e.stopPropagation();
-        closeAddAccountTray();
+        S.closeAddAccountTray();
         return;
       }
 
@@ -20465,7 +5155,7 @@
         e.preventDefault();
         e.stopPropagation();
         const hintProv = addAcctRemoteBtn.dataset.accountAddRemote;
-        openAddAccountTray(hintProv === 'claude' ? 'claude' : hintProv === 'antigravity' ? 'antigravity' : '', {
+        S.openAddAccountTray(hintProv === 'claude' ? 'claude' : hintProv === 'antigravity' ? 'antigravity' : '', {
           preferModal: !addAcctRemoteBtn.closest('#ide-explorer-sidebar')
         });
         return;
@@ -20474,12 +5164,12 @@
       if (e.target.closest('[data-account-details]')) {
         e.preventDefault();
         e.stopPropagation();
-        openAccountDetailsModal();
+        S.openAccountDetailsModal();
         return;
       }
 
       if (e.target.closest('#acct-details-close') || e.target === $('acct-details-modal')) {
-        closeAccountDetailsModal();
+        S.closeAccountDetailsModal();
         return;
       }
 
@@ -20489,18 +5179,18 @@
         e.stopPropagation();
         const act = acctDetailsAct.dataset.acctDetailsAct;
         if (act === 'refresh') {
-          const targetDeviceId = resolveLiveAccountHostForAdd()?.id || (prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all' ? prefs.selectedDeviceFilter : '');
-          await dispatchRemoteCommand({
+          const targetDeviceId = S.resolveLiveAccountHostForAdd()?.id || (prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all' ? prefs.selectedDeviceFilter : '');
+          await S.dispatchRemoteCommand({
             type: 'sessionAction',
             action: 'accountRefresh',
             subAction: 'accountRefresh',
             ...(targetDeviceId ? { targetDeviceId } : {})
           }).catch(() => {});
-          syncData({ toast: false });
+          S.syncData({ toast: false });
           showToast('↻ Refreshing quotas…');
         } else if (act === 'add') {
-          closeAccountDetailsModal();
-          openAddAccountTray('', { preferModal: true });
+          S.closeAccountDetailsModal();
+          S.openAddAccountTray('', { preferModal: true });
         }
         return;
       }
@@ -20512,8 +5202,8 @@
         const pAct = pendingLoginBtn.dataset.pendingLoginAct;
         const pl = appState?.pendingAccountLogin;
         if (pAct === 'cancel') {
-          const targetDeviceId = pl?.hostId || resolveLiveAccountHostForAdd()?.id || (prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all' ? prefs.selectedDeviceFilter : '');
-          await dispatchRemoteCommand({
+          const targetDeviceId = pl?.hostId || S.resolveLiveAccountHostForAdd()?.id || (prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all' ? prefs.selectedDeviceFilter : '');
+          await S.dispatchRemoteCommand({
             type: 'sessionAction',
             action: 'accountSignInCancel',
             subAction: 'accountSignInCancel',
@@ -20527,27 +5217,27 @@
               d.hostHealth.pendingAccountLogin = null;
             }
           }
-          for (const [devId, snap] of hostSnapshotsByDevice.entries()) {
+          for (const [devId, snap] of S.hostSnapshotsByDevice.entries()) {
             if (!snap || (targetDeviceId && devId !== targetDeviceId)) continue;
             if (snap.pendingAccountLogin) snap.pendingAccountLogin = null;
             if (snap.hostHealth?.pendingAccountLogin) snap.hostHealth.pendingAccountLogin = null;
           }
-          for (const d of fleetDevicesMap.values()) {
+          for (const d of S.fleetDevicesMap.values()) {
             if (d?.hostHealth?.pendingAccountLogin && (!targetDeviceId || d.id === targetDeviceId)) {
               d.hostHealth.pendingAccountLogin = null;
             }
           }
-          persistCache();
-          renderIdePendingLoginBanner();
+          S.persistCache();
+          S.renderIdePendingLoginBanner();
           showToast('Cancelled pending sign-in');
         } else if (pAct === 'resume') {
-          const host = resolveLiveAccountHostForAdd();
-          if (acctSignIn) {
+          const host = S.resolveLiveAccountHostForAdd();
+          if (S.acctSignIn) {
             const modal = $('acct-signin-modal');
             if (modal) modal.hidden = false;
-            renderAccountSignInModal();
+            S.renderAccountSignInModal();
           } else if (host && pl) {
-            acctSignIn = {
+            S.acctSignIn = {
               provider: pl.provider === 'claude' ? 'claude' : 'antigravity',
               label: String(pl.label || ''),
               hostId: host.id,
@@ -20565,11 +5255,11 @@
               modal.hidden = false;
               if (wasHidden) pushUiHistoryState('acct-signin-modal');
             }
-            renderAccountSignInModal();
-            acctSignIn.pollTimer = setInterval(() => pollAccountSignIn(acctSignIn), 2000);
-            pollAccountSignIn(acctSignIn);
+            S.renderAccountSignInModal();
+            S.acctSignIn.pollTimer = setInterval(() => S.pollAccountSignIn(S.acctSignIn), 2000);
+            S.pollAccountSignIn(S.acctSignIn);
           } else {
-            openAddAccountTray(pl?.provider || '', { preferModal: true });
+            S.openAddAccountTray(pl?.provider || '', { preferModal: true });
           }
         }
         return;
@@ -20582,7 +5272,7 @@
         const hAct = hostActBtn.dataset.hostAct;
         const targetDeviceId = hostActBtn.dataset.deviceId || '';
         if (hAct === 'checkPcSetup' || hAct === 'reload' || hAct === 'dismissAutoReloadFailure') {
-          await dispatchRemoteCommand({
+          await S.dispatchRemoteCommand({
             type: 'sessionAction',
             action: hAct,
             subAction: hAct,
@@ -20603,7 +5293,7 @@
                 clearArFailure(d?.hostHealth?.autoReload);
               }
             }
-            for (const snap of hostSnapshotsByDevice.values()) {
+            for (const snap of S.hostSnapshotsByDevice.values()) {
               clearArFailure(snap?.autoReload);
               for (const d of Array.isArray(snap?.devices) ? snap.devices : []) {
                 if (!targetDeviceId || d?.id === targetDeviceId) {
@@ -20612,16 +5302,16 @@
               }
             }
             if (targetDeviceId) {
-              clearArFailure(fleetDevicesMap.get(targetDeviceId)?.hostHealth?.autoReload);
+              clearArFailure(S.fleetDevicesMap.get(targetDeviceId)?.hostHealth?.autoReload);
             } else {
-              for (const d of fleetDevicesMap.values()) {
+              for (const d of S.fleetDevicesMap.values()) {
                 clearArFailure(d?.hostHealth?.autoReload);
               }
             }
-            persistCache();
-            renderIdeHostHealthCards();
+            S.persistCache();
+            S.renderIdeHostHealthCards();
           }
-          syncData({ toast: false });
+          S.syncData({ toast: false });
           showToast(
             hAct === 'reload'
               ? '↻ Sent window reload to PC'
@@ -20645,7 +5335,7 @@
         e.preventDefault();
         e.stopPropagation();
         const rect = grpCtxBtn.getBoundingClientRect();
-        openGroupContextMenu(grpCtxBtn.dataset.groupCtxMenu || '', rect.right - 170, rect.bottom + 4);
+        S.openGroupContextMenu(grpCtxBtn.dataset.groupCtxMenu || '', rect.right - 170, rect.bottom + 4);
         return;
       }
 
@@ -20653,36 +5343,36 @@
       if (acctSignInBtn) {
         e.preventDefault();
         e.stopPropagation();
-        handleAccountSignInAct(acctSignInBtn.dataset.acctSigninAct);
+        S.handleAccountSignInAct(acctSignInBtn.dataset.acctSigninAct);
         return;
       }
       if (e.target.closest('#acct-signin-close') || e.target === $('acct-signin-modal')) {
-        closeAccountSignInModal();
+        S.closeAccountSignInModal();
         return;
       }
 
       const quickNew = e.target.closest('[data-quick-new]');
       if (quickNew) {
-        enterNewSessionMode(quickNew.dataset.quickNew, { repoPrefix: '' });
+        S.enterNewSessionMode(quickNew.dataset.quickNew, { repoPrefix: '' });
         return;
       }
 
       if (e.target.closest('[data-clear-new-session-group]')) {
         prefs.newSessionGroupId = '';
         saveJson(STORAGE_KEYS.PREFS, prefs);
-        renderChatView();
-        renderIdeSidebar();
+        S.renderChatView();
+        S.renderIdeSidebar();
         return;
       }
 
       const launchRepo = e.target.closest('[data-launch-repo]');
       if (launchRepo) {
         const repoName = launchRepo.dataset.launchName;
-        enterNewSessionMode('antigravity', { repoPrefix: repoName });
+        S.enterNewSessionMode('antigravity', { repoPrefix: repoName });
         const inp = $('composer-input');
         if (inp) {
           inp.value = `[${repoName}] `;
-          updateComposerActionButton();
+          S.updateComposerActionButton();
           inp.focus();
         }
         return;
@@ -20695,7 +5385,7 @@
         const targetProv = openBgBtn.dataset.sessionProv || '';
         const focusTask = openBgBtn.dataset.focusTask || '';
         recentResumeUntil = 0;
-        ensureEditorTabOpen(targetSid);
+        S.ensureEditorTabOpen(targetSid);
         setPinnedNav({ threadId: targetSid, provider: targetProv, durationMs: 45000 });
         prefs.selectedThreadId = targetSid;
         prefs.lastReplyThreadId = targetSid;
@@ -20703,7 +5393,7 @@
         prefs.newSessionGroupId = '';
         saveJson(STORAGE_KEYS.PREFS, prefs);
         if (focusTask) {
-          openBgTaskDetails.add(`${targetSid}:${focusTask}`);
+          S.openBgTaskDetails.add(`${targetSid}:${focusTask}`);
         }
         markNotificationsCheckedForSession(targetSid);
         switchTab('chat');
@@ -20711,11 +5401,11 @@
         if (ctxPop) ctxPop.hidden = true;
         const bgPop = $('bg-tasks-popover');
         if (bgPop) bgPop.hidden = false;
-        renderIdeSidebar();
-        renderChatView(true);
-        fetchThreadDetail(targetSid, targetProv).then(() => {
+        S.renderIdeSidebar();
+        S.renderChatView(true);
+        S.fetchThreadDetail(targetSid, targetProv).then(() => {
           if (focusTask) {
-            fetchBgTaskLiveLog(targetSid, focusTask, targetProv);
+            S.fetchBgTaskLiveLog(targetSid, focusTask, targetProv);
           }
         });
         return;
@@ -20733,30 +5423,30 @@
           if (ctxPop) ctxPop.hidden = true;
           const bgPop = $('bg-tasks-popover');
           if (bgPop) bgPop.hidden = false;
-          renderChatView();
+          S.renderChatView();
           return;
         }
         if (act === 'refresh-log' && sid && tid) {
-          openBgTaskDetails.add(`${sid}:${tid}`);
-          const out = await fetchBgTaskLiveLog(sid, tid, prov);
+          S.openBgTaskDetails.add(`${sid}:${tid}`);
+          const out = await S.fetchBgTaskLiveLog(sid, tid, prov);
           showToast(out ? 'Refreshed live task log' : 'Synced latest task snapshot');
-          fetchThreadDetail(sid, prov).catch(() => {});
+          S.fetchThreadDetail(sid, prov).catch(() => {});
           return;
         }
         if (act === 'stop-task' && sid && tid) {
-          await cancelSingleBgTask(sid, tid, prov);
+          await S.cancelSingleBgTask(sid, tid, prov);
           return;
         }
         if (act === 'stop-session-all' && sid) {
-          await cancelAllSessionBgTasks(sid, prov);
+          await S.cancelAllSessionBgTasks(sid, prov);
           return;
         }
         if (act === 'stop-all-global') {
           const rows = (appState?.rows || []).filter((r) => r && r.id && !r.archived);
           for (const r of rows) {
-            const { runningCount } = getSessionBackgroundTasks(r, threadsCache[r.id]);
+            const { runningCount } = S.getSessionBackgroundTasks(r, threadsCache[r.id]);
             if (runningCount > 0) {
-              await cancelAllSessionBgTasks(r.id, r.provider);
+              await S.cancelAllSessionBgTasks(r.id, r.provider);
             }
           }
           return;
@@ -20767,16 +5457,16 @@
       const openChat = e.target.closest('[data-open-chat]');
       if (openChat && openChat.dataset.openChat) {
         clearPinnedNav();
-        ensureEditorTabOpen(openChat.dataset.openChat);
+        S.ensureEditorTabOpen(openChat.dataset.openChat);
         prefs.selectedThreadId = openChat.dataset.openChat;
         prefs.lastReplyThreadId = openChat.dataset.openChat;
         prefs.composerMode = 'reply';
         saveJson(STORAGE_KEYS.PREFS, prefs);
         markNotificationsCheckedForSession(prefs.selectedThreadId);
-        emitPrewarmHint(prefs.selectedThreadId, { source: 'open-chat' });
+        S.emitPrewarmHint(prefs.selectedThreadId, { source: 'open-chat' });
         switchTab('chat');
-        renderIdeSidebar();
-        fetchThreadDetail(prefs.selectedThreadId);
+        S.renderIdeSidebar();
+        S.fetchThreadDetail(prefs.selectedThreadId);
         return;
       }
 
@@ -20785,7 +5475,7 @@
         if (e.target.closest('[contenteditable="true"]')) return;
         e.stopPropagation();
         if (ctxMenuEl && !ctxMenuEl.hidden && groupAct.closest('#ide-context-menu')) {
-          closeIdeContextMenu();
+          S.closeIdeContextMenu();
         }
         const act = groupAct.dataset.groupAct;
         const gId = groupAct.dataset.groupId || '';
@@ -20802,16 +5492,16 @@
           const cur =
             attrExpanded === 'false' || attrExpanded === 'true'
               ? attrExpanded === 'false'
-              : isSessionGroupCollapsed(gId, Boolean(grpObj?.collapsed));
+              : S.isSessionGroupCollapsed(gId, Boolean(grpObj?.collapsed));
           const next = !cur;
           prefs.collapsedSessionGroups[gId] = next;
           if (grpObj) grpObj.collapsed = next;
           saveJson(STORAGE_KEYS.PREFS, prefs);
-          persistCache();
-          renderSessionsView();
-          renderIdeSidebar();
+          S.persistCache();
+          S.renderSessionsView();
+          S.renderIdeSidebar();
           if (gId !== 'ungrouped' && gId !== 'archived') {
-            dispatchRemoteCommand({
+            S.dispatchRemoteCommand({
               type: 'sessionAction',
               action: 'groupToggle',
               subAction: 'groupToggle',
@@ -20826,14 +5516,14 @@
           if (!name || !name.trim()) return;
           const cleanName = name.trim();
           const newId = `grp-${Date.now().toString(36)}`;
-          noteGroupOverride(newId, { op: 'create', name: cleanName });
+          S.noteGroupOverride(newId, { op: 'create', name: cleanName });
           if (appState) {
             appState.groups = [...(appState.groups || []), { id: newId, name: cleanName, collapsed: false }];
-            persistCache();
-            renderSessionsView();
-            renderIdeSidebar();
+            S.persistCache();
+            S.renderSessionsView();
+            S.renderIdeSidebar();
           }
-          await dispatchRemoteCommand({
+          await S.dispatchRemoteCommand({
             type: 'sessionAction',
             action: 'groupCreate',
             subAction: 'groupCreate',
@@ -20844,19 +5534,19 @@
           return;
         }
         if (act === 'rename' && gId) {
-          if (beginIdeInlineRename('group', gId)) return;
+          if (S.beginIdeInlineRename('group', gId)) return;
           const nextName = prompt('Rename session group:', gName || '');
           if (!nextName || !nextName.trim()) return;
           const clean = nextName.trim();
-          noteGroupOverride(gId, { op: 'rename', name: clean });
+          S.noteGroupOverride(gId, { op: 'rename', name: clean });
           const grpObj = (appState?.groups || []).find((g) => g.id === gId);
           if (grpObj) {
             grpObj.name = clean;
-            persistCache();
-            renderSessionsView();
-            renderIdeSidebar();
+            S.persistCache();
+            S.renderSessionsView();
+            S.renderIdeSidebar();
           }
-          await dispatchRemoteCommand({
+          await S.dispatchRemoteCommand({
             type: 'sessionAction',
             action: 'groupRename',
             subAction: 'groupRename',
@@ -20870,15 +5560,15 @@
           if (!confirm(`Delete group "${gName || 'Group'}"? (Sessions will move to Ungrouped)`)) return;
           const victimName =
             gName || (appState?.groups || []).find((g) => g.id === gId)?.name || '';
-          noteGroupOverride(gId, { op: 'delete', name: victimName });
+          S.noteGroupOverride(gId, { op: 'delete', name: victimName });
           if (prefs.newSessionGroupId === gId) {
             prefs.newSessionGroupId = '';
             saveJson(STORAGE_KEYS.PREFS, prefs);
           }
-          if (pendingNewSessionBind && pendingNewSessionBind.groupId === gId) {
-            pendingNewSessionBind.groupId = '';
+          if (S.pendingNewSessionBind && S.pendingNewSessionBind.groupId === gId) {
+            S.pendingNewSessionBind.groupId = '';
           }
-          for (const [, ov] of pendingRowOverrides.entries()) {
+          for (const [, ov] of S.pendingRowOverrides.entries()) {
             if (ov && ov.group === gId) {
               ov.group = '';
             }
@@ -20892,15 +5582,15 @@
             for (const r of appState.rows || []) {
               if (r.group === gId) {
                 r.group = '';
-                noteRowOverride(r.id, { group: '' });
+                S.noteRowOverride(r.id, { group: '' });
               }
             }
-            persistCache();
-            renderSessionsView();
-            renderIdeSidebar();
-            if (isNewSessionMode()) renderChatView();
+            S.persistCache();
+            S.renderSessionsView();
+            S.renderIdeSidebar();
+            if (S.isNewSessionMode()) S.renderChatView();
           }
-          await dispatchRemoteCommand({
+          await S.dispatchRemoteCommand({
             type: 'sessionAction',
             action: 'groupDelete',
             subAction: 'groupDelete',
@@ -20911,8 +5601,8 @@
           return;
         }
         if (act === 'new-in-group') {
-          enterNewSessionMode(
-            hasSignedInProviderRemote('antigravity') ? 'antigravity' : 'claude',
+          S.enterNewSessionMode(
+            S.hasSignedInProviderRemote('antigravity') ? 'antigravity' : 'claude',
             { groupId: gId }
           );
           return;
@@ -20926,7 +5616,7 @@
                 !r.archived &&
                 !isRowPinned(r) &&
                 (!r.group || !groupIds.has(r.group)) &&
-                !isSessionOpenTab(r) &&
+                !S.isSessionOpenTab(r) &&
                 r.status !== 'working' &&
                 r.status !== 'waiting' &&
                 !r.unread
@@ -20936,13 +5626,13 @@
           for (const r of appState?.rows || []) {
             if (closedIds.includes(r.id)) {
               r.archived = true;
-              noteRowOverride(r.id, { archived: true });
+              S.noteRowOverride(r.id, { archived: true });
             }
           }
-          removeEditorTabIds(closedIds, true);
-          persistCache();
+          S.removeEditorTabIds(closedIds, true);
+          S.persistCache();
           renderAll();
-          await dispatchRemoteCommand({
+          await S.dispatchRemoteCommand({
             type: 'sessionAction',
             action: 'archive',
             subAction: 'archive',
@@ -20960,12 +5650,12 @@
           for (const r of appState?.rows || []) {
             if (archivedIds.includes(r.id)) {
               r.archived = false;
-              noteRowOverride(r.id, { archived: false });
+              S.noteRowOverride(r.id, { archived: false });
             }
           }
-          persistCache();
+          S.persistCache();
           renderAll();
-          await dispatchRemoteCommand({
+          await S.dispatchRemoteCommand({
             type: 'sessionAction',
             action: 'archive',
             subAction: 'archive',
@@ -20982,28 +5672,28 @@
       if (sessAct) {
         e.stopPropagation();
         if (ctxMenuEl && !ctxMenuEl.hidden && sessAct.closest('#ide-context-menu')) {
-          closeIdeContextMenu();
+          S.closeIdeContextMenu();
         }
         const action = sessAct.dataset.sessAct;
         const id = sessAct.dataset.id;
         const val = sessAct.dataset.val === 'true';
         if (action === 'stop' && id) {
-          await stopActiveSession(id);
+          await S.stopActiveSession(id);
           return;
         }
         if (action === 'pin' && id) {
           const forceVal = sessAct.dataset.val !== undefined ? val : undefined;
-          await toggleSessionPin(id, forceVal);
+          await S.toggleSessionPin(id, forceVal);
           return;
         }
         const targetRow = (appState?.rows || []).find((r) => r.id === id);
         if (action === 'group-remove' && targetRow) {
           const prevGrp = targetRow.group || '';
           targetRow.group = '';
-          noteRowOverride(id, { group: '' });
-          persistCache();
+          S.noteRowOverride(id, { group: '' });
+          S.persistCache();
           renderAll();
-          await dispatchRemoteCommand({
+          await S.dispatchRemoteCommand({
             type: 'sessionAction',
             action: 'groupRemove',
             subAction: 'groupRemove',
@@ -21026,10 +5716,10 @@
           const clean = rawChoice.trim();
           if (!clean || clean === '0' || clean.toLowerCase() === 'ungrouped' || clean.toLowerCase() === 'none') {
             targetRow.group = '';
-            noteRowOverride(id, { group: '' });
-            persistCache();
+            S.noteRowOverride(id, { group: '' });
+            S.persistCache();
             renderAll();
-            await dispatchRemoteCommand({
+            await S.dispatchRemoteCommand({
               type: 'sessionAction',
               action: 'groupRemove',
               subAction: 'groupRemove',
@@ -21047,14 +5737,14 @@
             groups.find((g) => String(g.name || '').toLowerCase() === clean.toLowerCase());
           if (matchedGrp) {
             targetRow.group = matchedGrp.id;
-            noteRowOverride(id, { group: matchedGrp.id });
+            S.noteRowOverride(id, { group: matchedGrp.id });
             if (prefs.collapsedSessionGroups) {
               prefs.collapsedSessionGroups[matchedGrp.id] = false;
               saveJson(STORAGE_KEYS.PREFS, prefs);
             }
-            persistCache();
+            S.persistCache();
             renderAll();
-            await dispatchRemoteCommand({
+            await S.dispatchRemoteCommand({
               type: 'sessionAction',
               action: 'groupAdd',
               subAction: 'groupAdd',
@@ -21065,15 +5755,15 @@
             showToast(`Moved to "${matchedGrp.name}"`);
           } else {
             const newId = `grp-${Date.now().toString(36)}`;
-            noteGroupOverride(newId, { op: 'create', name: clean });
-            noteRowOverride(id, { group: newId });
+            S.noteGroupOverride(newId, { op: 'create', name: clean });
+            S.noteRowOverride(id, { group: newId });
             if (appState) {
               appState.groups = [...groups, { id: newId, name: clean, collapsed: false }];
             }
             targetRow.group = newId;
-            persistCache();
+            S.persistCache();
             renderAll();
-            await dispatchRemoteCommand({
+            await S.dispatchRemoteCommand({
               type: 'sessionAction',
               action: 'groupCreate',
               subAction: 'groupCreate',
@@ -21095,7 +5785,7 @@
               targetRow.pinned = false;
               targetRow.pinnedAt = 0;
               targetRow.pinUpdatedAt = arcTs;
-              noteRowOverride(id, {
+              S.noteRowOverride(id, {
                 archived: true,
                 group: '',
                 pinned: false,
@@ -21103,31 +5793,31 @@
                 pinUpdatedAt: arcTs
               });
               markNotificationsCheckedForSession(id);
-              removeEditorTabIds([id], true);
+              S.removeEditorTabIds([id], true);
             } else {
               const unarcTs = Math.max(Number(targetRow.pinUpdatedAt || 0), Date.now());
               targetRow.pinned = false;
               targetRow.pinnedAt = 0;
               targetRow.pinUpdatedAt = unarcTs;
-              noteRowOverride(id, {
+              S.noteRowOverride(id, {
                 archived: false,
                 pinned: false,
                 pinnedAt: 0,
                 pinUpdatedAt: unarcTs
               });
-              ensureEditorTabOpen(id);
+              S.ensureEditorTabOpen(id);
             }
           }
           if (action === 'unread') {
             targetRow.unread = val;
             if (!val && targetRow.dot === 'unread') targetRow.dot = targetRow.open ? 'idle' : null;
-            noteRowOverride(id, { unread: val });
+            S.noteRowOverride(id, { unread: val });
             if (!val) markNotificationsCheckedForSession(id);
           }
-          persistCache();
+          S.persistCache();
           renderAll();
         }
-        await dispatchRemoteCommand({
+        await S.dispatchRemoteCommand({
           type: 'sessionAction',
           action,
           subAction: action,
@@ -21142,7 +5832,7 @@
       const sessCard = e.target.closest('.session-card[data-session-id]');
       if (sessCard && sessCard.dataset.sessionId) {
         recentResumeUntil = 0;
-        ensureEditorTabOpen(sessCard.dataset.sessionId);
+        S.ensureEditorTabOpen(sessCard.dataset.sessionId);
         recordFreqUsage('threads', sessCard.dataset.sessionId);
         setPinnedNav({
           threadId: sessCard.dataset.sessionId,
@@ -21156,8 +5846,8 @@
         saveJson(STORAGE_KEYS.PREFS, prefs);
         markNotificationsCheckedForSession(prefs.selectedThreadId);
         switchTab('chat');
-        renderIdeSidebar();
-        fetchThreadDetail(prefs.selectedThreadId, sessCard.dataset.sessionProv);
+        S.renderIdeSidebar();
+        S.fetchThreadDetail(prefs.selectedThreadId, sessCard.dataset.sessionProv);
         return;
       }
 
@@ -21174,10 +5864,10 @@
           appState.approvals = appState.approvals.filter(
             (a) => a.approvalId !== appId && a.sessionId !== sessId
           );
-          persistCache();
+          S.persistCache();
           renderAll();
         }
-        const approveRes = await dispatchRemoteCommand({
+        const approveRes = await S.dispatchRemoteCommand({
           type: 'approve',
           decision,
           approvalId: appId,
@@ -21188,10 +5878,10 @@
         });
         // The PC says when an answer did not take effect (the request was already answered, or is gone):
         // say that, and reload the list, instead of reporting an approval that did nothing.
-        const approveReply = readDirectPcReply(approveRes);
+        const approveReply = S.readDirectPcReply(approveRes);
         if (approveReply.answered && approveReply.reply.resolved === false) {
           showToast(String(approveReply.reply.error || 'That request was no longer waiting for an answer.'));
-          setTimeout(() => syncData(), 300);
+          setTimeout(() => S.syncData(), 300);
         } else {
           showToast(decision === 'approve' ? '✓ Approved remote step' : '✕ Denied remote step');
         }
@@ -21207,17 +5897,17 @@
           recordFreqUsage('devices', devId);
         }
         saveJson(STORAGE_KEYS.PREFS, prefs);
-        renderPulseView();
-        renderSessionsView();
-        renderIdeSidebar();
-        if (prefs.activeTab === 'chat') renderChatView();
+        S.renderPulseView();
+        S.renderSessionsView();
+        S.renderIdeSidebar();
+        if (prefs.activeTab === 'chat') S.renderChatView();
         return;
       }
 
       if (e.target.closest('#composer-direct-toggle')) {
         prefs.composerDirectStream = !(prefs.composerDirectStream !== false);
         saveJson(STORAGE_KEYS.PREFS, prefs);
-        syncComposerRoutingSelectors(null, isNewSessionMode());
+        S.syncComposerRoutingSelectors(null, S.isNewSessionMode());
         showToast(
           prefs.composerDirectStream
             ? 'Direct CLI Stream enabled (<25ms live tokens, works without VS Code)'
@@ -21233,35 +5923,35 @@
         saveJson(STORAGE_KEYS.PREFS, prefs);
         const sInput = $('sess-search-input');
         if (sInput) sInput.value = '';
-        renderPulseView();
-        renderSessionsView();
-        renderIdeSidebar();
+        S.renderPulseView();
+        S.renderSessionsView();
+        S.renderIdeSidebar();
         return;
       }
 
       if (e.target.closest('#btn-empty-sync-now') || e.target.closest('#conn-modal-sync-btn')) {
-        await syncData({ toast: true });
+        await S.syncData({ toast: true });
         return;
       }
 
       if (e.target.closest('#mobile-conn-pill') || e.target.closest('#rail-conn-btn')) {
-        openConnModal();
-        syncData().catch(() => {});
+        S.openConnModal();
+        S.syncData().catch(() => {});
         return;
       }
 
       if (e.target.closest('#conn-modal-close') || e.target === $('conn-modal')) {
-        closeConnModal();
+        S.closeConnModal();
         return;
       }
 
       if (e.target.closest('#notif-modal-close') || e.target === $('notif-modal')) {
-        closeNotifModal();
+        S.closeNotifModal();
         return;
       }
 
       if (e.target === $('cmd-modal')) {
-        closeCommandPalette();
+        S.closeCommandPalette();
         return;
       }
 
@@ -21269,7 +5959,7 @@
       if (provSeg) {
         prefs.sessProvider = provSeg.dataset.prov;
         saveJson(STORAGE_KEYS.PREFS, prefs);
-        renderSessionsView();
+        S.renderSessionsView();
         return;
       }
 
@@ -21277,7 +5967,7 @@
       if (statusChip) {
         prefs.sessStatus = statusChip.dataset.statusFilter;
         saveJson(STORAGE_KEYS.PREFS, prefs);
-        renderSessionsView();
+        S.renderSessionsView();
         return;
       }
 
@@ -21285,11 +5975,11 @@
       if (compModeBtn) {
         const nextMode = compModeBtn.dataset.compMode;
         if (nextMode === 'new-antigravity') {
-          enterNewSessionMode('antigravity');
+          S.enterNewSessionMode('antigravity');
         } else if (nextMode === 'new-claude') {
-          enterNewSessionMode('claude');
+          S.enterNewSessionMode('claude');
         } else {
-          exitNewSessionModeToReply();
+          S.exitNewSessionModeToReply();
         }
         return;
       }
@@ -21299,7 +5989,7 @@
         const inp = $('composer-input');
         if (inp) {
           inp.value = slashChip.dataset.insertPrompt;
-          updateComposerActionButton();
+          S.updateComposerActionButton();
           inp.focus();
         }
         return;
@@ -21310,7 +6000,7 @@
         prefs.selectedRepoId = repoBtn.dataset.selectRepo;
         recordFreqUsage('repos', repoBtn.dataset.selectRepo);
         saveJson(STORAGE_KEYS.PREFS, prefs);
-        renderWorkspacesView();
+        S.renderWorkspacesView();
         return;
       }
 
@@ -21320,13 +6010,13 @@
         document.querySelectorAll('#telemetry-prov-seg .seg-btn').forEach((b) =>
           b.classList.toggle('active', b === telSeg)
         );
-        renderAnalyticsView();
+        S.renderAnalyticsView();
         return;
       }
 
       if (e.target.closest('#btn-save-edge-relay')) {
         const val = ($('input-edge-relay-url')?.value || '').trim();
-        await saveEdgeRelayConfig(val);
+        await S.saveEdgeRelayConfig(val);
         showToast(
           val
             ? 'Saved & broadcast Cloudflare Edge WS URL to all hosts'
@@ -21347,7 +6037,7 @@
       }
 
       if (e.target.closest('[data-download-pc-setup]')) {
-        await downloadPcSetupLauncher();
+        await S.downloadPcSetupLauncher();
         return;
       }
 
@@ -21355,7 +6045,7 @@
       if (applyPcSetupBtn) {
         e.preventDefault();
         if (!applyPcSetupBtn.disabled) {
-          await applyPcSetupOnDevice(applyPcSetupBtn.dataset.applyPcSetup);
+          await S.applyPcSetupOnDevice(applyPcSetupBtn.dataset.applyPcSetup);
         }
         return;
       }
@@ -21363,19 +6053,19 @@
       const pwaReadyToggle = e.target.closest('[data-pwa-ready-toggle]');
       if (pwaReadyToggle) {
         e.preventDefault();
-        pwaReadyCardOpen = pwaReadyToggle.getAttribute('aria-expanded') !== 'true';
-        renderPulseView();
+        S.pwaReadyCardOpen = pwaReadyToggle.getAttribute('aria-expanded') !== 'true';
+        S.renderPulseView();
         return;
       }
 
       if (e.target.closest('#btn-gen-pair-code')) {
-        await generateSixDigitPairCode();
+        await S.generateSixDigitPairCode();
         return;
       }
 
       if (e.target.closest('#btn-claim-six-code')) {
         const val = ($('input-pair-six-code')?.value || '').trim();
-        const ok = await claimSixDigitPairCode(val);
+        const ok = await S.claimSixDigitPairCode(val);
         if (ok && $('input-pair-six-code')) $('input-pair-six-code').value = '';
         return;
       }
@@ -21384,19 +6074,19 @@
       if (quickCodeBtn) {
         const card = quickCodeBtn.closest('.quick-pair-card');
         const inp = card?.querySelector('[data-pair-code-input]');
-        await claimSixDigitPairCode(inp?.value || '');
+        await S.claimSixDigitPairCode(inp?.value || '');
         return;
       }
 
       const quickToggleBtn = e.target.closest('[data-pair-toggle-link-box]');
       if (quickToggleBtn) {
-        showQuickPairLinkFallback = !showQuickPairLinkFallback;
+        S.showQuickPairLinkFallback = !S.showQuickPairLinkFallback;
         const card = quickToggleBtn.closest('.quick-pair-card');
         const wrap = card?.querySelector('[data-pair-manual-wrap]');
         if (wrap) {
-          wrap.hidden = !showQuickPairLinkFallback;
-          quickToggleBtn.textContent = showQuickPairLinkFallback ? 'Hide Link Box' : 'Type / Paste Manually';
-          if (showQuickPairLinkFallback) {
+          wrap.hidden = !S.showQuickPairLinkFallback;
+          quickToggleBtn.textContent = S.showQuickPairLinkFallback ? 'Hide Link Box' : 'Type / Paste Manually';
+          if (S.showQuickPairLinkFallback) {
             const inp = wrap.querySelector('[data-pair-link-input]');
             setTimeout(() => inp?.focus({ preventScroll: true }), 15);
           }
@@ -21417,16 +6107,16 @@
         if (clipText) {
           const onlyDigits = clipText.replace(/\D+/g, '');
           if (onlyDigits.length === 6 && /^[\d\s-]+$/.test(clipText)) {
-            await claimSixDigitPairCode(onlyDigits);
+            await S.claimSixDigitPairCode(onlyDigits);
             return;
           }
           const parsedClip = decodePairTokenString(clipText);
           if (parsedClip) {
-            await finalizeInteractivePairSuccess(parsedClip);
+            await S.finalizeInteractivePairSuccess(parsedClip);
             return;
           }
         }
-        showQuickPairLinkFallback = true;
+        S.showQuickPairLinkFallback = true;
         const card = quickPasteBtn.closest('.quick-pair-card');
         const wrap = card?.querySelector('[data-pair-manual-wrap]');
         if (wrap) {
@@ -21450,7 +6140,7 @@
         const raw = (card?.querySelector('[data-pair-link-input]')?.value || '').trim();
         const onlyDigits = raw.replace(/\D+/g, '');
         if (onlyDigits.length === 6 && /^[\d\s-]+$/.test(raw)) {
-          await claimSixDigitPairCode(onlyDigits);
+          await S.claimSixDigitPairCode(onlyDigits);
           return;
         }
         const parsed = decodePairTokenString(raw);
@@ -21458,21 +6148,21 @@
           showToast('Invalid #pair= URL or Access Key');
           return;
         }
-        await finalizeInteractivePairSuccess(parsed);
+        await S.finalizeInteractivePairSuccess(parsed);
         return;
       }
 
       if (e.target.closest('#btn-copy-mobile-pair')) {
-        const info = await fetchPairingInfoFromBridge();
+        const info = await S.fetchPairingInfoFromBridge();
         let pairUrl = info?.pairUrl || info?.mobilePairUrl || '';
         if (!pairUrl) {
-          refreshCloudConfig();
+          S.refreshCloudConfig();
           const tok = encodePairTokenString({
-            cloudUrl: cloudCfg.url,
-            cloudKey: cloudCfg.key,
-            edgeAccessKey: cloudCfg.edgeAccessKey,
-            edgeRelayUrl: prefs.edgeRelayUrl || discoveredEdgeUrl,
-            port: cloudCfg.port
+            cloudUrl: S.cloudCfg.url,
+            cloudKey: S.cloudCfg.key,
+            edgeAccessKey: S.cloudCfg.edgeAccessKey,
+            edgeRelayUrl: prefs.edgeRelayUrl || S.discoveredEdgeUrl,
+            port: S.cloudCfg.port
           });
           if (tok) pairUrl = `https://theo.husseinbdeir.workers.dev/#pair=${tok}`;
         }
@@ -21490,16 +6180,16 @@
       }
 
       if (e.target.closest('#btn-copy-pc-install')) {
-        const info = await fetchPairingInfoFromBridge();
+        const info = await S.fetchPairingInfoFromBridge();
         let cmd = info?.workstationCmd || info?.workstationBootstrapPs1 || '';
         if (!cmd) {
-          refreshCloudConfig();
+          S.refreshCloudConfig();
           const tok = encodePairTokenString({
-            cloudUrl: cloudCfg.url,
-            cloudKey: cloudCfg.key,
-            edgeAccessKey: cloudCfg.edgeAccessKey,
-            edgeRelayUrl: prefs.edgeRelayUrl || discoveredEdgeUrl,
-            port: cloudCfg.port
+            cloudUrl: S.cloudCfg.url,
+            cloudKey: S.cloudCfg.key,
+            edgeAccessKey: S.cloudCfg.edgeAccessKey,
+            edgeRelayUrl: prefs.edgeRelayUrl || S.discoveredEdgeUrl,
+            port: S.cloudCfg.port
           });
           cmd = tok
             ? `$env:THEO_PAIR_TOKEN='${tok}'; irm https://theo.husseinbdeir.workers.dev/install.ps1 | iex`
@@ -21518,7 +6208,7 @@
         const raw = ($('input-pair-token')?.value || '').trim();
         const onlyDigits = raw.replace(/\D+/g, '');
         if (onlyDigits.length === 6 && /^[\d\s-]+$/.test(raw)) {
-          const ok = await claimSixDigitPairCode(onlyDigits);
+          const ok = await S.claimSixDigitPairCode(onlyDigits);
           if (ok && $('input-pair-token')) $('input-pair-token').value = '';
           return;
         }
@@ -21528,7 +6218,7 @@
           return;
         }
         if ($('input-pair-token')) $('input-pair-token').value = '';
-        await finalizeInteractivePairSuccess(parsed);
+        await S.finalizeInteractivePairSuccess(parsed);
         return;
       }
 
@@ -21536,8 +6226,8 @@
         const val = ($('input-custom-bridge')?.value || '').trim();
         prefs.customBridgeUrl = val;
         saveJson(STORAGE_KEYS.PREFS, prefs);
-        localBridgeBase = '';
-        await syncData({ toast: true });
+        S.localBridgeBase = '';
+        await S.syncData({ toast: true });
         return;
       }
 
@@ -21587,32 +6277,32 @@
         }
         const ed = $('pin-inline-editor');
         if (ed) ed.hidden = true;
-        renderAnalyticsView();
+        S.renderAnalyticsView();
         return;
       }
 
       const removeAttachBtn = e.target.closest('[data-remove-attach]');
       if (removeAttachBtn) {
         const rmId = removeAttachBtn.dataset.removeAttach;
-        composerAttachments = composerAttachments.filter((a) => a.id !== rmId);
-        renderComposerAttachments();
+        S.composerAttachments = S.composerAttachments.filter((a) => a.id !== rmId);
+        S.renderComposerAttachments();
         return;
       }
 
       const attachRepoBtn = e.target.closest('[data-cmd-attach-repo]');
       if (attachRepoBtn) {
-        closeCommandPalette();
+        S.closeCommandPalette();
         const label = attachRepoBtn.dataset.cmdAttachRepo || '';
         const repoPath = attachRepoBtn.dataset.cmdRepoPath || '';
         if (label) {
-          composerAttachments.push({
+          S.composerAttachments.push({
             id: `att-repo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             kind: 'repo',
             name: label,
             repoPath,
             sizeLabel: 'workspace'
           });
-          renderComposerAttachments();
+          S.renderComposerAttachments();
           switchTab('chat');
           showToast(`Attached ${label}`);
           setTimeout(() => $('composer-input')?.focus(), 40);
@@ -21622,7 +6312,7 @@
 
       const cmdItem = e.target.closest('[data-cmd-act], [data-cmd-thread]');
       if (cmdItem) {
-        closeCommandPalette();
+        S.closeCommandPalette();
         clearPinnedNav();
         recentResumeUntil = 0;
         const act = cmdItem.dataset.cmdAct;
@@ -21633,7 +6323,7 @@
           recordFreqUsage('commands', act);
         }
         if (tid) {
-          ensureEditorTabOpen(tid);
+          S.ensureEditorTabOpen(tid);
           setPinnedNav({ threadId: tid, durationMs: 45000 });
           prefs.selectedThreadId = tid;
           prefs.lastReplyThreadId = tid;
@@ -21641,22 +6331,22 @@
           prefs.newSessionGroupId = '';
           saveJson(STORAGE_KEYS.PREFS, prefs);
           switchTab('chat');
-          renderIdeSidebar();
-          fetchThreadDetail(tid);
+          S.renderIdeSidebar();
+          S.fetchThreadDetail(tid);
         } else if (act === 'attach-file') {
           switchTab('chat');
           $('composer-file-input')?.click();
         } else if (act === 'pick-repo-file') {
           switchTab('chat');
-          openRepoFilePicker();
+          S.openRepoFilePicker();
         } else if (act === 'open-command-pwa' || act === 'open-discipline' || act === 'new-payment-hold') {
           window.open('https://planner.husseinbdeir.workers.dev/', '_blank', 'noopener');
         } else if (act === 'open-memory-vault') {
           window.open('https://memory.husseinbdeir.workers.dev/', '_blank', 'noopener');
         } else if (act === 'new-agy') {
-          enterNewSessionMode('antigravity');
+          S.enterNewSessionMode('antigravity');
         } else if (act === 'new-claude') {
-          enterNewSessionMode('claude');
+          S.enterNewSessionMode('claude');
         } else if (act === 'claude-mode-bypass') {
           await setFleetClaudeModeRemote('bypassPermissions');
         } else if (act === 'claude-mode-auto') {
@@ -21664,7 +6354,7 @@
         } else if (act === 'claude-mode-plan') {
           await setFleetClaudeModeRemote('plan');
         } else if (act === 'sync') {
-          syncData({ toast: true });
+          S.syncData({ toast: true });
         } else if (act === 'push-test') {
           await sendTestPush(false);
         } else if (act === 'bgtasks') {
@@ -21673,10 +6363,10 @@
           if (ctxPop) ctxPop.hidden = true;
           const bgPop = $('bg-tasks-popover');
           if (bgPop) bgPop.hidden = false;
-          renderChatView();
+          S.renderChatView();
         } else if (act === 'inspector') {
           if (prefs.activeTab !== 'chat') switchTab('chat');
-          setInspectorOpen(!prefs.inspectorOpen);
+          S.setInspectorOpen(!prefs.inspectorOpen);
         } else if (act === 'toggle-3p-quota') {
           await setHideThirdPartyQuota(!isThirdPartyQuotaHidden());
         } else if (act === 'palette') {
@@ -21687,9 +6377,9 @@
             positionPalettePopover($('btn-palette-picker'));
           }
         } else if (act === 'compact') {
-          await triggerActiveSessionCompact();
+          await S.triggerActiveSessionCompact();
         } else if (act === 'pin-chat') {
-          await toggleSessionPin(prefs.selectedThreadId);
+          await S.toggleSessionPin(prefs.selectedThreadId);
         } else if (act === 'tab-pulse') {
           switchTab('pulse');
         } else if (act === 'tab-sessions') {
@@ -21714,7 +6404,7 @@
         const provider = acctForm.dataset.acctProv === 'claude' ? 'claude' : 'antigravity';
         const inp = acctForm.querySelector('.ide-acct-inline-edit');
         const cleanLabel = String(inp?.value || '').trim();
-        activeInlineAcctEdit = null;
+        S.activeInlineAcctEdit = null;
         const provList = appState?.providers?.[provider]?.accounts;
         if (Array.isArray(provList) && accountId) {
           const item = provList.find((x) => x.id === accountId);
@@ -21722,12 +6412,12 @@
             item.nickname = cleanLabel;
             if (item.account) item.account.nickname = cleanLabel;
           }
-          persistCache();
+          S.persistCache();
         }
-        renderPulseView();
-        renderIdeSidebar();
+        S.renderPulseView();
+        S.renderIdeSidebar();
         if (accountId) {
-          await dispatchRemoteCommand({
+          await S.dispatchRemoteCommand({
             type: 'sessionAction',
             action: 'accountLabel',
             subAction: 'accountLabel',
@@ -21742,7 +6432,7 @@
       }
       if (e.target.closest?.('[data-add-acct-form]')) {
         e.preventDefault();
-        await submitAddAccountTray();
+        await S.submitAddAccountTray();
       }
     });
 
@@ -21750,10 +6440,10 @@
       if (e.key === 'Escape' && e.target?.classList?.contains('ide-acct-inline-edit')) {
         e.preventDefault();
         e.stopPropagation();
-        const surf = activeInlineAcctEdit?.surface || 'sidebar';
-        activeInlineAcctEdit = null;
-        if (surf === 'sidebar') renderIdeSidebar();
-        else renderPulseView();
+        const surf = S.activeInlineAcctEdit?.surface || 'sidebar';
+        S.activeInlineAcctEdit = null;
+        if (surf === 'sidebar') S.renderIdeSidebar();
+        else S.renderPulseView();
       }
     });
 
@@ -21799,12 +6489,12 @@
         const position = e.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
         const srcId = draggedAcctCardId;
         draggedAcctCardId = '';
-        await reorderPulseQuotaCard(srcId, {
+        await S.reorderPulseQuotaCard(srcId, {
           targetAccountId: targetId,
           position,
           provider: srcId.startsWith('claude:') ? 'claude' : 'antigravity'
         });
-        renderIdeSidebar();
+        S.renderIdeSidebar();
       });
       container.addEventListener('dragend', () => {
         draggedAcctCardId = '';
@@ -21820,21 +6510,21 @@
     const sideTree = $('ide-sidebar-tree');
     if (sideTree) {
       sideTree.addEventListener('pointerenter', (e) => {
-        if (e.pointerType !== 'touch') idePointerInsideTree = true;
+        if (e.pointerType !== 'touch') S.idePointerInsideTree = true;
       });
       sideTree.addEventListener('pointermove', (e) => {
-        if (e.pointerType !== 'touch') idePointerInsideTree = true;
+        if (e.pointerType !== 'touch') S.idePointerInsideTree = true;
       });
       sideTree.addEventListener('pointerleave', () => {
-        idePointerInsideTree = false;
-        flushDeferredIdeTreeOrder();
+        S.idePointerInsideTree = false;
+        S.flushDeferredIdeTreeOrder();
       });
       sideTree.addEventListener('contextmenu', (e) => {
         if (isPinLocked()) return;
         const rowEl = e.target.closest?.('.ide-tree-row[data-ide-open-session]');
         if (rowEl && rowEl.dataset.ideOpenSession) {
           e.preventDefault();
-          openSessionContextMenu(rowEl.dataset.ideOpenSession, e.clientX, e.clientY);
+          S.openSessionContextMenu(rowEl.dataset.ideOpenSession, e.clientX, e.clientY);
           return;
         }
         const grpHdr = e.target.closest?.('.ide-tree-group-hdr');
@@ -21842,20 +6532,20 @@
         const gid = grpEl?.dataset?.ideGroup || '';
         if (gid && gid !== 'ungrouped' && gid !== 'archived') {
           e.preventDefault();
-          openGroupContextMenu(gid, e.clientX, e.clientY);
+          S.openGroupContextMenu(gid, e.clientX, e.clientY);
         }
       });
       sideTree.addEventListener('keydown', async (e) => {
         if (isPinLocked()) return;
-        if (activeIdeRename) {
+        if (S.activeIdeRename) {
           if (e.key === 'Enter') {
             e.preventDefault();
             e.stopPropagation();
-            finishIdeInlineRename(true);
+            S.finishIdeInlineRename(true);
           } else if (e.key === 'Escape') {
             e.preventDefault();
             e.stopPropagation();
-            finishIdeInlineRename(false);
+            S.finishIdeInlineRename(false);
           }
           return;
         }
@@ -21870,16 +6560,16 @@
         if (e.key === 'F2') {
           e.preventDefault();
           if (rowEl && rowEl.dataset.ideOpenSession) {
-            beginIdeInlineRename('session', rowEl.dataset.ideOpenSession);
+            S.beginIdeInlineRename('session', rowEl.dataset.ideOpenSession);
           } else if (grpBtn && grpBtn.dataset.groupId && grpBtn.dataset.groupId !== 'ungrouped' && grpBtn.dataset.groupId !== 'archived') {
-            beginIdeInlineRename('group', grpBtn.dataset.groupId);
+            S.beginIdeInlineRename('group', grpBtn.dataset.groupId);
           }
           return;
         }
         if ((e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) && rowEl?.dataset?.ideOpenSession) {
           e.preventDefault();
           const rect = rowEl.getBoundingClientRect();
-          openSessionContextMenu(rowEl.dataset.ideOpenSession, rect.left + 24, rect.bottom + 2);
+          S.openSessionContextMenu(rowEl.dataset.ideOpenSession, rect.left + 24, rect.bottom + 2);
           return;
         }
         if (e.key === 'Delete' && rowEl?.dataset?.ideOpenSession && e.target === rowEl) {
@@ -21904,8 +6594,8 @@
         }
       });
       sideTree.addEventListener('focusout', (e) => {
-        if (activeIdeRename && e.target === activeIdeRename.el) {
-          finishIdeInlineRename(true);
+        if (S.activeIdeRename && e.target === S.activeIdeRename.el) {
+          S.finishIdeInlineRename(true);
         }
       });
       sideTree.addEventListener('pointerover', (e) => {
@@ -21924,7 +6614,7 @@
         if (!rowEl) return;
         if (sidebarHoverTimer) clearTimeout(sidebarHoverTimer);
         sidebarHoverTimer = setTimeout(() => {
-          showSidebarHoverCard(rowEl);
+          S.showSidebarHoverCard(rowEl);
         }, 200);
       });
       sideTree.addEventListener('pointerout', (e) => {
@@ -21992,9 +6682,9 @@
       syncPalettePickerUi();
       showToast(prefs.sound ? 'Audio chimes enabled' : 'Audio chimes muted');
     });
-    $('btn-sync-now')?.addEventListener('click', () => syncData({ toast: true }));
-    $('mobile-sync-btn')?.addEventListener('click', () => syncData({ toast: true }));
-    $('btn-refresh-git')?.addEventListener('click', () => renderWorkspacesView());
+    $('btn-sync-now')?.addEventListener('click', () => S.syncData({ toast: true }));
+    $('mobile-sync-btn')?.addEventListener('click', () => S.syncData({ toast: true }));
+    $('btn-refresh-git')?.addEventListener('click', () => S.renderWorkspacesView());
 
     document.addEventListener('change', (ev) => {
       if (isPinLocked()) return;
@@ -22004,9 +6694,9 @@
           prefs.splitWatchThreadId = nextId;
           recordFreqUsage('threads', nextId);
           saveJson(STORAGE_KEYS.PREFS, prefs);
-          emitPrewarmHint(nextId, { source: 'split-watch' });
-          renderSplitWatchPane();
-          fetchThreadDetail(nextId).catch(() => {});
+          S.emitPrewarmHint(nextId, { source: 'split-watch' });
+          S.renderSplitWatchPane();
+          S.fetchThreadDetail(nextId).catch(() => {});
         }
       }
     });
@@ -22022,12 +6712,12 @@
       if (nextOpen) {
         if (ctxPop) ctxPop.hidden = true;
         if (modPop) modPop.hidden = true;
-        modelPickerAdjustEffortOpen = false;
+        S.modelPickerAdjustEffortOpen = false;
         $('composer-model-btn')?.setAttribute('aria-expanded', 'false');
       }
-      renderChatView();
-      if (nextOpen && prefs.selectedThreadId && !isNewSessionMode()) {
-        fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
+      S.renderChatView();
+      if (nextOpen && prefs.selectedThreadId && !S.isNewSessionMode()) {
+        S.fetchThreadDetail(prefs.selectedThreadId, pinnedNavProvider || '').catch(() => {});
       }
     });
     $('btn-close-bgtasks')?.addEventListener('click', () => {
@@ -22037,22 +6727,22 @@
       $('btn-bg-tasks')?.setAttribute('aria-expanded', 'false');
     });
     $('btn-refresh-bgtasks')?.addEventListener('click', async () => {
-      if (!prefs.selectedThreadId || isNewSessionMode()) return;
+      if (!prefs.selectedThreadId || S.isNewSessionMode()) return;
       const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId);
       const prov = activeRow?.provider || pinnedNavProvider || 'antigravity';
-      await fetchThreadDetail(prefs.selectedThreadId, prov);
-      for (const key of openBgTaskDetails) {
+      await S.fetchThreadDetail(prefs.selectedThreadId, prov);
+      for (const key of S.openBgTaskDetails) {
         if (key.startsWith(`${prefs.selectedThreadId}:`)) {
           const tid = key.slice(prefs.selectedThreadId.length + 1);
-          await fetchBgTaskLiveLog(prefs.selectedThreadId, tid, prov);
+          await S.fetchBgTaskLiveLog(prefs.selectedThreadId, tid, prov);
         }
       }
       showToast('Refreshed background tasks & logs');
     });
     $('btn-stop-all-bgtasks')?.addEventListener('click', async () => {
-      if (!prefs.selectedThreadId || isNewSessionMode()) return;
+      if (!prefs.selectedThreadId || S.isNewSessionMode()) return;
       const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId);
-      await cancelAllSessionBgTasks(prefs.selectedThreadId, activeRow?.provider || 'antigravity');
+      await S.cancelAllSessionBgTasks(prefs.selectedThreadId, activeRow?.provider || 'antigravity');
     });
     $('chat-stream')?.addEventListener(
       'toggle',
@@ -22064,11 +6754,11 @@
           return;
         }
         const key = det.dataset.chatDetailKey;
-        const openMap = getThreadOpenDetailsMap(prefs.selectedThreadId, false);
+        const openMap = S.getThreadOpenDetailsMap(prefs.selectedThreadId, false);
         const renderedOpen = det.dataset.renderedOpen === '1';
         if (det.open === renderedOpen && !openMap?.has(key)) return;
         det.dataset.renderedOpen = det.open ? '1' : '0';
-        const targetMap = openMap || getThreadOpenDetailsMap(prefs.selectedThreadId, true);
+        const targetMap = openMap || S.getThreadOpenDetailsMap(prefs.selectedThreadId, true);
         if (targetMap) {
           targetMap.set(key, det.open);
         }
@@ -22095,15 +6785,15 @@
         }
         const key = det.dataset.bgDetailKey;
         if (det.open) {
-          openBgTaskDetails.add(key);
+          S.openBgTaskDetails.add(key);
           const sid = det.dataset.sessId;
           const tid = det.dataset.taskId;
           const prov = det.dataset.prov || '';
           if (sid && tid) {
-            fetchBgTaskLiveLog(sid, tid, prov).catch(() => {});
+            S.fetchBgTaskLiveLog(sid, tid, prov).catch(() => {});
           }
         } else {
-          openBgTaskDetails.delete(key);
+          S.openBgTaskDetails.delete(key);
         }
       },
       true
@@ -22118,7 +6808,7 @@
         if (!pop.hidden) {
           if (bgPop) bgPop.hidden = true;
           if (modPop) modPop.hidden = true;
-          modelPickerAdjustEffortOpen = false;
+          S.modelPickerAdjustEffortOpen = false;
           $('composer-model-btn')?.setAttribute('aria-expanded', 'false');
         }
       }
@@ -22128,22 +6818,22 @@
       if (pop) pop.hidden = true;
     });
     $('btn-ctx-compact')?.addEventListener('click', async () => {
-      await triggerActiveSessionCompact();
+      await S.triggerActiveSessionCompact();
     });
 
     $('btn-chat-open-vscode')?.addEventListener('click', async () => {
       const moreMenu = $('chat-more-menu');
       if (moreMenu) moreMenu.hidden = true;
       $('btn-chat-more')?.setAttribute('aria-expanded', 'false');
-      const isNewDraft = isNewSessionMode();
+      const isNewDraft = S.isNewSessionMode();
       const activeRow = isNewDraft ? null : (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId) || null;
-      if (!isHostVsCodeOpenForSession(activeRow, isNewDraft)) {
+      if (!S.isHostVsCodeOpenForSession(activeRow, isNewDraft)) {
         showToast('VS Code is not open on that PC. The session is fully usable here in THEO.');
         return;
       }
       if (isNewDraft) {
         const prov = prefs.composerMode === 'new-claude' ? 'claude' : 'antigravity';
-        const newTabRes = await dispatchRemoteCommand({
+        const newTabRes = await S.dispatchRemoteCommand({
           type: 'sessionAction',
           action: 'openNew',
           subAction: 'openNew',
@@ -22153,27 +6843,27 @@
           group: prefs.newSessionGroupId || ''
         });
         showToast(
-          describeVsCodeOpenReply(
+          S.describeVsCodeOpenReply(
             newTabRes,
             `Opened new blank ${prov === 'claude' ? 'Claude Code' : 'Antigravity'} tab in VS Code`
           )
         );
         return;
       }
-      const openTabRes = await dispatchRemoteCommand({
+      const openTabRes = await S.dispatchRemoteCommand({
         type: 'sessionAction',
         action: 'open',
         subAction: 'open',
         id: prefs.selectedThreadId,
         provider: activeRow?.provider || 'antigravity'
       });
-      showToast(describeVsCodeOpenReply(openTabRes, 'Opened session tab in VS Code'));
+      showToast(S.describeVsCodeOpenReply(openTabRes, 'Opened session tab in VS Code'));
     });
 
     $('btn-chat-stop')?.addEventListener('click', async (e) => {
       e.preventDefault();
       e.stopPropagation();
-      await stopActiveSession(prefs.selectedThreadId);
+      await S.stopActiveSession(prefs.selectedThreadId);
     });
 
     $('composer-send-btn')?.addEventListener('click', async (e) => {
@@ -22181,42 +6871,42 @@
       if (sendBtn?.classList.contains('is-stop')) {
         e.preventDefault();
         e.stopPropagation();
-        await stopActiveSession(prefs.selectedThreadId);
+        await S.stopActiveSession(prefs.selectedThreadId);
       }
     });
 
     // Inline chat session title rename (header)
     const chatTitleEl = $('chat-session-title');
     chatTitleEl?.addEventListener('dblclick', (e) => {
-      if (isPinLocked() || isNewSessionMode()) return;
-      if (activeIdeRename && activeIdeRename.kind === 'chat-session') return;
-      const tid = cleanTargetThreadId(prefs.selectedThreadId);
+      if (isPinLocked() || S.isNewSessionMode()) return;
+      if (S.activeIdeRename && S.activeIdeRename.kind === 'chat-session') return;
+      const tid = S.cleanTargetThreadId(prefs.selectedThreadId);
       if (!tid) return;
       e.preventDefault();
       e.stopPropagation();
-      beginIdeInlineRename('chat-session', tid);
+      S.beginIdeInlineRename('chat-session', tid);
     });
     chatTitleEl?.addEventListener('keydown', (e) => {
-      if (!activeIdeRename || activeIdeRename.kind !== 'chat-session') return;
+      if (!S.activeIdeRename || S.activeIdeRename.kind !== 'chat-session') return;
       if (e.key === 'Enter') {
         e.preventDefault();
         e.stopPropagation();
-        finishIdeInlineRename(true);
+        S.finishIdeInlineRename(true);
       } else if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
-        finishIdeInlineRename(false);
+        S.finishIdeInlineRename(false);
       }
     });
     chatTitleEl?.addEventListener('focusout', () => {
-      if (activeIdeRename && activeIdeRename.kind === 'chat-session') {
-        finishIdeInlineRename(true);
+      if (S.activeIdeRename && S.activeIdeRename.kind === 'chat-session') {
+        S.finishIdeInlineRename(true);
       }
     });
 
     // Search in Sessions & IDE Explorer Sidebar
-    $('sess-search-input')?.addEventListener('input', () => renderSessionsView());
-    $('ide-sidebar-search')?.addEventListener('input', () => renderIdeSidebar());
+    $('sess-search-input')?.addEventListener('input', () => S.renderSessionsView());
+    $('ide-sidebar-search')?.addEventListener('input', () => S.renderIdeSidebar());
 
     // Middle-click to close open editor tab (VS Code parity)
     $('ide-editor-tabs')?.addEventListener('auxclick', (e) => {
@@ -22224,7 +6914,7 @@
       const tab = e.target.closest('[data-editor-tab-id]');
       if (tab?.dataset.editorTabId) {
         e.preventDefault();
-        closeEditorTab(tab.dataset.editorTabId);
+        S.closeEditorTab(tab.dataset.editorTabId);
       }
     });
 
@@ -22255,9 +6945,9 @@
         inp.focus();
         inp.setSelectionRange(nextPos, nextPos);
       }
-      slashPopoverActiveIdx = 0;
-      updateComposerActionButton();
-      updateComposerSlashPopover();
+      S.slashPopoverActiveIdx = 0;
+      S.updateComposerActionButton();
+      S.updateComposerSlashPopover();
     };
     $('btn-composer-slash')?.addEventListener('click', () => insertComposerTriggerChar('/'));
     $('btn-composer-mention')?.addEventListener('click', () => insertComposerTriggerChar('@'));
@@ -22280,7 +6970,7 @@
         if (isPinLocked()) return;
         const files = e.dataTransfer?.files;
         if (files && files.length) {
-          await handleComposerFiles(files);
+          await S.handleComposerFiles(files);
         }
       });
     }
@@ -22291,7 +6981,7 @@
       prefs.composerTargetDevice = val;
       if (val !== 'auto') recordFreqUsage('devices', val);
       saveJson(STORAGE_KEYS.PREFS, prefs);
-      const dev = fleetDevicesMap.get(val);
+      const dev = S.fleetDevicesMap.get(val);
       showToast(
         val === 'auto'
           ? 'Target host set to Auto (Active Host)'
@@ -22303,7 +6993,7 @@
       prefs.composerRepoPrefix = val;
       if (val) recordFreqUsage('repos', val);
       saveJson(STORAGE_KEYS.PREFS, prefs);
-      if (isNewSessionMode()) renderChatView();
+      if (S.isNewSessionMode()) S.renderChatView();
     });
 
     // Composer File Attachments & @Repo Picker
@@ -22314,12 +7004,12 @@
       $('composer-file-input')?.click();
     });
     $('chip-pick-repo-file')?.addEventListener('click', () => {
-      openRepoFilePicker();
+      S.openRepoFilePicker();
     });
     $('composer-file-input')?.addEventListener('change', async (e) => {
       const files = e.target.files;
       if (files && files.length) {
-        await handleComposerFiles(files);
+        await S.handleComposerFiles(files);
         e.target.value = '';
       }
     });
@@ -22329,7 +7019,7 @@
       if (fileItems.length > 0) {
         const files = fileItems.map((it) => it.getAsFile()).filter(Boolean);
         if (files.length > 0) {
-          await handleComposerFiles(files);
+          await S.handleComposerFiles(files);
         }
       }
     });
@@ -22337,35 +7027,35 @@
       const el = e.target;
       el.style.height = 'auto';
       el.style.height = `${Math.min(140, el.scrollHeight)}px`;
-      slashPopoverActiveIdx = 0;
-      updateComposerActionButton();
-      updateComposerSlashPopover();
+      S.slashPopoverActiveIdx = 0;
+      S.updateComposerActionButton();
+      S.updateComposerSlashPopover();
     });
     $('composer-input')?.addEventListener('click', () => {
-      updateComposerSlashPopover();
+      S.updateComposerSlashPopover();
     });
 
     // Composer Form Submit
     $('chat-composer-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       if (isPinLocked()) return;
-      await submitComposerPrompt();
+      await S.submitComposerPrompt();
     });
 
     $('composer-input')?.addEventListener('keydown', async (e) => {
       if (isPinLocked()) return;
       const pop = $('composer-slash-popover');
-      const popOpen = Boolean(pop && !pop.hidden && slashPopoverItems.length > 0);
+      const popOpen = Boolean(pop && !pop.hidden && S.slashPopoverItems.length > 0);
       if (popOpen) {
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
           e.preventDefault();
-          const len = slashPopoverItems.length;
-          slashPopoverActiveIdx =
+          const len = S.slashPopoverItems.length;
+          S.slashPopoverActiveIdx =
             e.key === 'ArrowDown'
-              ? (slashPopoverActiveIdx + 1) % len
-              : (slashPopoverActiveIdx - 1 + len) % len;
+              ? (S.slashPopoverActiveIdx + 1) % len
+              : (S.slashPopoverActiveIdx - 1 + len) % len;
           pop.querySelectorAll('.slash-pop-item').forEach((btn, idx) => {
-            const isAct = idx === slashPopoverActiveIdx;
+            const isAct = idx === S.slashPopoverActiveIdx;
             btn.classList.toggle('active', isAct);
             btn.setAttribute('aria-selected', isAct ? 'true' : 'false');
             if (isAct) btn.scrollIntoView({ block: 'nearest' });
@@ -22374,67 +7064,67 @@
         }
         if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
           e.preventDefault();
-          await applySlashPopoverSelection(slashPopoverActiveIdx);
+          await S.applySlashPopoverSelection(S.slashPopoverActiveIdx);
           return;
         }
         if (e.key === 'Escape') {
           e.preventDefault();
           e.stopPropagation();
-          closeSlashPopover();
+          S.closeSlashPopover();
           return;
         }
       }
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        await submitComposerPrompt();
+        await S.submitComposerPrompt();
       }
     });
 
     // Command Palette & IDE Sidebar shortcuts
-    $('open-cmd-palette')?.addEventListener('click', openCommandPalette);
-    $('mobile-cmd-btn')?.addEventListener('click', openCommandPalette);
+    $('open-cmd-palette')?.addEventListener('click', S.openCommandPalette);
+    $('mobile-cmd-btn')?.addEventListener('click', S.openCommandPalette);
     $('rail-vault-btn')?.addEventListener('click', (e) => {
       if (isPinLocked()) e.preventDefault();
     });
     $('mobile-vault-btn')?.addEventListener('click', (e) => {
       if (isPinLocked()) e.preventDefault();
     });
-    $('cmd-close')?.addEventListener('click', closeCommandPalette);
-    $('cmd-input')?.addEventListener('input', (e) => renderCommandPaletteResults(e.target.value));
+    $('cmd-close')?.addEventListener('click', S.closeCommandPalette);
+    $('cmd-input')?.addEventListener('input', (e) => S.renderCommandPaletteResults(e.target.value));
     window.addEventListener('keydown', (e) => {
       if (isPinLocked()) return;
-      if (activeIdeRename && activeIdeRename.kind === 'chat-session') {
+      if (S.activeIdeRename && S.activeIdeRename.kind === 'chat-session') {
         if (e.key === 'Enter') {
           e.preventDefault();
           e.stopPropagation();
-          finishIdeInlineRename(true);
+          S.finishIdeInlineRename(true);
           return;
         }
         if (e.key === 'Escape') {
           e.preventDefault();
           e.stopPropagation();
-          finishIdeInlineRename(false);
+          S.finishIdeInlineRename(false);
           return;
         }
       }
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        openCommandPalette();
+        S.openCommandPalette();
       } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'b') {
         e.preventDefault();
         toggleIdeSidebar();
       } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'i') {
         e.preventDefault();
         if (prefs.activeTab !== 'chat') switchTab('chat');
-        setInspectorOpen(!prefs.inspectorOpen);
+        S.setInspectorOpen(!prefs.inspectorOpen);
       } else if (
         e.key === 'F2' &&
         !e.metaKey &&
         !e.ctrlKey &&
         !e.altKey &&
         prefs.activeTab === 'chat' &&
-        !isNewSessionMode() &&
-        cleanTargetThreadId(prefs.selectedThreadId) &&
+        !S.isNewSessionMode() &&
+        S.cleanTargetThreadId(prefs.selectedThreadId) &&
         !e.target?.closest?.('#ide-sidebar-tree')
       ) {
         const ae = document.activeElement;
@@ -22454,7 +7144,7 @@
         );
         if (!inField && !anyModalOpen) {
           e.preventDefault();
-          beginIdeInlineRename('chat-session', prefs.selectedThreadId);
+          S.beginIdeInlineRename('chat-session', prefs.selectedThreadId);
         }
       } else if (
         !e.metaKey &&
@@ -22491,7 +7181,7 @@
         const t = e.target;
         if (t && t.matches && t.matches('[data-pair-code-input], #input-pair-six-code')) {
           e.preventDefault();
-          claimSixDigitPairCode(t.value || '');
+          S.claimSixDigitPairCode(t.value || '');
         } else if (t && t.matches && t.matches('[data-pair-link-input]')) {
           e.preventDefault();
           t.closest('.quick-pair-card')?.querySelector('[data-pair-link-submit]')?.click();
@@ -22505,65 +7195,65 @@
         prefs.inspectorTab === 'files' &&
         prefs.inspectorViewMode !== 'source' &&
         prefs.inspectorViewMode !== 'diff' &&
-        activeInspectorFileTarget
+        S.activeInspectorFileTarget
       ) {
         const ae = document.activeElement;
         const inField = Boolean(
           ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT' || ae.isContentEditable)
         );
-        const parsedCur = parsePreviewTargetClient(activeInspectorFileTarget);
-        const dKind = getDeliverableKindClient(parsedCur.filePath);
+        const parsedCur = S.parsePreviewTargetClient(S.activeInspectorFileTarget);
+        const dKind = S.getDeliverableKindClient(parsedCur.filePath);
         if (!inField && (dKind === 'pdf' || dKind === 'pptx')) {
           const sid = String(prefs.selectedThreadId || '').trim();
           const activeRow = (appState?.rows || []).find((r) => r && r.id === sid) || null;
-          const wsId = resolveSessionWorkspaceContext(activeRow, threadsCache[sid] || null).wsId;
+          const wsId = S.resolveSessionWorkspaceContext(activeRow, threadsCache[sid] || null).wsId;
           const cacheKey = `${sid || wsId || 'global'}::${parsedCur.filePath.replace(/\\/g, '/')}`;
-          const dlv = deliverablePreviewCache.get(cacheKey);
+          const dlv = S.deliverablePreviewCache.get(cacheKey);
           const total = Math.max(1, Number(dlv?.pageCount || dlv?.slides?.length || 1));
           const delta = e.key === 'ArrowRight' ? 1 : -1;
-          const nextP = Math.max(1, Math.min(total, activeDeliverablePage + delta));
-          if (nextP !== activeDeliverablePage) {
+          const nextP = Math.max(1, Math.min(total, S.activeDeliverablePage + delta));
+          if (nextP !== S.activeDeliverablePage) {
             e.preventDefault();
-            activeDeliverablePage = nextP;
-            renderChatView(false);
-            fetchDeliverablePreview(activeInspectorFileTarget, activeRow, { page: nextP }).catch(() => {});
+            S.activeDeliverablePage = nextP;
+            S.renderChatView(false);
+            S.fetchDeliverablePreview(S.activeInspectorFileTarget, activeRow, { page: nextP }).catch(() => {});
           }
         }
       } else if (e.key === 'Escape') {
         closeFloatingUiMenus();
-        closeSlashPopover();
-        closeCommandPalette();
-        closeConnModal();
-        closeNotifModal();
+        S.closeSlashPopover();
+        S.closeCommandPalette();
+        S.closeConnModal();
+        S.closeNotifModal();
         if ($('acct-signin-modal') && !$('acct-signin-modal').hidden) {
-          closeAccountSignInModal();
+          S.closeAccountSignInModal();
         }
         if ($('acct-details-modal') && !$('acct-details-modal').hidden) {
-          closeAccountDetailsModal();
+          S.closeAccountDetailsModal();
         }
-        if (addAccountTrayState) {
-          closeAddAccountTray();
+        if (S.addAccountTrayState) {
+          S.closeAddAccountTray();
         }
-        if (activeInlineAcctEdit) {
-          const prevSurf = activeInlineAcctEdit.surface;
-          activeInlineAcctEdit = null;
-          if (prevSurf === 'sidebar') renderIdeSidebar();
-          else renderPulseView();
+        if (S.activeInlineAcctEdit) {
+          const prevSurf = S.activeInlineAcctEdit.surface;
+          S.activeInlineAcctEdit = null;
+          if (prevSurf === 'sidebar') S.renderIdeSidebar();
+          else S.renderPulseView();
         }
-        if (activeIdeRename) {
-          finishIdeInlineRename(false);
+        if (S.activeIdeRename) {
+          S.finishIdeInlineRename(false);
         }
         if (prefs.inspectorOpen && prefs.inspectorFullStage) {
           prefs.inspectorFullStage = false;
           saveJson(STORAGE_KEYS.PREFS, prefs);
-          renderChatView(false);
+          S.renderChatView(false);
         } else if (
           prefs.inspectorOpen &&
           (window.innerWidth <= 1024 ||
             document.activeElement?.closest?.('#ide-inspector-pane') ||
             $('ide-inspector-pane')?.classList.contains('is-deliverable-wide'))
         ) {
-          setInspectorOpen(false);
+          S.setInspectorOpen(false);
         }
         if (
           prefs.splitWatchOpen &&
@@ -22571,7 +7261,7 @@
         ) {
           prefs.splitWatchOpen = false;
           saveJson(STORAGE_KEYS.PREFS, prefs);
-          renderSplitWatchPane();
+          S.renderSplitWatchPane();
         }
       }
     });
@@ -22592,27 +7282,27 @@
       }
       const cmdModal = $('cmd-modal');
       if (cmdModal && !cmdModal.hidden) {
-        closeCommandPalette();
+        S.closeCommandPalette();
         return;
       }
       const connModal = $('conn-modal');
       if (connModal && !connModal.hidden) {
-        closeConnModal();
+        S.closeConnModal();
         return;
       }
       const acctModal = $('acct-signin-modal');
       if (acctModal && !acctModal.hidden) {
-        closeAccountSignInModal();
+        S.closeAccountSignInModal();
         return;
       }
       const detailsModal = $('acct-details-modal');
       if (detailsModal && !detailsModal.hidden) {
-        closeAccountDetailsModal();
+        S.closeAccountDetailsModal();
         return;
       }
       const notifModal = $('notif-modal');
       if (notifModal && !notifModal.hidden) {
-        closeNotifModal();
+        S.closeNotifModal();
         return;
       }
       const bgPop = $('bg-tasks-popover');
@@ -22626,13 +7316,13 @@
         return;
       }
       if (window.innerWidth <= 1024 && prefs.inspectorOpen) {
-        setInspectorOpen(false);
+        S.setInspectorOpen(false);
         return;
       }
       if (window.innerWidth <= 900 && prefs.splitWatchOpen) {
         prefs.splitWatchOpen = false;
         saveJson(STORAGE_KEYS.PREFS, prefs);
-        renderSplitWatchPane();
+        S.renderSplitWatchPane();
         return;
       }
       const targetTab = ev.state?.theoTab || (window.innerWidth >= 1025 ? 'chat' : 'pulse');
@@ -22650,7 +7340,7 @@
     let deckSwipeStartY = 0;
     document.addEventListener('touchstart', (e) => {
       if (isPinLocked() || !prefs.inspectorOpen || prefs.inspectorTab !== 'files') return;
-      if (activeDeliverableDeckMode !== 'single' || !e.target?.closest?.('.insp-deck-stage')) return;
+      if (S.activeDeliverableDeckMode !== 'single' || !e.target?.closest?.('.insp-deck-stage')) return;
       const t = e.touches && e.touches[0];
       if (!t) return;
       deckSwipeStartX = t.clientX;
@@ -22663,807 +7353,26 @@
       const sy = deckSwipeStartY;
       deckSwipeStartX = 0;
       deckSwipeStartY = 0;
-      if (!t || !prefs.inspectorOpen || prefs.inspectorTab !== 'files' || activeDeliverableDeckMode !== 'single') return;
+      if (!t || !prefs.inspectorOpen || prefs.inspectorTab !== 'files' || S.activeDeliverableDeckMode !== 'single') return;
       const dx = t.clientX - sx;
       const dy = t.clientY - sy;
       if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.4) return;
-      const parsedCur = parsePreviewTargetClient(activeInspectorFileTarget);
-      const dKind = getDeliverableKindClient(parsedCur.filePath);
+      const parsedCur = S.parsePreviewTargetClient(S.activeInspectorFileTarget);
+      const dKind = S.getDeliverableKindClient(parsedCur.filePath);
       if (dKind !== 'pdf' && dKind !== 'pptx') return;
       const sid = String(prefs.selectedThreadId || '').trim();
       const activeRow = (appState?.rows || []).find((r) => r && r.id === sid) || null;
-      const wsId = resolveSessionWorkspaceContext(activeRow, threadsCache[sid] || null).wsId;
+      const wsId = S.resolveSessionWorkspaceContext(activeRow, threadsCache[sid] || null).wsId;
       const cacheKey = `${sid || wsId || 'global'}::${parsedCur.filePath.replace(/\\/g, '/')}`;
-      const dlv = deliverablePreviewCache.get(cacheKey);
+      const dlv = S.deliverablePreviewCache.get(cacheKey);
       const total = Math.max(1, Number(dlv?.pageCount || dlv?.slides?.length || 1));
-      const nextP = Math.max(1, Math.min(total, activeDeliverablePage + (dx < 0 ? 1 : -1)));
-      if (nextP !== activeDeliverablePage) {
-        activeDeliverablePage = nextP;
-        renderChatView(false);
-        fetchDeliverablePreview(activeInspectorFileTarget, activeRow, { page: nextP }).catch(() => {});
+      const nextP = Math.max(1, Math.min(total, S.activeDeliverablePage + (dx < 0 ? 1 : -1)));
+      if (nextP !== S.activeDeliverablePage) {
+        S.activeDeliverablePage = nextP;
+        S.renderChatView(false);
+        S.fetchDeliverablePreview(S.activeInspectorFileTarget, activeRow, { page: nextP }).catch(() => {});
       }
     }, { passive: true });
-  }
-
-  const stoppedSessionsById = new Map();
-
-  // Optimistic session/group edits made on this device (unread, archive, group moves,
-  // group create/rename/delete) are re-applied on top of every incoming SSE / local /
-  // cloud snapshot until the workstation state agrees, or until they expire. Without
-  // this, a cloud poll that lands before the relay drains the command queue silently
-  // reverts the toggle (e.g. "○ Read" flips back to "● Unread").
-  const PENDING_OVERRIDE_TTL_MS = 240000;
-  const pendingRowOverrides = new Map();
-  const pendingGroupOverrides = new Map();
-
-  function noteRowOverride(id, patch) {
-    const cleanId = String(id || '').trim();
-    if (!cleanId || !patch) return;
-    const prev = pendingRowOverrides.get(cleanId) || {};
-    pendingRowOverrides.set(cleanId, { ...prev, ...patch, at: Date.now() });
-  }
-
-  async function toggleSessionPin(sessionId, forceVal) {
-    if (isPinLocked()) return;
-    const id = cleanTargetThreadId(sessionId);
-    if (!id || id === '__new__') {
-      showToast('Select an active session first to pin');
-      return;
-    }
-    const targetRow = (appState?.rows || []).find((r) => r && r.id === id);
-    if (!targetRow || targetRow.archived) return;
-    const val = typeof forceVal === 'boolean' ? forceVal : !isRowPinned(targetRow);
-    const ts = Date.now();
-    targetRow.pinned = val;
-    targetRow.pinnedAt = val ? ts : 0;
-    targetRow.pinUpdatedAt = ts;
-    noteRowOverride(id, {
-      pinned: val,
-      pinnedAt: val ? ts : 0,
-      pinUpdatedAt: ts
-    });
-    if (Array.isArray(appState?.rows)) {
-      appState.rows.sort(compareRowsPinnedFirst);
-    }
-    haptic(12);
-    persistCache();
-    renderAll();
-    await dispatchRemoteCommand({
-      type: 'sessionAction',
-      action: 'pin',
-      subAction: 'pin',
-      id,
-      ids: [id],
-      provider: targetRow.provider || 'antigravity',
-      value: val,
-      updatedAt: ts,
-      targetDeviceId: targetRow.deviceId || undefined
-    });
-    showToast(val ? 'Pinned chat' : 'Unpinned chat');
-  }
-
-  function noteGroupOverride(gId, patch) {
-    const cleanId = String(gId || '').trim();
-    if (!cleanId || !patch) return;
-    pendingGroupOverrides.set(cleanId, {
-      ...patch,
-      nameKey: String(patch.name || patch.nameKey || '')
-        .trim()
-        .toLowerCase(),
-      at: Date.now()
-    });
-  }
-
-  function applyPendingLocalOverrides(stateObj) {
-    if (!stateObj || typeof stateObj !== 'object') return;
-    if (pendingRowOverrides.size === 0 && pendingGroupOverrides.size === 0) return;
-    const now = Date.now();
-    if (!Array.isArray(stateObj.groups)) stateObj.groups = [];
-    const rows = Array.isArray(stateObj.rows) ? stateObj.rows : [];
-    const nameKeyOf = (g) =>
-      String(g?.name || '')
-        .trim()
-        .toLowerCase();
-
-    for (const [gId, rec] of Array.from(pendingGroupOverrides.entries())) {
-      if (now - rec.at > PENDING_OVERRIDE_TTL_MS) {
-        pendingGroupOverrides.delete(gId);
-        continue;
-      }
-      if (rec.op === 'delete') {
-        const before = stateObj.groups.length;
-        stateObj.groups = stateObj.groups.filter(
-          (g) => g && g.id !== gId && !(rec.nameKey && nameKeyOf(g) === rec.nameKey)
-        );
-        for (const r of rows) {
-          if (r && r.group === gId) r.group = '';
-        }
-        if (before === stateObj.groups.length) pendingGroupOverrides.delete(gId);
-      } else if (rec.op === 'create') {
-        const byId = stateObj.groups.find((g) => g && g.id === gId);
-        if (byId) {
-          pendingGroupOverrides.delete(gId);
-          continue;
-        }
-        const byName = rec.nameKey ? stateObj.groups.find((g) => g && nameKeyOf(g) === rec.nameKey) : null;
-        if (byName) {
-          // Workstation minted its own id for the same group — re-point pending row moves.
-          for (const rr of pendingRowOverrides.values()) {
-            if (rr.group === gId) rr.group = byName.id;
-          }
-          for (const r of rows) {
-            if (r && r.group === gId) r.group = byName.id;
-          }
-          pendingGroupOverrides.delete(gId);
-          continue;
-        }
-        stateObj.groups.push({ id: gId, name: rec.name || 'Group', collapsed: false });
-      } else if (rec.op === 'rename') {
-        const g = stateObj.groups.find((x) => x && x.id === gId);
-        if (!g) continue;
-        if (g.name === rec.name) pendingGroupOverrides.delete(gId);
-        else g.name = rec.name;
-      }
-    }
-
-    const groupIds = new Set(stateObj.groups.map((g) => g && g.id).filter(Boolean));
-    for (const [id, rec] of Array.from(pendingRowOverrides.entries())) {
-      if (now - rec.at > PENDING_OVERRIDE_TTL_MS) {
-        pendingRowOverrides.delete(id);
-        continue;
-      }
-      const r = rows.find((x) => x && x.id === id);
-      if (!r) continue;
-      const srvArchived = Boolean(r.archived);
-      let settled = true;
-      if ('unread' in rec) {
-        if (Boolean(r.unread) !== rec.unread) {
-          r.unread = rec.unread;
-          if (!rec.unread && r.dot === 'unread') r.dot = r.open ? 'idle' : null;
-          if (rec.unread && !r.dot && r.status !== 'working' && r.status !== 'waiting') r.dot = 'unread';
-          settled = false;
-        }
-      }
-      if ('title' in rec && rec.title) {
-        if (String(r.title || '').trim() !== rec.title) {
-          r.title = rec.title;
-          settled = false;
-        }
-      }
-      if ('archived' in rec) {
-        if (Boolean(r.archived) !== rec.archived) {
-          r.archived = rec.archived;
-          settled = false;
-        }
-      }
-      if ('group' in rec) {
-        const want = rec.group && groupIds.has(rec.group) ? rec.group : rec.group ? rec.group : '';
-        if ((r.group || '') !== want) {
-          r.group = want;
-          settled = false;
-        }
-      }
-      if ('lastWorkedAt' in rec) {
-        const wantMs = Number(rec.lastWorkedAt || 0);
-        if (wantMs > Number(r.at || 0)) {
-          r.at = wantMs;
-          r.lastWorkedAt = wantMs;
-          settled = false;
-        }
-      }
-      if ('model' in rec && rec.model) {
-        if (r.model !== rec.model) {
-          r.model = rec.model;
-          if (rec.effort) r.effort = rec.effort;
-          if (Number(rec.limitTokens || 0) > 0) {
-            r.limitTokens = Number(rec.limitTokens);
-            const rUsed = Math.max(0, Math.round(Number(r.usedTokens || 0)));
-            r.contextPct =
-              rUsed > 0 ? Math.min(100, Math.max(1, Math.round((rUsed / r.limitTokens) * 100))) : 0;
-          }
-          settled = false;
-        }
-      }
-      if ('pinned' in rec) {
-        const srvPinned = Boolean(r.pinned && !srvArchived);
-        const srvPinUpd = Number(r.pinUpdatedAt || (r.pinned ? r.pinnedAt : 0) || 0);
-        const recPinUpd = Number(rec.pinUpdatedAt || rec.pinnedAt || rec.at || 0);
-        if (r.archived) {
-          r.pinned = false;
-          r.pinnedAt = 0;
-          r.pinUpdatedAt = Math.max(srvPinUpd, recPinUpd);
-          if (srvArchived || srvPinUpd >= recPinUpd) {
-            delete rec.pinned;
-            delete rec.pinnedAt;
-            delete rec.pinUpdatedAt;
-          } else {
-            settled = false;
-          }
-        } else if (srvPinUpd > recPinUpd || (srvPinned === Boolean(rec.pinned) && srvPinUpd >= recPinUpd)) {
-          delete rec.pinned;
-          delete rec.pinnedAt;
-          delete rec.pinUpdatedAt;
-        } else {
-          r.pinned = Boolean(rec.pinned);
-          r.pinnedAt = rec.pinned ? Number(rec.pinnedAt || recPinUpd || Date.now()) : 0;
-          r.pinUpdatedAt = recPinUpd;
-          settled = false;
-        }
-      }
-      if (settled) pendingRowOverrides.delete(id);
-    }
-    rows.sort(
-      (a, b) =>
-        (isRowPinned(b) ? 1 : 0) - (isRowPinned(a) ? 1 : 0) ||
-        Number(b?.at || 0) - Number(a?.at || 0) ||
-        Number(b?.pinnedAt || 0) - Number(a?.pinnedAt || 0)
-    );
-  }
-
-  function applyStoppedSessionOverrides(stateObj) {
-    if (!stateObj || !Array.isArray(stateObj.rows) || stoppedSessionsById.size === 0) return;
-    const now = Date.now();
-    for (const r of stateObj.rows) {
-      if (!r || !r.id) continue;
-      const stopRec = stoppedSessionsById.get(r.id);
-      if (!stopRec) continue;
-      if (now - stopRec.at > 300000) {
-        stoppedSessionsById.delete(r.id);
-        continue;
-      }
-      r.status = 'completed';
-      r.statusLabel = 'Stopped';
-      r.dot = r.open ? 'idle' : null;
-      r.category = 'completed';
-      r.unread = false;
-      r.elsewhere = false;
-      r.reason = null;
-      r.bgTask = null;
-    }
-  }
-
-  function isSessionActivelyRunning(tid) {
-    const cleanId = String(tid || prefs.selectedThreadId || '').trim();
-    if (!cleanId) return false;
-    const row = (appState?.rows || []).find((r) => r.id === cleanId);
-    const detail = threadsCache[cleanId] || null;
-    const msgs = coalesceThreadMessages(detail?.messages || []);
-    const lastMsg = msgs.length > 0 ? msgs[msgs.length - 1] : null;
-    const nonOptMsgs = msgs.filter((m) => !m.optimistic);
-    const lastNonOptMsg = nonOptMsgs.length > 0 ? nonOptMsgs[nonOptMsgs.length - 1] : null;
-
-    const stopRec = stoppedSessionsById.get(cleanId);
-    if (stopRec) {
-      const hasNewOptimisticUserTurn = Boolean(
-        lastMsg && lastMsg.optimistic && Number(lastMsg.optimisticAt || 0) > stopRec.at
-      );
-      const lastNonOptTimeMs = lastNonOptMsg?.createdAt ? Date.parse(lastNonOptMsg.createdAt) : 0;
-      const hasNewServerUserTurn = Boolean(
-        lastNonOptMsg &&
-          lastNonOptMsg.role === 'user' &&
-          lastNonOptMsg.id &&
-          lastNonOptMsg.id !== stopRec.lastMsgId &&
-          lastNonOptTimeMs > stopRec.at + 1000
-      );
-      if (hasNewOptimisticUserTurn || hasNewServerUserTurn) {
-        stoppedSessionsById.delete(cleanId);
-      } else if (Date.now() - stopRec.at < 300000) {
-        return false;
-      } else {
-        stoppedSessionsById.delete(cleanId);
-      }
-    }
-
-    const liveStream = liveStreamsByThreadId.get(cleanId);
-    if (liveStream && liveStream.status === 'working' && Date.now() - Number(liveStream.receivedAt || 0) < 45000) {
-      return true;
-    }
-    if (row?.status === 'working' || row?.dot === 'running' || row?.bgTask?.state === 'running') {
-      return true;
-    }
-    if (row?.status === 'waiting' || row?.pendingQuestion) {
-      return false;
-    }
-    if (lastMsg) {
-      if (lastMsg.optimistic && Date.now() - Number(lastMsg.optimisticAt || 0) < 90000) {
-        return true;
-      }
-      const msgTimeMs = lastMsg.createdAt ? Date.parse(lastMsg.createdAt) : 0;
-      const isFreshUserDispatch =
-        msgTimeMs > 0 &&
-        Date.now() - msgTimeMs < 35 * 1000 &&
-        (!row || msgTimeMs > Number(row.at || 0));
-      if (lastMsg.role === 'user' && isFreshUserDispatch) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  function updateComposerActionButton() {
-    const running = isSessionActivelyRunning(prefs.selectedThreadId);
-    const inp = $('composer-input');
-    const hasDraft = Boolean((inp && inp.value.trim().length > 0) || composerAttachments.length > 0);
-    const isReplyMode = !prefs.composerMode || prefs.composerMode === 'reply';
-    const shouldShowStop = isReplyMode && !hasDraft && running;
-
-    const compBox = $('composer-box');
-    const routeToggleBtn = $('btn-toggle-composer-route');
-    if (compBox) {
-      compBox.classList.toggle('is-reply-compact', isReplyMode && !isNewSessionMode());
-      compBox.classList.toggle('is-route-open', Boolean(prefs.composerRouteExpanded || isNewSessionMode()));
-    }
-    if (routeToggleBtn) {
-      routeToggleBtn.hidden = isNewSessionMode();
-      routeToggleBtn.classList.toggle('active', Boolean(prefs.composerRouteExpanded));
-      routeToggleBtn.setAttribute('aria-expanded', prefs.composerRouteExpanded ? 'true' : 'false');
-    }
-
-    const stopHdrBtn = $('btn-chat-stop');
-    if (stopHdrBtn) {
-      stopHdrBtn.hidden = !(running && !shouldShowStop);
-    }
-    const btn = $('composer-send-btn');
-    if (!btn) return;
-    const shouldBrighten = !shouldShowStop && hasDraft;
-    btn.classList.toggle('is-stop', shouldShowStop);
-    btn.classList.toggle('is-ready', shouldBrighten);
-    btn.removeAttribute('title');
-    btn.setAttribute('aria-label', shouldShowStop ? 'Stop running session' : 'Dispatch Prompt');
-  }
-
-  async function stopActiveSession(explicitId = '') {
-    const tid = String(explicitId || prefs.selectedThreadId || '').trim();
-    if (!tid) return;
-    const isDraftNew = tid.startsWith('draft-new-');
-    const boundTargetDev =
-      isDraftNew && pendingNewSessionBind && pendingNewSessionBind.draftThreadId === tid
-        ? pendingNewSessionBind.targetDeviceId || ''
-        : '';
-    if (isDraftNew && pendingNewSessionBind && pendingNewSessionBind.draftThreadId === tid) {
-      pendingNewSessionBind = null;
-    }
-    const row = (appState?.rows || []).find((r) => r.id === tid);
-    const detail = threadsCache[tid] || null;
-    if (detail && Array.isArray(detail.messages)) {
-      detail.messages = detail.messages.filter((m) => !m.optimistic);
-    }
-    const msgs = coalesceThreadMessages(detail?.messages || []);
-    const lastMsg = msgs.length > 0 ? msgs[msgs.length - 1] : null;
-    const provider = (detail?.provider || row?.provider) === 'claude' ? 'claude' : 'antigravity';
-
-    stoppedSessionsById.set(tid, {
-      at: Date.now(),
-      msgCount: msgs.length,
-      lastMsgId: lastMsg?.id || ''
-    });
-    liveStreamsByThreadId.delete(tid);
-
-    if (row) {
-      row.status = 'completed';
-      row.statusLabel = 'Stopped';
-      row.dot = row.open ? 'idle' : null;
-      row.category = 'completed';
-      row.unread = false;
-      row.elsewhere = false;
-      row.reason = null;
-      row.bgTask = null;
-    }
-
-    haptic(20);
-    persistCache();
-    updateComposerActionButton();
-    renderAll();
-    showToast('■ Stopped session');
-
-    await dispatchRemoteCommand({
-      type: 'sessionAction',
-      action: 'interrupt',
-      subAction: 'interrupt',
-      id: isDraftNew ? '' : tid,
-      threadId: isDraftNew ? '' : tid,
-      draftThreadId: isDraftNew ? tid : undefined,
-      targetDeviceId: boundTargetDev || row?.deviceId || undefined,
-      provider
-    });
-  }
-
-  function updateComposerModePills() {
-    syncProviderNewSessionButtons();
-    document.querySelectorAll('[data-comp-mode]').forEach((b) => {
-      b.classList.toggle('active', b.dataset.compMode === prefs.composerMode);
-    });
-    updateComposerActionButton();
-  }
-
-  async function submitComposerPrompt() {
-    closeSlashPopover();
-    const inp = $('composer-input');
-    if (!inp) return;
-    const sendBtn = $('composer-send-btn');
-    const rawText = inp.value.trim();
-    if (!rawText && composerAttachments.length === 0) {
-      if (sendBtn?.classList.contains('is-stop') || isSessionActivelyRunning(prefs.selectedThreadId)) {
-        await stopActiveSession();
-      }
-      return;
-    }
-
-    // Intercept standalone local IDE action slash commands so they execute directly
-    if (composerAttachments.length === 0 && /^\/[a-z-]+$/i.test(rawText)) {
-      const cmdMatch = SLASH_COMMAND_CATALOG.find(
-        (c) => c.kind === 'action' && c.id.toLowerCase() === rawText.toLowerCase()
-      );
-      if (cmdMatch) {
-        slashPopoverItems = [cmdMatch];
-        slashPopoverTrigger = { mode: 'slash', query: cmdMatch.id.slice(1), startIdx: 0, endIdx: inp.value.length };
-        await applySlashPopoverSelection(0);
-        return;
-      }
-    }
-
-    const repoRefs = composerAttachments.filter((a) => a.kind === 'repo');
-    const fileRefs = composerAttachments.filter((a) => a.kind !== 'repo');
-    const activeRowPre = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId) || null;
-    const isNewPre = Boolean(
-      prefs.composerMode === 'new-antigravity' ||
-        prefs.composerMode === 'new-claude' ||
-        !prefs.selectedThreadId ||
-        prefs.selectedThreadId === '__new__'
-    );
-    const targetDevPre = isNewPre
-      ? prefs.composerTargetDevice && prefs.composerTargetDevice !== 'auto'
-        ? prefs.composerTargetDevice
-        : ''
-      : activeRowPre?.deviceId || '';
-    const liveWsPre = hasLiveAttachmentTransport(targetDevPre);
-    let preparedFileAttachments = fileRefs.map((f) => ({
-      name: f.name,
-      mime: f.mime,
-      size: f.size,
-      dataUrl: f.dataUrl || '',
-      textContent: f.textContent || ''
-    }));
-    if (fileRefs.length > 0 && (!liveWsPre && (!isHeadlessBrowser || window.__THEO_TEST_FORCE_TRANSPORT_MODE === 'cloud'))) {
-      preparedFileAttachments = compactAttachmentsForCloudFallback(preparedFileAttachments);
-      if (calcAttachmentsPayloadChars(preparedFileAttachments) > MAX_CLOUD_FALLBACK_CHARS) {
-        renderComposerAttachments();
-        showToast('Attachment exceeds 250 KB Cloud Store fallback limit (connect live Edge WS for up to 8 MB)');
-        return;
-      }
-    }
-
-    const sentAttachments = [...composerAttachments];
-    const prevSelectedThreadId = prefs.selectedThreadId;
-    const prevComposerMode = prefs.composerMode;
-    const prevNewSessionGroupId = prefs.newSessionGroupId;
-    const prevOpenEditorTabs = Array.isArray(prefs.openEditorTabs) ? [...prefs.openEditorTabs] : [];
-    const optMsgId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-
-    composerAttachments = [];
-    renderComposerAttachments();
-
-    inp.value = '';
-    inp.style.height = 'auto';
-    haptic(15);
-    playChime('send');
-
-    const contextHeader = repoRefs.length
-      ? `${repoRefs
-          .map((r) => {
-            const relMatch = String(r.repoPath || '').replace(/\\/g, '/').match(/\/bhfirms\/([^\n]+)$/i);
-            return relMatch ? `${r.name} (bhfirms/${relMatch[1]})` : r.name;
-          })
-          .join(', ')}\n`
-      : '';
-    const attachDisplayLine = sentAttachments.length
-      ? `\n\nAttached: ${sentAttachments.map((a) => a.name).join(', ')}`
-      : '';
-    const text = `${contextHeader}${rawText || (fileRefs.length ? `Please inspect the attached file(s): ${fileRefs.map((f) => f.name).join(', ')}` : '')}`.trim();
-
-    const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId);
-    const isNewAgy =
-      prefs.composerMode === 'new-antigravity' ||
-      (prefs.selectedThreadId === '__new__' && prefs.composerMode !== 'new-claude');
-    const isNewClaude = prefs.composerMode === 'new-claude';
-    const isNew = Boolean(
-      isNewAgy || isNewClaude || !prefs.selectedThreadId || prefs.selectedThreadId === '__new__'
-    );
-    const provider = isNewClaude
-      ? 'claude'
-      : isNewAgy
-        ? 'antigravity'
-        : activeRow?.provider || threadsCache[prefs.selectedThreadId]?.provider || 'antigravity';
-    const targetId = isNew ? '' : prefs.selectedThreadId;
-    const targetGroupObj =
-      isNew && prefs.newSessionGroupId
-        ? Array.isArray(appState?.groups)
-          ? appState.groups.find((g) => g && g.id === prefs.newSessionGroupId) || null
-          : { id: prefs.newSessionGroupId, name: '' }
-        : null;
-    const targetGroupId = targetGroupObj ? targetGroupObj.id : '';
-    const targetGroupName = targetGroupObj?.name || '';
-    const modelCfg = getEffectiveSessionModelConfig(activeRow, provider, isNew);
-
-    const prevRowSnapshot = activeRow
-      ? {
-          pendingQuestion: activeRow.pendingQuestion,
-          status: activeRow.status,
-          statusLabel: activeRow.statusLabel,
-          dot: activeRow.dot,
-          at: activeRow.at,
-          lastWorkedAt: activeRow.lastWorkedAt,
-          model: activeRow.model,
-          effort: activeRow.effort
-        }
-      : null;
-    const hadCacheBefore = Boolean(targetId && threadsCache[targetId]);
-    const prevCacheModel = targetId ? threadsCache[targetId]?.model : undefined;
-    const hadPrevOverride = Boolean(targetId && pendingRowOverrides.has(targetId));
-    const prevOverrideVal = hadPrevOverride ? { ...pendingRowOverrides.get(targetId) } : null;
-    const prevApprovals = Array.isArray(appState?.approvals) ? [...appState.approvals] : null;
-    const prevCollapsedGroups =
-      prefs.collapsedSessionGroups && typeof prefs.collapsedSessionGroups === 'object'
-        ? { ...prefs.collapsedSessionGroups }
-        : null;
-
-    let draftId = '';
-    if (isNew) {
-      draftId = `draft-new-${Date.now()}`;
-      if (!prefs.threadModelConfig || typeof prefs.threadModelConfig !== 'object') {
-        prefs.threadModelConfig = {};
-      }
-      prefs.threadModelConfig[draftId] = {
-        modelId: modelCfg.modelId,
-        effort: modelCfg.effort,
-        provider,
-        updatedAt: Date.now()
-      };
-      const knownIds = new Set((appState?.rows || []).map((r) => r && r.id).filter(Boolean));
-      const cleanTitle =
-        (rawText || text).replace(/\s+/g, ' ').trim().slice(0, 56) || 'New Session';
-      threadsCache[draftId] = {
-        id: draftId,
-        provider,
-        title: cleanTitle,
-        model: modelCfg.displayLabel,
-        effort: modelCfg.effort,
-        folder: prefs.composerRepoPrefix
-          ? `Scope: ${prefs.composerRepoPrefix}`
-          : 'BHFIRMS Workspace',
-        contextWindow: {
-          usedTokens: Math.max(120, Math.round(text.length / 4)),
-          limitTokens: inferDefaultContextLimit(provider, modelCfg.displayLabel),
-          modelLabel: modelCfg.displayLabel
-        },
-        messages: [
-          {
-            id: optMsgId,
-            role: 'user',
-            createdAt: new Date().toISOString(),
-            text: `${rawText || text}${attachDisplayLine}`,
-            toolCalls: [],
-            optimistic: true,
-            optimisticAt: Date.now()
-          }
-        ]
-      };
-      const boundDev =
-        prefs.composerTargetDevice && prefs.composerTargetDevice !== 'auto'
-          ? String(prefs.composerTargetDevice).trim()
-          : prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
-            ? String(prefs.selectedDeviceFilter).trim()
-            : '';
-      pendingNewSessionBind = {
-        draftThreadId: draftId,
-        provider,
-        targetDeviceId: boundDev,
-        promptText: rawText || text,
-        groupId: targetGroupId,
-        knownIds,
-        createdAt: Date.now()
-      };
-      if (targetGroupId) {
-        noteRowOverride(draftId, { group: targetGroupId });
-        if (!prefs.collapsedSessionGroups || typeof prefs.collapsedSessionGroups !== 'object') {
-          prefs.collapsedSessionGroups = {};
-        }
-        prefs.collapsedSessionGroups[targetGroupId] = false;
-      }
-      ensureEditorTabOpen(draftId);
-      prefs.selectedThreadId = draftId;
-      prefs.composerMode = 'reply';
-      prefs.newSessionGroupId = '';
-      saveJson(STORAGE_KEYS.PREFS, prefs);
-      persistCache();
-      updateComposerModePills();
-      renderChatView(true);
-      renderIdeSidebar();
-    } else if (targetId) {
-      stoppedSessionsById.delete(targetId);
-      const hadPendingQ = Boolean(
-        activeRow?.pendingQuestion ||
-          (Array.isArray(appState?.approvals) && appState.approvals.some((a) => a && a.sessionId === targetId))
-      );
-      const existingMsgs = coalesceThreadMessages(threadsCache[targetId]?.messages || []);
-      const lastExistingMsg = existingMsgs.length > 0 ? existingMsgs[existingMsgs.length - 1] : null;
-      const lastTurnQs =
-        lastExistingMsg && lastExistingMsg.role === 'assistant'
-          ? resolveQuestionsForTurn(lastExistingMsg, null).questions
-          : [];
-      if (hadPendingQ || lastTurnQs.length > 0) {
-        const matchedApp = (appState?.approvals || []).find((a) => a && a.sessionId === targetId);
-        recordQuestionAnswered({
-          sessionId: targetId,
-          approvalId: matchedApp?.approvalId || '',
-          turnId: String(lastExistingMsg?.id || ''),
-          stepIndex: activeRow?.pendingQuestion?.stepIndex ?? activeRow?.stepCount ?? null,
-          questions: lastTurnQs.length > 0 ? lastTurnQs : normalizeFrontendQuestions(activeRow?.pendingQuestion?.questions),
-          summary: `${rawText || text}`,
-          skipped: false
-        });
-        if (Array.isArray(appState?.approvals)) {
-          appState.approvals = appState.approvals.filter((a) => a && a.sessionId !== targetId);
-        }
-        markNotificationsCheckedForSession(targetId);
-      }
-      const workedNowMs = Date.now();
-      noteRowOverride(targetId, {
-        lastWorkedAt: workedNowMs,
-        model: modelCfg.displayLabel,
-        effort: modelCfg.effort
-      });
-      if (activeRow) {
-        activeRow.pendingQuestion = null;
-        activeRow.status = 'working';
-        activeRow.statusLabel = 'Running';
-        activeRow.dot = 'running';
-        activeRow.at = workedNowMs;
-        activeRow.lastWorkedAt = workedNowMs;
-        activeRow.model = modelCfg.displayLabel;
-        activeRow.effort = modelCfg.effort;
-        if (Array.isArray(appState?.rows)) {
-          appState.rows.sort(compareRowsPinnedFirst);
-        }
-      }
-      if (!threadsCache[targetId]) {
-        threadsCache[targetId] = { id: targetId, provider, model: modelCfg.displayLabel, messages: [] };
-      } else {
-        threadsCache[targetId].model = modelCfg.displayLabel;
-      }
-      const baseCountBeforePush = (threadsCache[targetId].messages || []).filter((m) => !m?.optimistic).length;
-      threadsCache[targetId].messages.push({
-        id: optMsgId,
-        role: 'user',
-        createdAt: new Date().toISOString(),
-        text: `${rawText || text}${attachDisplayLine}`,
-        toolCalls: [],
-        optimistic: true,
-        optimisticQuestionAnswer: hadPendingQ,
-        baseMsgCount: baseCountBeforePush,
-        optimisticAt: Date.now()
-      });
-      persistCache();
-      renderAll();
-    }
-
-    const res = await dispatchRemoteCommand({
-      type: 'send',
-      id: targetId,
-      threadId: targetId,
-      draftThreadId: draftId || undefined,
-      provider,
-      model: modelCfg.cliModel,
-      effort: modelCfg.effort,
-      displayModel: modelCfg.displayLabel,
-      prompt: text,
-      group: targetGroupId || undefined,
-      groupName: targetGroupName || undefined,
-      attachments: preparedFileAttachments,
-      newSession: isNew
-    });
-
-    if (res && res.ok === false) {
-      composerAttachments = sentAttachments;
-      inp.value = rawText;
-      updateComposerActionButton();
-      if (isNew && draftId) {
-        pendingNewSessionBind = null;
-        delete threadsCache[draftId];
-        if (prefs.threadModelConfig) delete prefs.threadModelConfig[draftId];
-        pendingRowOverrides.delete(draftId);
-        prefs.selectedThreadId = prevSelectedThreadId;
-        prefs.composerMode = prevComposerMode;
-        prefs.newSessionGroupId = prevNewSessionGroupId;
-        prefs.openEditorTabs = prevOpenEditorTabs;
-        if (prevCollapsedGroups) prefs.collapsedSessionGroups = prevCollapsedGroups;
-        saveJson(STORAGE_KEYS.PREFS, prefs);
-      } else if (targetId) {
-        if (!hadCacheBefore) {
-          delete threadsCache[targetId];
-        } else if (threadsCache[targetId]) {
-          if (prevCacheModel !== undefined) threadsCache[targetId].model = prevCacheModel;
-          threadsCache[targetId].messages = (threadsCache[targetId].messages || []).filter(
-            (m) => m && m.id !== optMsgId
-          );
-        }
-        if (activeRow && prevRowSnapshot) {
-          Object.assign(activeRow, prevRowSnapshot);
-          if (Array.isArray(appState?.rows)) {
-            appState.rows.sort(compareRowsPinnedFirst);
-          }
-        }
-        if (hadPrevOverride && prevOverrideVal) pendingRowOverrides.set(targetId, prevOverrideVal);
-        else pendingRowOverrides.delete(targetId);
-        if (prevApprovals && Array.isArray(appState?.approvals)) {
-          appState.approvals = prevApprovals;
-        }
-      }
-      persistCache();
-      renderComposerAttachments();
-      updateComposerModePills();
-      renderChatView(true);
-      renderIdeSidebar();
-      showToast(res.error || 'Failed to send message');
-      return;
-    }
-
-    recentResumeUntil = 0;
-    if (isNew) {
-      if (pendingNewSessionBind && res?.id) {
-        pendingNewSessionBind.cmdId = res.id;
-      }
-      const returnedRealId = cleanTargetThreadId(
-        res?.out?.id || res?.out?.result?.id || res?.out?.result?.sessionId || ''
-      );
-      if (returnedRealId) {
-        bindDraftThreadToRealSession(draftId, returnedRealId, provider);
-      }
-    }
-
-    if (res.mode === 'cloud') {
-      setTimeout(() => syncData(), 1800);
-      setTimeout(() => syncData(), 4000);
-      setTimeout(() => syncData(), 7500);
-      setTimeout(() => syncData(), 12000);
-      if (res.id) {
-        setTimeout(() => {
-          const q = lastCloudQueue || {};
-          const hasResult = Boolean(q.results && q.results[res.id]);
-          const inQueue =
-            Array.isArray(q.commands) && q.commands.some((c) => c && c.id === res.id);
-          const stillUnbound =
-            !isNew || (pendingNewSessionBind && pendingNewSessionBind.cmdId === res.id);
-          if (!hasResult && !inQueue && stillUnbound) {
-            dispatchRemoteCommand({
-              type: 'send',
-              id: res.id,
-              threadId: targetId,
-              draftThreadId: draftId || undefined,
-              provider,
-              model: modelCfg.cliModel,
-              effort: modelCfg.effort,
-              displayModel: modelCfg.displayLabel,
-              prompt: text,
-              group: targetGroupId || undefined,
-              groupName: targetGroupName || undefined,
-              attachments: preparedFileAttachments,
-              newSession: isNew
-            }).catch(() => {});
-          }
-        }, 4500);
-      }
-    }
-
-    showToast(
-      res.mode === 'local_ws' || res.mode === 'edge_ws'
-        ? `Streaming live from ${provider === 'claude' ? 'Claude Code' : 'Antigravity'} (${res.mode === 'edge_ws' ? 'Edge WS' : 'Direct WS'})`
-        : res.mode === 'cloud'
-          ? `Dispatched via THEO Cloud Relay`
-          : res.mode === 'local'
-            ? `Sent to ${provider === 'claude' ? 'Claude Code' : 'Antigravity'} (Direct Host)`
-            : `Queued in Outbox (will send when online)`
-    );
   }
 
   function applyNotificationNav(nav) {
@@ -23512,7 +7421,7 @@
     });
 
     if (threadId) {
-      ensureEditorTabOpen(threadId);
+      S.ensureEditorTabOpen(threadId);
       prefs.selectedThreadId = threadId;
       prefs.lastReplyThreadId = threadId;
       prefs.composerMode = 'reply';
@@ -23520,7 +7429,7 @@
       saveJson(STORAGE_KEYS.PREFS, prefs);
       switchTab('chat');
       renderAll();
-      fetchThreadDetail(threadId, nav.provider || pinnedNavProvider || '').catch(() => {});
+      S.fetchThreadDetail(threadId, nav.provider || pinnedNavProvider || '').catch(() => {});
     } else if (reminderId || tab === 'discipline') {
       window.location.href = `https://planner.husseinbdeir.workers.dev/${reminderId ? `?tab=tasks&taskId=${encodeURIComponent(reminderId)}` : ''}`;
       return true;
@@ -23549,16 +7458,16 @@
       }
     }
 
-    syncData({ force: true }).catch(() => {});
+    S.syncData({ force: true }).catch(() => {});
     return true;
   }
 
   async function consumePendingNotificationNav(opts = {}) {
     const allowUnseenPush = Boolean(opts && opts.allowUnseenPush);
     const inNewSessionFlow = Boolean(
-      isNewSessionMode() ||
+      S.isNewSessionMode() ||
         String(prefs.selectedThreadId || '').startsWith('draft-new-') ||
-        pendingNewSessionBind
+        S.pendingNewSessionBind
     );
     try {
       if ('caches' in window) {
@@ -23570,7 +7479,7 @@
           const pending = await pendingRes.json().catch(() => null);
           const pendingTs = Number(pending?.ts || 0);
           const startedNewAfterClick = Boolean(
-            pendingNewSessionBind && Number(pendingNewSessionBind.createdAt || 0) > pendingTs
+            S.pendingNewSessionBind && Number(S.pendingNewSessionBind.createdAt || 0) > pendingTs
           );
           if (pending && Date.now() - pendingTs < 20 * 60 * 1000 && !startedNewAfterClick) {
             return applyNotificationNav(pending);
@@ -23635,7 +7544,7 @@
 
   // Register Service Worker & Push Navigation Listener
   function registerServiceWorker() {
-    if (initialNoSse || location.search.includes('nosse=1')) return;
+    if (S.initialNoSse || location.search.includes('nosse=1')) return;
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
       let refreshingSw = false;
       const hadController = Boolean(navigator.serviceWorker.controller);
@@ -23646,7 +7555,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=93', { updateViaCache: 'none' })
+        .register('sw.js?v=94', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
@@ -23673,7 +7582,7 @@
               reg.update().catch(() => {});
               syncUnreadNotificationsWithSwCache();
               consumePendingNotificationNav({ allowUnseenPush: hiddenDur >= 1500 }).finally(() => {
-                syncData({ force: true });
+                S.syncData({ force: true });
               });
             }
           });
@@ -23710,9 +7619,9 @@
                   }
                 : null;
             const inNewSessionFlow = Boolean(
-              isNewSessionMode() ||
+              S.isNewSessionMode() ||
                 String(prefs.selectedThreadId || '').startsWith('draft-new-') ||
-                pendingNewSessionBind
+                S.pendingNewSessionBind
             );
             // If the app is backgrounded when the push arrives (and not in a new-session draft), pre-stage the session
             if (navTarget && navTarget.threadId && document.hidden && !inNewSessionFlow) {
@@ -23735,7 +7644,7 @@
               );
             }
           }
-          syncData({ force: true });
+          S.syncData({ force: true });
         }
       });
     }
@@ -23787,7 +7696,7 @@
       syncUnreadNotificationsWithSwCache();
       consumePendingNotificationNav({ allowUnseenPush: hiddenDur >= 1500 }).finally(() => {
         renderAll();
-        syncData({ force: true }).catch(() => {});
+        S.syncData({ force: true }).catch(() => {});
       });
     });
     window.addEventListener('pageshow', (ev) => {
@@ -23797,20 +7706,20 @@
       }
     });
     window.addEventListener('offline', () => {
-      updateConnectionBanner();
-      if (prefs.activeTab === 'chat') renderChatView(false);
+      S.updateConnectionBanner();
+      if (prefs.activeTab === 'chat') S.renderChatView(false);
     });
     window.addEventListener('online', () => {
-      updateConnectionBanner();
-      if (prefs.activeTab === 'chat') renderChatView(false);
+      S.updateConnectionBanner();
+      if (prefs.activeTab === 'chat') S.renderChatView(false);
     });
 
     if (appState && typeof appState === 'object') {
-      storeHostSnapshotEntry(appState, appState?.device?.id || '');
+      S.storeHostSnapshotEntry(appState, appState?.device?.id || '');
     }
     if (localBootInfo?.device?.id) {
-      localWsDevice = localBootInfo.device;
-      updateFleetDevices([{ ...localBootInfo.device, online: true, local: true, lastSeen: Date.now() }]);
+      S.localWsDevice = localBootInfo.device;
+      S.updateFleetDevices([{ ...localBootInfo.device, online: true, local: true, lastSeen: Date.now() }]);
     }
 
     const urlParams = new URLSearchParams(location.search);
@@ -23832,7 +7741,7 @@
       prefs.selectedThreadId = '__new__';
       prefs.activeTab = 'chat';
       saveJson(STORAGE_KEYS.PREFS, prefs);
-      updateComposerModePills();
+      S.updateComposerModePills();
     }
 
     if (threadParam || remParam || tabParam || newParam) {
@@ -23876,7 +7785,7 @@
       try {
         history.replaceState({ theoTab: 'chat', overlay: '' }, '');
       } catch {}
-      fetchThreadDetail(pinnedNavThreadId, pinnedNavProvider || '');
+      S.fetchThreadDetail(pinnedNavThreadId, pinnedNavProvider || '');
     } else {
       const isDesktopBoot = window.innerWidth >= 1025;
       let startTab =
@@ -23914,27 +7823,27 @@
     }
 
     if (appState) {
-      applyAnsweredQuestionOverrides(appState);
+      S.applyAnsweredQuestionOverrides(appState);
     }
     renderAll();
     if (!hasExplicitBootUrlNav && !isHeadlessBrowser) {
       consumePendingNotificationNav({ allowUnseenPush: true });
     }
-    if (!isHeadlessBrowser && (prefs.edgeRelayUrl || discoveredEdgeUrl)) {
-      connectEdgeWs(prefs.edgeRelayUrl || discoveredEdgeUrl).catch(() => {});
+    if (!isHeadlessBrowser && (prefs.edgeRelayUrl || S.discoveredEdgeUrl)) {
+      S.connectEdgeWs(prefs.edgeRelayUrl || S.discoveredEdgeUrl).catch(() => {});
     }
     if (!isHeadlessBrowser) {
-      syncData();
-      if (!initialNoSse) {
+      S.syncData();
+      if (!S.initialNoSse) {
         setInterval(() => {
           if (document.hidden) return;
-          if (!localWsAuthed || !localWs || localWs.readyState !== 1) {
-            if (!hasAnyPairingCredentials() && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '')) {
+          if (!S.localWsAuthed || !S.localWs || S.localWs.readyState !== 1) {
+            if (!S.hasAnyPairingCredentials() && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '')) {
               return;
             }
-            syncData();
+            S.syncData();
           } else {
-            maybePollCloudClaudeModeBackstop();
+            S.maybePollCloudClaudeModeBackstop();
           }
         }, 4500);
 
@@ -23956,11 +7865,11 @@
             tid &&
             tid !== '__new__' &&
             !String(tid).startsWith('draft-new-') &&
-            isSessionActivelyRunning(tid) &&
-            nowMs - (lastThreadDetailFetchAtById.get(tid) || 0) >= 1650 &&
-            nowMs - (lastThreadDetailReceivedAtById.get(tid) || 0) >= 1350
+            S.isSessionActivelyRunning(tid) &&
+            nowMs - (S.lastThreadDetailFetchAtById.get(tid) || 0) >= 1650 &&
+            nowMs - (S.lastThreadDetailReceivedAtById.get(tid) || 0) >= 1350
           ) {
-            fetchThreadDetail(tid, pinnedNavProvider || '').catch(() => {});
+            S.fetchThreadDetail(tid, pinnedNavProvider || '').catch(() => {});
           }
         }, 1100);
       }
@@ -23968,53 +7877,58 @@
     }
   }
 
+  Object.assign(S, {
+    renderAll,
+    switchTab
+  });
+
+
   window.__theoTestWs = {
     ...((isHeadlessBrowser || (typeof window !== 'undefined' && window.__THEO_ALLOW_PROBE_MOCK_FETCH))
-      ? { buildMigrationUrl: () => buildTheoMigrationUrl(), renderSidebar: () => renderIdeSidebar() }
+      ? { buildMigrationUrl: () => S.buildTheoMigrationUrl(), renderSidebar: () => S.renderIdeSidebar() }
       : {}),
-    connectLocalWs,
-    connectEdgeWs,
-    noteRowOverride,
-    emitPrewarmHint,
-    resetPrewarmHintCooldowns: () => lastPrewarmHintById.clear(),
+    connectLocalWs: S.connectLocalWs,
+    connectEdgeWs: S.connectEdgeWs,
+    noteRowOverride: S.noteRowOverride,
+    emitPrewarmHint: S.emitPrewarmHint,
+    resetPrewarmHintCooldowns: () => S.lastPrewarmHintById.clear(),
     getState: () => appState,
     getBaselineRows: (transport = 'local', devId = '') => {
-      const sock = transport === 'edge' ? edgeWs : localWs;
-      const m = sock ? wsBaselineBySocket.get(sock) : null;
+      const sock = transport === 'edge' ? S.edgeWs : S.localWs;
+      const m = sock ? S.wsBaselineBySocket.get(sock) : null;
       if (!m) return [];
       const entry = (devId && m.get(devId)) || m.get('__default__') || m.values().next().value;
       return Array.isArray(entry?.snapshot?.rows) ? entry.snapshot.rows.slice() : [];
     },
     disconnectLocal: () => {
       try {
-        if (localWsReconnectTimer) {
-          clearTimeout(localWsReconnectTimer);
-          localWsReconnectTimer = null;
+        if (S.localWsReconnectTimer) {
+          clearTimeout(S.localWsReconnectTimer);
+          S.localWsReconnectTimer = null;
         }
-        localBridgeBase = '';
-        localBridgeWsPath = '/ws';
-        localWs?.close();
+        S.localBridgeBase = '';
+        S.localBridgeWsPath = '/ws';
+        S.localWs?.close();
       } catch {}
     },
     disconnectAll: () => {
       try {
-        if (localWsReconnectTimer) {
-          clearTimeout(localWsReconnectTimer);
-          localWsReconnectTimer = null;
+        if (S.localWsReconnectTimer) {
+          clearTimeout(S.localWsReconnectTimer);
+          S.localWsReconnectTimer = null;
         }
-        if (edgeWsReconnectTimer) {
-          clearTimeout(edgeWsReconnectTimer);
-          edgeWsReconnectTimer = null;
+        if (S.edgeWsReconnectTimer) {
+          clearTimeout(S.edgeWsReconnectTimer);
+          S.edgeWsReconnectTimer = null;
         }
-        localBridgeBase = '';
-        localBridgeWsPath = '/ws';
-        localWs?.close();
-        edgeWs?.close();
+        S.localBridgeBase = '';
+        S.localBridgeWsPath = '/ws';
+        S.localWs?.close();
+        S.edgeWs?.close();
       } catch {}
       window.__THEO_ALLOW_MOCK_WS = false;
       delete window.__THEO_MOCK_BRIDGE_TOKEN;
     }
   };
-
-  init();
+init();
 })();
