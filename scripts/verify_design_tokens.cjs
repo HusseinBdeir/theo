@@ -36,6 +36,21 @@ function maskCss(text) {
   return { masked, masks };
 }
 
+// offset -> 1-based line number, by binary search over the newline positions
+function lineIndex(text) {
+  const nl = [];
+  for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) nl.push(i);
+  return (offset) => {
+    let lo = 0, hi = nl.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (nl[mid] < offset) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo + 1;
+  };
+}
+
 function* declarations({ masked, masks }) {
   for (const block of masked.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
     // comments drop out of the selector; quoted attribute values come back
@@ -97,7 +112,7 @@ function check(files) {
   if (/@import\b|@font-face\b/.test(css)) fail('css/theo.css must not use @import or @font-face');
 
   const head = maskCss(header);
-  const headLine = (offset) => head.masked.slice(0, offset).split('\n').length;
+  const headLine = lineIndex(head.masked);
   for (const d of declarations(head)) {
     const where = `css/theo.css:${headLine(d.offset)} ${d.sel} { ${d.prop}: ${d.value} }`;
     if (!d.prop.startsWith('--')) fail(`${where}: the token header may only declare custom properties`);
@@ -116,7 +131,8 @@ function check(files) {
 
   // 2. Every rule below the header uses the tokens.
   const main = maskCss(body);
-  const lineOf = (offset) => headerLines + main.masked.slice(0, offset).split('\n').length;
+  const bodyLine = lineIndex(main.masked);
+  const lineOf = (offset) => headerLines + bodyLine(offset);
   let declCount = 0;
   for (const d of declarations(main)) {
     const { sel, prop, value } = d;
