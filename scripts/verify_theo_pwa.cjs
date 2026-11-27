@@ -10471,9 +10471,12 @@ async function main() {
       const theoHtmlSrc = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
       const theoCssSrc = fs.readFileSync(path.join(__dirname, '..', 'css', 'theo.css'), 'utf8');
       const theoManSrc = fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8');
+      const theoSwSrc = fs.readFileSync(path.join(__dirname, '..', 'sw.js'), 'utf8');
+      const swVerMatch = theoSwSrc.match(/CACHE_NAME\s*=\s*['"]theo-remote-v(\d+)['"]/);
+      assert.ok(swVerMatch && Number(swVerMatch[1]) >= 99, 'sw.js must declare CACHE_NAME = theo-remote-v99+');
       assert.ok(theoHtmlSrc.includes('class="pwa-status-bar-surface"'), 'index.html must include .pwa-status-bar-surface element');
       assert.ok(theoCssSrc.includes('--ios-pwa-top-clear') && theoCssSrc.includes('@supports (-webkit-touch-callout: none)'), 'css/theo.css must guard --ios-pwa-top-clear under @supports');
-      assert.ok(theoManSrc.includes('?v=98'), 'manifest.json must be bumped to v98');
+      assert.ok(theoManSrc.includes(`?v=${swVerMatch[1]}`), `manifest.json must be bumped to v${swVerMatch[1]}`);
       const nonIosDisp = await evalJs(`(() => {
         const els = document.querySelectorAll('.pwa-status-bar-surface');
         return { count: els.length, display: els[0] ? getComputedStyle(els[0]).display : null };

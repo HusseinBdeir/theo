@@ -1,3 +1,4 @@
+/* BEGIN GENERATED DESIGN TOKENS (source: theo-hub/tokens.json; do not edit by hand) */
 :root,
 html[data-theme="light"] {
   --bg-obsidian: #FCFBF8;
@@ -214,6 +215,8 @@ html[data-theme="dark"] {
   --on-emerald: #111114;
 }
 /* @scales:end */
+/* @tokens-sha256: ef5108ffa34aa5d6b21a4a8c93edc6d553e8bf1a755eeaf130f63869be043a03 */
+/* END GENERATED DESIGN TOKENS */
 
 *, *::before, *::after {
   box-sizing: border-box;
