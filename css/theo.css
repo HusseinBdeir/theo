@@ -44,7 +44,10 @@ html[data-theme="light"] {
   --shadow-sm: 0 1px 3px rgba(18, 19, 23, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
-/* Default Dark Palette: VS Code Modern Graphite (Low-glare matte charcoal & sage/champagne depth) */
+/* Default Dark Palette: VS Code Modern Graphite (Low-glare matte charcoal & champagne depth).
+   --steel, --agy, --claude and --emerald are the THEO Hub extension's own accents
+   (theo-hub/resources/hub.css: --status-pending, --progress-agy, --progress-claude, --status-busy),
+   so quota bars, status dots and selection read the same in the PWA and in VS Code. */
 html[data-theme="dark"] {
   --bg-obsidian: #1C1C20;
   --bg-plate: #161619;
@@ -71,17 +74,17 @@ html[data-theme="dark"] {
   --brass: #C8A25A;
   --brass-deep: #AD8740;
   --brass-glow: rgba(200, 162, 90, 0.14);
-  --steel: #7C97C2;
-  --steel-deep: #5D79A6;
-  --agy: #6E95C8;
-  --agy-soft: rgba(110, 149, 200, 0.13);
+  --steel: #3B82F6;
+  --steel-deep: #2563EB;
+  --agy: #3186FF;
+  --agy-soft: rgba(49, 134, 255, 0.14);
   --3p-pool: #8B7CF6;
   --3p-pool-soft: rgba(139, 124, 246, 0.08);
   --3p-pool-border: rgba(139, 124, 246, 0.28);
-  --claude: #C97A5E;
-  --claude-soft: rgba(201, 122, 94, 0.14);
-  --emerald: #6E9E82;
-  --emerald-soft: rgba(110, 158, 130, 0.14);
+  --claude: #D97757;
+  --claude-soft: rgba(217, 119, 87, 0.14);
+  --emerald: #89D185;
+  --emerald-soft: rgba(137, 209, 133, 0.14);
   --amber: #C89B54;
   --amber-soft: rgba(200, 155, 84, 0.14);
   --crimson: #BC767A;
@@ -180,17 +183,21 @@ html[data-theme="dark"][data-palette="espresso"] {
   --amber-line: color-mix(in srgb, var(--amber) 36%, transparent);
   --crimson-line: color-mix(in srgb, var(--crimson) 36%, transparent);
   --violet-line: color-mix(in srgb, var(--violet) 36%, transparent);
+  --focus: var(--steel);
+  --titlebar-h: 0px;
 }
 
 :root,
 html[data-theme="light"] {
   --surface-raise: rgba(15, 23, 42, 0.03);
   --shadow-ink: #121317;
+  --on-emerald: #FFFFFF;
 }
 
 html[data-theme="dark"] {
   --surface-raise: rgba(255, 255, 255, 0.03);
   --shadow-ink: #000000;
+  --on-emerald: #111114;
 }
 /* @scales:end */
 
@@ -6305,7 +6312,7 @@ details.ide-side-section:not([open]) .ide-chevron {
 
 .ide-appr-btn.allow {
   background: var(--emerald);
-  color: var(--on-accent);
+  color: var(--on-emerald);
 }
 
 .ide-appr-btn.deny {
@@ -7731,7 +7738,7 @@ html[data-theme="dark"] .composer-send-btn.is-ready {
   font-size: var(--fs-2xs);
   font-weight: 600;
   background: var(--emerald);
-  color: var(--on-accent);
+  color: var(--on-emerald);
   flex-shrink: 0;
 }
 
@@ -11922,4 +11929,483 @@ html[data-theme="light"] .sb-q-btn.primary {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+/* ============================================================================
+   v97 (Phase 7): Component Polish
+   Parts 1 and 2 apply at every width. Part 3 is the desktop workbench (1025px and up).
+   Part 4 is the title bar of the installed desktop app (window controls overlay).
+   ============================================================================ */
+
+/* 1. Keyboard focus: one ring for every control, drawn inside so a scroll edge never clips it */
+:where(button, a[href], summary, select, [role="button"], [role="tab"], [role="menuitem"], [role="menuitemcheckbox"], [tabindex="0"]):focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: -1px;
+}
+
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea):focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: -1px;
+}
+
+.ide-search-wrap:focus-within {
+  border-color: var(--focus);
+}
+
+#view-chat .composer-box:focus-within {
+  border-color: var(--focus);
+  box-shadow: var(--shadow-sm);
+}
+
+/* 2. Text on solid accent fills stays readable in the dark palettes */
+html[data-theme="dark"] .btn-brass-sm,
+html[data-theme="dark"] .composer-send-btn.is-ready,
+html[data-theme="dark"] .step-mention-btn:hover,
+html[data-theme="dark"] .ide-step-mention-btn:hover {
+  color: var(--on-accent-ink);
+}
+
+html[data-theme="dark"] .dock-count {
+  color: var(--text-heading);
+}
+
+/* A full-width approve button carries the green a step calmer than a status dot does */
+html[data-theme="dark"] .btn-approve {
+  background: color-mix(in srgb, var(--emerald) 78%, var(--bg-ink));
+}
+
+/* 3. Desktop workbench */
+@media (min-width: 1025px) {
+  /* 3a. Sidebar frame: VS Code's default 300px. Above 640px of height the sidebar scrolls as one
+     column once its sections outgrow the window, so the session list never shrinks to nothing. */
+  .ide-explorer-sidebar {
+    width: 300px;
+  }
+
+  .ide-sidebar-top {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: var(--bg-plate);
+  }
+
+  .ide-sidebar-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+  }
+
+  /* 3b. Section headers: one line, quiet text actions */
+  .ide-side-summary {
+    height: 28px;
+    padding: 0 10px;
+    gap: 8px;
+  }
+
+  .ide-side-summary-left {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .ide-side-summary-left > span {
+    white-space: nowrap;
+  }
+
+  .ide-side-summary-left > span:not(.ide-chevron):not(.ide-side-count) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .ide-side-summary-left > .ide-chevron,
+  .ide-side-summary-left > .ide-side-count {
+    flex-shrink: 0;
+  }
+
+  .ide-side-summary-right {
+    flex: 0 0 auto;
+    gap: 9px;
+    white-space: nowrap;
+  }
+
+  /* The cards below already show how many accounts there are; without the count the header
+     keeps its three actions on one line even when the sidebar shows a scrollbar. */
+  #ide-accounts-count {
+    display: none;
+  }
+
+  .ide-side-summary .ide-link-pill {
+    padding: 0;
+    border: none;
+    border-radius: var(--r-sm);
+    background: none;
+    font-size: var(--fs-xs);
+    font-weight: 500;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+
+  .ide-side-summary .ide-link-pill:hover {
+    color: var(--text-heading);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .ide-side-summary .ide-link-pill.danger {
+    background: none !important;
+    border: none;
+  }
+
+  /* 3c. Account cards: the provider name never truncates, the label pill gives way instead */
+  .ide-accounts-body {
+    padding: 2px 8px 8px;
+  }
+
+  .ide-acct-card {
+    padding: 8px 10px;
+    gap: 5px;
+  }
+
+  .ide-acct-card.is-active {
+    border-color: var(--border-subtle);
+  }
+
+  .ide-acct-head {
+    gap: 6px;
+    min-height: 20px;
+  }
+
+  .ide-acct-toggle,
+  .ide-acct-left {
+    gap: 6px;
+    overflow: hidden;
+  }
+
+  .ide-acct-name {
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+
+  .ide-acct-role {
+    flex: 0 1 auto;
+    min-width: 0;
+    border-radius: var(--r-pill);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ide-acct-actions {
+    gap: 2px;
+  }
+
+  .ide-plan-tag {
+    padding: 0 6px;
+    border-radius: var(--r-pill);
+    font-weight: 500;
+  }
+
+  .ide-qpool-3p {
+    border-color: transparent;
+  }
+
+  /* 3d. Session tools: search, filter chips that all fit and wrap instead of clipping */
+  .ide-search-wrap {
+    height: 28px;
+    border-radius: var(--r-md);
+  }
+
+  .ide-filter-strip {
+    flex-wrap: wrap;
+    gap: 2px;
+    row-gap: 3px;
+    overflow: visible;
+  }
+
+  .ide-fchip {
+    padding: 2px 6px;
+    border: none;
+    border-radius: var(--r-sm);
+    line-height: 18px;
+  }
+
+  .ide-fchip.active {
+    background: var(--tint-2);
+    color: var(--text-heading);
+  }
+
+  /* 3e. Session rows, status dots and group badges */
+  .ide-session-tree {
+    padding: 0 6px 10px;
+  }
+
+  .ide-tree-group-btn {
+    font-size: var(--fs-sm);
+    color: var(--text-secondary);
+  }
+
+  .ide-group-pill {
+    min-width: 16px;
+    padding: 0 5px;
+    text-align: center;
+    font-weight: 600;
+    line-height: 16px;
+    background: var(--steel);
+    color: var(--on-accent);
+  }
+
+  .ide-tree-row {
+    min-height: 26px;
+    padding: 2px 8px;
+    gap: 7px;
+    font-size: var(--fs-md);
+  }
+
+  .ide-tree-row.active {
+    background: color-mix(in srgb, var(--steel) 22%, transparent);
+    color: var(--text-heading);
+  }
+
+  .ide-tree-row.active .ide-row-act {
+    color: var(--text-secondary);
+  }
+
+  .ide-dot.working {
+    border: none;
+    background: var(--emerald);
+    opacity: 1;
+  }
+
+  /* 3f. Tab strip: the active tab joins the editor, the strip's rule runs under the others */
+  .ide-editor-tabs-bar {
+    border-bottom: none;
+    box-shadow: inset 0 -1px 0 var(--border-subtle);
+  }
+
+  .ide-editor-tab {
+    min-width: 120px;
+    max-width: 240px;
+    padding: 0 8px 0 12px;
+    gap: 7px;
+    font-size: var(--fs-md);
+  }
+
+  .ide-editor-tab.active {
+    color: var(--text-heading);
+    font-weight: 400;
+  }
+
+  .ide-tab-close {
+    width: 20px;
+    height: 20px;
+    font-size: var(--fs-lg);
+  }
+
+  .ide-tab-add-btn {
+    width: 35px;
+    font-size: var(--fs-xl);
+  }
+
+  /* 3g. Chat header: one control height (26px), one radius, accent borders only for state */
+  #view-chat .chat-header {
+    min-height: 40px;
+    padding: 6px 12px 6px 14px;
+  }
+
+  #view-chat .chat-prov-badge {
+    width: 22px;
+    height: 22px;
+    border: none;
+    background: transparent;
+  }
+
+  #view-chat .chat-header-actions {
+    gap: 6px;
+  }
+
+  #view-chat .bg-tasks-pill,
+  #view-chat .ctx-window-pill,
+  #view-chat .inspector-toggle-pill,
+  #view-chat .btn-chat-stop {
+    height: 26px;
+    padding: 0 9px;
+    gap: 6px;
+    border-radius: var(--r-md);
+    font-size: var(--fs-xs);
+    font-weight: 500;
+    line-height: 1;
+  }
+
+  #view-chat .bg-tasks-pill,
+  #view-chat .ctx-window-pill,
+  #view-chat .inspector-toggle-pill,
+  #view-chat .chat-more-btn {
+    background: transparent;
+  }
+
+  #view-chat .bg-tasks-pill:not(.has-running):not(.active),
+  #view-chat .ctx-window-pill:not(.is-soft-overrun) {
+    border-color: var(--border-subtle);
+    color: var(--text-secondary);
+  }
+
+  #view-chat .bg-tasks-pill:not(.has-running):hover,
+  #view-chat .ctx-window-pill:not(.is-soft-overrun):hover,
+  #view-chat .inspector-toggle-pill:hover,
+  #view-chat .chat-more-btn:hover {
+    background: var(--tint-1);
+    border-color: var(--border-subtle);
+    color: var(--text-heading);
+  }
+
+  #view-chat .bg-tasks-pill.has-running {
+    background: color-mix(in srgb, var(--emerald) 8%, transparent);
+  }
+
+  #view-chat .ctx-ring {
+    width: 14px;
+    height: 14px;
+  }
+
+  #view-chat .chat-quick-switch-pill {
+    background: transparent;
+  }
+
+  /* 3h. Thread chips: fills instead of outlines for anything that is not a state */
+  #view-chat .turn-text code:not(pre code),
+  #view-chat .md-inline-code,
+  #view-chat .vs-artifact-desc code {
+    padding: 1px 5px;
+    border: none;
+  }
+
+  #view-chat .vs-live-step-count,
+  #view-chat .vs-live-target-chip,
+  #view-chat .vs-q-num,
+  #view-chat .vs-q-rec-badge {
+    border-color: transparent;
+  }
+
+  #view-chat .vs-q-mode-pill {
+    padding: 0;
+    border: none;
+    background: none;
+  }
+
+  /* 3i. Composer: quiet controls on one 24px line */
+  #view-chat .composer-box {
+    padding: 10px 12px 8px;
+  }
+
+  #view-chat .composer-model-pill,
+  #view-chat .composer-route-toggle-pill {
+    background: transparent;
+  }
+
+  #view-chat .composer-model-pill:hover,
+  #view-chat .composer-route-toggle-pill:hover {
+    background: var(--tint-1);
+  }
+}
+
+@media (min-width: 1025px) and (min-height: 641px) {
+  .ide-explorer-sidebar {
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+
+  .ide-explorer-sidebar .ide-side-sessions {
+    flex: 1 1 0;
+    min-height: 264px;
+  }
+}
+
+@media (min-width: 1025px) and (hover: hover) {
+  /* Reorder arrows and the label pencil appear on hover or keyboard focus; the menu stays */
+  .ide-acct-card:not(:hover):not(:focus-within) .ide-acct-move-btn,
+  .ide-acct-card:not(:hover):not(:focus-within) .ide-acct-icon-btn[data-account-label] {
+    display: none;
+  }
+}
+
+/* 4. Installed desktop app: with the window controls overlay switched on, THEO draws its own
+   title bar (drag region, app icon, search) beside the minimise / maximise / close buttons. */
+.wco-titlebar {
+  display: none;
+}
+
+@media (display-mode: window-controls-overlay) {
+  :root {
+    --titlebar-h: env(titlebar-area-height, 33px);
+  }
+
+  .app-shell {
+    grid-template-rows: var(--titlebar-h) minmax(0, 1fr);
+  }
+
+  .wco-titlebar {
+    grid-column: 1 / -1;
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: var(--titlebar-h);
+    min-width: 0;
+    padding: 0 10px 0 calc(env(titlebar-area-x, 0px) + 10px);
+    background: var(--bg-plate);
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    font-size: var(--fs-sm);
+    user-select: none;
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+
+  .wco-titlebar-icon {
+    width: 16px;
+    height: 16px;
+    border-radius: var(--r-sm);
+    flex-shrink: 0;
+  }
+
+  .wco-titlebar-search {
+    position: absolute;
+    top: 50%;
+    left: calc(env(titlebar-area-x, 0px) + env(titlebar-area-width, 100%) / 2);
+    transform: translate(-50%, -50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    width: min(420px, calc(env(titlebar-area-width, 100%) - 220px));
+    height: 22px;
+    padding: 0 10px;
+    border-radius: var(--r-md);
+    background: var(--tint-1);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    font-size: var(--fs-sm);
+    white-space: nowrap;
+    overflow: hidden;
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+
+  .wco-titlebar-search:hover {
+    background: var(--tint-2);
+    color: var(--text-heading);
+  }
+
+  .wco-titlebar-search svg {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+  }
+
+  .wco-titlebar-search kbd {
+    font-family: var(--font-ui);
+    font-size: var(--fs-2xs);
+    color: var(--text-muted);
+  }
 }

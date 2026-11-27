@@ -3472,15 +3472,21 @@
     document.documentElement.classList.toggle('sidebar-collapsed', Boolean(prefs.sidebarCollapsed));
     const meta = $('meta-theme-color');
     if (meta) {
-      const metaHex =
+      // The browser paints the installed window's title bar (and the phone status bar) in this
+      // colour, so it follows the palette's top-strip surface (--bg-plate) and the two never differ.
+      const fallbackHex =
         prefs.theme === 'light'
-          ? '#F6F5F0'
+          ? '#F3F1EC'
           : prefs.palette === 'velvet'
-            ? '#0C0D12'
+            ? '#0C0E13'
             : prefs.palette === 'espresso'
-              ? '#191614'
-              : '#141417';
-      meta.setAttribute('content', metaHex);
+              ? '#151311'
+              : '#161619';
+      let plateHex = '';
+      try {
+        plateHex = getComputedStyle(document.documentElement).getPropertyValue('--bg-plate').trim();
+      } catch {}
+      meta.setAttribute('content', /^#[0-9a-fA-F]{6}$/.test(plateHex) ? plateHex.toUpperCase() : fallbackHex);
     }
     syncPalettePickerUi();
     saveJson(STORAGE_KEYS.PREFS, prefs);
@@ -7731,7 +7737,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=96', { updateViaCache: 'none' })
+        .register('sw.js?v=97', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

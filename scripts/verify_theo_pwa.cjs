@@ -2028,7 +2028,7 @@ async function main() {
     assert.strictEqual(v59DesktopProbe.palAfterHostile, 'daylight', 'Hostile palette string must be rejected by strict allowlist without mutating current palette');
     assert.strictEqual(v59DesktopProbe.palGraphite, 'graphite', 'Clicking graphite preset must apply graphite');
     assert.strictEqual(v59DesktopProbe.themeGraphite, 'dark', 'Graphite must set dark theme');
-    assert.strictEqual(v59DesktopProbe.metaThemeGraphite, '#141417', 'Graphite #meta-theme-color must be #141417');
+    assert.strictEqual(v59DesktopProbe.metaThemeGraphite, '#161619', 'Graphite #meta-theme-color must be #161619 (the palette --bg-plate, so the installed title bar matches the top strip)');
 
     // Navigate fresh after seeding sess-v59
     await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
@@ -10140,6 +10140,267 @@ async function main() {
         await evalJs(`(() => {
           window.__THEO_ALLOW_PROBE_MOCK_FETCH = false;
           window.__THEO_INTERCEPT_CACHE_RESET = false;
+          const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+          prefs.customBridgeUrl = '';
+          localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+          return true;
+        })()`).catch(() => {});
+      }
+    }
+
+    // ---- Adversarial #32: Phase 7 (v97) desktop component polish, extension accents, keyboard focus & installed-window title bar ----
+    {
+      try {
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
+        const now32 = Date.now();
+        const lim32 = (label, pct) => ({ label, pct, usedPercent: pct, reset: now32 + 3600000 });
+        const state32 = {
+          seq: 3200,
+          generatedAt: now32,
+          device: { id: 'host-v97', name: 'Host97', online: true },
+          accountOrder: ['antigravity:a97@example.com', 'antigravity:b97@example.com', 'claude:a97@example.com', 'claude:b97@example.com'],
+          providers: {
+            antigravity: {
+              id: 'antigravity',
+              accounts: [
+                { id: 'antigravity:a97@example.com', available: true, active: true, nickname: 'A deliberately long account label', account: { email: 'a97@example.com', plan: 'Google AI Ultra' }, usage: { limits: [lim32('Session (5hr)', 12), lim32('Weekly (7 day)', 40), lim32('Claude & GPT (5hr)', 91), lim32('Claude & GPT (7 day)', 14)] } },
+                { id: 'antigravity:b97@example.com', available: true, active: false, nickname: 'Team shared seat', account: { email: 'b97@example.com', plan: 'Google AI Ultra' }, usage: { limits: [lim32('Session (5hr)', 5), lim32('Weekly (7 day)', 9)] } }
+              ]
+            },
+            claude: {
+              id: 'claude',
+              accounts: [
+                { id: 'claude:a97@example.com', available: true, active: true, nickname: 'Work', account: { email: 'a97@example.com', plan: 'Claude Max' }, usage: { limits: [lim32('Session (5hr)', 22), lim32('Weekly (7 day)', 41), lim32('Fable limit', 18)] } },
+                { id: 'claude:b97@example.com', available: true, active: false, account: { email: 'b97-second-account@example.com', plan: 'Claude Max' }, usage: { limits: [lim32('Session (5hr)', 3)] } }
+              ]
+            }
+          },
+          groups: [{ id: 'grp-v97', name: 'V97', color: 'blue', collapsed: false }],
+          workspaces: [],
+          approvals: [],
+          rows: [
+            { id: 'sess-32-a', title: 'Session 32 A', provider: 'antigravity', group: 'grp-v97', status: 'working', folder: 'theo', branch: 'main', model: 'Gemini 4 Carbon', at: now32 - 1000 },
+            { id: 'sess-32-b', title: 'Session 32 B', provider: 'claude', group: 'grp-v97', status: 'idle', folder: 'theo-hub', branch: 'main', model: 'Claude Opus 5.5', at: now32 - 2000 }
+          ]
+        };
+        srv.mockStatePayload = state32;
+        const threads32 = {
+          'sess-32-a': {
+            id: 'sess-32-a',
+            title: 'Session 32 A',
+            provider: 'antigravity',
+            messages: [
+              { role: 'user', text: 'Check the desktop polish', createdAt: new Date(now32 - 5000).toISOString() },
+              { role: 'assistant', text: 'Inline code such as `css/theo.css` carries no outline.', createdAt: new Date(now32 - 4000).toISOString() }
+            ]
+          }
+        };
+        await evalJs(`((snapJson, threadsJson) => {
+          const snap = JSON.parse(snapJson);
+          const threads = JSON.parse(threadsJson);
+          const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+          prefs.theme = 'dark';
+          prefs.themeUserSet = true;
+          prefs.palette = 'graphite';
+          prefs.activeTab = 'chat';
+          prefs.desktopWorkbenchBootV92 = true;
+          prefs.sidebarCollapsed = false;
+          prefs.selectedThreadId = 'sess-32-a';
+          prefs.openEditorTabs = ['sess-32-a', 'sess-32-b'];
+          prefs.collapsedQuotaCards = {};
+          prefs.inspectorOpen = false;
+          prefs.splitWatchOpen = false;
+          prefs.customBridgeUrl = location.origin;
+          localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+          localStorage.setItem('theo_remote_cache_v3', JSON.stringify({ state: snap, snapshot: snap, threads, updatedAt: Date.now() }));
+          location.reload();
+          return true;
+        })(${JSON.stringify(JSON.stringify(state32))}, ${JSON.stringify(JSON.stringify(threads32))})`);
+        await new Promise((r) => setTimeout(r, 900));
+        await evalJs('window.__THEO_ALLOW_PROBE_MOCK_FETCH = true; true');
+
+        const p32 = await evalJs(`(() => {
+          const root = getComputedStyle(document.documentElement);
+          const tok = (n) => root.getPropertyValue(n).trim().toUpperCase();
+          const rect = (el) => el.getBoundingClientRect();
+          const side = document.getElementById('ide-explorer-sidebar');
+          const sideRect = rect(side);
+          const shown = (el) => el && el.getClientRects().length > 0;
+          const summaries = [...document.querySelectorAll('#ide-explorer-sidebar .ide-side-summary')].filter(shown).map((el) => {
+            const label = el.querySelector('.ide-side-summary-left > span:not(.ide-chevron):not(.ide-side-count)');
+            const right = el.querySelector('.ide-side-summary-right');
+            return {
+              text: (label?.textContent || '').trim(),
+              height: Math.round(rect(el).height),
+              labelClipped: label ? label.scrollWidth > label.clientWidth : false,
+              labelLines: label ? Math.round(rect(label).height / parseFloat(getComputedStyle(label).lineHeight || '16')) : 0,
+              rightEdge: right && shown(right) ? Math.round(rect(right).right) : 0,
+              rowOverflow: el.scrollWidth > el.clientWidth
+            };
+          });
+          const cards = [...document.querySelectorAll('#ide-sidebar-accounts .ide-acct-card')].map((card) => {
+            const name = card.querySelector('.ide-acct-name');
+            const role = card.querySelector('.ide-acct-role');
+            const head = card.querySelector('.ide-acct-head');
+            return {
+              name: (name?.textContent || '').trim(),
+              nameClipped: name ? name.scrollWidth > Math.ceil(rect(name).width) : true,
+              nameWidth: name ? Math.round(rect(name).width) : 0,
+              role: (role?.textContent || '').trim(),
+              roleRight: role ? Math.round(rect(role).right) : 0,
+              headRight: head ? Math.round(rect(head).right) : 0,
+              headOverflow: head ? head.scrollWidth > head.clientWidth : true,
+              menuVisible: shown(card.querySelector('[data-acct-ctx-menu]'))
+            };
+          });
+          const strip = document.getElementById('ide-sidebar-filters');
+          const chips = [...strip.querySelectorAll('.ide-fchip')].filter(shown).map((c) => ({ text: c.textContent.trim(), left: Math.round(rect(c).left), right: Math.round(rect(c).right) }));
+          const sessions = document.querySelector('#ide-explorer-sidebar .ide-side-sessions');
+          const footer = document.getElementById('ide-sidebar-footer');
+          const ctrlHeights = ['btn-ctx-window', 'btn-toggle-inspector', 'btn-chat-more'].map((id) => Math.round(rect(document.getElementById(id)).height));
+          const ctrlRadii = ['btn-ctx-window', 'btn-toggle-inspector', 'btn-chat-more'].map((id) => getComputedStyle(document.getElementById(id)).borderTopLeftRadius);
+          const activeTab = document.querySelector('#ide-editor-tabs .ide-editor-tab.active');
+          const tabsBar = document.getElementById('ide-editor-tabs-bar');
+          const code = document.querySelector('#chat-stream .turn-text code');
+          const workingDot = document.querySelector('#ide-sidebar-tree .ide-dot.working');
+          const groupPill = document.querySelector('#ide-sidebar-tree .ide-group-pill');
+          const titlebar = document.getElementById('wco-titlebar');
+          return {
+            agy: tok('--agy'), claude: tok('--claude'), emerald: tok('--emerald'), steel: tok('--steel'), plate: tok('--bg-plate'),
+            metaTheme: (document.getElementById('meta-theme-color')?.getAttribute('content') || '').toUpperCase(),
+            sideWidth: Math.round(sideRect.width),
+            sideRight: Math.round(sideRect.right),
+            sideOverflowY: getComputedStyle(side).overflowY,
+            sideScrollable: side.scrollHeight > side.clientHeight,
+            sideScrollX: side.scrollWidth > side.clientWidth,
+            summaries, cards, chips,
+            stripRight: Math.round(rect(strip).right),
+            sessionsHeight: Math.round(rect(sessions).height),
+            footerBottom: Math.round(rect(footer).bottom),
+            ctrlHeights, ctrlRadii,
+            activeTabBottom: activeTab ? Math.round(rect(activeTab).bottom) : -1,
+            tabsBarBottom: Math.round(rect(tabsBar).bottom),
+            activeTabHasClose: Boolean(activeTab && shown(activeTab.querySelector('.ide-tab-close')) && Number(getComputedStyle(activeTab.querySelector('.ide-tab-close')).opacity) > 0.5),
+            codeBorder: code ? getComputedStyle(code).borderTopStyle : 'missing',
+            workingDotBg: workingDot ? getComputedStyle(workingDot).backgroundColor : 'missing',
+            groupPillBg: groupPill ? getComputedStyle(groupPill).backgroundColor : 'missing',
+            titlebarDisplay: titlebar ? getComputedStyle(titlebar).display : 'missing',
+            titlebarOpensPalette: Boolean(titlebar && titlebar.querySelector('[data-open-cmd-palette]')),
+            shellRows: getComputedStyle(document.getElementById('app-shell')).gridTemplateRows
+          };
+        })()`);
+
+        // (a) Extension accents (theo-hub/resources/hub.css) and a title-bar colour that follows the palette
+        assert.strictEqual(p32.agy, '#3186FF', 'Graphite --agy must be the extension --progress-agy');
+        assert.strictEqual(p32.claude, '#D97757', 'Graphite --claude must be the extension --progress-claude');
+        assert.strictEqual(p32.emerald, '#89D185', 'Graphite --emerald must be the extension --status-busy');
+        assert.strictEqual(p32.steel, '#3B82F6', 'Graphite --steel must be the extension --status-pending');
+        assert.strictEqual(p32.metaTheme, p32.plate, '#meta-theme-color must equal the palette --bg-plate');
+        assert.strictEqual(p32.workingDotBg, 'rgb(137, 209, 133)', `A running session dot must be solid extension green (got ${p32.workingDotBg})`);
+        assert.strictEqual(p32.groupPillBg, 'rgb(59, 130, 246)', `Group count badges must be filled with the selection blue (got ${p32.groupPillBg})`);
+
+        // (b) Sidebar headers stay on one line and inside the sidebar
+        assert.strictEqual(p32.sideWidth, 300, 'Desktop sidebar must be 300px wide');
+        assert.strictEqual(p32.sideScrollX, false, 'Desktop sidebar must not scroll sideways');
+        assert.ok(p32.summaries.length >= 2, `Expected the Account and Sessions headers (got ${JSON.stringify(p32.summaries)})`);
+        for (const sm of p32.summaries) {
+          assert.strictEqual(sm.height, 28, `Sidebar header "${sm.text}" must be one 28px line (got ${sm.height}px)`);
+          assert.strictEqual(sm.labelLines, 1, `Sidebar header "${sm.text}" must not wrap`);
+          assert.strictEqual(sm.labelClipped, false, `Sidebar header "${sm.text}" must not be cut off`);
+          assert.strictEqual(sm.rowOverflow, false, `Sidebar header "${sm.text}" must not overflow its row`);
+          assert.ok(sm.rightEdge <= p32.sideRight - 8, `Sidebar header "${sm.text}" actions must end inside the sidebar (${sm.rightEdge} > ${p32.sideRight - 8})`);
+        }
+
+        // (c) Account cards: provider names are never cut, a long label gives way instead
+        assert.strictEqual(p32.cards.length, 4, `Expected 4 account cards (got ${p32.cards.length})`);
+        for (const card of p32.cards) {
+          assert.ok(card.name === 'Antigravity' || card.name === 'Claude Code', `Unexpected account card name "${card.name}"`);
+          assert.strictEqual(card.nameClipped, false, `Account name "${card.name}" must not be truncated`);
+          assert.strictEqual(card.headOverflow, false, `Account card "${card.name}" head must not overflow`);
+          assert.ok(card.roleRight <= card.headRight, `Account label "${card.role}" must stay inside its card`);
+          assert.strictEqual(card.menuVisible, true, `Account card "${card.name}" must always show its menu button`);
+        }
+        assert.strictEqual(p32.cards[0].role, 'A deliberately long account label', 'First card must carry the long label');
+
+        // (d) Filter chips all sit inside the sidebar (nothing clipped)
+        assert.ok(p32.chips.length >= 6, `Expected 6 filter chips (got ${p32.chips.length})`);
+        for (const chip of p32.chips) {
+          assert.ok(chip.left >= 0 && chip.right <= p32.stripRight, `Filter chip "${chip.text}" must be fully visible (${chip.left}..${chip.right} of ${p32.stripRight})`);
+        }
+
+        // (e) With every account card open at 900px the session list keeps its room and the sidebar scrolls as one column
+        assert.ok(p32.sessionsHeight >= 264, `Session list must keep at least 264px (got ${p32.sessionsHeight})`);
+        assert.strictEqual(p32.sideOverflowY, 'auto', 'Desktop sidebar must scroll vertically when its sections outgrow the window');
+        assert.strictEqual(p32.footerBottom, 900, 'Sidebar footer must stay pinned to the bottom edge');
+
+        // (f) Chat header controls share one height and radius; the active tab reaches the editor and shows its close button
+        assert.deepStrictEqual(p32.ctrlHeights, [26, 26, 26], `Header controls must all be 26px tall (got ${p32.ctrlHeights})`);
+        assert.deepStrictEqual(p32.ctrlRadii, ['6px', '6px', '6px'], `Header controls must share the 6px radius (got ${p32.ctrlRadii})`);
+        assert.strictEqual(p32.activeTabBottom, p32.tabsBarBottom, 'Active tab must reach the bottom of the tab strip');
+        assert.strictEqual(p32.activeTabHasClose, true, 'Active tab must show its close button');
+        assert.strictEqual(p32.codeBorder, 'none', 'Inline code in the thread must carry no outline on desktop');
+
+        // (g) Keyboard focus draws the one focus ring
+        await evalJs(`(() => { document.getElementById('btn-sidebar-brand').focus(); return true; })()`);
+        await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 }, sessionId);
+        await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 }, sessionId);
+        const focus32 = await evalJs(`(() => {
+          const el = document.activeElement;
+          const cs = getComputedStyle(el);
+          const probe = document.createElement('span');
+          probe.style.color = 'var(--focus)';
+          document.body.appendChild(probe);
+          const focusColour = getComputedStyle(probe).color;
+          probe.remove();
+          return { tag: el.tagName, isButton: el.matches('button'), focusVisible: el.matches(':focus-visible'), style: cs.outlineStyle, width: cs.outlineWidth, colour: cs.outlineColor, focusColour };
+        })()`);
+        assert.strictEqual(focus32.isButton, true, `Tab from the brand button must land on a button (got ${focus32.tag})`);
+        assert.strictEqual(focus32.focusVisible, true, 'A button reached by Tab must match :focus-visible');
+        assert.strictEqual(focus32.style, 'solid', 'Keyboard focus must draw a solid ring');
+        assert.strictEqual(focus32.width, '1px', 'Keyboard focus ring must be 1px');
+        assert.strictEqual(focus32.colour, focus32.focusColour, 'Keyboard focus ring must use --focus');
+        await evalJs(`(() => { document.activeElement && document.activeElement.blur(); return true; })()`);
+
+        // (h) Installed-window title bar: hidden in a browser tab, wired to the palette, opted into by the manifest
+        assert.strictEqual(p32.titlebarDisplay, 'none', 'The THEO title bar must stay hidden outside the window controls overlay');
+        assert.strictEqual(p32.titlebarOpensPalette, true, 'The THEO title bar search must open the command palette');
+        assert.ok(!/\s/.test(p32.shellRows.trim()), `App shell must keep a single grid row outside the overlay (got "${p32.shellRows}")`);
+        const manifest32 = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'manifest.json'), 'utf8'));
+        assert.deepStrictEqual(manifest32.display_override, ['window-controls-overlay', 'standalone'], 'manifest.json must opt into the window controls overlay and fall back to standalone');
+        assert.strictEqual(manifest32.display, 'standalone', 'manifest.json display must stay standalone');
+        assert.strictEqual(String(manifest32.theme_color).toUpperCase(), '#161619', 'manifest.json theme_color must be the graphite --bg-plate');
+        const css32 = fs.readFileSync(path.join(REPO_ROOT, 'css', 'theo.css'), 'utf8');
+        const wcoAt = css32.indexOf('@media (display-mode: window-controls-overlay)');
+        assert.ok(wcoAt > 0, 'css/theo.css must carry the window-controls-overlay rules');
+        const wcoCss = css32.slice(wcoAt);
+        assert.ok(/app-region:\s*drag/.test(wcoCss) && /app-region:\s*no-drag/.test(wcoCss), 'The title bar must be a drag region with its search button excluded');
+        assert.ok(/env\(titlebar-area-height/.test(wcoCss), 'The title bar height must come from env(titlebar-area-height)');
+
+        // (i) Other palettes keep their own selection colour, and the title-bar colour follows each of them
+        const pal32 = await evalJs(`(async () => {
+          const out = {};
+          for (const pal of ['velvet', 'espresso', 'daylight', 'graphite']) {
+            document.querySelector('[data-set-palette="' + pal + '"]')?.click();
+            await new Promise((r) => setTimeout(r, 60));
+            const root = getComputedStyle(document.documentElement);
+            out[pal] = {
+              applied: document.documentElement.getAttribute('data-palette'),
+              plate: root.getPropertyValue('--bg-plate').trim().toUpperCase(),
+              meta: (document.getElementById('meta-theme-color')?.getAttribute('content') || '').toUpperCase()
+            };
+          }
+          return out;
+        })()`);
+        for (const pal of Object.keys(pal32)) {
+          assert.strictEqual(pal32[pal].applied, pal, `Palette "${pal}" must apply from the picker`);
+          assert.ok(/^#[0-9A-F]{6}$/.test(pal32[pal].plate), `${pal}: --bg-plate must be a 6-digit hex (got "${pal32[pal].plate}")`);
+          assert.strictEqual(pal32[pal].meta, pal32[pal].plate, `${pal}: #meta-theme-color must equal --bg-plate`);
+        }
+        console.log('[PASS] Adversarial #32: Phase 7 (v97) one-line sidebar headers, untruncated account names, unclipped filter chips, session-list floor, 26px header controls, extension accents, keyboard focus ring & installed-window title bar verified');
+      } finally {
+        srv.mockStatePayload = null;
+        await evalJs(`(() => {
+          window.__THEO_ALLOW_PROBE_MOCK_FETCH = false;
           const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
           prefs.customBridgeUrl = '';
           localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));

@@ -3,17 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-  <meta name="theme-color" content="#141417" id="meta-theme-color">
+  <meta name="theme-color" content="#161619" id="meta-theme-color">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="THEO">
   <meta name="description" content="THEO workbench for Google Antigravity and Claude Code.">
   <title>THEO</title>
-  <link rel="manifest" href="manifest.json?v=96">
-  <link rel="icon" type="image/svg+xml" href="icon.svg?v=96">
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=96">
-  <link rel="apple-touch-icon" href="icon-180.png?v=96">
-  <link rel="stylesheet" href="css/theo.css?v=96">
+  <link rel="manifest" href="manifest.json?v=97">
+  <link rel="icon" type="image/svg+xml" href="icon.svg?v=97">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=97">
+  <link rel="apple-touch-icon" href="icon-180.png?v=97">
+  <link rel="stylesheet" href="css/theo.css?v=97">
   <script id="pre">
     (() => {
       try {
@@ -31,7 +31,7 @@
         if (m) {
           m.setAttribute(
             'content',
-            t === 'light' ? '#F6F5F0' : pal === 'velvet' ? '#0C0D12' : pal === 'espresso' ? '#191614' : '#141417'
+            t === 'light' ? '#F3F1EC' : pal === 'velvet' ? '#0C0E13' : pal === 'espresso' ? '#151311' : '#161619'
           );
         }
         if (p && p.sidebarCollapsed) {
@@ -52,7 +52,7 @@
   <div id="pin-overlay" class="pin-overlay" hidden>
     <div class="pin-card">
       <div class="pin-brand">
-        <img src="icon.svg?v=96" alt="THEO" class="pin-logo">
+        <img src="icon.svg?v=97" alt="THEO" class="pin-logo">
         <div class="pin-title">THEO</div>
         <div class="brass-double-rule"></div>
       </div>
@@ -78,13 +78,22 @@
   </div>
 
   <div class="app-shell" id="app-shell">
-    <!-- Desktop Collapsible Explorer Sidebar (282px) -->
+    <!-- Title bar of the installed desktop app; shown only when the window controls overlay is on -->
+    <header class="wco-titlebar" id="wco-titlebar" aria-label="THEO window title bar">
+      <img src="icon.svg?v=97" alt="" class="wco-titlebar-icon">
+      <button type="button" class="wco-titlebar-search" id="wco-titlebar-search" data-open-cmd-palette="1" aria-label="Search sessions and commands (Ctrl+K)">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <span>Search sessions and commands</span>
+        <kbd>Ctrl K</kbd>
+      </button>
+    </header>
+    <!-- Desktop Collapsible Explorer Sidebar (300px from 1025px) -->
     <aside class="ink-rail" id="ink-rail" aria-label="THEO Sidebar">
       <!-- Persistent VS Code Explorer Sidebar -->
       <div class="ide-explorer-sidebar" id="ide-explorer-sidebar">
         <div class="ide-sidebar-top">
           <button type="button" class="ide-brand-home-btn" id="btn-sidebar-brand" data-tab="chat" data-micro-tip="Workbench" aria-label="Open THEO Workbench">
-            <img src="icon.svg?v=96" alt="" class="ide-brand-icon">
+            <img src="icon.svg?v=97" alt="" class="ide-brand-icon">
             <span class="ide-sidebar-heading">THEO</span>
           </button>
           <div class="ide-sidebar-top-actions">
@@ -230,7 +239,7 @@
       <!-- Mobile & Compact Top Header -->
       <header class="mobile-topbar">
         <div class="mobile-brand">
-          <img src="icon.svg?v=96" alt="THEO" class="mobile-badge">
+          <img src="icon.svg?v=97" alt="THEO" class="mobile-badge">
           <div class="mobile-brand-copy">
             <div class="mobile-title-row">
               <div class="mobile-wordmark-stack">
@@ -872,13 +881,13 @@
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=96"></script>
-  <script src="js/models.js?v=96"></script>
-  <script src="js/transport.js?v=96"></script>
-  <script src="js/sidebar.js?v=96"></script>
-  <script src="js/inspector.js?v=96"></script>
-  <script src="js/chat.js?v=96"></script>
-  <script src="js/views.js?v=96"></script>
-  <script src="js/app.js?v=96"></script>
+  <script src="js/endpoints.js?v=97"></script>
+  <script src="js/models.js?v=97"></script>
+  <script src="js/transport.js?v=97"></script>
+  <script src="js/sidebar.js?v=97"></script>
+  <script src="js/inspector.js?v=97"></script>
+  <script src="js/chat.js?v=97"></script>
+  <script src="js/views.js?v=97"></script>
+  <script src="js/app.js?v=97"></script>
 </body>
 </html>
