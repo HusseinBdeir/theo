@@ -12451,3 +12451,68 @@ html[data-theme="dark"] .btn-approve {
     app-region: no-drag;
   }
 }
+
+/* iOS 26/27 Standalone Top-Edge Progressive Blur Mitigation */
+.pwa-status-bar-surface { display: none; }
+@supports (-webkit-touch-callout: none) and (background-clip: text) {
+  @media (display-mode: standalone) {
+    .pwa-status-bar-surface {
+      display: block;
+      position: fixed;
+      inset: 0 0 auto 0;
+      width: 100%;
+      height: 12px;
+      z-index: 2147483647;
+      pointer-events: none;
+      background-color: var(--bg-plate);
+      -webkit-background-clip: text;
+      background-clip: text;
+    }
+  }
+}
+@supports (-webkit-touch-callout: none) {
+  html.ios-standalone {
+    --ios-pwa-top-clear: calc(max(env(safe-area-inset-top, 0px), 52px) + 28px);
+  }
+  @media (min-width: 744px) {
+    html.ios-standalone {
+      --ios-pwa-top-clear: calc(max(env(safe-area-inset-top, 0px), 24px) + 20px);
+    }
+  }
+  @media (orientation: landscape) and (max-height: 499px) {
+    html.ios-standalone {
+      --ios-pwa-top-clear: calc(env(safe-area-inset-top, 0px) + 8px);
+    }
+  }
+  html.ios-standalone .mobile-topbar {
+    background: var(--bg-plate);
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    padding-top: var(--ios-pwa-top-clear) !important;
+  }
+  @media (max-width: 768px) {
+    html.ios-standalone .ide-sidebar-top {
+      height: auto;
+      min-height: 35px;
+      padding-top: var(--ios-pwa-top-clear);
+      padding-bottom: 6px;
+    }
+  }
+  @media (min-width: 1025px) {
+    html.ios-standalone .ide-sidebar-top {
+      height: auto;
+      min-height: 35px;
+      padding-top: var(--ios-pwa-top-clear);
+      padding-bottom: 6px;
+    }
+    html.ios-standalone .main-stage > .view-container {
+      padding-top: calc(var(--ios-pwa-top-clear) + 16px);
+    }
+  }
+  html.ios-standalone .pin-overlay {
+    padding-top: var(--ios-pwa-top-clear);
+  }
+  html.ios-standalone .cmd-dialog {
+    max-height: calc(100vh - var(--ios-pwa-top-clear) - 12px);
+  }
+}

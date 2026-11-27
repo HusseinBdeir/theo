@@ -10466,6 +10466,15 @@ async function main() {
       }
     }
 
+    // Static check: iOS 26/27 standalone top-edge progressive blur mitigation present
+    {
+      const theoHtmlSrc = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+      const theoCssSrc = fs.readFileSync(path.join(__dirname, '..', 'css', 'theo.css'), 'utf8');
+      assert.ok(theoHtmlSrc.includes('class="pwa-status-bar-surface"'), 'index.html must include .pwa-status-bar-surface element');
+      assert.ok(theoCssSrc.includes('--ios-pwa-top-clear'), 'css/theo.css must define --ios-pwa-top-clear iOS standalone clearance');
+      console.log('[PASS] Static: iOS 26/27 standalone status-bar surface & --ios-pwa-top-clear present');
+    }
+
     // Final error & network quarantine assertions (#21)
     assert.strictEqual(pageExceptions.length, 0, `Uncaught page exceptions: ${JSON.stringify(pageExceptions)}`);
     assert.strictEqual(consoleErrors.length, 0, `Console errors: ${JSON.stringify(consoleErrors)}`);

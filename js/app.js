@@ -7737,7 +7737,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=97', { updateViaCache: 'none' })
+        .register('sw.js?v=98', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
