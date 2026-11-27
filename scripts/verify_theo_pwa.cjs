@@ -10466,13 +10466,21 @@ async function main() {
       }
     }
 
-    // Static check: iOS 26/27 standalone top-edge progressive blur mitigation present
+    // Static & Chromium isolation check: iOS 26/27 standalone top-edge progressive blur mitigation present
     {
       const theoHtmlSrc = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
       const theoCssSrc = fs.readFileSync(path.join(__dirname, '..', 'css', 'theo.css'), 'utf8');
+      const theoManSrc = fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8');
       assert.ok(theoHtmlSrc.includes('class="pwa-status-bar-surface"'), 'index.html must include .pwa-status-bar-surface element');
-      assert.ok(theoCssSrc.includes('--ios-pwa-top-clear'), 'css/theo.css must define --ios-pwa-top-clear iOS standalone clearance');
-      console.log('[PASS] Static: iOS 26/27 standalone status-bar surface & --ios-pwa-top-clear present');
+      assert.ok(theoCssSrc.includes('--ios-pwa-top-clear') && theoCssSrc.includes('@supports (-webkit-touch-callout: none)'), 'css/theo.css must guard --ios-pwa-top-clear under @supports');
+      assert.ok(theoManSrc.includes('?v=98'), 'manifest.json must be bumped to v98');
+      const nonIosDisp = await evalJs(`(() => {
+        const els = document.querySelectorAll('.pwa-status-bar-surface');
+        return { count: els.length, display: els[0] ? getComputedStyle(els[0]).display : null };
+      })()`);
+      assert.strictEqual(nonIosDisp.count, 1, 'exactly one .pwa-status-bar-surface element expected');
+      assert.strictEqual(nonIosDisp.display, 'none', '.pwa-status-bar-surface must stay hidden on non-iOS browsers');
+      console.log('[PASS] Static + Runtime: iOS 26/27 standalone status-bar surface, --ios-pwa-top-clear & non-iOS isolation verified');
     }
 
     // Final error & network quarantine assertions (#21)
