@@ -764,14 +764,7 @@
     popList.scrollTop = prevScroll;
   }
 
-  // VIEW 1: Render Pulse
-  function renderPulseView() {
-    const bannerEl = S.$('pulse-notif-banner');
-    if (bannerEl && !S.isFocusInsideContainerInputs(bannerEl)) {
-      bannerEl.innerHTML = renderPulseNotifBannerHtml();
-    }
-
-    const fleetEl = S.$('pulse-fleet-strip');
+  function syncPulseNavBadges() {
     const fleetDevices = S.getUnifiedFleetDevices();
     if (
       S.prefs.selectedDeviceFilter &&
@@ -782,6 +775,64 @@
       S.prefs.selectedDeviceFilter = 'all';
     }
     const allRows = S.appState?.rows || [];
+    const rows =
+      S.prefs.selectedDeviceFilter && S.prefs.selectedDeviceFilter !== 'all'
+        ? allRows.filter((r) => !r.deviceId || r.deviceId === S.prefs.selectedDeviceFilter)
+        : allRows;
+    const approvals =
+      S.prefs.selectedDeviceFilter && S.prefs.selectedDeviceFilter !== 'all'
+        ? (S.appState?.approvals || []).filter(
+            (a) => !a.deviceId || a.deviceId === S.prefs.selectedDeviceFilter
+          )
+        : S.appState?.approvals || [];
+    const activeTotal = rows.filter((r) => r.id && !r.archived).length;
+    const waitingCount = approvals.length;
+
+    const badgePulse = S.$('badge-pulse');
+    const dockPulse = S.$('dock-badge-pulse');
+    if (badgePulse) {
+      badgePulse.hidden = waitingCount === 0;
+      badgePulse.textContent = String(waitingCount);
+    }
+    if (dockPulse) {
+      dockPulse.hidden = waitingCount === 0;
+    }
+    const badgeSessions = S.$('badge-sessions');
+    if (badgeSessions) {
+      badgeSessions.textContent = String(activeTotal);
+    }
+    const dockSessions = S.$('dock-badge-sessions');
+    if (dockSessions) {
+      dockSessions.hidden = activeTotal === 0;
+      dockSessions.textContent = String(activeTotal);
+    }
+    const dirtyRepoCount = (S.appState?.workspaces || []).filter((w) => Number(w?.dirtyCount || 0) > 0).length;
+    const badgeWorkspaces = S.$('badge-workspaces');
+    if (badgeWorkspaces) {
+      badgeWorkspaces.hidden = dirtyRepoCount === 0;
+      badgeWorkspaces.textContent = String(dirtyRepoCount);
+    }
+    return { fleetDevices, allRows, rows, approvals, activeTotal, waitingCount };
+  }
+
+  // VIEW 1: Render Pulse
+  function renderPulseView() {
+    let pulseMeta = null;
+    try {
+      pulseMeta = syncPulseNavBadges();
+    } catch (err) {
+      console.warn('[THEO] Pulse badge sync error:', err?.message || err);
+    }
+    if (S.prefs.activeTab !== 'pulse') return;
+    return S.runViewBoundary('pulse', 'Pulse', { elId: 'view-pulse', mode: 'prepend' }, () => {
+    const { fleetDevices, allRows, rows, approvals, activeTotal, waitingCount } =
+      pulseMeta || syncPulseNavBadges();
+    const bannerEl = S.$('pulse-notif-banner');
+    if (bannerEl && !S.isFocusInsideContainerInputs(bannerEl)) {
+      bannerEl.innerHTML = renderPulseNotifBannerHtml();
+    }
+
+    const fleetEl = S.$('pulse-fleet-strip');
     if (fleetEl) {
       if (fleetDevices.length === 0 && !S.localWsAuthed && !S.edgeWsAuthed) {
         fleetEl.hidden = true;
@@ -820,47 +871,9 @@
       }
     }
 
-    const rows =
-      S.prefs.selectedDeviceFilter && S.prefs.selectedDeviceFilter !== 'all'
-        ? allRows.filter((r) => !r.deviceId || r.deviceId === S.prefs.selectedDeviceFilter)
-        : allRows;
-    const approvals =
-      S.prefs.selectedDeviceFilter && S.prefs.selectedDeviceFilter !== 'all'
-        ? (S.appState?.approvals || []).filter(
-            (a) => !a.deviceId || a.deviceId === S.prefs.selectedDeviceFilter
-          )
-        : S.appState?.approvals || [];
-    const activeTotal = rows.filter((r) => r.id && !r.archived).length;
     const workingCount = rows.filter((r) => r.status === 'working' && !r.archived).length;
-    const waitingCount = approvals.length;
     const unreadCount = rows.filter((r) => r.unread && !r.archived).length;
     const openCount = rows.filter((r) => r.open && !r.archived).length;
-
-    // Update navigation badges
-    const badgePulse = S.$('badge-pulse');
-    const dockPulse = S.$('dock-badge-pulse');
-    if (badgePulse) {
-      badgePulse.hidden = waitingCount === 0;
-      badgePulse.textContent = String(waitingCount);
-    }
-    if (dockPulse) {
-      dockPulse.hidden = waitingCount === 0;
-    }
-    const badgeSessions = S.$('badge-sessions');
-    if (badgeSessions) {
-      badgeSessions.textContent = String(activeTotal);
-    }
-    const dockSessions = S.$('dock-badge-sessions');
-    if (dockSessions) {
-      dockSessions.hidden = activeTotal === 0;
-      dockSessions.textContent = String(activeTotal);
-    }
-    const dirtyRepoCount = (S.appState?.workspaces || []).filter((w) => Number(w?.dirtyCount || 0) > 0).length;
-    const badgeWorkspaces = S.$('badge-workspaces');
-    if (badgeWorkspaces) {
-      badgeWorkspaces.hidden = dirtyRepoCount === 0;
-      badgeWorkspaces.textContent = String(dirtyRepoCount);
-    }
 
     const kpisEl = S.$('pulse-kpis');
     if (kpisEl) {
@@ -1023,6 +1036,7 @@
       const topRows = rows.filter((r) => !r.archived).slice(0, 6);
       recentEl.innerHTML = topRows.map((r) => renderSessionCardHtml(r)).join('');
     }
+    });
   }
 
   function isSignedInQuotaCard(provInfo) {
@@ -1502,7 +1516,13 @@
 
   // VIEW 2: Render Sessions List
   function renderSessionsView() {
-    syncProviderNewSessionButtons();
+    try {
+      syncProviderNewSessionButtons();
+    } catch (err) {
+      console.warn('[THEO] Provider button sync error:', err?.message || err);
+    }
+    if (S.prefs.activeTab !== 'sessions') return;
+    return S.runViewBoundary('sessions', 'Sessions', { elId: 'sessions-full-list', mode: 'replace' }, () => {
     const container = S.$('sessions-full-list');
     if (!container) return;
     const hideDesktop = S.isClaudeDesktopHidden();
@@ -1737,6 +1757,7 @@
     container.innerHTML =
       unpairedBannerHtml + filtered.map((r) => renderSessionCardHtml(r)).join('');
     S.reconcileIdeMicroTip();
+    });
   }
   const UW_VISIBLE_ROWS = 8;
   function fmtUnsavedIdle(h) {
@@ -1932,7 +1953,8 @@
   }
 
   // VIEW 4: Render Workspaces & Git Inspector
-  async function renderWorkspacesView() {
+  function renderWorkspacesView() {
+    return S.runViewBoundary('workspaces', 'Repositories & Git', { elId: 'view-workspaces', mode: 'prepend' }, async () => {
     const listEl = S.$('repo-selector-list');
     const detailEl = S.$('repo-detail-panel');
     renderUnsavedWorkPanel();
@@ -2023,6 +2045,7 @@
       <div class="eyebrow" style="margin:14px 0 6px">Git Diff Inspector</div>
       <pre class="diff-viewer mono">${diffHtml || 'No uncommitted diff lines in working tree.'}</pre>
     `;
+    });
   }
 
   function formatGitDiffHtml(patch) {
@@ -2047,6 +2070,7 @@
 
   // VIEW 5: Render Telemetry & Pairing
   function renderAnalyticsView() {
+    return S.runViewBoundary('analytics', 'Analytics & Settings', { elId: 'view-analytics', mode: 'prepend' }, () => {
     const prov = S.prefs.telemetryProv || 'all';
     const summaryObj = S.appState?.summaryByProvider?.[prov] || S.appState?.summary || {
       today: { tokens: 0, turns: 0, sessions: 0, input: 0, cached: 0, output: 0 },
@@ -2255,7 +2279,7 @@
           <p class="meta-timestamp" style="margin:6px 0">Protect remote mobile access with a SHA-256 4-digit PIN lock on launch.</p>
           <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
             <button type="button" class="btn-ghost-sm" id="btn-set-pin">${hasPin ? 'Change / Clear 4-Digit PIN' : 'Enable 4-Digit PIN Lock'}</button>
-            <a href="reset.html" class="btn-ghost-sm" style="text-decoration:none;display:inline-flex;align-items:center">Reset PWA Cache</a>
+            <a href="reset.html" class="btn-ghost-sm" data-reset-theo-cache="1" style="text-decoration:none;display:inline-flex;align-items:center">Reset PWA Cache</a>
           </div>
           <div id="pin-inline-editor" class="pin-inline-editor" hidden>
             ${
@@ -2272,6 +2296,7 @@
         </div>
       `;
     }
+    });
   }
 
   let cmdPaletteMode = 'default';

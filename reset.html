@@ -36,6 +36,11 @@
     (async () => {
       const scopePrefix = new URL('./', location.href).href;
       try {
+        try {
+          localStorage.removeItem('theo_remote_cache_v3');
+          localStorage.removeItem('theo_remote_cache_v2');
+          localStorage.removeItem('theo_remote_cache_v1');
+        } catch (e) {}
         if ('serviceWorker' in navigator) {
           const regs = await navigator.serviceWorker.getRegistrations();
           for (const r of regs) {
