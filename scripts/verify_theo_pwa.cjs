@@ -5955,7 +5955,7 @@ async function main() {
     })()`);
     assert.strictEqual(v73Overrun.isSoftOverrun, true);
     assert.strictEqual(v73Overrun.arcHidden, false);
-    assert.strictEqual(v73Overrun.arcStroke, 'rgb(168, 85, 247)', 'Overrun ring must render violet #a855f7');
+    assert.strictEqual(v73Overrun.arcStroke, 'rgb(139, 124, 246)', 'Overrun ring must render the palette violet (--violet, dark #8B7CF6)');
     assert.ok(v73Overrun.arcOffset < 56.5, `Expected non-empty overrun arc stroke, got offset ${v73Overrun.arcOffset}`);
     assert.strictEqual(v73Overrun.overrunPillHidden, false);
     assert.strictEqual(v73Overrun.overrunPillText, '+12.6k');
