@@ -9,14 +9,14 @@
   <meta name="apple-mobile-web-app-title" content="THEO">
   <meta name="description" content="THEO workbench for Google Antigravity and Claude Code.">
   <title>THEO</title>
-  <link rel="manifest" href="manifest.json?v=92">
-  <link rel="icon" type="image/svg+xml" href="icon.svg?v=92">
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=92">
-  <link rel="apple-touch-icon" href="icon-180.png?v=92">
+  <link rel="manifest" href="manifest.json?v=93">
+  <link rel="icon" type="image/svg+xml" href="icon.svg?v=93">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=93">
+  <link rel="apple-touch-icon" href="icon-180.png?v=93">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/theo.css?v=92">
+  <link rel="stylesheet" href="css/theo.css?v=93">
   <script id="pre">
     (() => {
       try {
@@ -55,7 +55,7 @@
   <div id="pin-overlay" class="pin-overlay" hidden>
     <div class="pin-card">
       <div class="pin-brand">
-        <img src="icon.svg?v=92" alt="THEO" class="pin-logo">
+        <img src="icon.svg?v=93" alt="THEO" class="pin-logo">
         <div class="pin-title">THEO</div>
         <div class="brass-double-rule"></div>
       </div>
@@ -87,7 +87,7 @@
       <div class="ide-explorer-sidebar" id="ide-explorer-sidebar">
         <div class="ide-sidebar-top">
           <button type="button" class="ide-brand-home-btn" id="btn-sidebar-brand" data-tab="chat" data-micro-tip="Workbench" aria-label="Open THEO Workbench">
-            <img src="icon.svg?v=92" alt="" class="ide-brand-icon">
+            <img src="icon.svg?v=93" alt="" class="ide-brand-icon">
             <span class="ide-sidebar-heading">THEO</span>
           </button>
           <div class="ide-sidebar-top-actions">
@@ -233,7 +233,7 @@
       <!-- Mobile & Compact Top Header -->
       <header class="mobile-topbar">
         <div class="mobile-brand">
-          <img src="icon.svg?v=92" alt="THEO" class="mobile-badge">
+          <img src="icon.svg?v=93" alt="THEO" class="mobile-badge">
           <div class="mobile-brand-copy">
             <div class="mobile-title-row">
               <div class="mobile-wordmark-stack">
@@ -471,12 +471,6 @@
                 <span id="ctx-pill-label">0 / 512k · 0%</span>
                 <span class="ctx-overrun-pill" id="ctx-overrun-pill" hidden></span>
               </button>
-              <div class="studio-lens-bar" id="studio-lens-bar" role="group" aria-label="Inspector Views">
-                <button type="button" class="studio-lens-pill" data-open-lens="git" aria-label="Open Git Lens">Git</button>
-                <button type="button" class="studio-lens-pill" data-open-lens="canvas" aria-label="Open Live Canvas and Skills">Canvas</button>
-                <button type="button" class="studio-lens-pill" data-open-lens="agents" aria-label="Open Checks and Side Agents">Checks</button>
-                <button type="button" class="studio-lens-pill split-watch-btn" id="btn-split-watch" aria-label="Toggle Parallel Split-Watch Session Monitor" aria-pressed="false">Split</button>
-              </div>
               <button type="button" class="inspector-toggle-pill tabular" id="btn-toggle-inspector" aria-label="Toggle Split Inspector (Ctrl+I)" aria-expanded="false" aria-controls="ide-inspector-pane">
                 <svg class="insp-pill-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <rect x="1.5" y="2.5" width="13" height="11" rx="1.6"/>
@@ -485,9 +479,23 @@
                 <span class="insp-pill-lbl">Inspector</span>
                 <span class="insp-pill-badge" id="inspector-pill-count" hidden>0</span>
               </button>
-              <button type="button" class="btn-ghost-sm" id="btn-chat-open-vscode" aria-label="Open this session in a VS Code tab on the PC (optional)">
-                Open in IDE
-              </button>
+              <div class="chat-more-wrap" id="chat-more-wrap">
+                <button type="button" class="ide-mini-icon-btn chat-more-btn" id="btn-chat-more" data-micro-tip="More session actions" aria-label="More session actions" aria-haspopup="menu" aria-expanded="false">⋯</button>
+                <div class="chat-more-menu" id="chat-more-menu" role="menu" aria-label="Session actions" hidden>
+                  <button type="button" class="ctx-menu-item split-watch-btn" id="btn-split-watch" role="menuitemcheckbox" aria-checked="false" aria-pressed="false">
+                    <span>Parallel Split-Watch</span>
+                    <span class="meta-timestamp" id="chat-more-split-state">Off</span>
+                  </button>
+                  <button type="button" class="ctx-menu-item" id="btn-chat-more-compact" data-chat-more-act="compact" role="menuitem">
+                    <span>Run /compact</span>
+                    <span class="meta-timestamp">Context</span>
+                  </button>
+                  <button type="button" class="ctx-menu-item" id="btn-chat-open-vscode" role="menuitem" hidden>
+                    <span>Open in IDE</span>
+                    <span class="meta-timestamp">VS Code</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -605,26 +613,20 @@
             <!-- Parallel Split-Watch Secondary Session Monitor -->
             <section class="chat-split-watch-pane" id="chat-split-watch-pane" aria-label="Parallel Session Split-Watch" hidden></section>
 
-            <!-- Right-Hand Split Inspector (Code & Diff | Git | Canvas | Checks & Agents | Outline) -->
+            <!-- Right-Hand Split Inspector (Files & Preview | Git | Tasks & Outline) -->
             <div class="ide-inspector-backdrop" id="ide-inspector-backdrop" hidden></div>
             <aside class="ide-inspector-pane" id="ide-inspector-pane" aria-label="IDE Split Inspector" hidden>
               <div class="ide-inspector-head">
                 <div class="ide-inspector-tabs" id="ide-inspector-tabs" role="tablist">
-                  <button type="button" class="ide-insp-tab active" role="tab" aria-selected="true" data-insp-tab="code">
-                    <span>Code &amp; Diff</span>
+                  <button type="button" class="ide-insp-tab active" role="tab" aria-selected="true" data-insp-tab="files">
+                    <span>Files &amp; Preview</span>
                   </button>
                   <button type="button" class="ide-insp-tab" role="tab" aria-selected="false" data-insp-tab="git">
                     <span>Git</span>
                   </button>
-                  <button type="button" class="ide-insp-tab" role="tab" aria-selected="false" data-insp-tab="canvas">
-                    <span>Canvas</span>
-                  </button>
-                  <button type="button" class="ide-insp-tab" role="tab" aria-selected="false" data-insp-tab="agents">
-                    <span>Checks &amp; Agents</span>
+                  <button type="button" class="ide-insp-tab" role="tab" aria-selected="false" data-insp-tab="tasks">
+                    <span>Tasks &amp; Outline</span>
                     <span class="ide-insp-badge tabular" id="insp-agents-badge" hidden>0</span>
-                  </button>
-                  <button type="button" class="ide-insp-tab" role="tab" aria-selected="false" data-insp-tab="outline">
-                    <span>Outline</span>
                   </button>
                 </div>
                 <button type="button" class="icon-btn-sm" id="btn-close-inspector" aria-label="Close Split Inspector">✕</button>
@@ -873,7 +875,7 @@
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=92"></script>
-  <script src="js/app.js?v=92"></script>
+  <script src="js/endpoints.js?v=93"></script>
+  <script src="js/app.js?v=93"></script>
 </body>
 </html>

@@ -53,6 +53,11 @@ function startStaticServer(rootDir) {
           res.end(JSON.stringify({ ok: true, service: 'theo-mock-local', authRequired: false }));
           return;
         }
+        if (u.pathname === '/api/state' && srv.mockStatePayload) {
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ ok: true, state: srv.mockStatePayload }));
+          return;
+        }
         if (u.pathname === '/api/file-preview') {
           const reqPath = String(u.searchParams.get('path') || '').trim();
           if (!reqPath || reqPath.includes('..') || /\.(env|dev\.vars|sqlite)/i.test(reqPath)) {
@@ -676,6 +681,11 @@ async function main() {
       activeDeliverableBlobUrls: new Set(),
       isNewSessionMode: () => false,
       resolveStudioWorkspaceId: (ws) => String(ws || 'memory'),
+      resolveSessionWorkspaceContext: (row) => ({
+        wsId: String(row?.folder || 'memory'),
+        rpcWsId: String(row?.folder || 'memory'),
+        matchedWs: null
+      }),
       coalesceThreadMessages: () => [],
       renderSplitInspector: () => {},
       authFetchLocal: async (u) => { httpCalls.push(u); return { ok: true, json: async () => ({ ok: true }) }; },
@@ -732,6 +742,87 @@ async function main() {
     assert.strictEqual(revoked.length, 1);
     assert.strictEqual(vaultRes.blobUrl, '', 'revokeActiveDeliverableBlobs must clear cached blobUrl to prevent dead iframe');
     console.log('[PASS] Static: Deliverable multi-device isolation, WS chunk continuation, :line target strip & blobUrl revocation verified');
+  }
+
+  // Static Attachment Transport & Chunk-Failure Block Verification (Phase 4 Red-Team Guard)
+  {
+    const vm = require('vm');
+    const appSrc = fs.readFileSync(path.join(REPO_ROOT, 'js', 'app.js'), 'utf8');
+    const attStart = appSrc.indexOf('  const MAX_LIVE_WS_ATTACHMENT_BYTES = 8 * 1024 * 1024;');
+    const attEnd = appSrc.indexOf('\n  }\n\n  async function flushOutbox()');
+    assert.ok(attStart > 0 && attEnd > attStart, 'Attachment transport slice must locate inside js/app.js');
+    const attSlice =
+      appSrc.slice(attStart, attEnd + 4) +
+      '\n__attApi = { calcAttachmentsPayloadChars, compactAttachmentsForCloudFallback, uploadLargeAttachmentsOverWs, dispatchRemoteCommand, getOutbox: () => outbox };';
+    const attFetchCalls = [];
+    const attBox = {
+      window: {},
+      localWsDevice: { id: 'dev-local' },
+      localWsAuthed: false,
+      localWs: null,
+      edgeWsAuthed: true,
+      edgeWs: { readyState: 1 },
+      connMode: 'edge',
+      localBridgeBase: '',
+      refreshCloudConfig: () => {},
+      cloudCfg: { url: 'https://cloud.example/store', key: 'k'.repeat(64), port: 4318 },
+      cleanTargetThreadId: (x) => String(x || '').trim(),
+      appState: { rows: [{ id: 's-att', deviceId: 'dev-local', folder: 'theo' }] },
+      prefs: { selectedThreadId: 's-att', selectedDeviceFilter: 'all', composerTargetDevice: 'auto', composerRepoPrefix: 'theo' },
+      recordFreqUsage: () => {},
+      isHeadlessBrowser: false,
+      sendWsRpc: async (_ws, frame) => {
+        if (frame?.cmd?.type === 'uploadAttachmentChunk') {
+          return { ok: false, error: 'Simulated chunk upload failure' };
+        }
+        return { ok: true };
+      },
+      authFetchLocal: async () => ({ ok: false }),
+      syncData: async () => {},
+      cloudCmdChain: Promise.resolve(true),
+      lastCloudQueue: null,
+      outbox: [],
+      saveJson: () => {},
+      STORAGE_KEYS: { OUTBOX: 'theo_outbox' },
+      renderOutboxBadge: () => {},
+      fetch: async (u) => {
+        attFetchCalls.push(u);
+        return { ok: true, json: async () => ({}) };
+      }
+    };
+    vm.runInNewContext(attSlice, attBox, { filename: 'app-attachment-extract.js' });
+    const attApi = attBox.__attApi;
+
+    // 1. >520 KB attachment with failed WS chunk upload MUST fail closed without falling back to Cloud Relay or Outbox
+    const bigDataUrl = 'data:application/octet-stream;base64,' + 'A'.repeat(600000);
+    const chunkFailRes = await attApi.dispatchRemoteCommand({
+      type: 'send',
+      id: 's-att',
+      threadId: 's-att',
+      prompt: 'Analyze large dump',
+      attachments: [{ name: 'dump.bin', mime: 'application/octet-stream', size: 450000, dataUrl: bigDataUrl, textContent: '' }]
+    });
+    assert.strictEqual(chunkFailRes.ok, false, 'Failed WS chunk upload must return ok: false');
+    assert.strictEqual(chunkFailRes.blocked, 'attachment_chunk_failed', 'Failed WS chunk upload must return blocked: attachment_chunk_failed');
+    assert.strictEqual(attFetchCalls.length, 0, 'Failed WS chunk upload must never fall back to Cloud Relay fetch');
+    assert.strictEqual(attApi.getOutbox().length, 0, 'Failed WS chunk upload must never push to Outbox');
+
+    // 2. When WS is offline and payload exceeds 360 KB Cloud cap, dispatchRemoteCommand MUST block without hitting Cloud Relay or Outbox
+    attBox.edgeWsAuthed = false;
+    attBox.edgeWs = null;
+    attBox.connMode = 'cloud';
+    const cloudCapRes = await attApi.dispatchRemoteCommand({
+      type: 'send',
+      id: 's-att',
+      threadId: 's-att',
+      prompt: 'Analyze medium dump',
+      attachments: [{ name: 'med.bin', mime: 'application/octet-stream', size: 300000, dataUrl: 'data:application/octet-stream;base64,' + 'B'.repeat(400000), textContent: '' }]
+    });
+    assert.strictEqual(cloudCapRes.ok, false, 'Oversized Cloud attachment must return ok: false');
+    assert.strictEqual(cloudCapRes.blocked, 'attachment_too_large_for_cloud', 'Oversized Cloud attachment must return blocked: attachment_too_large_for_cloud');
+    assert.strictEqual(attFetchCalls.length, 0, 'Oversized Cloud attachment must not issue Cloud Relay fetch');
+    assert.strictEqual(attApi.getOutbox().length, 0, 'Oversized Cloud attachment must not push to Outbox');
+    console.log('[PASS] Static: Failed WS chunk upload & Cloud attachment cap abort cleanly without Cloud/Outbox leak');
   }
 
   const edgeExe = findEdgeBinary();
@@ -2033,12 +2124,10 @@ async function main() {
       await new Promise((r) => setTimeout(r, 25));
       const diffRendered = Boolean(document.querySelector('#ide-inspector-body')?.textContent?.includes('newVal'));
 
-      document.querySelector('#ide-inspector-pane [data-insp-tab="agents"]')?.click();
+      document.querySelector('#ide-inspector-pane [data-insp-tab="tasks"]')?.click();
       await new Promise((r) => setTimeout(r, 25));
       const agentsTabRendered = Boolean(document.querySelector('#ide-inspector-body .insp-agent-card'));
 
-      document.querySelector('#ide-inspector-pane [data-insp-tab="outline"]')?.click();
-      await new Promise((r) => setTimeout(r, 25));
       document.querySelector('#ide-inspector-body [data-outline-jump="cp-1"]')?.click();
       await new Promise((r) => setTimeout(r, 35));
       const cpOpenedByOutline = Boolean(document.querySelector('#chat-stream details.vs-checkpoint-divider')?.open === true);
@@ -2249,33 +2338,22 @@ async function main() {
       await new Promise((r) => setTimeout(r, 25));
       const quotedInComposer = String(document.getElementById('composer-input')?.value || '').includes('@js/app.js#L1');
 
-      // 2. Test Built-in Git Lens
-      document.querySelector('#studio-lens-bar [data-open-lens="git"]')?.click();
+      // 2. Test Built-in Git Tab (3-Tab Functional Inspector)
+      document.querySelector('#ide-inspector-pane [data-insp-tab="git"]')?.click();
       await new Promise((r) => setTimeout(r, 60));
       const gitFilesRendered = document.querySelectorAll('#ide-inspector-body .studio-git-file-row').length >= 2;
       document.querySelector('#ide-inspector-subbar [data-git-prompt-action="commit"]')?.click();
       const gitCommitPrompted = String(document.getElementById('composer-input')?.value || '').includes('Summarize all uncommitted');
 
-      // 3. Test Built-in Canvas Lens (Port Radar, Searchable Data Grid, Sandboxed Preview & Skills)
-      document.querySelector('#studio-lens-bar [data-open-lens="canvas"]')?.click();
-      await new Promise((r) => setTimeout(r, 50));
-      const gridRowsBefore = document.querySelectorAll('#ide-inspector-body .canvas-data-grid tbody tr').length;
-      const gridSearch = document.getElementById('canvas-grid-search');
-      if (gridSearch) {
-        gridSearch.focus();
-        gridSearch.value = 'GitLens';
-        gridSearch.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-      await new Promise((r) => setTimeout(r, 30));
-      const gridSearchKeptFocus = document.activeElement?.id === 'canvas-grid-search';
-      const gridRowsAfter = document.querySelectorAll('#ide-inspector-body .canvas-data-grid tbody tr').length;
-      const sandboxFrame = document.querySelector('#ide-inspector-body iframe.canvas-sandbox-frame');
-      const sandboxAttr = sandboxFrame ? sandboxFrame.getAttribute('sandbox') : null;
-      document.querySelector('#ide-inspector-body [data-use-studio-skill="red-team-gate"]')?.click();
-      const skillInserted = String(document.getElementById('composer-input')?.value || '').includes('Use the red-team-gate skill:');
+      // 3. Verify retired Canvas/Lens bar are gone and Files & Preview tab holds file chips
+      const studioLensGone = document.getElementById('studio-lens-bar') === null;
+      const canvasTabGone = document.querySelector('#ide-inspector-tabs [data-insp-tab="canvas"]') === null;
+      document.querySelector('#ide-inspector-pane [data-insp-tab="files"]')?.click();
+      await new Promise((r) => setTimeout(r, 40));
+      const filesTabHasChips = document.querySelectorAll('#ide-inspector-body .insp-file-pills [data-preview-file]').length >= 1;
 
-      // 4. Test Built-in Checks & Error Lens + Negative Test on unallowlisted checkId + Cross-Workspace Isolation
-      document.querySelector('#studio-lens-bar [data-open-lens="agents"]')?.click();
+      // 4. Test Built-in Tasks & Outline Checks + Negative Test on unallowlisted checkId + Error Lens Jump
+      document.querySelector('#ide-inspector-pane [data-insp-tab="tasks"]')?.click();
       await new Promise((r) => setTimeout(r, 50));
       const hostileCheckRes = await fetch('/api/studio-check', {
         method: 'POST',
@@ -2292,7 +2370,9 @@ async function main() {
       await new Promise((r) => setTimeout(r, 50));
       const jumpedToLine12 = Boolean(document.querySelector('#ide-inspector-body .insp-code-row.is-hl[data-ln="12"]'));
 
-      // 5. Test Parallel Split-Watch (⊞ Split) & Swap
+      // 5. Test Parallel Split-Watch (#btn-split-watch in #chat-more-menu) & Swap
+      document.getElementById('btn-chat-more')?.click();
+      await new Promise((r) => setTimeout(r, 25));
       document.getElementById('btn-split-watch')?.click();
       await new Promise((r) => setTimeout(r, 40));
       const splitPane = document.getElementById('chat-split-watch-pane');
@@ -2306,7 +2386,7 @@ async function main() {
       document.getElementById('btn-split-watch-close')?.click();
       await new Promise((r) => setTimeout(r, 25));
 
-      // 6. Negative Test: PIN-lock blocks new v60 actions ([data-quote-line], [data-run-studio-check], #btn-split-watch)
+      // 6. Negative Test: PIN-lock blocks actions ([data-quote-line], [data-run-studio-check], #btn-split-watch)
       if (inp) inp.value = '';
       const pinOverlay = document.getElementById('pin-overlay');
       if (pinOverlay) pinOverlay.hidden = false;
@@ -2318,8 +2398,8 @@ async function main() {
         document.getElementById('composer-input')?.value === '';
       if (pinOverlay) pinOverlay.hidden = true;
 
-      // Leave Inspector on 'canvas' lens to test reload persistence
-      document.querySelector('#studio-lens-bar [data-open-lens="canvas"]')?.click();
+      // Leave Inspector on 'git' tab to test reload persistence
+      document.querySelector('#ide-inspector-pane [data-insp-tab="git"]')?.click();
       await new Promise((r) => setTimeout(r, 25));
 
       return {
@@ -2336,11 +2416,9 @@ async function main() {
         quotedInComposer,
         gitFilesRendered,
         gitCommitPrompted,
-        gridRowsBefore,
-        gridRowsAfter,
-        gridSearchKeptFocus,
-        sandboxAttr,
-        skillInserted,
+        studioLensGone,
+        canvasTabGone,
+        filesTabHasChips,
         hostileBlocked403,
         diagRendered,
         jumpedToLine12,
@@ -2352,7 +2430,7 @@ async function main() {
       };
     })()`);
 
-    // Verify 'canvas' lens survives reload and mobile Escape closes Split-Watch
+    // Verify 'git' tab survives reload and mobile Escape closes Split-Watch
     await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
     await new Promise((r) => setTimeout(r, 550));
     await cdp.send(
@@ -2362,14 +2440,14 @@ async function main() {
     );
     const v60ReloadAndMobileProbe = await evalJs(`(async () => {
       const savedPrefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
-      const canvasTabSurvivedReload = savedPrefs.inspectorTab === 'canvas';
+      const gitTabSurvivedReload = savedPrefs.inspectorTab === 'git';
       document.getElementById('btn-split-watch')?.click();
       await new Promise((r) => setTimeout(r, 25));
       const openedOnMobile = document.getElementById('chat-split-watch-pane')?.hidden === false;
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       await new Promise((r) => setTimeout(r, 25));
       const closedByEscapeOnMobile = document.getElementById('chat-split-watch-pane')?.hidden === true;
-      return { canvasTabSurvivedReload, openedOnMobile, closedByEscapeOnMobile };
+      return { gitTabSurvivedReload, openedOnMobile, closedByEscapeOnMobile };
     })()`);
 
     assert.ok(!v60Probe.pushBadgeBg.includes('255, 59, 48'), `Push badge must not use harsh neon #FF3B30, got ${v60Probe.pushBadgeBg}`);
@@ -2383,25 +2461,23 @@ async function main() {
     assert.strictEqual(v60Probe.hasChangeSetStrip, true, 'Turn must render 1-row .turn-changeset-strip');
     assert.strictEqual(v60Probe.diffOpenedFromChip, true, 'Clicking .turn-cs-chip must open Diff view in Split Inspector');
     assert.strictEqual(v60Probe.quotedInComposer, true, 'Clicking @L button in Code Inspector must quote @file#L in composer');
-    assert.strictEqual(v60Probe.gitFilesRendered, true, 'Git Lens must render modified working tree files');
-    assert.strictEqual(v60Probe.gitCommitPrompted, true, 'Summarize & Commit in Git Lens must populate composer prompt');
-    assert.strictEqual(v60Probe.gridRowsBefore, 2, 'Canvas Data Grid must extract 2 rows from Markdown table');
-    assert.strictEqual(v60Probe.gridRowsAfter, 1, 'Canvas Data Grid search must filter rows live');
-    assert.strictEqual(v60Probe.gridSearchKeptFocus, true, 'Canvas Data Grid search input must retain focus across re-render');
-    assert.strictEqual(v60Probe.sandboxAttr, '', 'Canvas HTML preview iframe must enforce strict sandbox=""');
-    assert.strictEqual(v60Probe.skillInserted, true, 'Clicking Use Skill in Canvas Lens must insert skill instruction');
+    assert.strictEqual(v60Probe.gitFilesRendered, true, 'Git tab must render modified working tree files');
+    assert.strictEqual(v60Probe.gitCommitPrompted, true, 'Summarize & Commit in Git tab must populate composer prompt');
+    assert.strictEqual(v60Probe.studioLensGone, true, '#studio-lens-bar must be removed in Phase 4');
+    assert.strictEqual(v60Probe.canvasTabGone, true, 'Retired Canvas tab must be removed in Phase 4');
+    assert.strictEqual(v60Probe.filesTabHasChips, true, 'Files & Preview tab must render file chips');
     assert.strictEqual(v60Probe.hostileBlocked403, true, 'Hostile/unlisted checkId must be rejected with HTTP 403');
     assert.strictEqual(v60Probe.diagRendered, true, 'Running studio check must render clickable Error Lens diagnostic pill');
-    assert.strictEqual(v60Probe.jumpedToLine12, true, 'Clicking Error Lens diagnostic pill must highlight line 12 in Code Inspector');
-    assert.strictEqual(v60Probe.splitWatchOpen, true, 'Clicking ⊞ Split must open #chat-split-watch-pane');
+    assert.strictEqual(v60Probe.jumpedToLine12, true, 'Clicking Error Lens diagnostic pill must highlight line 12 in Files & Preview');
+    assert.strictEqual(v60Probe.splitWatchOpen, true, 'Clicking Parallel Split-Watch must open #chat-split-watch-pane');
     assert.strictEqual(v60Probe.splitOverflowX, 0, 'Parallel Split-Watch + Inspector must cause 0px horizontal overflow');
     assert.strictEqual(v60Probe.swappedPrimary, true, 'Clicking ⇄ Swap in Split-Watch must swap primary and watched sessions');
     assert.strictEqual(v60Probe.blockedByPin, true, 'PIN lock must block Split-Watch and @L quote actions');
     assert.strictEqual(v60Probe.titleAttrsCount, 0, 'Zero [title] attributes allowed anywhere in v60 DOM');
-    assert.strictEqual(v60ReloadAndMobileProbe.canvasTabSurvivedReload, true, 'Canvas/Git inspectorTab must survive page reload');
+    assert.strictEqual(v60ReloadAndMobileProbe.gitTabSurvivedReload, true, 'Git inspectorTab must survive page reload');
     assert.strictEqual(v60ReloadAndMobileProbe.openedOnMobile, true, 'Split-Watch must open when triggered');
     assert.strictEqual(v60ReloadAndMobileProbe.closedByEscapeOnMobile, true, 'Escape on mobile (<=900px) must close Split-Watch overlay');
-    console.log('[PASS] Adversarial #11: v60 Calm Chromatics, 31-Step Change-Set Compaction, @L Quote, 5 Built-in Studio Lenses, Parallel Split-Watch & PIN/403 Guards verified');
+    console.log('[PASS] Adversarial #11: Calm Chromatics, 31-Step Change-Set Compaction, @L Quote, 3-Tab Functional Inspector, Parallel Split-Watch & PIN/403 Guards verified');
 
     // -------------------------------------------------------------------------
     // Adversarial Check #12: v61 Composer De-clutter (No Direct/Reply pills),
@@ -2963,12 +3039,17 @@ async function main() {
       const toolsCard = document.querySelector('#chat-stream details.tools-details');
       const liveClickOpenedTrace = Boolean(thinkCard?.open && toolsCard?.open && liveBar?.classList.contains('is-expanded'));
 
-      // Check Outline tab in Split Inspector strips [LIVE WORKSTATION CONTEXT] & "# Resuming from a compaction"
-      const outlineTabBtn = document.querySelector('.insp-tab[data-insp-tab="outline"]');
-      outlineTabBtn?.click();
+      // Check Tasks & Outline tab in Split Inspector strips [LIVE WORKSTATION CONTEXT] & "# Resuming from a compaction"
+      if (document.getElementById('ide-inspector-pane')?.hidden) {
+        document.getElementById('btn-toggle-inspector')?.click();
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      const tasksTabBtn = document.querySelector('#ide-inspector-pane [data-insp-tab="tasks"]');
+      tasksTabBtn?.click();
       await new Promise((r) => setTimeout(r, 25));
-      const outlineText = document.getElementById('split-inspector-body')?.textContent || '';
+      const outlineText = document.getElementById('ide-inspector-body')?.textContent || '';
       const outlineClean =
+        outlineText.includes('Prompt #') &&
         !outlineText.includes('LIVE WORKSTATION CONTEXT') &&
         !outlineText.includes('Resuming from a compaction');
 
@@ -8462,7 +8543,7 @@ async function main() {
 
       const p2Probe = await evalJs(`(async () => {
         const swSrc = await fetch('./sw.js?t=' + Date.now()).then((r) => r.text());
-        const swHasV92 = swSrc.includes("'theo-remote-v92'");
+        const swHasV93 = swSrc.includes("'theo-remote-v93'");
         const titleCount = document.querySelectorAll('[title]').length;
         const ctxPillIdle = document.getElementById('ctx-pill-label')?.textContent?.trim() || '';
         const ctxHas22019 = ctxPillIdle.includes('22019');
@@ -8633,7 +8714,7 @@ async function main() {
           document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 
           return {
-            swHasV92,
+            swHasV93,
             titleCount,
             ctxHas22019,
             quotaCount,
@@ -8685,7 +8766,7 @@ async function main() {
         return { error: 'rowBefore missing' };
       })()`);
 
-      assert.strictEqual(p2Probe.swHasV92, true, 'sw.js must advertise theo-remote-v92');
+      assert.strictEqual(p2Probe.swHasV93, true, 'sw.js must advertise theo-remote-v93');
       assert.strictEqual(p2Probe.titleCount, 0, 'Zero native [title] tooltips allowed');
       assert.strictEqual(p2Probe.ctxHas22019, false, 'Context pill must never show hardcoded 22019 fallback');
       assert.ok(p2Probe.quotaCount >= 3, 'Model picker must render per-model quotaRemainingFraction bars');
@@ -8878,7 +8959,7 @@ async function main() {
 
       const shellAndRename = await evalJs(`(async () => {
         const swSrc = await fetch('./sw.js?t=' + Date.now()).then((r) => r.text());
-        const swHasV92 = swSrc.includes("'theo-remote-v92'");
+        const swHasV93 = swSrc.includes("'theo-remote-v93'");
         const actBarGone = document.querySelector('.ide-activity-bar') === null;
         const brandTxt = document.getElementById('btn-sidebar-brand')?.textContent?.trim() || '';
         const footerIds = ['rail-vault-btn', 'rail-workspaces-btn', 'rail-fleet-btn', 'rail-push-btn', 'open-cmd-palette', 'btn-palette-picker'];
@@ -9035,7 +9116,7 @@ async function main() {
         const overflowDesktop = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
 
         return {
-          swHasV92,
+          swHasV93,
           actBarGone,
           brandTxt,
           footerVisibleCount,
@@ -9073,7 +9154,7 @@ async function main() {
         };
       })()`);
 
-      assert.strictEqual(shellAndRename.swHasV92, true, 'Phase 3 sw.js must serve theo-remote-v92');
+      assert.strictEqual(shellAndRename.swHasV93, true, 'Phase 4 sw.js must serve theo-remote-v93');
       assert.strictEqual(shellAndRename.actBarGone, true, '.ide-activity-bar must not exist in Phase 3');
       assert.strictEqual(shellAndRename.brandTxt, 'THEO', 'Sidebar brand button must read "THEO"');
       assert.strictEqual(shellAndRename.footerVisibleCount, 6, 'Sidebar footer must display all 6 actions');
@@ -9117,6 +9198,405 @@ async function main() {
       assert.ok(mobileColdBoot.dockAnalyticsLbl.includes('Settings'), `5th mobile dock tab must read Settings, got "${mobileColdBoot.dockAnalyticsLbl}"`);
       assert.strictEqual(mobileColdBoot.overflowMobile, 0, '0px horizontal overflow on mobile cold boot');
       console.log('[PASS] Adversarial #28: Phase 3 (v92) Desktop Workbench Default, 1-Sidebar Shell, Single-Control Rule, Header Inline Rename & Copy Scrub verified');
+    }
+
+    // Adversarial Check #29: Phase 4 (v93) 3-Tab Functional Inspector, Session-True Git Workspace, No-VS-Code Gating, Hardened /compact, Cloud Store Attachment Cap & Pinned ⌘K Go-to-View Routes
+    {
+      try {
+        await cdp.send('Page.addScriptToEvaluateOnNewDocument', {
+          source: 'if (location.search.includes("allowprobe=1")) window.__THEO_ALLOW_PROBE_MOCK_FETCH = true;'
+        }, sessionId);
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 2, mobile: false }, sessionId);
+        const nowP4 = Date.now();
+        const p4Snap = {
+          generatedAt: new Date(nowP4).toISOString(),
+          devices: [
+            { id: 'host-novscode', name: 'Headless Host', online: true, pwaReady: { ready: true, okCount: 1, totalCount: 1, vscodeOpen: false, checks: [{ id: 'hub', ok: true, level: 'required', title: 'Hub', detail: 'OK' }] } },
+            { id: 'host-vscode', name: 'IDE Host', online: true, pwaReady: { ready: true, okCount: 1, totalCount: 1, vscodeOpen: true, checks: [{ id: 'hub', ok: true, level: 'required', title: 'Hub', detail: 'OK' }] } }
+          ],
+          device: { id: 'host-novscode', name: 'Headless Host', online: true },
+          rows: [
+            { id: 'p4-hub-s1', key: 'p4-hub-s1', title: 'Hub Session', provider: 'antigravity', cwd: 'C:\\Users\\hbdei\\bhfirms\\theo-hub', folder: 'theo-hub', model: 'Gemini 4 Carbon (High)', usedTokens: 380000, limitTokens: 512000, at: nowP4 - 1000, status: 'idle', deviceId: 'host-novscode' },
+            { id: 'p4-ide-s2', key: 'p4-ide-s2', title: 'IDE Session', provider: 'claude', cwd: 'C:\\Users\\hbdei\\bhfirms\\theo', folder: 'theo', model: 'Claude Opus 4.7', usedTokens: 42000, limitTokens: 1000000, at: nowP4 - 2000, status: 'idle', deviceId: 'host-vscode' },
+            { id: 'p4-mem-s3', key: 'p4-mem-s3', title: 'Vault Session', provider: 'antigravity', cwd: 'C:\\Users\\hbdei\\bhfirms\\memory', folder: 'memory', model: 'Gemini 4 Carbon (High)', usedTokens: 18000, limitTokens: 512000, at: nowP4 - 2500, status: 'idle', deviceId: 'host-vscode' },
+            ...Array.from({ length: 20 }, (_, i) => ({
+              id: 'p4-freq-' + i,
+              key: 'p4-freq-' + i,
+              title: 'Frequent Thread ' + i,
+              provider: 'antigravity',
+              folder: 'theo',
+              at: nowP4 - 5000 - i * 1000,
+              status: 'idle',
+              deviceId: 'host-novscode'
+            }))
+          ],
+          groups: [],
+          workspaces: [
+            { id: 'isabi-app', name: 'ISABI Command Center', branch: 'main', dirtyCount: 1, path: 'C:/Users/hbdei/bhfirms/isabi-app', modifiedFiles: [{ status: 'M', path: 'js/isabi.js' }], recentCommits: [{ hash: '111aaaa', subject: 'isabi commit', relativeTime: '1h' }] },
+            { id: 'theo-hub', name: 'THEO Hub', branch: 'main', dirtyCount: 2, path: 'C:/Users/hbdei/bhfirms/theo-hub', modifiedFiles: [{ status: 'M', path: 'remote.js' }, { status: 'M', path: 'store.js' }], recentCommits: [{ hash: '222bbbb', subject: 'hub commit', relativeTime: '10m' }] },
+            { id: 'theo', name: 'THEO Remote', branch: 'main', dirtyCount: 0, path: 'C:/Users/hbdei/bhfirms/theo', modifiedFiles: [], recentCommits: [] },
+            { id: 'theo-memory', name: 'THEO Memory', noGit: true, path: 'C:/Users/hbdei/bhfirms/memory', modifiedFiles: [], recentCommits: [] }
+          ],
+          approvals: [],
+          notifications: []
+        };
+        srv.mockStatePayload = p4Snap;
+        await evalJs(`((snapJson) => {
+          const snap = JSON.parse(snapJson);
+          const now = Date.now();
+          sessionStorage.removeItem('theo_pinned_nav_v1');
+          localStorage.setItem('theo_remote_prefs_v1', JSON.stringify({
+            theme: 'dark',
+            themeUserSet: true,
+            activeTab: 'chat',
+            desktopWorkbenchBootV92: true,
+            inspectorOpen: true,
+            inspectorTab: 'canvas',
+            selectedRepoId: 'resort-operations',
+            selectedThreadId: 'p4-hub-s1',
+            edgeAccessKey: 'e'.repeat(64),
+            freqUsage: {
+              threads: Object.fromEntries(Array.from({ length: 20 }, (_, i) => ['p4-freq-' + i, 50 - i])),
+              commands: {},
+              devices: {},
+              repos: {},
+              skills: {},
+              checks: {}
+            }
+          }));
+          localStorage.setItem('theo_remote_cache_v3', JSON.stringify({
+            state: snap,
+            snapshot: snap,
+            threads: {
+              'p4-hub-s1': {
+                id: 'p4-hub-s1',
+                provider: 'antigravity',
+                cwd: 'C:\\\\Users\\\\hbdei\\\\bhfirms\\\\theo-hub',
+                folder: 'theo-hub',
+                contextWindow: { usedTokens: 380000, limitTokens: 512000, modelLabel: 'Gemini 4 Carbon (High)' },
+                messages: [
+                  { id: 'u1', role: 'user', text: 'Check remote.js', createdAt: new Date(now - 3000).toISOString() },
+                  { id: 'a1', role: 'assistant', text: 'Updated remote.js', toolCalls: [{ kind: 'edit', relPath: 'remote.js', addedLines: 4, removedLines: 1 }], createdAt: new Date(now - 2000).toISOString() }
+                ]
+              },
+              'p4-ide-s2': {
+                id: 'p4-ide-s2',
+                provider: 'claude',
+                cwd: 'C:\\\\Users\\\\hbdei\\\\bhfirms\\\\theo',
+                folder: 'theo',
+                messages: [{ id: 'u2', role: 'user', text: 'Hello IDE', createdAt: new Date(now - 2000).toISOString() }]
+              },
+              'p4-mem-s3': {
+                id: 'p4-mem-s3',
+                provider: 'antigravity',
+                cwd: 'C:\\\\Users\\\\hbdei\\\\bhfirms\\\\memory',
+                folder: 'memory',
+                messages: [{ id: 'u3', role: 'user', text: 'Sync vault', createdAt: new Date(now - 2000).toISOString() }]
+              }
+            },
+            updatedAt: now
+          }));
+          return true;
+        })(${JSON.stringify(JSON.stringify(p4Snap))})`);
+        await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1&allowprobe=1` }, sessionId);
+        await new Promise((r) => setTimeout(r, 700));
+
+        const p4Check = await evalJs(`(async () => {
+          const migratedPrefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+          const tabIds = Array.from(document.querySelectorAll('#ide-inspector-tabs [data-insp-tab]')).map((b) => b.dataset.inspTab);
+          const studioLensGone = document.getElementById('studio-lens-bar') === null;
+
+          // Select remote.js in Files & Preview on p4-hub-s1
+          document.querySelector('#ide-inspector-tabs [data-insp-tab="files"]')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          document.querySelector('#ide-inspector-body [data-preview-file]')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          const hubSelectedFilePath = document.querySelector('#ide-inspector-subbar .insp-sub-path-txt')?.textContent || '';
+
+          // Open Git tab: must resolve session's own workspace ('theo-hub', remote.js/store.js), NOT 'isabi-app' or 'resort-operations'
+          document.querySelector('#ide-inspector-tabs [data-insp-tab="git"]')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          const gitSubText = document.querySelector('#ide-inspector-subbar .insp-sub-path-txt')?.textContent || '';
+          const gitBodyText = document.getElementById('ide-inspector-body')?.textContent || '';
+
+          // Tasks & Outline tab combines Outline + Tasks + Checks
+          document.querySelector('#ide-inspector-tabs [data-insp-tab="tasks"]')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          const tasksBodyText = document.getElementById('ide-inspector-body')?.textContent || '';
+
+          // No-VS-Code gating: host-novscode hides #btn-chat-open-vscode & context menu Reveal
+          const ideBtnHiddenNoVsCode = document.getElementById('btn-chat-open-vscode')?.hidden === true;
+          document.querySelector('.ide-tree-row[data-ide-open-session="p4-hub-s1"] [data-sess-ctx-menu]')?.click();
+          await new Promise((r) => setTimeout(r, 25));
+          const ctxRevealHiddenNoVsCode = document.querySelector('#ide-context-menu [data-ctx-menu-act="open-vscode"]') === null;
+          window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          await new Promise((r) => setTimeout(r, 20));
+
+          // Switch to __new__ session: activeInspectorFileTarget (remote.js) MUST clear instead of leaking into __new__
+          document.querySelector('#ide-inspector-tabs [data-insp-tab="files"]')?.click();
+          await new Promise((r) => setTimeout(r, 25));
+          document.getElementById('rail-new-agy')?.click();
+          await new Promise((r) => setTimeout(r, 35));
+          const newDraftFileSubText = document.querySelector('#ide-inspector-subbar .insp-sub-path-txt')?.textContent || '';
+
+          // Switch to p4-mem-s3 (theo-memory): Git tab renders Vault Sync & Memory Vault Workspace and hides Summarize & Commit
+          document.querySelector('.ide-tree-row[data-ide-open-session="p4-mem-s3"]')?.click();
+          await new Promise((r) => setTimeout(r, 35));
+          document.querySelector('#ide-inspector-tabs [data-insp-tab="git"]')?.click();
+          await new Promise((r) => setTimeout(r, 35));
+          const memGitSubText = document.querySelector('#ide-inspector-subbar .insp-sub-path-txt')?.textContent || '';
+          const memGitBodyText = document.getElementById('ide-inspector-body')?.textContent || '';
+          const memHasCommitBtn = document.querySelector('#ide-inspector-body [data-git-prompt-action="commit"]') !== null;
+
+          // Switch to host-vscode session (p4-ide-s2): remote.js remains cleared & #btn-chat-open-vscode + Reveal appear online
+          document.querySelector('.ide-tree-row[data-ide-open-session="p4-ide-s2"]')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          document.querySelector('#ide-inspector-tabs [data-insp-tab="files"]')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          const ideFileLeakCheck = document.querySelector('#ide-inspector-subbar .insp-sub-path-txt')?.textContent || '';
+          document.getElementById('btn-chat-more')?.click();
+          await new Promise((r) => setTimeout(r, 25));
+          const ideBtnVisibleWithVsCode = document.getElementById('btn-chat-open-vscode')?.hidden === false;
+          const ideBtnInsideMoreMenu = Boolean(document.getElementById('chat-more-menu')?.contains(document.getElementById('btn-chat-open-vscode')));
+          window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          await new Promise((r) => setTimeout(r, 20));
+          document.querySelector('.ide-tree-row[data-ide-open-session="p4-ide-s2"] [data-sess-ctx-menu]')?.click();
+          await new Promise((r) => setTimeout(r, 25));
+          const ctxRevealVisibleWithVsCode = document.querySelector('#ide-context-menu [data-ctx-menu-act="open-vscode"]') !== null;
+          window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          await new Promise((r) => setTimeout(r, 20));
+
+          // Hardened /compact: switch back to p4-hub-s1, trigger /compact via #btn-ctx-compact
+          document.querySelector('.ide-tree-row[data-ide-open-session="p4-hub-s1"]')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          window.__theoLastQuarantinedCmd = null;
+          document.getElementById('btn-ctx-compact')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          const compactCmdSent = window.__theoLastQuarantinedCmd?.subAction === 'compact';
+          const optimisticCompactShown = Boolean(document.querySelector('#chat-stream .user-compact-cmd-pill'));
+
+          // Simulate server returning checkpoint + post-compact assistant summary + 92k contextWindow while stale row had 380k & compacted=false
+          const cached = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+          cached.threads['p4-hub-s1'].contextWindow = { usedTokens: 92000, limitTokens: 512000, modelLabel: 'Gemini 4 Carbon (High)' };
+          cached.threads['p4-hub-s1'].messages.push(
+            { id: 'cp-post', role: 'checkpoint', text: 'Compacted summary', createdAt: new Date().toISOString() },
+            { id: 'a-summary', role: 'assistant', text: 'Resuming compact summary', createdAt: new Date().toISOString() }
+          );
+          localStorage.setItem('theo_remote_cache_v3', JSON.stringify(cached));
+          return {
+            migratedInspectorTab: migratedPrefs.inspectorTab,
+            migratedRepoId: migratedPrefs.selectedRepoId,
+            tabIds,
+            studioLensGone,
+            gitSubText,
+            gitBodyHasHubFiles: gitBodyText.includes('remote.js') && gitBodyText.includes('store.js') && !gitBodyText.includes('js/isabi.js'),
+            tasksHasOutlineAndChecks: tasksBodyText.includes('Turn & Artifact Outline') && tasksBodyText.includes('Background Tasks & Subagents') && tasksBodyText.includes('Workspace Verification Checks'),
+            ideBtnHiddenNoVsCode,
+            ctxRevealHiddenNoVsCode,
+            newDraftFileCleared: !newDraftFileSubText.includes('remote.js'),
+            memGitSubText,
+            memGitVaultShown: memGitBodyText.includes('Memory Vault Workspace'),
+            memHasCommitBtn,
+            ideBtnVisibleWithVsCode,
+            ideBtnInsideMoreMenu,
+            ctxRevealVisibleWithVsCode,
+            compactCmdSent,
+            optimisticCompactShown,
+            hubSelectedFilePath,
+            ideFileLeakCleared: !ideFileLeakCheck.includes('remote.js')
+          };
+        })()`);
+
+        assert.strictEqual(p4Check.migratedInspectorTab, 'files', 'Saved canvas tab must migrate to files on boot');
+        assert.strictEqual(p4Check.migratedRepoId, 'isabi-app', 'Retired selectedRepoId resort-operations must reset on boot');
+        assert.deepStrictEqual(p4Check.tabIds, ['files', 'git', 'tasks'], 'Inspector must have exact 3 tabs: files, git, tasks');
+        assert.strictEqual(p4Check.studioLensGone, true, '#studio-lens-bar must be removed');
+        assert.ok(p4Check.hubSelectedFilePath.includes('remote.js'), `p4-hub-s1 should open remote.js preview, got: ${p4Check.hubSelectedFilePath}`);
+        assert.strictEqual(p4Check.newDraftFileCleared, true, 'Switching from p4-hub-s1 to __new__ must clear activeInspectorFileTarget');
+        assert.strictEqual(p4Check.memGitSubText.includes('Vault Sync') && p4Check.memGitVaultShown && !p4Check.memHasCommitBtn, true, 'theo-memory Git tab must show Vault Sync & Memory Vault Workspace with no commit button');
+        assert.strictEqual(p4Check.ideFileLeakCleared, true, 'Switching from p4-hub-s1 to p4-ide-s2 must clear activeInspectorFileTarget so remote.js does not leak');
+        assert.ok(p4Check.gitSubText.includes('THEO Hub') && p4Check.gitBodyHasHubFiles, `Git tab must bind to session workspace theo-hub, got: ${p4Check.gitSubText}`);
+        assert.strictEqual(p4Check.tasksHasOutlineAndChecks, true, 'Tasks & Outline tab must render Outline, Tasks, and Checks sections');
+        assert.strictEqual(p4Check.ideBtnHiddenNoVsCode, true, 'Open in IDE must stay hidden when host vscodeOpen is false');
+        assert.strictEqual(p4Check.ctxRevealHiddenNoVsCode, true, 'Context menu Reveal in Desktop VS Code must hide when vscodeOpen is false');
+        assert.strictEqual(p4Check.ideBtnVisibleWithVsCode && p4Check.ideBtnInsideMoreMenu, true, 'Open in IDE must appear inside #chat-more-menu when vscodeOpen is true');
+        assert.strictEqual(p4Check.ctxRevealVisibleWithVsCode, true, 'Context menu Reveal in Desktop VS Code must appear when vscodeOpen is true');
+        assert.strictEqual(p4Check.compactCmdSent && p4Check.optimisticCompactShown, true, '/compact must dispatch and show optimistic /compact pill');
+
+        // Verify post-compaction token refresh drop (380k -> 92k) on [cp-post, a-summary], Pinned ⌘K Go to View routes, Attachment Cloud guard & Chunk-failure rollback
+        await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1&allowprobe=1` }, sessionId);
+        await new Promise((r) => setTimeout(r, 700));
+        const p4PostCompactAndCmdAndAttach = await evalJs(`(async () => {
+          const ctxPillAfterCompact = document.getElementById('ctx-pill-label')?.textContent?.trim() || '';
+
+          // Folded #1: Unfiltered ⌘K with 20 high-frequency threads MUST still pin all 4 Go-to-View routes
+          document.getElementById('open-cmd-palette')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          const cmdActs = Array.from(document.querySelectorAll('#cmd-results [data-cmd-act]')).map((b) => b.dataset.cmdAct);
+          const hasAll4Views = ['tab-pulse', 'tab-sessions', 'tab-workspaces', 'tab-analytics'].every((v) => cmdActs.includes(v));
+          document.getElementById('cmd-close')?.click();
+          await new Promise((r) => setTimeout(r, 20));
+
+          // Attachment 8 MB rejection + Cloud fallback (~250 KB) block
+          window.__THEO_TEST_FORCE_TRANSPORT_MODE = 'cloud';
+          const compInp = document.getElementById('composer-input');
+          const dtBig = new DataTransfer();
+          const over8MbFile = new File([new Uint8Array(8 * 1024 * 1024 + 32)], 'huge-video.bin', { type: 'application/octet-stream' });
+          dtBig.items.add(over8MbFile);
+          const fileInp = document.getElementById('composer-file-input');
+          Object.defineProperty(fileInp, 'files', { value: dtBig.files, configurable: true });
+          fileInp.dispatchEvent(new Event('change', { bubbles: true }));
+          await new Promise((r) => setTimeout(r, 40));
+          const zeroGhostAfter8Mb = document.querySelectorAll('#composer-attachments .composer-attach-pill').length === 0;
+
+          // 300 KB binary file (~400 KB base64) triggers Cloud Store fallback warning and blocks submit without losing draft
+          const dtMed = new DataTransfer();
+          const medBin = new File([new Uint8Array(300 * 1024)], 'capture.bin', { type: 'application/octet-stream' });
+          dtMed.items.add(medBin);
+          Object.defineProperty(fileInp, 'files', { value: dtMed.files, configurable: true });
+          fileInp.dispatchEvent(new Event('change', { bubbles: true }));
+          await new Promise((r) => setTimeout(r, 80));
+          const hasCloudWarn = Boolean(document.querySelector('#composer-attachments .composer-attach-warn'));
+          const hasOverCapPill = Boolean(document.querySelector('#composer-attachments .composer-attach-pill.is-over-cloud-cap'));
+          if (compInp) compInp.value = 'Inspect binary';
+          window.__theoLastQuarantinedCmd = null;
+          document.getElementById('chat-composer-form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+          await new Promise((r) => setTimeout(r, 40));
+          const cloudBlockedSend = window.__theoLastQuarantinedCmd === null;
+          const draftPreserved = document.getElementById('composer-input')?.value === 'Inspect binary';
+          document.querySelector('#composer-attachments [data-remove-attach]')?.click();
+          if (compInp) compInp.value = '';
+          delete window.__THEO_TEST_FORCE_TRANSPORT_MODE;
+
+          // Failed send / chunk-upload rollback in submitComposerPrompt: preserves draft + attachment, removes optimistic message & Working state, shows error toast (no Outbox)
+          const dtSmall = new DataTransfer();
+          const smallFile = new File(['hello-world'], 'notes.txt', { type: 'text/plain' });
+          dtSmall.items.add(smallFile);
+          Object.defineProperty(fileInp, 'files', { value: dtSmall.files, configurable: true });
+          fileInp.dispatchEvent(new Event('change', { bubbles: true }));
+          await new Promise((r) => setTimeout(r, 50));
+          if (compInp) compInp.value = 'Chunk rollback test';
+          window.__THEO_TEST_QUARANTINE_RES = { ok: false, blocked: 'attachment_chunk_failed', error: 'Large attachment chunk upload failed over Edge WS.' };
+          let rollbackDraftRestored = false;
+          let rollbackAttachRestored = false;
+          let rollbackNoPhantomTurn = false;
+          let rollbackNoOutboxToast = false;
+          try {
+            document.getElementById('chat-composer-form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+            await new Promise((r) => setTimeout(r, 60));
+            rollbackDraftRestored = document.getElementById('composer-input')?.value === 'Chunk rollback test';
+            rollbackAttachRestored = document.querySelectorAll('#composer-attachments .composer-attach-pill').length === 1;
+            rollbackNoPhantomTurn = !(document.getElementById('chat-stream')?.textContent || '').includes('Chunk rollback test');
+            const toastTxt = document.getElementById('toast-stack')?.textContent || '';
+            rollbackNoOutboxToast = toastTxt.includes('chunk upload failed') && !toastTxt.includes('Outbox');
+          } finally {
+            delete window.__THEO_TEST_QUARANTINE_RES;
+            document.querySelector('#composer-attachments [data-remove-attach]')?.click();
+            if (compInp) compInp.value = '';
+          }
+
+          // Open #chat-more-menu on desktop and check 0px overflow
+          document.getElementById('btn-chat-more')?.click();
+          await new Promise((r) => setTimeout(r, 25));
+          const desktopOverflow = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+          window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          return {
+            ctxPillAfterCompact,
+            hasAll4Views,
+            zeroGhostAfter8Mb,
+            hasCloudWarn,
+            hasOverCapPill,
+            cloudBlockedSend,
+            draftPreserved,
+            rollbackDraftRestored,
+            rollbackAttachRestored,
+            rollbackNoPhantomTurn,
+            rollbackNoOutboxToast,
+            desktopOverflow,
+            titleAttrsCount: document.querySelectorAll('[title]').length
+          };
+        })()`);
+
+        assert.ok(p4PostCompactAndCmdAndAttach.ctxPillAfterCompact.includes('92k'), `Post-compaction context pill must refresh to 92k even when assistant summary follows checkpoint and row still cached 380k, got: ${p4PostCompactAndCmdAndAttach.ctxPillAfterCompact}`);
+        assert.strictEqual(p4PostCompactAndCmdAndAttach.hasAll4Views, true, 'Folded #1: unfiltered ⌘K must keep all 4 Go-to-View routes pinned even with 20 high-frequency threads');
+        assert.strictEqual(p4PostCompactAndCmdAndAttach.zeroGhostAfter8Mb, true, '>8 MB file must be rejected with 0 ghost attachment pills');
+        assert.strictEqual(p4PostCompactAndCmdAndAttach.hasCloudWarn && p4PostCompactAndCmdAndAttach.hasOverCapPill, true, 'Cloud fallback must warn and highlight oversized binary attachments');
+        assert.strictEqual(p4PostCompactAndCmdAndAttach.cloudBlockedSend && p4PostCompactAndCmdAndAttach.draftPreserved, true, 'Cloud fallback must block oversized send while preserving composer draft');
+        assert.strictEqual(
+          p4PostCompactAndCmdAndAttach.rollbackDraftRestored &&
+            p4PostCompactAndCmdAndAttach.rollbackAttachRestored &&
+            p4PostCompactAndCmdAndAttach.rollbackNoPhantomTurn &&
+            p4PostCompactAndCmdAndAttach.rollbackNoOutboxToast,
+          true,
+          `submitComposerPrompt failure must restore draft/attachment without phantom turn or Outbox toast: ${JSON.stringify(p4PostCompactAndCmdAndAttach)}`
+        );
+        assert.strictEqual(p4PostCompactAndCmdAndAttach.desktopOverflow, 0, '0px desktop horizontal overflow');
+        assert.strictEqual(p4PostCompactAndCmdAndAttach.titleAttrsCount, 0, '0 [title] attributes');
+
+        // Verify subsequent post-compaction turns grow context tokens (92k -> 185k) even while activeRow.compacted=true and stale row=92000
+        const p4SnapGrowth = JSON.parse(JSON.stringify(p4Snap));
+        const gRow = p4SnapGrowth.rows.find((r) => r.id === 'p4-hub-s1');
+        gRow.usedTokens = 92000;
+        gRow.compacted = true;
+        srv.mockStatePayload = p4SnapGrowth;
+        await evalJs(`(() => {
+          const cached = JSON.parse(localStorage.getItem('theo_remote_cache_v3') || '{}');
+          const td = cached.threads['p4-hub-s1'];
+          const snapRow = (cached.snapshot?.rows || []).find((r) => r.id === 'p4-hub-s1');
+          if (snapRow) { snapRow.usedTokens = 92000; snapRow.compacted = true; }
+          if (cached.state?.rows) {
+            const stRow = cached.state.rows.find((r) => r.id === 'p4-hub-s1');
+            if (stRow) { stRow.usedTokens = 92000; stRow.compacted = true; }
+          }
+          td.contextWindow = { usedTokens: 185000, limitTokens: 512000, modelLabel: 'Gemini 4 Carbon (High)' };
+          td.messages.push(
+            { id: 'u-post', role: 'user', text: 'Next step after compact', createdAt: new Date().toISOString() },
+            { id: 'a-post', role: 'assistant', text: 'Working on next step', createdAt: new Date().toISOString() }
+          );
+          localStorage.setItem('theo_remote_cache_v3', JSON.stringify(cached));
+        })()`);
+        await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1&allowprobe=1` }, sessionId);
+        await new Promise((r) => setTimeout(r, 700));
+        const ctxPillPostGrowth = await evalJs(`document.getElementById('ctx-pill-label')?.textContent?.trim() || ''`);
+        assert.ok(ctxPillPostGrowth.includes('185k'), `Post-compaction subsequent turn must grow to 185k even with compacted=true on row, got: ${ctxPillPostGrowth}`);
+
+        // Offline client check (native CDP offline sets navigator.onLine=false while cached snapshot still has host-vscode.online=true & vscodeOpen=true): MUST hide Open in IDE & Reveal
+        await evalJs(`(async () => {
+          document.querySelector('.ide-tree-row[data-ide-open-session="p4-ide-s2"]')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+        })()`);
+        const onlinePreCheck = await evalJs(`document.getElementById('btn-chat-open-vscode')?.hidden === false`);
+        assert.strictEqual(onlinePreCheck, true, 'p4-ide-s2 Open in IDE must be visible online before offline transition');
+        await cdp.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }, sessionId);
+        const offlineIdeCheck = await evalJs(`(async () => {
+          window.dispatchEvent(new Event('offline'));
+          await new Promise((r) => setTimeout(r, 30));
+          const ideBtnHiddenOffline = document.getElementById('btn-chat-open-vscode')?.hidden === true;
+          document.querySelector('.ide-tree-row[data-ide-open-session="p4-ide-s2"] [data-sess-ctx-menu]')?.click();
+          await new Promise((r) => setTimeout(r, 25));
+          const ctxRevealHiddenOffline = document.querySelector('#ide-context-menu [data-ctx-menu-act="open-vscode"]') === null;
+          window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          return { ideBtnHiddenOffline, ctxRevealHiddenOffline };
+        })()`);
+        await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }, sessionId);
+        await evalJs(`window.dispatchEvent(new Event('online'))`);
+        assert.strictEqual(offlineIdeCheck.ideBtnHiddenOffline && offlineIdeCheck.ctxRevealHiddenOffline, true, 'Offline client must hide Open in IDE & context-menu Reveal even when cached host reports vscodeOpen: true');
+
+        // Mobile 390x844 overflow check with #chat-more-menu open
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true }, sessionId);
+        const mobOverflowP4 = await evalJs(`(async () => {
+          document.getElementById('btn-chat-more')?.click();
+          await new Promise((r) => setTimeout(r, 25));
+          const ov = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+          window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          return ov;
+        })()`);
+        assert.strictEqual(mobOverflowP4, 0, '0px horizontal overflow on 390x844 mobile with #chat-more-menu open');
+        console.log('[PASS] Adversarial #29: Phase 4 (v93) 3-Tab Inspector, Session Workspace Truth, No-VS-Code Gating, Offline Gating, Hardened /compact, Chunk Rollback, Attachment Cloud Guard & Pinned ⌘K Views verified');
+      } finally {
+        srv.mockStatePayload = null;
+        await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }, sessionId).catch(() => {});
+      }
     }
 
     // Final error & network quarantine assertions (#21)

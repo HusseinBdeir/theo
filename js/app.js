@@ -1055,6 +1055,25 @@
       (typeof window !== 'undefined' && window.__THEO_HEADLESS_TEST)
   );
 
+  const RETIRED_WORKSPACE_IDS = new Set([
+    'resort-operations',
+    'trading-operations',
+    'manufacturing-operations',
+    'holding-operations',
+    'realestate-operations',
+    'insurance-operations',
+    'codex-hub',
+    'agent-board'
+  ]);
+
+  function normalizeInspectorTab(raw) {
+    const t = String(raw || '').trim().toLowerCase();
+    if (t === 'files' || t === 'code' || t === 'canvas') return 'files';
+    if (t === 'git') return 'git';
+    if (t === 'tasks' || t === 'agents' || t === 'checks' || t === 'outline') return 'tasks';
+    return 'files';
+  }
+
   const DEFAULT_PREFS = {
     theme: 'dark',
     themeUserSet: false,
@@ -1064,7 +1083,7 @@
     sidebarFilter: 'all',
     openEditorTabs: [],
     inspectorOpen: false,
-    inspectorTab: 'code',
+    inspectorTab: 'files',
     inspectorViewMode: 'source',
     inspectorFullStage: false,
     splitWatchOpen: false,
@@ -1135,8 +1154,13 @@
   }
   prefs.sidebarCollapsed = Boolean(prefs.sidebarCollapsed);
   prefs.inspectorOpen = Boolean(prefs.inspectorOpen);
-  if (!['code', 'git', 'canvas', 'agents', 'outline'].includes(prefs.inspectorTab)) {
-    prefs.inspectorTab = 'code';
+  const rawInspTab = String(prefs.inspectorTab || '');
+  prefs.inspectorTab = normalizeInspectorTab(rawInspTab);
+  if (RETIRED_WORKSPACE_IDS.has(String(prefs.selectedRepoId || '').trim())) {
+    prefs.selectedRepoId = 'isabi-app';
+  }
+  if (rawStoredPrefs && (rawInspTab !== prefs.inspectorTab || RETIRED_WORKSPACE_IDS.has(String(rawStoredPrefs.selectedRepoId || '').trim()))) {
+    saveJson(STORAGE_KEYS.PREFS, prefs);
   }
   if (!['preview', 'source', 'diff'].includes(prefs.inspectorViewMode)) {
     prefs.inspectorViewMode = 'source';
@@ -4428,6 +4452,9 @@
       ctxMenu.hidden = true;
       ctxMenu.innerHTML = '';
     }
+    const chatMoreMenu = $('chat-more-menu');
+    if (chatMoreMenu) chatMoreMenu.hidden = true;
+    $('btn-chat-more')?.setAttribute('aria-expanded', 'false');
     if (typeof ideMenuPinFreeze !== 'undefined' && ideMenuPinFreeze) {
       ideMenuPinFreeze = false;
       if (typeof flushDeferredIdeTreeOrder === 'function') flushDeferredIdeTreeOrder();
@@ -7112,6 +7139,39 @@
     return s;
   }
 
+  const MAX_LIVE_WS_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+  const MAX_CLOUD_FALLBACK_CHARS = 360 * 1024;
+
+  function hasLiveAttachmentTransport(targetDeviceId = '') {
+    if (window.__THEO_TEST_FORCE_TRANSPORT_MODE === 'cloud') return false;
+    const targetsOther = Boolean(
+      targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id
+    );
+    if (localWsAuthed && localWs && localWs.readyState === 1 && !targetsOther) return true;
+    if (edgeWsAuthed && edgeWs && edgeWs.readyState === 1) return true;
+    if (connMode === 'local' && Boolean(localBridgeBase) && !targetsOther) return true;
+    return false;
+  }
+
+  function calcAttachmentsPayloadChars(atts) {
+    if (!Array.isArray(atts) || !atts.length) return 0;
+    return atts.reduce(
+      (sum, a) => sum + String(a?.dataUrl || '').length + String(a?.textContent || '').length,
+      0
+    );
+  }
+
+  function compactAttachmentsForCloudFallback(atts) {
+    if (!Array.isArray(atts) || !atts.length) return [];
+    return atts.map((a) => {
+      if (!a) return a;
+      if (a.textContent && String(a.dataUrl || '').length > 0) {
+        return { ...a, dataUrl: '' };
+      }
+      return a;
+    });
+  }
+
   async function uploadLargeAttachmentsOverWs(wsConn, isEdge, targetDeviceId, attachments) {
     if (!Array.isArray(attachments) || attachments.length === 0) return attachments;
     const CHUNK_CHAR_SIZE = 240000;
@@ -7155,7 +7215,13 @@
           textContent: att.textContent || ''
         });
       } else {
-        out.push(att);
+        out.push({
+          name: att.name,
+          mime: att.mime,
+          size: att.size,
+          textContent: att.textContent || '',
+          chunkUploadFailed: true
+        });
       }
     }
     return out;
@@ -7220,6 +7286,9 @@
       try {
         window.__theoLastQuarantinedCmd = cmd;
       } catch {}
+      if (window.__THEO_TEST_QUARANTINE_RES && typeof window.__THEO_TEST_QUARANTINE_RES === 'object') {
+        return { ...window.__THEO_TEST_QUARANTINE_RES, id: cmd.id };
+      }
       return { ok: true, mode: 'quarantined', id: cmd.id };
     }
 
@@ -7235,6 +7304,13 @@
         const wsAttachments = Array.isArray(cmd.attachments) && cmd.attachments.length
           ? await uploadLargeAttachmentsOverWs(localWs, false, resolvedTargetDevice, cmd.attachments)
           : cmd.attachments;
+        if (Array.isArray(wsAttachments) && wsAttachments.some((a) => a && a.chunkUploadFailed)) {
+          return {
+            ok: false,
+            blocked: 'attachment_chunk_failed',
+            error: 'Large attachment chunk upload failed over Direct WS.'
+          };
+        }
         const wsRes = await sendWsRpc(
           localWs,
           {
@@ -7263,6 +7339,13 @@
         const edgeAttachments = Array.isArray(cmd.attachments) && cmd.attachments.length
           ? await uploadLargeAttachmentsOverWs(edgeWs, true, resolvedTargetDevice, cmd.attachments)
           : cmd.attachments;
+        if (Array.isArray(edgeAttachments) && edgeAttachments.some((a) => a && a.chunkUploadFailed)) {
+          return {
+            ok: false,
+            blocked: 'attachment_chunk_failed',
+            error: 'Large attachment chunk upload failed over Edge WS.'
+          };
+        }
         const edgeRes = await sendWsRpc(
           edgeWs,
           {
@@ -7319,6 +7402,18 @@
     // a live link or not at all: it is never written to the cloud queue or kept in this device's outbox.
     if (cmdObj?.liveOnly) {
       return { ok: false, mode: 'no_live_link', id: cmd.id };
+    }
+
+    if (Array.isArray(cmd.attachments) && cmd.attachments.length > 0) {
+      const slimmedAtts = compactAttachmentsForCloudFallback(cmd.attachments);
+      if (calcAttachmentsPayloadChars(slimmedAtts) > MAX_CLOUD_FALLBACK_CHARS) {
+        return {
+          ok: false,
+          blocked: 'attachment_too_large_for_cloud',
+          error: 'Attachment exceeds 250 KB Cloud Store fallback limit; connect live Edge WS for up to 8 MB.'
+        };
+      }
+      cmd.attachments = slimmedAtts;
     }
 
     // 4. Cloud Relay Command Queue (serialized + fast get_control)
@@ -9750,9 +9845,8 @@
     const hasCustomGroup = Boolean(
       r.group && (appState?.groups || []).some((g) => g && g.id === r.group)
     );
-    // "Reveal in VS Code" is offered only where a VS Code window is open (or the PC's build does not say).
-    const rowHost = getUnifiedFleetDevices().find((d) => d && d.id === r.deviceId);
-    const canRevealInVsCode = !rowHost?.pwaReady || Boolean(rowHost.pwaReady.vscodeOpen);
+    // "Reveal in VS Code" is offered only when connected and that host reports VS Code open and online.
+    const canRevealInVsCode = isHostVsCodeOpenForSession(r, false);
     menuEl.innerHTML = `
       <button type="button" class="ctx-menu-item" data-ctx-menu-act="open" data-id="${esc(r.id)}" data-prov="${provKey}">
         <span>Open in Workbench</span><span class="meta-timestamp">↵</span>
@@ -13246,6 +13340,7 @@
   const activeDeliverableBlobUrls = new Set();
   const activeDockStepByCardKey = new Map();
   let activeInspectorFileTarget = '';
+  let activeInspectorSessionId = '';
   let activeInspectorAgentId = '';
   let lastScrolledInspectorHlKey = '';
   let inspectorFetchSeq = 0;
@@ -13609,7 +13704,10 @@
     const page = Math.max(1, Number(opts.page || 1));
     const forceRefresh = Boolean(opts.forceRefresh);
     const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
-    const wsId = String(prefs.selectedRepoId || activeRow?.folder || '').trim();
+    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid) || null;
+    const wsCtx = resolveSessionWorkspaceContext(matchedRow, threadsCache[sid] || null);
+    const wsId = wsCtx.wsId;
+    const rpcWsId = wsCtx.rpcWsId;
     const cacheKey = `${sid || wsId || 'global'}::${parsed.filePath.replace(/\\/g, '/')}`;
     const pageKey = `${cacheKey}::p${page}`;
 
@@ -13624,7 +13722,6 @@
     }
 
     const seq = (opts.backgroundPrefetch || opts.batchRender) ? inspectorFetchSeq : ++inspectorFetchSeq;
-    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid);
     const targetDeviceId = matchedRow?.deviceId || '';
     const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
     const effectiveLocalBase =
@@ -13641,7 +13738,7 @@
     try {
       if (effectiveLocalBase && allowProbeHttp) {
         try {
-          const q = `path=${encodeURIComponent(parsed.filePath)}&sessionId=${encodeURIComponent(sid)}&workspaceId=${encodeURIComponent(wsId)}&page=${page}`;
+          const q = `path=${encodeURIComponent(parsed.filePath)}&sessionId=${encodeURIComponent(sid)}&workspaceId=${encodeURIComponent(rpcWsId)}&page=${page}`;
           const res = await authFetchLocal(`${effectiveLocalBase}/api/deliverable-preview?${q}`);
           const data = await res.json().catch(() => null);
           if (data && typeof data === 'object') result = data;
@@ -13659,7 +13756,7 @@
                 type: 'getDeliverablePreview',
                 path: parsed.filePath,
                 sessionId: sid,
-                workspaceId: wsId,
+                workspaceId: rpcWsId,
                 page,
                 transport: 'ws'
               }
@@ -13673,7 +13770,7 @@
                 payload,
                 parsed.filePath,
                 sid,
-                wsId,
+                rpcWsId,
                 effectiveLocalBase,
                 allowProbeHttp,
                 targetDeviceId
@@ -13761,8 +13858,8 @@
     const parsed = parsePreviewTargetClient(rawTarget);
     if (!parsed.filePath) return;
     const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
-    const wsId = String(prefs.selectedRepoId || activeRow?.folder || '').trim();
-    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid);
+    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid) || null;
+    const rpcWsId = resolveSessionWorkspaceContext(matchedRow, threadsCache[sid] || null).rpcWsId;
     const targetDeviceId = matchedRow?.deviceId || '';
     const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
     const effectiveLocalBase =
@@ -13777,7 +13874,7 @@
         const res = await authFetchLocal(`${effectiveLocalBase}/api/open-deliverable-app`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: parsed.filePath, sessionId: sid, workspaceId: wsId })
+          body: JSON.stringify({ path: parsed.filePath, sessionId: sid, workspaceId: rpcWsId })
         });
         out = await res.json().catch(() => null);
       } catch {}
@@ -13788,7 +13885,7 @@
           {
             type: 'rpc_cmd',
             targetDeviceId,
-            cmd: { type: 'openDeliverableApp', path: parsed.filePath, sessionId: sid, workspaceId: wsId }
+            cmd: { type: 'openDeliverableApp', path: parsed.filePath, sessionId: sid, workspaceId: rpcWsId }
           },
           10000
         );
@@ -13806,10 +13903,12 @@
     const parsed = parsePreviewTargetClient(rawTarget);
     if (!parsed.filePath) return;
     const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
-    const wsId = String(prefs.selectedRepoId || activeRow?.folder || '').trim();
+    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid) || null;
+    const wsCtx = resolveSessionWorkspaceContext(matchedRow, threadsCache[sid] || null);
+    const wsId = wsCtx.wsId;
+    const rpcWsId = wsCtx.rpcWsId;
     const cacheKey = `${sid || wsId || 'global'}::${parsed.filePath.replace(/\\/g, '/')}`;
     const cached = deliverablePreviewCache.get(cacheKey);
-    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid);
     const targetDeviceId = matchedRow?.deviceId || '';
     const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
     const effectiveLocalBase =
@@ -13826,7 +13925,7 @@
       blob = new Blob([cached.rawBytes], { type: cached?.rawMime || 'application/octet-stream' });
     } else if (effectiveLocalBase) {
       try {
-        const q = `path=${encodeURIComponent(parsed.filePath)}&sessionId=${encodeURIComponent(sid)}&workspaceId=${encodeURIComponent(wsId)}`;
+        const q = `path=${encodeURIComponent(parsed.filePath)}&sessionId=${encodeURIComponent(sid)}&workspaceId=${encodeURIComponent(rpcWsId)}`;
         const res = await authFetchLocal(`${effectiveLocalBase}/api/deliverable-raw?${q}`);
         if (res.ok) {
           blob = await res.blob();
@@ -13842,7 +13941,7 @@
             {
               type: 'rpc_cmd',
               targetDeviceId,
-              cmd: { type: 'getDeliverableChunk', path: parsed.filePath, sessionId: sid, workspaceId: wsId, offset, length: 512 * 1024, channel: 'raw' }
+              cmd: { type: 'getDeliverableChunk', path: parsed.filePath, sessionId: sid, workspaceId: rpcWsId, offset, length: 512 * 1024, channel: 'raw' }
             },
             15000
           );
@@ -13895,14 +13994,16 @@
     const parsed = parsePreviewTargetClient(rawTarget);
     if (!parsed.filePath) return null;
     const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
-    const wsId = String(prefs.selectedRepoId || activeRow?.folder || '').trim();
+    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid) || null;
+    const wsCtx = resolveSessionWorkspaceContext(matchedRow, threadsCache[sid] || null);
+    const wsId = wsCtx.wsId;
+    const rpcWsId = wsCtx.rpcWsId;
     const cacheKey = `${sid || wsId || 'global'}::${parsed.filePath.replace(/\\/g, '/')}`;
     const seq = ++inspectorFetchSeq;
     if (!forceRefresh && filePreviewCache.has(cacheKey)) {
       return filePreviewCache.get(cacheKey);
     }
 
-    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid);
     const targetDeviceId = matchedRow?.deviceId || '';
     const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
     let result = null;
@@ -13920,7 +14021,7 @@
     try {
       if (effectiveLocalBase && allowProbeHttp) {
         try {
-          const q = `path=${encodeURIComponent(rawTarget)}&sessionId=${encodeURIComponent(sid)}&workspaceId=${encodeURIComponent(wsId)}`;
+          const q = `path=${encodeURIComponent(rawTarget)}&sessionId=${encodeURIComponent(sid)}&workspaceId=${encodeURIComponent(rpcWsId)}`;
           const res = await authFetchLocal(`${effectiveLocalBase}/api/file-preview?${q}`);
           const data = await res.json().catch(() => null);
           if (data && typeof data === 'object') {
@@ -13936,7 +14037,7 @@
             {
               type: 'rpc_cmd',
               targetDeviceId,
-              cmd: { type: 'getFilePreview', path: rawTarget, sessionId: sid, workspaceId: wsId }
+              cmd: { type: 'getFilePreview', path: rawTarget, sessionId: sid, workspaceId: rpcWsId }
             },
             6500
           );
@@ -13983,33 +14084,111 @@
   const studioCheckResultsById = new Map();
   let studioCapFetchSeq = 0;
   let studioCheckBusy = false;
-  let canvasGridFilterText = '';
+
+  function resolveSessionWorkspaceContext(activeRow = null, threadDetail = null) {
+    const wsList = Array.isArray(appState?.workspaces) ? appState.workspaces : [];
+    const activeWorkspaces = wsList.filter(
+      (w) => w && !w.retired && !RETIRED_WORKSPACE_IDS.has(String(w.id || ''))
+    );
+    const pool = activeWorkspaces.length ? activeWorkspaces : wsList;
+    const normSlashes = (p) => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    const matchWsByHint = (hint) => {
+      const raw = String(hint || '').replace(/^Scope:\s*/i, '').trim();
+      if (!raw) return null;
+      const low = raw.toLowerCase();
+      if (['workspace', 'bhfirms workspace', 'session', 'task session', 'claude desktop', 'default', 'auto'].includes(low)) {
+        return null;
+      }
+      const normRaw = normSlashes(raw);
+      // 1. Direct id / name / full path match
+      let matched = pool.find((w) => {
+        const wPath = normSlashes(w.path);
+        return (
+          String(w.id || '').toLowerCase() === low ||
+          String(w.name || '').toLowerCase() === low ||
+          (wPath && (normRaw === wPath || normRaw.startsWith(`${wPath}/`) || wPath.endsWith(`/${low}`)))
+        );
+      });
+      if (matched) return matched;
+      // 2. Match /bhfirms/<dir> segment from cwd strings even across host junctions (e.g. ~/bhfirms/theo-hub)
+      const bhMatch = normRaw.match(/(?:^|\/)bhfirms\/([^/]+)/i);
+      if (bhMatch && bhMatch[1]) {
+        const seg = bhMatch[1].toLowerCase();
+        const alias = seg === 'memory' ? 'theo-memory' : seg === 'command' ? 'planner' : seg;
+        matched = pool.find(
+          (w) =>
+            String(w.id || '').toLowerCase() === alias ||
+            String(w.id || '').toLowerCase() === seg ||
+            normSlashes(w.path).endsWith(`/${seg}`)
+        );
+        if (matched) return matched;
+        if (!RETIRED_WORKSPACE_IDS.has(alias)) {
+          return { id: alias, name: alias, branch: 'main', dirtyCount: 0, modifiedFiles: [], recentCommits: [] };
+        }
+      }
+      return null;
+    };
+
+    const isDraft = activeRow ? activeRow.id === '__new__' : isNewSessionMode();
+    if (isDraft) {
+      const mPref = matchWsByHint(prefs.composerRepoPrefix);
+      const fb = mPref || pool.find((w) => w.id === 'isabi-app') || pool[0] || null;
+      const id = fb?.id || String(prefs.composerRepoPrefix || '').trim() || 'isabi-app';
+      return { wsId: id, rpcWsId: id, matchedWs: fb };
+    }
+
+    const sid = cleanTargetThreadId(activeRow?.id || prefs.selectedThreadId || '');
+    const td = threadDetail || (sid ? threadsCache[sid] : null);
+    const candidates = [
+      activeRow?.workspaceId,
+      td?.workspaceId,
+      activeRow?.cwd,
+      td?.cwd,
+      activeRow?.folder,
+      td?.folder
+    ];
+    // Pass 1: resolve against registered active workspaces across all metadata fields first.
+    for (const cand of candidates) {
+      const m = matchWsByHint(cand);
+      if (m && m.id && !RETIRED_WORKSPACE_IDS.has(m.id)) {
+        return { wsId: m.id, rpcWsId: m.id, matchedWs: m };
+      }
+    }
+    // Pass 2: accept a clean single-token workspace slug only when no registered workspace matched.
+    for (const cand of candidates) {
+      const cleanCand = String(cand || '').replace(/^Scope:\s*/i, '').trim();
+      if (
+        cleanCand &&
+        /^[a-z0-9][a-z0-9._-]{0,63}$/i.test(cleanCand) &&
+        !['workspace', 'session', 'default', 'auto'].includes(cleanCand.toLowerCase()) &&
+        !RETIRED_WORKSPACE_IDS.has(cleanCand.toLowerCase())
+      ) {
+        return { wsId: cleanCand, rpcWsId: cleanCand, matchedWs: null };
+      }
+    }
+
+    // No client-side workspace hint on this session: pass empty workspaceId so the host resolves thread.cwd directly.
+    return { wsId: 'auto', rpcWsId: '', matchedWs: null };
+  }
 
   function resolveStudioWorkspaceId(activeRow = null) {
-    const rawFolder = String(
-      prefs.selectedRepoId || activeRow?.workspaceId || activeRow?.folder || ''
-    )
-      .replace(/^Scope:\s*/i, '')
-      .trim();
-    const wsList = Array.isArray(appState?.workspaces) ? appState.workspaces : [];
-    const matched = wsList.find(
-      (w) =>
-        w &&
-        (w.id === rawFolder ||
-          String(w.name || '').toLowerCase() === rawFolder.toLowerCase() ||
-          String(w.path || '').toLowerCase().endsWith(`\\${rawFolder.toLowerCase()}`) ||
-          String(w.path || '').toLowerCase().endsWith(`/${rawFolder.toLowerCase()}`))
-    );
-    return matched?.id || rawFolder || 'theo';
+    return resolveSessionWorkspaceContext(activeRow, null).wsId;
   }
 
   function buildOfflineStudioCapabilitiesFallback(wsId, activeRow = null) {
     const wsList = Array.isArray(appState?.workspaces) ? appState.workspaces : [];
+    const activeList = wsList.filter(
+      (w) => w && !w.retired && !RETIRED_WORKSPACE_IDS.has(String(w.id || ''))
+    );
+    const pool = activeList.length ? activeList : wsList;
+    const cleanWs = wsId && wsId !== 'auto' ? wsId : '';
+    const folderClean = String(activeRow?.folder || '').replace(/^Scope:\s*/i, '').trim();
     const wsObj =
-      wsList.find((w) => w && (w.id === wsId || w.name === wsId)) ||
-      wsList[0] || {
-        id: wsId || 'theo',
-        name: activeRow?.folder || 'THEO Workspace',
+      (cleanWs && pool.find((w) => w && (w.id === cleanWs || w.name === cleanWs))) ||
+      pool.find((w) => w && w.id === 'isabi-app') ||
+      pool[0] || {
+        id: cleanWs || 'theo',
+        name: folderClean || cleanWs || 'Workspace',
         branch: 'main',
         dirtyCount: 0,
         modifiedFiles: [],
@@ -14023,27 +14202,23 @@
         { id: 'git:diff-stat', label: 'Git Diff Summary', category: 'git', commandPreview: 'git diff --stat' },
         { id: 'syntax:js/app.js', label: 'Syntax Check · js/app.js', category: 'lint', commandPreview: 'node --check js/app.js' }
       ],
-      skills: [
-        { id: 'red-team-gate', name: 'red-team-gate', description: 'Dynamic Pre-Handoff 7-Axis Red-Team Auditor & Adversarial Verification', scope: 'user' },
-        { id: 'generative_ui', name: 'generative_ui', description: 'Interactive HTML widgets, diagrams & data visualizations', scope: 'builtin' },
-        { id: 'agy-customizations', name: 'agy-customizations', description: 'Skills, rules, plugins, hooks & MCP servers reference', scope: 'builtin' },
-        { id: 'automation', name: 'automation', description: 'Design and schedule recurring background automations', scope: 'builtin' }
-      ],
-      ports: connMode === 'local' ? [{ port: 4318, label: 'THEO Workstation Bridge', url: 'http://127.0.0.1:4318/' }] : [],
+      ports: [],
       fallbackOnly: true
     };
   }
 
   async function fetchStudioCapabilities(activeRow = null, forceRefresh = false) {
     const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
-    const wsId = resolveStudioWorkspaceId(activeRow);
+    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid) || null;
+    const wsCtx = resolveSessionWorkspaceContext(matchedRow, threadsCache[sid] || null);
+    const wsId = wsCtx.wsId;
+    const rpcWsId = wsCtx.rpcWsId;
     const cacheKey = `${sid || 'global'}::${wsId}`;
     const seq = ++studioCapFetchSeq;
     if (!forceRefresh && studioCapabilitiesCache.has(cacheKey)) {
       return studioCapabilitiesCache.get(cacheKey);
     }
 
-    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid);
     const targetDeviceId = matchedRow?.deviceId || '';
     const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
     const effectiveLocalBase =
@@ -14060,7 +14235,7 @@
     try {
       if (effectiveLocalBase && allowProbeHttp) {
         try {
-          const q = `workspaceId=${encodeURIComponent(wsId)}&sessionId=${encodeURIComponent(sid)}&diff=1`;
+          const q = `workspaceId=${encodeURIComponent(rpcWsId)}&sessionId=${encodeURIComponent(sid)}&diff=1`;
           const res = await authFetchLocal(`${effectiveLocalBase}/api/studio-capabilities?${q}`);
           const data = await res.json().catch(() => null);
           if (data && typeof data === 'object' && data.ok) {
@@ -14076,7 +14251,7 @@
             {
               type: 'rpc_cmd',
               targetDeviceId,
-              cmd: { type: 'getStudioCapabilities', workspaceId: wsId, sessionId: sid, includeDiff: true }
+              cmd: { type: 'getStudioCapabilities', workspaceId: rpcWsId, sessionId: sid, includeDiff: true }
             },
             7000
           );
@@ -14107,7 +14282,7 @@
       prefs.inspectorOpen &&
       prefs.activeTab === 'chat' &&
       sid === String(prefs.selectedThreadId || '').trim() &&
-      ['git', 'canvas', 'agents'].includes(prefs.inspectorTab)
+      ['files', 'git', 'tasks'].includes(prefs.inspectorTab)
     ) {
       const td = threadsCache[sid] || null;
       const msgs = coalesceThreadMessages(td?.messages || []);
@@ -14123,8 +14298,10 @@
     if (!cleanId) return null;
     recordFreqUsage('checks', cleanId);
     const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
-    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid);
-    const wsId = resolveStudioWorkspaceId(matchedRow);
+    const matchedRow = activeRow || (appState?.rows || []).find((r) => r && r.id === sid) || null;
+    const wsCtx = resolveSessionWorkspaceContext(matchedRow, threadsCache[sid] || null);
+    const wsId = wsCtx.wsId;
+    const rpcWsId = wsCtx.rpcWsId;
     const checkResKey = `${wsId}::${cleanId}`;
     const targetDeviceId = matchedRow?.deviceId || '';
     const isRemote = Boolean(targetDeviceId && localWsDevice?.id && targetDeviceId !== localWsDevice.id);
@@ -14148,7 +14325,7 @@
           const res = await authFetchLocal(`${effectiveLocalBase}/api/studio-check`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ workspaceId: wsId, sessionId: sid, checkId: cleanId })
+            body: JSON.stringify({ workspaceId: rpcWsId, sessionId: sid, checkId: cleanId })
           });
           const data = await res.json().catch(() => null);
           result = data || { ok: false, status: res.status, error: `HTTP ${res.status}` };
@@ -14162,7 +14339,7 @@
             {
               type: 'rpc_cmd',
               targetDeviceId,
-              cmd: { type: 'runStudioCheck', workspaceId: wsId, sessionId: sid, checkId: cleanId }
+              cmd: { type: 'runStudioCheck', workspaceId: rpcWsId, sessionId: sid, checkId: cleanId }
             },
             22000
           );
@@ -14182,77 +14359,6 @@
       studioCheckBusy = false;
       renderChatView(false);
     }
-  }
-
-  function extractSessionStructuredTables(messages) {
-    const tables = [];
-    for (const m of messages || []) {
-      const txt = String(m?.text || '');
-      if (!txt) continue;
-      const lines = txt.split(/\r?\n/);
-      let i = 0;
-      while (i < lines.length - 1) {
-        const hdrLine = lines[i].trim();
-        const sepLine = lines[i + 1].trim();
-        if (
-          hdrLine.startsWith('|') &&
-          hdrLine.endsWith('|') &&
-          /^\|(?:\s*:?-{2,}:?\s*\|)+$/.test(sepLine)
-        ) {
-          const headers = hdrLine
-            .slice(1, -1)
-            .split('|')
-            .map((c) => c.trim());
-          const rows = [];
-          i += 2;
-          while (i < lines.length && lines[i].trim().startsWith('|') && lines[i].trim().endsWith('|')) {
-            const cells = lines[i]
-              .trim()
-              .slice(1, -1)
-              .split('|')
-              .map((c) => c.trim());
-            rows.push(cells);
-            i += 1;
-          }
-          if (headers.length > 0 && rows.length > 0) {
-            tables.push({ headers, rows });
-          }
-          continue;
-        }
-        i += 1;
-      }
-      const jsonFenceRe = /```json\s*\n([\s\S]*?)```/gi;
-      let jm;
-      while ((jm = jsonFenceRe.exec(txt)) !== null) {
-        try {
-          const parsed = JSON.parse(jm[1]);
-          if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'object' && parsed[0] !== null) {
-            const headers = Object.keys(parsed[0]).slice(0, 8);
-            const rows = parsed.slice(0, 30).map((item) => headers.map((k) => String(item?.[k] ?? '')));
-            if (headers.length > 0) tables.push({ headers, rows });
-          }
-        } catch {}
-      }
-    }
-    return tables;
-  }
-
-  function extractSessionCanvasSnippets(messages) {
-    const snippets = [];
-    for (const m of messages || []) {
-      const txt = String(m?.text || '');
-      if (!txt) continue;
-      const re = /```(html|svg|mermaid)\s*\n([\s\S]*?)```/gi;
-      let match;
-      while ((match = re.exec(txt)) !== null) {
-        const lang = String(match[1] || 'html').toLowerCase();
-        const code = String(match[2] || '').trim();
-        if (code) {
-          snippets.push({ lang, code });
-        }
-      }
-    }
-    return snippets;
   }
 
   function renderSplitWatchPane() {
@@ -14348,14 +14454,16 @@
       ++inspectorFetchSeq;
       teardownDeliverableInspectorFrames();
     }
-    const normTab = tab === 'checks' ? 'agents' : tab;
-    if (normTab && ['code', 'git', 'canvas', 'agents', 'outline'].includes(normTab)) {
-      if (prefs.inspectorTab === 'code' && normTab !== 'code') {
+    if (tab) {
+      const normTab = normalizeInspectorTab(tab);
+      if (prefs.inspectorTab === 'files' && normTab !== 'files') {
         teardownDeliverableInspectorFrames();
       }
       prefs.inspectorTab = normTab;
+    } else {
+      prefs.inspectorTab = normalizeInspectorTab(prefs.inspectorTab);
     }
-    if (!prefs.inspectorOpen || prefs.inspectorTab !== 'code') {
+    if (!prefs.inspectorOpen || prefs.inspectorTab !== 'files') {
       prefs.inspectorFullStage = false;
     }
     if (opts.fileTarget !== undefined) {
@@ -14369,7 +14477,7 @@
       }
     } else if (
       prefs.inspectorOpen &&
-      prefs.inspectorTab === 'code' &&
+      prefs.inspectorTab === 'files' &&
       activeInspectorFileTarget &&
       prefs.inspectorViewMode !== 'diff'
     ) {
@@ -14383,12 +14491,26 @@
     }
     saveJson(STORAGE_KEYS.PREFS, prefs);
     const sid = prefs.selectedThreadId || '';
+    const cleanSid = cleanTargetThreadId(sid);
+    const inspSessKey = isNewSessionMode() ? '__new__' : cleanSid || sid;
+    if (opts.fileTarget === undefined && inspSessKey && activeInspectorSessionId && inspSessKey !== activeInspectorSessionId) {
+      activeInspectorFileTarget = '';
+      activeDeliverablePage = 1;
+      activeDeliverableDeckMode = 'single';
+      activeDeliverableZoomPct = 0;
+      activeDeliverableSheetIdx = 0;
+      teardownDeliverableInspectorFrames();
+      ++inspectorFetchSeq;
+    }
+    if (inspSessKey) {
+      activeInspectorSessionId = inspSessKey;
+    }
     const row = (appState?.rows || []).find((r) => r && r.id === sid) || null;
     const td = isNewSessionMode() ? null : threadsCache[sid] || null;
     const msgs = coalesceThreadMessages(td?.messages || []);
     const provKey = (td?.provider || row?.provider) === 'claude' ? 'claude' : 'antigravity';
     renderSplitInspector(row, td, msgs, provKey, isNewSessionMode(), true);
-    if (prefs.inspectorOpen && prefs.inspectorTab === 'code' && activeInspectorFileTarget) {
+    if (prefs.inspectorOpen && prefs.inspectorTab === 'files' && activeInspectorFileTarget) {
       const parsedTgt = parsePreviewTargetClient(activeInspectorFileTarget);
       const dKind = getDeliverableKindClient(parsedTgt.filePath);
       if (dKind && prefs.inspectorViewMode === 'preview') {
@@ -14400,10 +14522,10 @@
         fetchSafeFilePreview(activeInspectorFileTarget, row, Boolean(opts.forceRefresh)).catch(() => {});
       }
     }
-    if (prefs.inspectorOpen && ['git', 'canvas', 'agents'].includes(prefs.inspectorTab)) {
+    if (prefs.inspectorOpen && ['files', 'git', 'tasks'].includes(prefs.inspectorTab)) {
       fetchStudioCapabilities(row, Boolean(opts.forceRefresh)).catch(() => {});
     }
-    if (prefs.inspectorOpen && prefs.inspectorTab === 'agents' && sid && activeInspectorAgentId) {
+    if (prefs.inspectorOpen && prefs.inspectorTab === 'tasks' && sid && activeInspectorAgentId) {
       fetchBgTaskLiveLog(sid, activeInspectorAgentId, provKey).catch(() => {});
     }
     if (prefs.inspectorOpen && sid && !isNewSessionMode()) {
@@ -14438,19 +14560,63 @@
     const bodyEl = $('ide-inspector-body');
     if (!paneEl || !bodyEl) return;
 
+    prefs.inspectorTab = normalizeInspectorTab(prefs.inspectorTab);
     const { allTasks, runningCount } = isNewDraft
       ? { allTasks: [], runningCount: 0 }
       : getSessionBackgroundTasks(activeRow, threadDetail);
     const touchedFiles = isNewDraft ? [] : collectSessionTouchedFiles(messages);
 
+    const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
+    const cleanSid = cleanTargetThreadId(sid);
+    const inspSessKey = isNewDraft ? '__new__' : cleanSid || sid;
+    if (inspSessKey && activeInspectorSessionId && inspSessKey !== activeInspectorSessionId) {
+      activeInspectorFileTarget = '';
+      activeDeliverablePage = 1;
+      activeDeliverableDeckMode = 'single';
+      activeDeliverableZoomPct = 0;
+      activeDeliverableSheetIdx = 0;
+      teardownDeliverableInspectorFrames();
+      ++inspectorFetchSeq;
+    }
+    if (inspSessKey) {
+      activeInspectorSessionId = inspSessKey;
+    }
+    const wsCtx = resolveSessionWorkspaceContext(activeRow, threadDetail);
+    const wsId = wsCtx.wsId;
+    const capCacheKey = `${sid || 'global'}::${wsId}`;
+    const studioCap = studioCapabilitiesCache.get(capCacheKey) || null;
+    const liveWsFiles = Array.isArray(studioCap?.workspace?.modifiedFiles)
+      ? studioCap.workspace.modifiedFiles
+      : Array.isArray(wsCtx.matchedWs?.modifiedFiles)
+        ? wsCtx.matchedWs.modifiedFiles
+        : [];
+    const mergedFiles = [...touchedFiles];
+    const seenFileKeys = new Set(mergedFiles.map((f) => f.key));
+    for (const mf of liveWsFiles) {
+      const mPath = String(mf?.path || '').trim();
+      if (!mPath) continue;
+      const parsedMf = parsePreviewTargetClient(mPath);
+      if (!parsedMf.filePath) continue;
+      const key = parsedMf.filePath.replace(/\\/g, '/').toLowerCase();
+      if (seenFileKeys.has(key)) continue;
+      seenFileKeys.add(key);
+      mergedFiles.push({
+        key,
+        target: parsedMf.filePath,
+        filePath: parsedMf.filePath,
+        displayBase: parsedMf.displayBase,
+        isEdit: true,
+        gitStatus: String(mf.status || 'M'),
+        added: 0,
+        removed: 0
+      });
+    }
+
     if (toggleBtn) {
       toggleBtn.setAttribute('aria-expanded', prefs.inspectorOpen ? 'true' : 'false');
     }
-    document.querySelectorAll('#studio-lens-bar [data-open-lens]').forEach((btn) => {
-      btn.classList.toggle('active', Boolean(prefs.inspectorOpen && btn.dataset.openLens === prefs.inspectorTab));
-    });
     if (pillBadge) {
-      const badgeNum = runningCount > 0 ? runningCount : allTasks.length > 0 ? allTasks.length : touchedFiles.length;
+      const badgeNum = runningCount > 0 ? runningCount : allTasks.length > 0 ? allTasks.length : mergedFiles.length;
       if (badgeNum > 0) {
         pillBadge.hidden = false;
         pillBadge.textContent = String(badgeNum);
@@ -14483,34 +14649,29 @@
     }
 
     paneEl.hidden = false;
-    if (prefs.inspectorTab !== 'code') {
+    if (prefs.inspectorTab !== 'files') {
       paneEl.classList.remove('is-deliverable-wide', 'is-full-stage');
     }
     if (backdropEl) {
       backdropEl.hidden = window.innerWidth > 1024;
     }
 
-    const sid = String(activeRow?.id || prefs.selectedThreadId || '').trim();
-    const wsId = resolveStudioWorkspaceId(activeRow);
-    const capCacheKey = `${sid || 'global'}::${wsId}`;
-    const studioCap = studioCapabilitiesCache.get(capCacheKey) || null;
     if (
       !skipAutoFetch &&
       !studioCap &&
       !studioCapInFlightKeys.has(capCacheKey) &&
-      ['git', 'canvas', 'agents'].includes(prefs.inspectorTab)
+      ['files', 'git', 'tasks'].includes(prefs.inspectorTab)
     ) {
       fetchStudioCapabilities(activeRow).catch(() => {});
     }
 
-    if (prefs.inspectorTab === 'code') {
-      if (!activeInspectorFileTarget && touchedFiles.length > 0) {
-        activeInspectorFileTarget = touchedFiles[0].target;
+    if (prefs.inspectorTab === 'files') {
+      if (!activeInspectorFileTarget && mergedFiles.length > 0) {
+        activeInspectorFileTarget = mergedFiles[0].target;
       }
       const parsed = parsePreviewTargetClient(activeInspectorFileTarget);
-      const rawWsId = String(prefs.selectedRepoId || activeRow?.folder || '').trim();
       const cacheKey = parsed.filePath
-        ? `${sid || rawWsId || 'global'}::${parsed.filePath.replace(/\\/g, '/')}`
+        ? `${sid || wsId || 'global'}::${parsed.filePath.replace(/\\/g, '/')}`
         : '';
       const deliverableKind = getDeliverableKindClient(parsed.filePath);
       const pageCacheKey = `${cacheKey}::p${activeDeliverablePage}`;
@@ -14520,15 +14681,20 @@
           ? deliverablePageCache.get(pageCacheKey) || deliverablePreviewCache.get(cacheKey)
           : deliverablePreviewCache.get(cacheKey);
 
-      const pillsHtml = touchedFiles.length
-        ? `<div class="insp-file-pills">${touchedFiles
-            .slice(0, 14)
+      const pillsHtml = mergedFiles.length
+        ? `<div class="insp-file-pills">${mergedFiles
+            .slice(0, 18)
             .map((tf) => {
               const isCur =
                 parsed.filePath &&
                 tf.filePath.replace(/\\/g, '/').toLowerCase() ===
                   parsed.filePath.replace(/\\/g, '/').toLowerCase();
-              return `<button type="button" class="insp-mini-btn${isCur ? ' active' : ''}" data-preview-file="${esc(tf.target)}">${esc(tf.displayBase)}${tf.added || tf.removed ? ` <span class="tabular" style="opacity:0.8">${tf.added ? `+${tf.added}` : ''}${tf.removed ? ` -${tf.removed}` : ''}</span>` : ''}</button>`;
+              const statSuffix = tf.added || tf.removed
+                ? ` <span class="tabular" style="opacity:0.8">${tf.added ? `+${tf.added}` : ''}${tf.removed ? ` -${tf.removed}` : ''}</span>`
+                : tf.gitStatus
+                  ? ` <span class="tabular" style="opacity:0.75">${esc(tf.gitStatus)}</span>`
+                  : '';
+              return `<button type="button" class="insp-mini-btn${isCur ? ' active' : ''}" data-preview-file="${esc(tf.target)}">${esc(tf.displayBase)}${statSuffix}</button>`;
             })
             .join('')}</div>`
         : '';
@@ -14536,7 +14702,7 @@
       if (!parsed.filePath) {
         paneEl.classList.remove('is-deliverable-wide', 'is-full-stage');
         if (subbarEl) subbarEl.hidden = true;
-        bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">Click any file chip in the conversation or change-set strip to inspect deliverables, source code, quote lines (<code class="md-inline-code">@L</code>), or review live git diffs.</div>`;
+        bodyEl.innerHTML = `${pillsHtml}<div class="insp-empty">Click any file chip in the conversation, change-set strip, or Git tab to inspect deliverables (HTML, PDF, PPTX, Excel), view source with <code class="md-inline-code">@L</code> line quoting, or review diffs.</div>`;
         return;
       }
 
@@ -14813,28 +14979,40 @@
 
     if (prefs.inspectorTab === 'git') {
       const wsInfo = studioCap?.workspace ||
-        (appState?.workspaces || []).find((w) => w && w.id === wsId) ||
-        (appState?.workspaces || [])[0] || {
-          name: activeRow?.folder || 'Workspace',
+        wsCtx.matchedWs || {
+          name: (activeRow?.folder && !/^workspace$/i.test(activeRow.folder) ? activeRow.folder : '') || (wsId !== 'auto' ? wsId : 'Workspace'),
           branch: 'main',
           dirtyCount: touchedFiles.length,
           modifiedFiles: touchedFiles.map((tf) => ({ status: 'M', path: tf.filePath })),
           recentCommits: []
         };
-      const modFiles = Array.isArray(wsInfo.modifiedFiles) && wsInfo.modifiedFiles.length
-        ? wsInfo.modifiedFiles
-        : touchedFiles.map((tf) => ({ status: tf.isEdit ? 'M' : 'R', path: tf.filePath }));
-      const commits = Array.isArray(wsInfo.recentCommits) ? wsInfo.recentCommits : [];
+      const isNoGitWs = Boolean(wsInfo?.noGit || wsInfo?.id === 'theo-memory');
+      const modFiles = isNoGitWs
+        ? []
+        : Array.isArray(wsInfo.modifiedFiles) && wsInfo.modifiedFiles.length
+          ? wsInfo.modifiedFiles
+          : touchedFiles.map((tf) => ({ status: tf.isEdit ? 'M' : 'R', path: tf.filePath }));
+      const commits = isNoGitWs ? [] : Array.isArray(wsInfo.recentCommits) ? wsInfo.recentCommits : [];
 
       if (subbarEl) {
         subbarEl.hidden = false;
         subbarEl.innerHTML = `
-          <span class="insp-sub-path"><span class="insp-sub-path-txt">${esc(wsInfo.name || wsId)} · <code class="md-inline-code">${esc(wsInfo.branch || 'main')}</code> · ${modFiles.length} changed</span></span>
+          <span class="insp-sub-path"><span class="insp-sub-path-txt">${esc(wsInfo.name || wsId)} · <code class="md-inline-code">${esc(isNoGitWs ? 'Vault Sync' : wsInfo.branch || 'main')}</code>${isNoGitWs ? '' : ` · ${modFiles.length} changed`}</span></span>
           <span class="insp-sub-actions">
             <button type="button" class="insp-mini-btn" data-studio-cap-refresh="1">↻ Refresh</button>
-            <button type="button" class="insp-mini-btn" data-git-prompt-action="commit">Summarize &amp; Commit</button>
+            ${isNoGitWs ? '' : `<button type="button" class="insp-mini-btn" data-git-prompt-action="commit">Summarize &amp; Commit</button>`}
           </span>
         `;
+      }
+
+      if (isNoGitWs) {
+        bodyEl.innerHTML = `
+          <div class="studio-lens-section">
+            <div class="studio-lens-head"><span class="studio-lens-title">Memory Vault Workspace</span></div>
+            <div class="meta-timestamp">Synced two-way via Cloudflare Memory Vault (git history retired for <code class="md-inline-code">bhfirms/memory</code>).</div>
+          </div>
+        `;
+        return;
       }
 
       const modHtml = modFiles.length
@@ -14890,232 +15068,9 @@
       return;
     }
 
-    if (prefs.inspectorTab === 'canvas') {
-      const ports = Array.isArray(studioCap?.ports) ? studioCap.ports : [];
-      const rawSkills = Array.isArray(studioCap?.skills) ? studioCap.skills : [];
-      const rankedSkills = rankByFreq(rawSkills, 'skills', (s) => s.id || s.name);
-      const tables = extractSessionStructuredTables(messages);
-      const snippets = extractSessionCanvasSnippets(messages);
-
-      if (subbarEl) {
-        subbarEl.hidden = false;
-        subbarEl.innerHTML = `
-          <span class="insp-sub-path"><span class="insp-sub-path-txt">Live Canvas · ${tables.length} Data Grid${tables.length === 1 ? '' : 's'} · ${rankedSkills.length} Skills</span></span>
-          <span class="insp-sub-actions">
-            <button type="button" class="insp-mini-btn" data-studio-cap-refresh="1">↻ Refresh</button>
-          </span>
-        `;
-      }
-
-      const portsHtml = ports.length
-        ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${ports
-            .map(
-              (p) =>
-                `<a href="${esc(p.url)}" target="_blank" rel="noopener" class="insp-mini-btn" style="text-decoration:none">● :${p.port} ${esc(p.label)}</a>`
-            )
-            .join('')}</div>`
-        : `<div class="meta-timestamp">No local dev servers detected on ports 3000–8787.</div>`;
-
-      let gridHtml = `<div class="meta-timestamp">Markdown tables and JSON arrays in this conversation automatically render as a searchable data grid here.</div>`;
-      if (tables.length > 0) {
-        const primaryTbl = tables[tables.length - 1];
-        const qGrid = String(canvasGridFilterText || '').trim().toLowerCase();
-        const filteredRows = qGrid
-          ? primaryTbl.rows.filter((r) => r.some((cell) => String(cell).toLowerCase().includes(qGrid)))
-          : primaryTbl.rows;
-        gridHtml = `
-          <input type="search" id="canvas-grid-search" class="q-dock-other" placeholder="Filter ${primaryTbl.rows.length} rows…" value="${esc(canvasGridFilterText)}" autocomplete="off">
-          <div class="canvas-data-grid-wrap">
-            <table class="canvas-data-grid tabular">
-              <thead><tr>${primaryTbl.headers.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead>
-              <tbody>${filteredRows
-                .slice(0, 40)
-                .map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`)
-                .join('')}</tbody>
-            </table>
-          </div>
-        `;
-      }
-
-      let sandboxHtml = '';
-      if (snippets.length > 0) {
-        const lastSnip = snippets[snippets.length - 1];
-        const safeDoc =
-          lastSnip.lang === 'mermaid'
-            ? `<!doctype html><html><body style="margin:10px;font-family:monospace;font-size:12px;background:#18181b;color:#e4e4e7"><pre>${esc(lastSnip.code)}</pre></body></html>`
-            : lastSnip.code;
-        sandboxHtml = `
-          <div class="studio-lens-section">
-            <div class="studio-lens-head">
-              <span class="studio-lens-title">Sandboxed ${esc(lastSnip.lang.toUpperCase())} Preview (Zero-Script Isolation)</span>
-            </div>
-            <iframe class="canvas-sandbox-frame" sandbox="" referrerpolicy="no-referrer" srcdoc="${esc(safeDoc)}"></iframe>
-          </div>
-        `;
-      }
-
-      const skillsHtml = rankedSkills.length
-        ? rankedSkills
-            .slice(0, 12)
-            .map(
-              (s) => `
-              <div class="studio-skill-row">
-                <div style="min-width:0;flex:1">
-                  <div style="font-weight:600;color:var(--text-heading)">${esc(s.name)} <span class="meta-timestamp">(${esc(s.scope || 'skill')})</span></div>
-                  <div class="meta-timestamp" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.description || '')}</div>
-                </div>
-                <button type="button" class="insp-mini-btn" data-use-studio-skill="${esc(s.name)}">Use Skill</button>
-              </div>
-            `
-            )
-            .join('')
-        : `<div class="meta-timestamp">No skills discovered yet.</div>`;
-
-      const prevGridInp = $('canvas-grid-search');
-      const hadGridFocus = document.activeElement === prevGridInp;
-      const prevSelStart = hadGridFocus ? prevGridInp.selectionStart : null;
-      const prevSelEnd = hadGridFocus ? prevGridInp.selectionEnd : null;
-
-      bodyEl.innerHTML = `
-        <div class="studio-lens-section">
-          <div class="studio-lens-head"><span class="studio-lens-title">Live Local Port Radar</span></div>
-          ${portsHtml}
-        </div>
-        <div class="studio-lens-section">
-          <div class="studio-lens-head"><span class="studio-lens-title">Interactive Data Grid (${tables.length})</span></div>
-          ${gridHtml}
-        </div>
-        ${sandboxHtml}
-        <div class="studio-lens-section">
-          <div class="studio-lens-head"><span class="studio-lens-title">Built-in AI Skills Pack (Frequency-First)</span></div>
-          ${skillsHtml}
-        </div>
-      `;
-      if (hadGridFocus) {
-        const nextGridInp = $('canvas-grid-search');
-        if (nextGridInp) {
-          nextGridInp.focus();
-          try {
-            if (typeof prevSelStart === 'number') {
-              nextGridInp.setSelectionRange(prevSelStart, prevSelEnd ?? prevSelStart);
-            }
-          } catch {}
-        }
-      }
-      return;
-    }
-
-    if (prefs.inspectorTab === 'agents') {
-      const rawChecks = Array.isArray(studioCap?.checks) ? studioCap.checks : [];
-      const rankedChecks = rankByFreq(rawChecks, 'checks', (c) => c.id);
-
-      if (subbarEl) {
-        subbarEl.hidden = false;
-        subbarEl.innerHTML = `
-          <span class="insp-sub-path"><span class="insp-sub-path-txt">${rankedChecks.length} Check${rankedChecks.length === 1 ? '' : 's'} · ${allTasks.length} Side Agent${allTasks.length === 1 ? '' : 's'}${runningCount > 0 ? ` · ${runningCount} Live` : ''}</span></span>
-          <span class="insp-sub-actions">
-            <button type="button" class="insp-mini-btn" data-insp-refresh-agents="1">↻ Refresh</button>
-            ${runningCount > 0 && sid ? `<button type="button" class="insp-mini-btn" style="color:var(--crimson)" data-bg-act="stop-session-all" data-sess-id="${esc(sid)}" data-prov="${provKey}">■ Stop All</button>` : ''}
-          </span>
-        `;
-      }
-
-      const checksHtml = rankedChecks.length
-        ? rankedChecks
-            .map((chk) => {
-              const res = studioCheckResultsById.get(`${wsId}::${chk.id}`);
-              const diags = Array.isArray(res?.diagnostics) ? res.diagnostics : [];
-              const statusBadge = res
-                ? res.running
-                  ? `<span class="meta-timestamp">Running…</span>`
-                  : res.ok && res.passed
-                    ? `<span style="color:var(--emerald);font-weight:600;font-size:11px">✓ Passed (${res.durationMs || 1}ms)</span>`
-                    : `<span style="color:var(--crimson);font-weight:600;font-size:11px">✕ Failed</span>`
-                : '';
-              const diagsHtml = diags.length
-                ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:5px">${diags
-                    .map(
-                      (d) =>
-                        `<button type="button" class="studio-diag-pill" data-preview-file="${esc(d.relPath)}#L${d.line}">⚠ ${esc(d.relPath)}:${d.line} · ${esc(String(d.message || '').slice(0, 64))}</button>`
-                    )
-                    .join('')}</div>`
-                : '';
-              return `
-                <div style="display:flex;flex-direction:column;gap:4px">
-                  <div class="studio-check-row">
-                    <div style="min-width:0;flex:1">
-                      <div style="font-weight:600;color:var(--text-heading)">${esc(chk.label)}</div>
-                      <div class="meta-timestamp mono">${esc(chk.commandPreview || chk.id)}</div>
-                    </div>
-                    ${statusBadge}
-                    <button type="button" class="insp-mini-btn" data-run-studio-check="${esc(chk.id)}" ${studioCheckBusy ? 'disabled' : ''}>▶ Run</button>
-                  </div>
-                  ${diagsHtml}
-                  ${res && (res.output || res.error) ? `<pre class="studio-check-output">${esc(res.output || res.error)}</pre>` : ''}
-                </div>
-              `;
-            })
-            .join('')
-        : `<div class="meta-timestamp">Discovering allowlisted workspace checks…</div>`;
-
-      const agentsHtml =
-        allTasks.length === 0
-          ? `<div class="meta-timestamp">No Side Agents or background tasks recorded in this session yet. Subagents spawned via <code class="md-inline-code">invoke_subagent</code> or Claude <code class="md-inline-code">Task</code> appear here with live trace output.</div>`
-          : allTasks
-              .map((t) => {
-                const stInfo = getBgStateBadgeInfo(t.state);
-                const cacheKey = `${sid}:${t.id}`;
-                const isFocused = activeInspectorAgentId && (t.id === activeInspectorAgentId || t.fullId === activeInspectorAgentId);
-                const titleTxt = t.subagentRole || t.summary || t.command || t.id || 'Side Agent';
-                const liveOut =
-                  bgTaskLogsCache.get(cacheKey) ||
-                  t.outputPreview ||
-                  (t.state === 'running'
-                    ? 'Agent/task is running — click Refresh to tail live output.'
-                    : 'Completed cleanly.');
-                const linkedConvId = String(t.subagentConversationId || '').trim();
-                const hasLinkedSession = Boolean(
-                  linkedConvId && (appState?.rows || []).some((r) => r && r.id === linkedConvId)
-                );
-                return `
-                  <div class="insp-agent-card${t.state === 'running' ? ' is-running' : ''}" ${isFocused ? 'style="border-color:var(--brass)"' : ''}>
-                    <div class="insp-agent-head">
-                      <span class="insp-agent-title">${esc(titleTxt)}</span>
-                      <span class="bg-kind-badge ${stInfo.cls}">${esc(getBgKindLabel(t.kind))} · ${esc(stInfo.label)}</span>
-                    </div>
-                    ${t.command ? `<div class="meta-timestamp mono" style="white-space:pre-wrap;word-break:break-word">${esc(String(t.command).slice(0, 260))}</div>` : ''}
-                    <pre class="insp-agent-log mono" data-bg-log-key="${esc(cacheKey)}">${esc(liveOut)}</pre>
-                    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px">
-                      <span class="meta-timestamp tabular">${esc(t.id)}${t.startedAt ? ` · ${esc(timeAgo(t.startedAt))}` : ''}</span>
-                      <span style="display:inline-flex;gap:5px">
-                        <button type="button" class="insp-mini-btn" data-bg-act="refresh-log" data-sess-id="${esc(sid)}" data-task-id="${esc(t.id)}" data-prov="${provKey}">↻ Tail</button>
-                        ${hasLinkedSession ? `<button type="button" class="insp-mini-btn" data-open-conv="${esc(linkedConvId)}">Open Thread</button>` : ''}
-                        ${t.state === 'running' ? `<button type="button" class="ide-bg-stop" style="display:inline-flex" data-bg-act="stop-task" data-sess-id="${esc(sid)}" data-task-id="${esc(t.fullId || t.id)}" data-prov="${provKey}">■ Stop</button>` : ''}
-                      </span>
-                    </div>
-                  </div>
-                `;
-              })
-              .join('');
-
-      bodyEl.innerHTML = `
-        <div class="studio-lens-section">
-          <div class="studio-lens-head"><span class="studio-lens-title">Checks &amp; Diagnostics</span></div>
-          ${checksHtml}
-        </div>
-        <div class="studio-lens-section">
-          <div class="studio-lens-head"><span class="studio-lens-title">Side Agents &amp; Background Tasks (${allTasks.length})</span></div>
-          ${agentsHtml}
-        </div>
-      `;
-      return;
-    }
-
-    // Tab 5: Outline (Prompts, Checkpoints & Artifacts)
-    if (subbarEl) {
-      subbarEl.hidden = false;
-      subbarEl.innerHTML = `<span class="insp-sub-path"><span class="insp-sub-path-txt">Session Prompts, Checkpoints &amp; Artifacts</span></span>`;
-    }
+    // Tab 3: Tasks & Outline (Turn/Artifact Outline + Side Agents/Bg Tasks + Allowlisted Checks)
+    const rawChecks = Array.isArray(studioCap?.checks) ? studioCap.checks : [];
+    const rankedChecks = rankByFreq(rawChecks, 'checks', (c) => c.id);
     const outlineItems = [];
     let promptNum = 0;
     (messages || []).forEach((m, idx) => {
@@ -15149,20 +15104,122 @@
       }
     });
 
-    if (outlineItems.length === 0) {
-      bodyEl.innerHTML = `<div class="insp-empty">Prompts, <code class="md-inline-code">/compact</code> checkpoints, and Walkthrough/Plan artifacts will appear here for 1-click navigation.</div>`;
-      return;
+    if (subbarEl) {
+      subbarEl.hidden = false;
+      subbarEl.innerHTML = `
+        <span class="insp-sub-path"><span class="insp-sub-path-txt">${allTasks.length} Task${allTasks.length === 1 ? '' : 's'}${runningCount > 0 ? ` (${runningCount} Live)` : ''} · ${outlineItems.length} Outline · ${rankedChecks.length} Check${rankedChecks.length === 1 ? '' : 's'}</span></span>
+        <span class="insp-sub-actions">
+          <button type="button" class="insp-mini-btn" data-insp-refresh-agents="1">↻ Refresh</button>
+          ${runningCount > 0 && sid ? `<button type="button" class="insp-mini-btn" style="color:var(--crimson)" data-bg-act="stop-session-all" data-sess-id="${esc(sid)}" data-prov="${provKey}">■ Stop All</button>` : ''}
+        </span>
+      `;
     }
-    bodyEl.innerHTML = outlineItems
-      .map(
-        (it) => `
-        <button type="button" class="insp-outline-item" data-outline-jump="${esc(it.anchor)}" ${it.detailKey ? `data-outline-detail="${esc(it.detailKey)}"` : ''}>
-          <span class="insp-outline-kicker tabular">${esc(it.kicker)}</span>
-          <span class="insp-outline-title">${esc(it.title)}</span>
-        </button>
-      `
-      )
-      .join('');
+
+    const outlineHtml = outlineItems.length === 0
+      ? `<div class="meta-timestamp">Prompts, <code class="md-inline-code">/compact</code> checkpoints, and artifacts appear here for 1-click navigation.</div>`
+      : outlineItems
+          .map(
+            (it) => `
+            <button type="button" class="insp-outline-item" data-outline-jump="${esc(it.anchor)}" ${it.detailKey ? `data-outline-detail="${esc(it.detailKey)}"` : ''}>
+              <span class="insp-outline-kicker tabular">${esc(it.kicker)}</span>
+              <span class="insp-outline-title">${esc(it.title)}</span>
+            </button>
+          `
+          )
+          .join('');
+
+    const agentsHtml =
+      allTasks.length === 0
+        ? `<div class="meta-timestamp">No Side Agents or background tasks recorded in this session yet.</div>`
+        : allTasks
+            .map((t) => {
+              const stInfo = getBgStateBadgeInfo(t.state);
+              const cacheKey = `${sid}:${t.id}`;
+              const isFocused = activeInspectorAgentId && (t.id === activeInspectorAgentId || t.fullId === activeInspectorAgentId);
+              const titleTxt = t.subagentRole || t.summary || t.command || t.id || 'Side Agent';
+              const liveOut =
+                bgTaskLogsCache.get(cacheKey) ||
+                t.outputPreview ||
+                (t.state === 'running'
+                  ? 'Agent/task is running — click Tail to load live output.'
+                  : 'Completed cleanly.');
+              const linkedConvId = String(t.subagentConversationId || '').trim();
+              const hasLinkedSession = Boolean(
+                linkedConvId && (appState?.rows || []).some((r) => r && r.id === linkedConvId)
+              );
+              return `
+                <div class="insp-agent-card${t.state === 'running' ? ' is-running' : ''}" ${isFocused ? 'style="border-color:var(--brass)"' : ''}>
+                  <div class="insp-agent-head">
+                    <span class="insp-agent-title">${esc(titleTxt)}</span>
+                    <span class="bg-kind-badge ${stInfo.cls}">${esc(getBgKindLabel(t.kind))} · ${esc(stInfo.label)}</span>
+                  </div>
+                  ${t.command ? `<div class="meta-timestamp mono" style="white-space:pre-wrap;word-break:break-word">${esc(String(t.command).slice(0, 260))}</div>` : ''}
+                  <pre class="insp-agent-log mono" data-bg-log-key="${esc(cacheKey)}">${esc(liveOut)}</pre>
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:6px">
+                    <span class="meta-timestamp tabular">${esc(t.id)}${t.startedAt ? ` · ${esc(timeAgo(t.startedAt))}` : ''}</span>
+                    <span style="display:inline-flex;gap:5px">
+                      <button type="button" class="insp-mini-btn" data-bg-act="refresh-log" data-sess-id="${esc(sid)}" data-task-id="${esc(t.id)}" data-prov="${provKey}">↻ Tail</button>
+                      ${hasLinkedSession ? `<button type="button" class="insp-mini-btn" data-open-conv="${esc(linkedConvId)}">Open Thread</button>` : ''}
+                      ${t.state === 'running' ? `<button type="button" class="ide-bg-stop" style="display:inline-flex" data-bg-act="stop-task" data-sess-id="${esc(sid)}" data-task-id="${esc(t.fullId || t.id)}" data-prov="${provKey}">■ Stop</button>` : ''}
+                    </span>
+                  </div>
+                </div>
+              `;
+            })
+            .join('');
+
+    const checksHtml = rankedChecks.length
+      ? rankedChecks
+          .map((chk) => {
+            const res = studioCheckResultsById.get(`${wsId}::${chk.id}`);
+            const diags = Array.isArray(res?.diagnostics) ? res.diagnostics : [];
+            const statusBadge = res
+              ? res.running
+                ? `<span class="meta-timestamp">Running…</span>`
+                : res.ok && res.passed
+                  ? `<span style="color:var(--emerald);font-weight:600;font-size:11px">✓ Passed (${res.durationMs || 1}ms)</span>`
+                  : `<span style="color:var(--crimson);font-weight:600;font-size:11px">✕ Failed</span>`
+              : '';
+            const diagsHtml = diags.length
+              ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:5px">${diags
+                  .map(
+                    (d) =>
+                      `<button type="button" class="studio-diag-pill" data-preview-file="${esc(d.relPath)}#L${d.line}">⚠ ${esc(d.relPath)}:${d.line} · ${esc(String(d.message || '').slice(0, 64))}</button>`
+                  )
+                  .join('')}</div>`
+              : '';
+            return `
+              <div style="display:flex;flex-direction:column;gap:4px">
+                <div class="studio-check-row">
+                  <div style="min-width:0;flex:1">
+                    <div style="font-weight:600;color:var(--text-heading)">${esc(chk.label)}</div>
+                    <div class="meta-timestamp mono">${esc(chk.commandPreview || chk.id)}</div>
+                  </div>
+                  ${statusBadge}
+                  <button type="button" class="insp-mini-btn" data-run-studio-check="${esc(chk.id)}" ${studioCheckBusy ? 'disabled' : ''}>▶ Run</button>
+                </div>
+                ${diagsHtml}
+                ${res && (res.output || res.error) ? `<pre class="studio-check-output">${esc(res.output || res.error)}</pre>` : ''}
+              </div>
+            `;
+          })
+          .join('')
+      : `<div class="meta-timestamp">Discovering allowlisted workspace checks…</div>`;
+
+    bodyEl.innerHTML = `
+      <div class="studio-lens-section">
+        <div class="studio-lens-head"><span class="studio-lens-title">Turn &amp; Artifact Outline (${outlineItems.length})</span></div>
+        ${outlineHtml}
+      </div>
+      <div class="studio-lens-section">
+        <div class="studio-lens-head"><span class="studio-lens-title">Background Tasks &amp; Subagents (${allTasks.length})</span></div>
+        ${agentsHtml}
+      </div>
+      <div class="studio-lens-section">
+        <div class="studio-lens-head"><span class="studio-lens-title">Workspace Verification Checks (${rankedChecks.length})</span></div>
+        ${checksHtml}
+      </div>
+    `;
   }
 
   function extractThoughtStepTitle(rawText) {
@@ -16317,6 +16374,217 @@
     `;
   }
 
+  function resolveSessionHostDevice(activeRow = null, isNewDraft = false) {
+    if ((typeof navigator !== 'undefined' && navigator.onLine === false) || connMode === 'offline') {
+      return null;
+    }
+    const fleet = getUnifiedFleetDevices();
+    let hostDev = null;
+    if (!isNewDraft && activeRow?.deviceId) {
+      hostDev = fleet.find((d) => d && d.id === activeRow.deviceId) || null;
+    } else if (isNewDraft) {
+      const targetDev =
+        prefs.composerTargetDevice && prefs.composerTargetDevice !== 'auto'
+          ? String(prefs.composerTargetDevice).trim()
+          : prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
+            ? String(prefs.selectedDeviceFilter).trim()
+            : '';
+      if (targetDev) {
+        hostDev = fleet.find((d) => d && d.id === targetDev) || null;
+      }
+      const fallbackNewDevId = localWsDevice?.id || appState?.device?.id || '';
+      if (!hostDev && fallbackNewDevId) {
+        hostDev = fleet.find((d) => d && d.id === fallbackNewDevId) || null;
+      }
+      if (!hostDev) {
+        hostDev = fleet.find((d) => d && d.isSelf) || fleet.find((d) => d && d.online) || null;
+      }
+    } else {
+      const fallbackDevId = localWsDevice?.id || appState?.device?.id || '';
+      if (fallbackDevId) {
+        hostDev = fleet.find((d) => d && d.id === fallbackDevId) || null;
+      }
+      if (!hostDev) {
+        hostDev = fleet.find((d) => d && d.isSelf) || fleet.find((d) => d && d.online) || null;
+      }
+    }
+    return hostDev;
+  }
+
+  function isHostVsCodeOpenForSession(activeRow = null, isNewDraft = false) {
+    const hostDev = resolveSessionHostDevice(activeRow, isNewDraft);
+    return Boolean(hostDev && hostDev.online !== false && hostDev.pwaReady && hostDev.pwaReady.vscodeOpen === true);
+  }
+
+  const pendingCompactByThread = new Map();
+  const compactionWatermarkByThread = new Map();
+
+  function clearPendingCompactState(tid) {
+    const entry = pendingCompactByThread.get(tid);
+    if (!entry) return;
+    for (const tm of entry.timers || []) {
+      clearTimeout(tm);
+    }
+    pendingCompactByThread.delete(tid);
+  }
+
+  function reconcileCompactionContextTokens(tid, activeRow, threadDetail) {
+    const rawCtx = threadDetail?.contextWindow || {};
+    const msgs = Array.isArray(threadDetail?.messages) ? threadDetail.messages : [];
+    const nonOptMsgs = msgs.filter((m) => m && !m.optimistic);
+    let cpCount = 0;
+    let lastCpIdx = -1;
+    for (let i = 0; i < nonOptMsgs.length; i++) {
+      if (nonOptMsgs[i].role === 'checkpoint') {
+        cpCount += 1;
+        lastCpIdx = i;
+      }
+    }
+    const lastNonOptIsCp = lastCpIdx >= 0 && lastCpIdx === nonOptMsgs.length - 1;
+    const afterCpMsgs = lastCpIdx >= 0 ? nonOptMsgs.slice(lastCpIdx + 1) : [];
+    const hasUserAfterCp = afterCpMsgs.some((m) => m.role === 'user');
+    const ctxUsedNum = Number(rawCtx.usedTokens);
+    const rowUsedNum = Number(activeRow?.usedTokens ?? activeRow?.contextTokens);
+    const hasCtxUsed = rawCtx.usedTokens != null && rawCtx.usedTokens !== '' && Number.isFinite(ctxUsedNum);
+    const hasRowUsed = (activeRow?.usedTokens != null || activeRow?.contextTokens != null) && Number.isFinite(rowUsedNum);
+
+    let justCompacted = false;
+    const pending = tid ? pendingCompactByThread.get(tid) : null;
+    if (pending && tid) {
+      const cpIncreased = cpCount > pending.baselineCheckpoints;
+      const tokensDropped =
+        (hasCtxUsed && pending.prevUsedTokens > 0 && ctxUsedNum < pending.prevUsedTokens * 0.88) ||
+        (hasRowUsed && pending.prevUsedTokens > 0 && rowUsedNum < pending.prevUsedTokens * 0.88);
+      if (cpIncreased || tokensDropped) {
+        justCompacted = true;
+        clearPendingCompactState(tid);
+      } else if (Date.now() - pending.startedAt > 90000) {
+        clearPendingCompactState(tid);
+      }
+    }
+
+    if (hasCtxUsed && hasRowUsed && ctxUsedNum !== rowUsedNum) {
+      const wm = tid ? compactionWatermarkByThread.get(tid) : null;
+      const atBoundary =
+        justCompacted ||
+        lastNonOptIsCp ||
+        (lastCpIdx >= 0 &&
+          !hasUserAfterCp &&
+          (!wm || wm.cpCount !== cpCount || ctxUsedNum < rowUsedNum * 0.88 || rowUsedNum < ctxUsedNum * 0.88));
+      if (atBoundary) {
+        const minUsed = Math.min(ctxUsedNum, rowUsedNum);
+        if (tid) compactionWatermarkByThread.set(tid, { cpCount, baselineTokens: minUsed });
+        if (activeRow) activeRow.usedTokens = minUsed;
+        if (threadDetail?.contextWindow) threadDetail.contextWindow.usedTokens = minUsed;
+        return minUsed;
+      }
+      // Once subsequent turns run after the checkpoint, trust the higher (newer) token count
+      if (cpCount > 0) {
+        return Math.max(ctxUsedNum, rowUsedNum);
+      }
+    }
+    if (hasCtxUsed) return ctxUsedNum;
+    if (hasRowUsed) return rowUsedNum;
+    return 0;
+  }
+
+  async function triggerActiveSessionCompact() {
+    if (isPinLocked()) return;
+    const tid = cleanTargetThreadId(prefs.selectedThreadId);
+    if (isNewSessionMode() || !tid) {
+      showToast('Select an active session first to run /compact');
+      return;
+    }
+    const existing = pendingCompactByThread.get(tid);
+    if (existing && Date.now() - existing.startedAt < 4000) {
+      showToast('Compaction already dispatched for this session');
+      return;
+    }
+
+    const activeRow = (appState?.rows || []).find((r) => r && r.id === tid) || null;
+    const td = threadsCache[tid] || null;
+    const prov = activeRow?.provider || td?.provider || 'antigravity';
+    const prevUsedTokens = reconcileCompactionContextTokens(tid, activeRow, td);
+    const msgs = Array.isArray(td?.messages) ? td.messages : [];
+    const baselineCheckpoints = msgs.filter((m) => m && m.role === 'checkpoint').length;
+
+    const ctxPop = $('ctx-popover');
+    if (ctxPop) ctxPop.hidden = true;
+    const moreMenu = $('chat-more-menu');
+    if (moreMenu) moreMenu.hidden = true;
+    $('btn-chat-more')?.setAttribute('aria-expanded', 'false');
+
+    const optMsgId = `local-compact-${Date.now()}`;
+    if (!threadsCache[tid]) {
+      threadsCache[tid] = { id: tid, provider: prov, messages: [] };
+    }
+    const curMsgs = Array.isArray(threadsCache[tid].messages) ? threadsCache[tid].messages : [];
+    const lastMsg = curMsgs[curMsgs.length - 1];
+    let pushedOpt = false;
+    if (!lastMsg || !(lastMsg.role === 'user' && /^\/compact\b/i.test(String(lastMsg.text || '').trim()))) {
+      curMsgs.push({
+        id: optMsgId,
+        role: 'user',
+        createdAt: new Date().toISOString(),
+        text: '/compact',
+        toolCalls: [],
+        optimistic: true,
+        optimisticAt: Date.now()
+      });
+      threadsCache[tid].messages = curMsgs;
+      pushedOpt = true;
+    }
+
+    clearPendingCompactState(tid);
+    const timers = [];
+    pendingCompactByThread.set(tid, {
+      startedAt: Date.now(),
+      prevUsedTokens,
+      baselineCheckpoints,
+      timers
+    });
+    renderChatView(true);
+
+    const res = await dispatchRemoteCommand({
+      type: 'sessionAction',
+      action: 'compact',
+      subAction: 'compact',
+      id: tid,
+      provider: prov
+    });
+    const innerFailed = res?.ok === false || res?.out?.ok === false || res?.out?.result?.ok === false;
+    if (innerFailed) {
+      clearPendingCompactState(tid);
+      if (pushedOpt && threadsCache[tid]?.messages) {
+        threadsCache[tid].messages = threadsCache[tid].messages.filter((m) => m && m.id !== optMsgId);
+      }
+      renderChatView(false);
+      showToast(res?.out?.error || res?.error || 'Unable to dispatch /compact to session');
+      return;
+    }
+
+    if (!isHeadlessBrowser) {
+      for (const delay of [1800, 4500, 9000, 16000]) {
+        const tm = setTimeout(() => {
+          if (!pendingCompactByThread.has(tid)) return;
+          syncData().catch(() => {});
+          fetchThreadDetail(tid, prov).catch(() => {});
+        }, delay);
+        timers.push(tm);
+      }
+    }
+
+    showToast(
+      res?.mode === 'quarantined'
+        ? 'Sent /compact to active session'
+        : res?.mode === 'cloud'
+          ? 'Queued /compact via Cloud Store (refreshes on sync)'
+          : res?.mode === 'queued'
+            ? 'Offline: /compact queued in outbox'
+            : 'Compacting context window…'
+    );
+  }
+
   // VIEW 3: Render Live Chat Workbench
   function renderChatView(forceScroll = false) {
     ensureSelectedThread();
@@ -16399,18 +16667,34 @@
       folderEl.textContent = folderLabel;
     }
 
-    // Keep selectedRepoId aligned with the active session's workspace if a matching repo exists
-    if (!isNewDraft && folderLabel && Array.isArray(appState?.workspaces)) {
-      const fLow = folderLabel.toLowerCase();
-      const matchedWs = appState.workspaces.find(
-        (w) =>
-          w.id.toLowerCase() === fLow ||
-          w.name.toLowerCase() === fLow ||
-          (w.path && w.path.toLowerCase().endsWith(`\\${fLow}`))
-      );
-      if (matchedWs && prefs.selectedRepoId !== matchedWs.id) {
-        prefs.selectedRepoId = matchedWs.id;
-      }
+    const activeTidForCompact = cleanTargetThreadId(activeRow?.id || prefs.selectedThreadId);
+    const openIdeBtn = $('btn-chat-open-vscode');
+    if (openIdeBtn) {
+      openIdeBtn.hidden = !isHostVsCodeOpenForSession(activeRow, isNewDraft);
+    }
+    const moreCompactBtn = $('btn-chat-more-compact');
+    if (moreCompactBtn) {
+      moreCompactBtn.hidden = Boolean(isNewDraft || !activeTidForCompact);
+    }
+    const moreBtn = $('btn-chat-more');
+    if (moreBtn) {
+      moreBtn.classList.toggle('is-active', Boolean(prefs.splitWatchOpen));
+    }
+    const splitStateEl = $('chat-more-split-state');
+    if (splitStateEl) {
+      splitStateEl.textContent = prefs.splitWatchOpen ? 'On' : 'Off';
+    }
+    const splitWatchMenuBtn = $('btn-split-watch');
+    if (splitWatchMenuBtn) {
+      splitWatchMenuBtn.classList.toggle('active', Boolean(prefs.splitWatchOpen));
+      splitWatchMenuBtn.setAttribute('aria-pressed', prefs.splitWatchOpen ? 'true' : 'false');
+      splitWatchMenuBtn.setAttribute('aria-checked', prefs.splitWatchOpen ? 'true' : 'false');
+    }
+    const ctxCompactBtn = $('btn-ctx-compact');
+    if (ctxCompactBtn) {
+      const isCompacting = Boolean(activeTidForCompact && pendingCompactByThread.has(activeTidForCompact));
+      ctxCompactBtn.disabled = isCompacting;
+      ctxCompactBtn.innerHTML = isCompacting ? 'Compacting…' : 'Run <code>/compact</code>';
     }
 
     const rawCtx = threadDetail?.contextWindow || {};
@@ -16451,12 +16735,9 @@
       !isNewDraft && !hasThreadModelOverride
         ? rawCtx.modelLabel || rawCtx.modelName || threadDetail?.model || activeRow?.model || resolvedModelLabel
         : resolvedModelLabel;
-    const explicitUsedRaw = rawCtx.usedTokens ?? activeRow?.usedTokens ?? activeRow?.contextTokens;
     const rawUsed = isNewDraft
       ? 0
-      : explicitUsedRaw != null && explicitUsedRaw !== '' && Number.isFinite(Number(explicitUsedRaw))
-        ? Number(explicitUsedRaw)
-        : 0;
+      : reconcileCompactionContextTokens(activeTidForCompact, activeRow, threadDetail);
     const rawLimit = hasThreadModelOverride
       ? inferDefaultContextLimit(provKey, resolvedModelLabel)
       : Number(
@@ -17473,7 +17754,9 @@
     }
 
     if (!workspaces.some((w) => w.id === prefs.selectedRepoId)) {
-      prefs.selectedRepoId = workspaces[0].id;
+      const preferredDefault =
+        workspaces.find((w) => w && !w.retired && !RETIRED_WORKSPACE_IDS.has(w.id)) || workspaces[0];
+      prefs.selectedRepoId = preferredDefault.id;
     }
 
     listEl.innerHTML = workspaces
@@ -17830,7 +18113,7 @@
     { id: '/mode-bypass', label: '/mode-bypass', desc: 'Fleet Claude Mode: Bypass (full control across every PC)', kind: 'action', act: 'claude-mode-bypass', baseWeight: 73 },
     { id: '/mode-auto', label: '/mode-auto', desc: 'Fleet Claude Mode: Auto (classifier safety check across every PC)', kind: 'action', act: 'claude-mode-auto', baseWeight: 71 },
     { id: '/mode-plan', label: '/mode-plan', desc: 'Fleet Claude Mode: Plan (read-only planning across every PC)', kind: 'action', act: 'claude-mode-plan', baseWeight: 70 },
-    { id: '/inspector', label: '/inspector', desc: 'Toggle Split Inspector (Code, Diff, Side Agents & Outline)', kind: 'action', act: 'inspector', baseWeight: 72 },
+    { id: '/inspector', label: '/inspector', desc: 'Toggle Split Inspector (Files & Preview, Git, Tasks & Outline)', kind: 'action', act: 'inspector', baseWeight: 72 },
     { id: '/bgtasks', label: '/bgtasks', desc: 'Inspect live background tasks & subagents', kind: 'action', act: 'bgtasks', baseWeight: 68 },
     { id: '/stop', label: '/stop', desc: 'Interrupt the currently running session', kind: 'action', act: 'stop', baseWeight: 64 },
     { id: '/sync', label: '/sync', desc: 'Force immediate Bridge & Cloud Relay sync', kind: 'action', act: 'sync', baseWeight: 60 },
@@ -18057,19 +18340,7 @@
       inp.style.height = 'auto';
       updateComposerActionButton();
       if (item.act === 'compact') {
-        if (isNewSessionMode() || !cleanTargetThreadId(prefs.selectedThreadId)) {
-          showToast('Select an active session first to run /compact');
-        } else {
-          const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId);
-          await dispatchRemoteCommand({
-            type: 'sessionAction',
-            action: 'compact',
-            subAction: 'compact',
-            id: prefs.selectedThreadId,
-            provider: activeRow?.provider || 'antigravity'
-          });
-          showToast('Dispatched /compact to summarize context');
-        }
+        await triggerActiveSessionCompact();
       } else if (item.act === 'new-agy') {
         enterNewSessionMode('antigravity');
       } else if (item.act === 'new-claude') {
@@ -18146,25 +18417,41 @@
       updateComposerActionButton();
       return;
     }
+    const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId) || null;
+    const targetDev =
+      activeRow?.deviceId ||
+      (prefs.composerTargetDevice && prefs.composerTargetDevice !== 'auto' ? prefs.composerTargetDevice : '');
+    const liveWs = hasLiveAttachmentTransport(targetDev);
+    const fileAtts = composerAttachments.filter((a) => a && a.kind !== 'repo');
+    const cloudChars = calcAttachmentsPayloadChars(compactAttachmentsForCloudFallback(fileAtts));
+    const cloudExceeded = !liveWs && fileAtts.length > 0 && cloudChars > MAX_CLOUD_FALLBACK_CHARS;
+
     tray.hidden = false;
-    tray.innerHTML = composerAttachments
-      .map((a) => {
-        const iconHtml =
-          a.kind === 'image' && a.dataUrl
-            ? `<img src="${esc(a.dataUrl)}" class="composer-attach-thumb" alt="">`
-            : a.kind === 'repo'
-              ? `<span class="composer-attach-kind">Repo</span>`
-              : `<span class="composer-attach-kind">File</span>`;
-        return `
-          <span class="composer-attach-pill">
+    tray.innerHTML =
+      composerAttachments
+        .map((a) => {
+          const iconHtml =
+            a.kind === 'image' && a.dataUrl
+              ? `<img src="${esc(a.dataUrl)}" class="composer-attach-thumb" alt="">`
+              : a.kind === 'repo'
+                ? `<span class="composer-attach-kind">Repo</span>`
+                : `<span class="composer-attach-kind">File</span>`;
+          const isLargeChunk = liveWs && String(a.dataUrl || '').length > 520000;
+          const isOverCloud = !liveWs && a.kind !== 'repo' && !a.textContent && String(a.dataUrl || '').length > MAX_CLOUD_FALLBACK_CHARS;
+          const metaTxt = [a.sizeLabel, isLargeChunk ? 'chunked WS' : ''].filter(Boolean).join(' · ');
+          return `
+          <span class="composer-attach-pill${isOverCloud ? ' is-over-cloud-cap' : ''}">
             ${iconHtml}
             <span class="composer-attach-name">${esc(a.name)}</span>
-            ${a.sizeLabel ? `<span class="composer-attach-meta tabular">${esc(a.sizeLabel)}</span>` : ''}
+            ${metaTxt ? `<span class="composer-attach-meta tabular">${esc(metaTxt)}</span>` : ''}
             <button type="button" class="composer-attach-remove" data-remove-attach="${esc(a.id)}" aria-label="Remove attachment">✕</button>
           </span>
         `;
-      })
-      .join('');
+        })
+        .join('') +
+      (cloudExceeded
+        ? `<div class="composer-attach-warn">Cloud Store fallback limits attachments to ~250 KB total. Connect live Edge WS for chunked uploads up to 8 MB, or remove large files.</div>`
+        : '');
     updateComposerActionButton();
   }
 
@@ -18177,14 +18464,15 @@
     });
   }
 
-  async function compressImageFile(file) {
+  async function compressImageFile(file, opts = {}) {
     const rawDataUrl = await readFileAsDataUrl(file);
-    if (file.size <= 220 * 1024) return rawDataUrl;
+    const maxDim = Number(opts.maxDim || 1440);
+    const quality = Number(opts.quality || 0.82);
+    if (file.size <= 220 * 1024 && !opts.force) return rawDataUrl;
     return new Promise((resolve) => {
       const img = new Image();
       img.onload = () => {
         try {
-          const maxDim = 1440;
           let w = img.naturalWidth || img.width || 800;
           let h = img.naturalHeight || img.height || 600;
           if (w > maxDim || h > maxDim) {
@@ -18201,7 +18489,7 @@
           canvas.height = h;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, w, h);
-          resolve(canvas.toDataURL('image/jpeg', 0.82));
+          resolve(canvas.toDataURL('image/jpeg', quality));
         } catch {
           resolve(rawDataUrl);
         }
@@ -18214,7 +18502,22 @@
   async function handleComposerFiles(fileList) {
     const files = Array.from(fileList || []);
     if (!files.length) return;
+    let addedCount = 0;
+    const isNewFileCtx = Boolean(isNewSessionMode() || !prefs.selectedThreadId || prefs.selectedThreadId === '__new__');
+    const activeFileRow = !isNewFileCtx ? (appState?.rows || []).find((r) => r && r.id === prefs.selectedThreadId) || null : null;
+    const targetFileDev = isNewFileCtx
+      ? (prefs.composerTargetDevice && prefs.composerTargetDevice !== 'auto' ? prefs.composerTargetDevice : '')
+      : activeFileRow?.deviceId || '';
+    const liveWs = hasLiveAttachmentTransport(targetFileDev);
     for (const file of files) {
+      if (composerAttachments.length >= 8) {
+        showToast('Maximum 8 attachments per message');
+        break;
+      }
+      if (Number(file.size || 0) > MAX_LIVE_WS_ATTACHMENT_BYTES) {
+        showToast(`${file.name || 'File'} (${fmtFileBytes(file.size)}) exceeds the 8 MB limit`);
+        continue;
+      }
       const isImg = String(file.type || '').startsWith('image/');
       const isText =
         /\.(txt|md|json|csv|py|js|ts|tsx|jsx|html|css|sql|xml|yaml|yml|ps1|sh|log|ini|env|toml)$/i.test(
@@ -18225,13 +18528,19 @@
       try {
         if (isImg) {
           dataUrl = await compressImageFile(file);
+          if (!liveWs && dataUrl.length > MAX_CLOUD_FALLBACK_CHARS) {
+            const smaller = await compressImageFile(file, { maxDim: 1024, quality: 0.72, force: true });
+            if (smaller && smaller.length < dataUrl.length) dataUrl = smaller;
+          }
         } else {
           if (isText && file.size <= 512 * 1024 && typeof file.text === 'function') {
             textContent = (await file.text()).slice(0, 64000);
           }
-          if (file.size <= 2 * 1024 * 1024) {
-            dataUrl = await readFileAsDataUrl(file);
-          }
+          dataUrl = await readFileAsDataUrl(file);
+        }
+        if (!dataUrl && !textContent) {
+          showToast(`Unable to read ${file.name || 'file'}`);
+          continue;
         }
         composerAttachments.push({
           id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -18243,10 +18552,13 @@
           dataUrl,
           textContent
         });
+        addedCount += 1;
       } catch {}
     }
     renderComposerAttachments();
-    showToast(`Attached ${files.length} file${files.length === 1 ? '' : 's'}`);
+    if (addedCount > 0) {
+      showToast(`Attached ${addedCount} file${addedCount === 1 ? '' : 's'}`);
+    }
     $('composer-input')?.focus();
   }
 
@@ -18362,7 +18674,7 @@
       { title: 'Sync with the PC & Cloud Relay Now', sub: 'Connectivity', act: 'sync' },
       { title: 'Open THEO Memory Vault (Reports, Notes & Docs)', sub: 'Cloudflare Vault · memory.husseinbdeir.workers.dev', act: 'open-memory-vault' },
       { title: `${isThirdPartyQuotaHidden() ? 'Show' : 'Hide'} Antigravity Claude & GPT Quota Pool`, sub: 'Quota Display', act: 'toggle-3p-quota' },
-      { title: 'Toggle Split Inspector (Code, Diff, Side Agents & Outline)', sub: 'Workbench · ⌘I', act: 'inspector' },
+      { title: 'Toggle Split Inspector (Files & Preview, Git, Tasks & Outline)', sub: 'Workbench · ⌘I', act: 'inspector' },
       { title: 'Switch Color Palette (Graphite · Velvet · Espresso · Daylight)', sub: 'Appearance', act: 'palette' },
       { title: 'Enable / Test Web Push Notifications', sub: 'Notifications', act: 'push-test' },
       { title: 'Inspect Background Tasks & Subagents', sub: 'Workbench Overview', act: 'bgtasks' },
@@ -18381,6 +18693,12 @@
       }
     }
 
+    const CMD_VIEW_ROUTE_ACTS = new Set([
+      'tab-pulse',
+      'tab-sessions',
+      'tab-workspaces',
+      'tab-analytics'
+    ]);
     const rawMatched = items.filter(
       (it) => !q || `${it.title} ${it.sub}`.toLowerCase().includes(q)
     );
@@ -18393,12 +18711,24 @@
             'threads',
             (it) => it.threadId || it.act || it.title
           );
-          return exact.concat(freqOrdered);
+          return exact.concat(freqOrdered).slice(0, 12);
         })()
-      : rankByFreq(rawMatched, 'threads', (it) => it.threadId || it.act || it.title);
+      : (() => {
+          const viewRoutes = rankByFreq(
+            rawMatched.filter((it) => CMD_VIEW_ROUTE_ACTS.has(it.act)),
+            'commands',
+            (it) => it.act
+          );
+          const restItems = rankByFreq(
+            rawMatched.filter((it) => !CMD_VIEW_ROUTE_ACTS.has(it.act)),
+            'threads',
+            (it) => it.threadId || it.act || it.title,
+            (it) => Number(prefs.freqUsage?.commands?.[it.act] || 0) * 10
+          );
+          return viewRoutes.concat(restItems.slice(0, 10));
+        })();
 
     resEl.innerHTML = matched
-      .slice(0, 12)
       .map(
         (it) => `
         <button type="button" class="cmd-item" data-cmd-act="${esc(it.act || '')}" data-cmd-thread="${esc(it.threadId || '')}">
@@ -18893,6 +19223,15 @@
       ) {
         closeIdeContextMenu();
       }
+      const chatMoreMenu = $('chat-more-menu');
+      if (
+        chatMoreMenu &&
+        !chatMoreMenu.hidden &&
+        !e.target?.closest?.('#chat-more-wrap')
+      ) {
+        chatMoreMenu.hidden = true;
+        $('btn-chat-more')?.setAttribute('aria-expanded', 'false');
+      }
       const modPop = $('model-picker-popover');
       if (
         modPop &&
@@ -19065,20 +19404,29 @@
         updateComposerActionButton();
         return;
       }
-      const openLensBtn = e.target.closest('[data-open-lens]');
-      if (openLensBtn) {
-        const rawLens = openLensBtn.dataset.openLens || 'code';
-        const lens = rawLens === 'checks' ? 'agents' : rawLens;
-        if (prefs.inspectorOpen && prefs.inspectorTab === lens) {
-          setInspectorOpen(false);
-        } else {
-          setInspectorOpen(true, lens);
+      if (e.target.closest('#btn-chat-more')) {
+        e.preventDefault();
+        e.stopPropagation();
+        const menu = $('chat-more-menu');
+        if (menu) {
+          const nextOpen = menu.hidden;
+          menu.hidden = !nextOpen;
+          $('btn-chat-more')?.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
         }
+        return;
+      }
+      if (e.target.closest('#btn-chat-more-compact')) {
+        e.preventDefault();
+        e.stopPropagation();
+        await triggerActiveSessionCompact();
         return;
       }
       if (e.target.closest('#btn-split-watch')) {
         prefs.splitWatchOpen = !prefs.splitWatchOpen;
         saveJson(STORAGE_KEYS.PREFS, prefs);
+        const menu = $('chat-more-menu');
+        if (menu) menu.hidden = true;
+        $('btn-chat-more')?.setAttribute('aria-expanded', 'false');
         renderChatView(false);
         return;
       }
@@ -19151,21 +19499,7 @@
       if (e.target.closest('[data-studio-cap-refresh]')) {
         const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId) || null;
         await fetchStudioCapabilities(activeRow, true);
-        showToast('Refreshed workspace studio capabilities');
-        return;
-      }
-      const useSkillBtn = e.target.closest('[data-use-studio-skill]');
-      if (useSkillBtn) {
-        const skillName = String(useSkillBtn.dataset.useStudioSkill || '').trim();
-        const inp = $('composer-input');
-        if (skillName && inp) {
-          recordFreqUsage('skills', skillName);
-          const prefix = `Use the ${skillName} skill: `;
-          inp.value = inp.value ? `${prefix}${inp.value}` : prefix;
-          inp.focus();
-          updateComposerActionButton();
-          renderChatView(false);
-        }
+        showToast('Refreshed workspace capabilities');
         return;
       }
       const runCheckBtn = e.target.closest('[data-run-studio-check]');
@@ -19188,7 +19522,7 @@
       }
       const inspTabBtn = e.target.closest('[data-insp-tab]');
       if (inspTabBtn) {
-        setInspectorOpen(true, inspTabBtn.dataset.inspTab || 'code');
+        setInspectorOpen(true, inspTabBtn.dataset.inspTab || 'files');
         return;
       }
       const inspModeBtn = e.target.closest('[data-insp-view-mode]');
@@ -19207,14 +19541,14 @@
           const dKind = getDeliverableKindClient(parsedCur.filePath);
           if (dKind) {
             const sid = String(prefs.selectedThreadId || '').trim();
-            const wsId = String(prefs.selectedRepoId || '').trim();
+            const activeRow = (appState?.rows || []).find((r) => r && r.id === sid) || null;
+            const wsId = resolveSessionWorkspaceContext(activeRow, threadsCache[sid] || null).wsId;
             const cacheKey = `${sid || wsId || 'global'}::${parsedCur.filePath.replace(/\\/g, '/')}`;
             const pageKey = `${cacheKey}::p${activeDeliverablePage}`;
             const hasEntry = dKind === 'pdf' || dKind === 'pptx'
               ? deliverablePageCache.has(pageKey)
               : deliverablePreviewCache.has(cacheKey);
             if (!hasEntry) {
-              const activeRow = (appState?.rows || []).find((r) => r && r.id === sid) || null;
               fetchDeliverablePreview(activeInspectorFileTarget, activeRow, { page: activeDeliverablePage }).catch(() => {});
             }
           }
@@ -19293,7 +19627,7 @@
       }
       if (e.target.closest('[data-insp-refresh-agents]')) {
         const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId) || null;
-        await fetchStudioCapabilities(activeRow, true);
+        fetchStudioCapabilities(activeRow, true).catch(() => {});
         if (prefs.selectedThreadId && !isNewSessionMode()) {
           const prov = activeRow?.provider || pinnedNavProvider || 'antigravity';
           await fetchThreadDetail(prefs.selectedThreadId, prov);
@@ -19327,7 +19661,7 @@
                   : 'source';
         if (fileTarget) {
           if (prefs.activeTab !== 'chat') switchTab('chat');
-          setInspectorOpen(true, 'code', { fileTarget, viewMode });
+          setInspectorOpen(true, 'files', { fileTarget, viewMode });
         }
         return;
       }
@@ -19349,7 +19683,7 @@
           fetchThreadDetail(sid, prov).catch(() => {});
         }
         if (prefs.activeTab !== 'chat') switchTab('chat');
-        setInspectorOpen(true, 'agents', { agentId });
+        setInspectorOpen(true, 'tasks', { agentId });
         if (sid && agentId) {
           fetchBgTaskLiveLog(sid, agentId, prov).catch(() => {});
         }
@@ -19458,7 +19792,7 @@
           saveJson(STORAGE_KEYS.PREFS, prefs);
           switchTab('chat');
           if (cAct === 'inspect-outline') {
-            setInspectorOpen(true, 'outline');
+            setInspectorOpen(true, 'tasks');
           }
           renderIdeSidebar();
           fetchThreadDetail(sid, prov).catch(() => {});
@@ -21294,7 +21628,10 @@
         const act = cmdItem.dataset.cmdAct;
         const tid = cmdItem.dataset.cmdThread;
         if (tid) recordFreqUsage('threads', tid);
-        else if (act) recordFreqUsage('threads', act);
+        else if (act) {
+          recordFreqUsage('threads', act);
+          recordFreqUsage('commands', act);
+        }
         if (tid) {
           ensureEditorTabOpen(tid);
           setPinnedNav({ threadId: tid, durationMs: 45000 });
@@ -21350,12 +21687,7 @@
             positionPalettePopover($('btn-palette-picker'));
           }
         } else if (act === 'compact') {
-          if (isNewSessionMode() || !cleanTargetThreadId(prefs.selectedThreadId)) {
-            showToast('Select an active session first to run /compact');
-          } else {
-            dispatchRemoteCommand({ type: 'sessionAction', action: 'compact', subAction: 'compact', id: prefs.selectedThreadId });
-            showToast('Dispatched /compact');
-          }
+          await triggerActiveSessionCompact();
         } else if (act === 'pin-chat') {
           await toggleSessionPin(prefs.selectedThreadId);
         } else if (act === 'tab-pulse') {
@@ -21664,19 +21996,6 @@
     $('mobile-sync-btn')?.addEventListener('click', () => syncData({ toast: true }));
     $('btn-refresh-git')?.addEventListener('click', () => renderWorkspacesView());
 
-    document.addEventListener('input', (ev) => {
-      if (isPinLocked()) return;
-      if (ev.target && ev.target.id === 'canvas-grid-search') {
-        canvasGridFilterText = String(ev.target.value || '');
-        const sid = prefs.selectedThreadId || '';
-        const row = (appState?.rows || []).find((r) => r && r.id === sid) || null;
-        const td = isNewSessionMode() ? null : threadsCache[sid] || null;
-        const msgs = coalesceThreadMessages(td?.messages || []);
-        const provKey = (td?.provider || row?.provider) === 'claude' ? 'claude' : 'antigravity';
-        renderSplitInspector(row, td, msgs, provKey, isNewSessionMode(), true);
-      }
-    });
-
     document.addEventListener('change', (ev) => {
       if (isPinLocked()) return;
       if (ev.target && ev.target.id === 'split-watch-session-select') {
@@ -21809,25 +22128,20 @@
       if (pop) pop.hidden = true;
     });
     $('btn-ctx-compact')?.addEventListener('click', async () => {
-      if (isNewSessionMode() || !cleanTargetThreadId(prefs.selectedThreadId)) {
-        showToast('Start or select a session before running /compact');
-        return;
-      }
-      const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId);
-      await dispatchRemoteCommand({
-        type: 'sessionAction',
-        action: 'compact',
-        subAction: 'compact',
-        id: prefs.selectedThreadId,
-        provider: activeRow?.provider || 'antigravity'
-      });
-      showToast('Sent /compact to active session');
-      const pop = $('ctx-popover');
-      if (pop) pop.hidden = true;
+      await triggerActiveSessionCompact();
     });
 
     $('btn-chat-open-vscode')?.addEventListener('click', async () => {
-      if (isNewSessionMode()) {
+      const moreMenu = $('chat-more-menu');
+      if (moreMenu) moreMenu.hidden = true;
+      $('btn-chat-more')?.setAttribute('aria-expanded', 'false');
+      const isNewDraft = isNewSessionMode();
+      const activeRow = isNewDraft ? null : (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId) || null;
+      if (!isHostVsCodeOpenForSession(activeRow, isNewDraft)) {
+        showToast('VS Code is not open on that PC. The session is fully usable here in THEO.');
+        return;
+      }
+      if (isNewDraft) {
         const prov = prefs.composerMode === 'new-claude' ? 'claude' : 'antigravity';
         const newTabRes = await dispatchRemoteCommand({
           type: 'sessionAction',
@@ -21846,7 +22160,6 @@
         );
         return;
       }
-      const activeRow = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId);
       const openTabRes = await dispatchRemoteCommand({
         type: 'sessionAction',
         action: 'open',
@@ -22189,7 +22502,7 @@
       } else if (
         (e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
         prefs.inspectorOpen &&
-        prefs.inspectorTab === 'code' &&
+        prefs.inspectorTab === 'files' &&
         prefs.inspectorViewMode !== 'source' &&
         prefs.inspectorViewMode !== 'diff' &&
         activeInspectorFileTarget
@@ -22202,7 +22515,8 @@
         const dKind = getDeliverableKindClient(parsedCur.filePath);
         if (!inField && (dKind === 'pdf' || dKind === 'pptx')) {
           const sid = String(prefs.selectedThreadId || '').trim();
-          const wsId = String(prefs.selectedRepoId || '').trim();
+          const activeRow = (appState?.rows || []).find((r) => r && r.id === sid) || null;
+          const wsId = resolveSessionWorkspaceContext(activeRow, threadsCache[sid] || null).wsId;
           const cacheKey = `${sid || wsId || 'global'}::${parsedCur.filePath.replace(/\\/g, '/')}`;
           const dlv = deliverablePreviewCache.get(cacheKey);
           const total = Math.max(1, Number(dlv?.pageCount || dlv?.slides?.length || 1));
@@ -22211,7 +22525,6 @@
           if (nextP !== activeDeliverablePage) {
             e.preventDefault();
             activeDeliverablePage = nextP;
-            const activeRow = (appState?.rows || []).find((r) => r && r.id === sid) || null;
             renderChatView(false);
             fetchDeliverablePreview(activeInspectorFileTarget, activeRow, { page: nextP }).catch(() => {});
           }
@@ -22271,8 +22584,9 @@
       if (isPinLocked()) return;
       const palPop = $('theme-palette-popover');
       const ctxMenu = $('ide-context-menu');
+      const chatMoreMenu = $('chat-more-menu');
       const modPop = $('model-picker-popover');
-      if ((palPop && !palPop.hidden) || (ctxMenu && !ctxMenu.hidden) || (modPop && !modPop.hidden)) {
+      if ((palPop && !palPop.hidden) || (ctxMenu && !ctxMenu.hidden) || (chatMoreMenu && !chatMoreMenu.hidden) || (modPop && !modPop.hidden)) {
         closeFloatingUiMenus();
         return;
       }
@@ -22335,7 +22649,7 @@
     let deckSwipeStartX = 0;
     let deckSwipeStartY = 0;
     document.addEventListener('touchstart', (e) => {
-      if (isPinLocked() || !prefs.inspectorOpen || prefs.inspectorTab !== 'code') return;
+      if (isPinLocked() || !prefs.inspectorOpen || prefs.inspectorTab !== 'files') return;
       if (activeDeliverableDeckMode !== 'single' || !e.target?.closest?.('.insp-deck-stage')) return;
       const t = e.touches && e.touches[0];
       if (!t) return;
@@ -22349,7 +22663,7 @@
       const sy = deckSwipeStartY;
       deckSwipeStartX = 0;
       deckSwipeStartY = 0;
-      if (!t || !prefs.inspectorOpen || prefs.inspectorTab !== 'code' || activeDeliverableDeckMode !== 'single') return;
+      if (!t || !prefs.inspectorOpen || prefs.inspectorTab !== 'files' || activeDeliverableDeckMode !== 'single') return;
       const dx = t.clientX - sx;
       const dy = t.clientY - sy;
       if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.4) return;
@@ -22357,14 +22671,14 @@
       const dKind = getDeliverableKindClient(parsedCur.filePath);
       if (dKind !== 'pdf' && dKind !== 'pptx') return;
       const sid = String(prefs.selectedThreadId || '').trim();
-      const wsId = String(prefs.selectedRepoId || '').trim();
+      const activeRow = (appState?.rows || []).find((r) => r && r.id === sid) || null;
+      const wsId = resolveSessionWorkspaceContext(activeRow, threadsCache[sid] || null).wsId;
       const cacheKey = `${sid || wsId || 'global'}::${parsedCur.filePath.replace(/\\/g, '/')}`;
       const dlv = deliverablePreviewCache.get(cacheKey);
       const total = Math.max(1, Number(dlv?.pageCount || dlv?.slides?.length || 1));
       const nextP = Math.max(1, Math.min(total, activeDeliverablePage + (dx < 0 ? 1 : -1)));
       if (nextP !== activeDeliverablePage) {
         activeDeliverablePage = nextP;
-        const activeRow = (appState?.rows || []).find((r) => r && r.id === sid) || null;
         renderChatView(false);
         fetchDeliverablePreview(activeInspectorFileTarget, activeRow, { page: nextP }).catch(() => {});
       }
@@ -22788,7 +23102,44 @@
       }
     }
 
+    const repoRefs = composerAttachments.filter((a) => a.kind === 'repo');
+    const fileRefs = composerAttachments.filter((a) => a.kind !== 'repo');
+    const activeRowPre = (appState?.rows || []).find((r) => r.id === prefs.selectedThreadId) || null;
+    const isNewPre = Boolean(
+      prefs.composerMode === 'new-antigravity' ||
+        prefs.composerMode === 'new-claude' ||
+        !prefs.selectedThreadId ||
+        prefs.selectedThreadId === '__new__'
+    );
+    const targetDevPre = isNewPre
+      ? prefs.composerTargetDevice && prefs.composerTargetDevice !== 'auto'
+        ? prefs.composerTargetDevice
+        : ''
+      : activeRowPre?.deviceId || '';
+    const liveWsPre = hasLiveAttachmentTransport(targetDevPre);
+    let preparedFileAttachments = fileRefs.map((f) => ({
+      name: f.name,
+      mime: f.mime,
+      size: f.size,
+      dataUrl: f.dataUrl || '',
+      textContent: f.textContent || ''
+    }));
+    if (fileRefs.length > 0 && (!liveWsPre && (!isHeadlessBrowser || window.__THEO_TEST_FORCE_TRANSPORT_MODE === 'cloud'))) {
+      preparedFileAttachments = compactAttachmentsForCloudFallback(preparedFileAttachments);
+      if (calcAttachmentsPayloadChars(preparedFileAttachments) > MAX_CLOUD_FALLBACK_CHARS) {
+        renderComposerAttachments();
+        showToast('Attachment exceeds 250 KB Cloud Store fallback limit (connect live Edge WS for up to 8 MB)');
+        return;
+      }
+    }
+
     const sentAttachments = [...composerAttachments];
+    const prevSelectedThreadId = prefs.selectedThreadId;
+    const prevComposerMode = prefs.composerMode;
+    const prevNewSessionGroupId = prefs.newSessionGroupId;
+    const prevOpenEditorTabs = Array.isArray(prefs.openEditorTabs) ? [...prefs.openEditorTabs] : [];
+    const optMsgId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
     composerAttachments = [];
     renderComposerAttachments();
 
@@ -22797,8 +23148,6 @@
     haptic(15);
     playChime('send');
 
-    const repoRefs = sentAttachments.filter((a) => a.kind === 'repo');
-    const fileRefs = sentAttachments.filter((a) => a.kind !== 'repo');
     const contextHeader = repoRefs.length
       ? `${repoRefs
           .map((r) => {
@@ -22836,6 +23185,28 @@
     const targetGroupName = targetGroupObj?.name || '';
     const modelCfg = getEffectiveSessionModelConfig(activeRow, provider, isNew);
 
+    const prevRowSnapshot = activeRow
+      ? {
+          pendingQuestion: activeRow.pendingQuestion,
+          status: activeRow.status,
+          statusLabel: activeRow.statusLabel,
+          dot: activeRow.dot,
+          at: activeRow.at,
+          lastWorkedAt: activeRow.lastWorkedAt,
+          model: activeRow.model,
+          effort: activeRow.effort
+        }
+      : null;
+    const hadCacheBefore = Boolean(targetId && threadsCache[targetId]);
+    const prevCacheModel = targetId ? threadsCache[targetId]?.model : undefined;
+    const hadPrevOverride = Boolean(targetId && pendingRowOverrides.has(targetId));
+    const prevOverrideVal = hadPrevOverride ? { ...pendingRowOverrides.get(targetId) } : null;
+    const prevApprovals = Array.isArray(appState?.approvals) ? [...appState.approvals] : null;
+    const prevCollapsedGroups =
+      prefs.collapsedSessionGroups && typeof prefs.collapsedSessionGroups === 'object'
+        ? { ...prefs.collapsedSessionGroups }
+        : null;
+
     let draftId = '';
     if (isNew) {
       draftId = `draft-new-${Date.now()}`;
@@ -22867,7 +23238,7 @@
         },
         messages: [
           {
-            id: `local-${Date.now()}`,
+            id: optMsgId,
             role: 'user',
             createdAt: new Date().toISOString(),
             text: `${rawText || text}${attachDisplayLine}`,
@@ -22962,7 +23333,7 @@
       }
       const baseCountBeforePush = (threadsCache[targetId].messages || []).filter((m) => !m?.optimistic).length;
       threadsCache[targetId].messages.push({
-        id: `local-${Date.now()}`,
+        id: optMsgId,
         role: 'user',
         createdAt: new Date().toISOString(),
         text: `${rawText || text}${attachDisplayLine}`,
@@ -22988,15 +23359,54 @@
       prompt: text,
       group: targetGroupId || undefined,
       groupName: targetGroupName || undefined,
-      attachments: fileRefs.map((f) => ({
-        name: f.name,
-        mime: f.mime,
-        size: f.size,
-        dataUrl: f.dataUrl || '',
-        textContent: f.textContent || ''
-      })),
+      attachments: preparedFileAttachments,
       newSession: isNew
     });
+
+    if (res && res.ok === false) {
+      composerAttachments = sentAttachments;
+      inp.value = rawText;
+      updateComposerActionButton();
+      if (isNew && draftId) {
+        pendingNewSessionBind = null;
+        delete threadsCache[draftId];
+        if (prefs.threadModelConfig) delete prefs.threadModelConfig[draftId];
+        pendingRowOverrides.delete(draftId);
+        prefs.selectedThreadId = prevSelectedThreadId;
+        prefs.composerMode = prevComposerMode;
+        prefs.newSessionGroupId = prevNewSessionGroupId;
+        prefs.openEditorTabs = prevOpenEditorTabs;
+        if (prevCollapsedGroups) prefs.collapsedSessionGroups = prevCollapsedGroups;
+        saveJson(STORAGE_KEYS.PREFS, prefs);
+      } else if (targetId) {
+        if (!hadCacheBefore) {
+          delete threadsCache[targetId];
+        } else if (threadsCache[targetId]) {
+          if (prevCacheModel !== undefined) threadsCache[targetId].model = prevCacheModel;
+          threadsCache[targetId].messages = (threadsCache[targetId].messages || []).filter(
+            (m) => m && m.id !== optMsgId
+          );
+        }
+        if (activeRow && prevRowSnapshot) {
+          Object.assign(activeRow, prevRowSnapshot);
+          if (Array.isArray(appState?.rows)) {
+            appState.rows.sort(compareRowsPinnedFirst);
+          }
+        }
+        if (hadPrevOverride && prevOverrideVal) pendingRowOverrides.set(targetId, prevOverrideVal);
+        else pendingRowOverrides.delete(targetId);
+        if (prevApprovals && Array.isArray(appState?.approvals)) {
+          appState.approvals = prevApprovals;
+        }
+      }
+      persistCache();
+      renderComposerAttachments();
+      updateComposerModePills();
+      renderChatView(true);
+      renderIdeSidebar();
+      showToast(res.error || 'Failed to send message');
+      return;
+    }
 
     recentResumeUntil = 0;
     if (isNew) {
@@ -23037,13 +23447,7 @@
               prompt: text,
               group: targetGroupId || undefined,
               groupName: targetGroupName || undefined,
-              attachments: fileRefs.map((f) => ({
-                name: f.name,
-                mime: f.mime,
-                size: f.size,
-                dataUrl: f.dataUrl || '',
-                textContent: f.textContent || ''
-              })),
+              attachments: preparedFileAttachments,
               newSession: isNew
             }).catch(() => {});
           }
@@ -23242,7 +23646,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=92', { updateViaCache: 'none' })
+        .register('sw.js?v=93', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
@@ -23391,6 +23795,14 @@
         recentResumeUntil = Date.now() + 25000;
         consumePendingNotificationNav({ allowUnseenPush: true });
       }
+    });
+    window.addEventListener('offline', () => {
+      updateConnectionBanner();
+      if (prefs.activeTab === 'chat') renderChatView(false);
+    });
+    window.addEventListener('online', () => {
+      updateConnectionBanner();
+      if (prefs.activeTab === 'chat') renderChatView(false);
     });
 
     if (appState && typeof appState === 'object') {

@@ -5049,8 +5049,7 @@ html[data-theme="light"] .mobile-bottom-dock {
     gap: 6px;
   }
   .bg-tasks-pill,
-  .ctx-window-pill,
-  #btn-chat-open-vscode {
+  .ctx-window-pill {
     padding: 4px 8px;
     font-size: 11px;
   }
@@ -9469,41 +9468,7 @@ html[data-theme="light"] .sb-q-btn.primary {
   padding-right: 4px;
 }
 
-/* 4. Header Built-in Studio Lens Bar */
-.studio-lens-bar {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px;
-  border-radius: 7px;
-  background: var(--bg-obsidian);
-  border: 1px solid var(--border-subtle);
-}
-
-.studio-lens-pill {
-  height: 23px;
-  padding: 0 7.5px;
-  border-radius: 5px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  background: transparent;
-  transition: background 0.12s ease, color 0.12s ease;
-  white-space: nowrap;
-}
-
-.studio-lens-pill:hover,
-.studio-lens-pill.active {
-  background: var(--bg-elevated);
-  color: var(--text-heading);
-}
-
-.studio-lens-pill.split-watch-btn.active {
-  color: var(--brass);
-  border: 1px solid rgba(200, 162, 90, 0.35);
-}
-
-/* 5. Code Quote-Line Button & Studio Lens Panels (Git / Canvas / Checks) */
+/* 5. Code Quote-Line Button & Workbench Inspector Panels */
 .insp-quote-line-btn {
   opacity: 0;
   padding: 0 4px;
@@ -9704,9 +9669,6 @@ html[data-theme="light"] .sb-q-btn.primary {
 }
 
 @media (max-width: 900px) {
-  .studio-lens-bar {
-    display: none;
-  }
   .chat-split-watch-pane {
     position: absolute;
     inset: 0;
@@ -11749,4 +11711,93 @@ html[data-theme="light"] .sb-q-btn.primary {
   .ide-add-account-tray input {
     font-size: 16px !important;
   }
+}
+
+/* ==========================================================================
+   v93 (Phase 4) — Workbench Overflow Menu & Cloud Store Attachment Warnings
+   ========================================================================== */
+
+.chat-more-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.chat-more-btn {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  font-size: 14px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-obsidian);
+  border-radius: 6px;
+}
+
+.chat-more-btn.is-active {
+  border-color: rgba(200, 162, 90, 0.45);
+  color: var(--brass);
+}
+
+.chat-more-btn.is-active::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--brass);
+}
+
+.chat-more-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 220px;
+  max-width: min(268px, calc(100vw - 24px));
+  padding: 5px;
+  border-radius: 9px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 95;
+}
+
+.chat-more-menu[hidden],
+#btn-chat-open-vscode[hidden],
+#btn-chat-more-compact[hidden] {
+  display: none !important;
+}
+
+.chat-more-menu .ctx-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+}
+
+.chat-more-menu .split-watch-btn.active {
+  color: var(--brass);
+  background: rgba(200, 162, 90, 0.1);
+}
+
+.composer-attach-pill.is-over-cloud-cap {
+  border-color: var(--amber);
+  background: rgba(217, 165, 74, 0.1);
+}
+
+.composer-attach-warn {
+  flex: 1 0 100%;
+  font-size: 11px;
+  line-height: 1.35;
+  padding: 5px 8px;
+  border-radius: 7px;
+  color: var(--amber);
+  background: rgba(217, 165, 74, 0.1);
+  border: 1px solid rgba(217, 165, 74, 0.34);
 }
