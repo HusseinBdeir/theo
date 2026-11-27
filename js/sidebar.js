@@ -319,7 +319,7 @@
         </div>
         <input type="text" class="ide-add-tray-input" id="${targetMode === 'modal' ? 'acct-modal-add-label' : 'ide-add-tray-label'}" placeholder="Optional label (e.g. Work, Personal)" value="${S.esc(st.label || '')}" maxlength="32" autocomplete="off">
         <div class="ide-add-tray-actions">
-          <span class="meta-timestamp" style="margin-right:auto;font-size:10px">${S.esc(hostTxt)}</span>
+          <span class="meta-timestamp" style="margin-right:auto;font-size:var(--fs-2xs)">${S.esc(hostTxt)}</span>
           <button type="button" class="btn-ghost-sm" data-add-tray-cancel="1">Cancel</button>
           <button type="submit" class="btn-brass-sm" ${host ? '' : 'disabled'}>Sign In</button>
         </div>

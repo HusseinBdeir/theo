@@ -42,7 +42,7 @@
 
     const listHtml =
       items.length === 0
-        ? `<div class="meta-timestamp" style="padding:14px 12px;border-radius:10px;background:var(--bg-ink);border:1px solid var(--border-subtle);text-align:center">No unchecked notifications — Home Screen badge is clear (0).</div>`
+        ? `<div class="meta-timestamp" style="padding:14px 12px;border-radius:var(--r-lg);background:var(--bg-ink);border:1px solid var(--border-subtle);text-align:center">No unchecked notifications — Home Screen badge is clear (0).</div>`
         : `<div class="notif-inbox-list">
             ${items
               .slice(0, 25)
@@ -57,7 +57,7 @@
                 ${
                   !it.checked
                     ? `<button type="button" class="notif-check-btn" data-notif-check="${S.esc(it.id || it.tag)}" aria-label="Mark checked &amp; decrement Home Screen badge">✓ Check</button>`
-                    : `<span class="pill-count steel" style="font-size:10px">Done</span>`
+                    : `<span class="pill-count steel" style="font-size:var(--fs-2xs)">Done</span>`
                 }
               </div>
             `
@@ -68,17 +68,17 @@
     bodyEl.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
         <span class="meta-timestamp">
-          Home Screen Badge: <strong class="tabular" style="color:${badgeCount > 0 ? '#FF3B30' : 'var(--emerald)'}">${badgeCount > 0 ? `${badgeCount} Unchecked` : '0 (All Clear)'}</strong> · Push: <strong style="color:${pushActive ? 'var(--emerald)' : 'var(--amber)'}">${pushActive ? 'Active' : 'Off'}</strong>
+          Home Screen Badge: <strong class="tabular" style="color:${badgeCount > 0 ? 'var(--crimson)' : 'var(--emerald)'}">${badgeCount > 0 ? `${badgeCount} Unchecked` : '0 (All Clear)'}</strong> · Push: <strong style="color:${pushActive ? 'var(--emerald)' : 'var(--amber)'}">${pushActive ? 'Active' : 'Off'}</strong>
         </span>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           ${
             unchecked.length > 0 || badgeCount > 0
-              ? `<button type="button" class="btn-brass-sm" data-notif-act="check-all" style="padding:5px 10px;font-size:11.5px">✓ Mark All Checked (${badgeCount})</button>`
+              ? `<button type="button" class="btn-brass-sm" data-notif-act="check-all" style="padding:5px 10px;font-size:var(--fs-sm)">✓ Mark All Checked (${badgeCount})</button>`
               : ''
           }
           ${
             checked.length > 0
-              ? `<button type="button" class="btn-ghost-sm" data-notif-act="clear-checked" style="padding:5px 10px;font-size:11.5px">Clear Checked</button>`
+              ? `<button type="button" class="btn-ghost-sm" data-notif-act="clear-checked" style="padding:5px 10px;font-size:var(--fs-sm)">Clear Checked</button>`
               : ''
           }
         </div>
@@ -187,7 +187,7 @@
         <div class="push-banner-top">
           <strong>Push Notifications</strong>
         </div>
-        <div class="meta-timestamp" style="color:var(--text-secondary);font-size:12.5px">
+        <div class="meta-timestamp" style="color:var(--text-secondary);font-size:var(--fs-md)">
           Get lock-screen alerts for tool approvals, session completions, and quota warnings.
         </div>
         <div class="push-banner-actions">
@@ -248,7 +248,7 @@
       <div class="push-settings-card">
         <div class="section-head" style="margin-bottom:0">
           <div>
-            <h2 class="section-title" style="font-size:17px;margin-top:2px">Push Notifications</h2>
+            <h2 class="section-title" style="font-size:var(--fs-xl);margin-top:2px">Push Notifications</h2>
             <div class="brass-rule-single"></div>
           </div>
           ${statusChip}
@@ -753,7 +753,7 @@
               }
               <div class="bg-detail-label-row">
                 <span>Live Output / Trace</span>
-                <button type="button" class="btn-ghost-sm" style="padding:2px 8px;font-size:10.5px" data-bg-act="refresh-log" data-sess-id="${S.esc(sid)}" data-task-id="${S.esc(t.id)}" data-prov="${provKey}">↻ Refresh Log</button>
+                <button type="button" class="btn-ghost-sm" style="padding:2px 8px;font-size:var(--fs-xs)" data-bg-act="refresh-log" data-sess-id="${S.esc(sid)}" data-task-id="${S.esc(t.id)}" data-prov="${provKey}">↻ Refresh Log</button>
               </div>
               <pre class="bg-detail-pre mono" data-bg-log-key="${S.esc(cacheKey)}">${S.esc(liveOut)}</pre>
             </div>
@@ -1955,7 +1955,7 @@
         (w) => `
         <button type="button" class="repo-item-btn ${w.id === S.prefs.selectedRepoId ? 'active' : ''}" data-select-repo="${S.esc(w.id)}">
           <div>
-            <div style="font-weight:700;font-size:13px">${S.esc(w.name)}</div>
+            <div style="font-weight:700;font-size:var(--fs-md)">${S.esc(w.name)}</div>
             <div class="meta-timestamp tabular">⎇ ${S.esc(w.branch || 'main')}</div>
           </div>
           <span class="tag-pill tabular" style="color:${w.dirtyCount > 0 ? 'var(--amber)' : 'var(--emerald)'}">
@@ -1985,7 +1985,7 @@
       <div class="section-head">
         <div>
           <div class="eyebrow">${S.esc(repo.group || 'Repository')}</div>
-          <h2 class="section-title" style="font-size:18px">${S.esc(repo.name)} <span class="tag-pill tabular">⎇ ${S.esc(repo.branch)}</span></h2>
+          <h2 class="section-title" style="font-size:var(--fs-2xl)">${S.esc(repo.name)} <span class="tag-pill tabular">⎇ ${S.esc(repo.branch)}</span></h2>
           <div class="meta-timestamp mono">${S.esc(repo.path || '')}</div>
         </div>
         <button type="button" class="btn-brass-sm" data-launch-repo="${S.esc(repo.id)}" data-launch-name="${S.esc(repo.name)}">
@@ -2003,7 +2003,7 @@
                   .slice(0, 12)
                   .map(
                     (f) =>
-                      `<div class="mono" style="font-size:11.5px;padding:3px 0;display:flex;justify-content:space-between"><span>${S.esc(f.path)}</span><strong style="color:var(--amber)">${S.esc(f.status)}</strong></div>`
+                      `<div class="mono" style="font-size:var(--fs-sm);padding:3px 0;display:flex;justify-content:space-between"><span>${S.esc(f.path)}</span><strong style="color:var(--amber)">${S.esc(f.status)}</strong></div>`
                   )
                   .join('')
           }
@@ -2014,7 +2014,7 @@
             .slice(0, 5)
             .map(
               (c) =>
-                `<div style="font-size:12px;padding:4px 0;border-bottom:1px solid var(--border-subtle)"><code style="color:var(--brass)">${S.esc(c.hash)}</code> ${S.esc(c.subject)} <span class="meta-timestamp">(${S.esc(c.relativeTime)})</span></div>`
+                `<div style="font-size:var(--fs-sm);padding:4px 0;border-bottom:1px solid var(--border-subtle)"><code style="color:var(--brass)">${S.esc(c.hash)}</code> ${S.esc(c.subject)} <span class="meta-timestamp">(${S.esc(c.relativeTime)})</span></div>`
             )
             .join('')}
         </div>
@@ -2059,13 +2059,13 @@
       kpiGrid.innerHTML = `
         <div class="ledger-panel">
           <div class="eyebrow">Today (5-Hour / Daily)</div>
-          <div class="hero-headline" style="color:var(--brass)">${S.fmtCompact(summaryObj.today?.tokens)} <span style="font-size:13px;color:var(--text-muted)">tokens</span></div>
+          <div class="hero-headline" style="color:var(--brass)">${S.fmtCompact(summaryObj.today?.tokens)} <span style="font-size:var(--fs-md);color:var(--text-muted)">tokens</span></div>
           <div class="meta-timestamp">${S.fmtInt(summaryObj.today?.turns)} turns · ${S.fmtInt(summaryObj.today?.sessions)} sessions</div>
           <div class="meta-timestamp" style="margin-top:6px">In: ${S.fmtCompact(summaryObj.today?.input)} · Cache: ${S.fmtCompact(summaryObj.today?.cached)} · Out: ${S.fmtCompact(summaryObj.today?.output)}</div>
         </div>
         <div class="ledger-panel">
           <div class="eyebrow">7-Day Usage</div>
-          <div class="hero-headline" style="color:var(--steel)">${S.fmtCompact(summaryObj.week?.tokens)} <span style="font-size:13px;color:var(--text-muted)">tokens</span></div>
+          <div class="hero-headline" style="color:var(--steel)">${S.fmtCompact(summaryObj.week?.tokens)} <span style="font-size:var(--fs-md);color:var(--text-muted)">tokens</span></div>
           <div class="meta-timestamp">${S.fmtInt(summaryObj.week?.turns)} turns · ${S.fmtInt(summaryObj.week?.sessions)} active sessions</div>
           <div class="meta-timestamp" style="margin-top:6px">In: ${S.fmtCompact(summaryObj.week?.input)} · Cache: ${S.fmtCompact(summaryObj.week?.cached)} · Out: ${S.fmtCompact(summaryObj.week?.output)}</div>
         </div>
@@ -2088,11 +2088,11 @@
               const hPct = Math.max(5, Math.round((Number(d.tokens || 0) / maxTok) * 100));
               return `
                 <div class="chart-col">
-                  <span class="meta-timestamp" style="font-size:10.5px">${S.fmtCompact(d.tokens)}</span>
+                  <span class="meta-timestamp" style="font-size:var(--fs-xs)">${S.fmtCompact(d.tokens)}</span>
                   <div class="chart-bar-wrap">
                     <div class="chart-bar-fill" style="height:${hPct}%"></div>
                   </div>
-                  <span style="font-size:11px;font-weight:600">${S.esc(d.label || d.key)}</span>
+                  <span style="font-size:var(--fs-xs);font-weight:600">${S.esc(d.label || d.key)}</span>
                 </div>
               `;
             })
@@ -2212,14 +2212,14 @@
             <button type="button" class="btn-ghost-sm" id="btn-download-pc-setup" data-download-pc-setup="1" aria-label="Download double-clickable Windows PC Setup app with single-use 6-digit code">Download PC Setup</button>
             <button type="button" class="btn-ghost-sm" id="btn-copy-mobile-pair" aria-label="Copy 1-tap mobile pairing URL">Copy Mobile Pair URL</button>
           </div>
-          <label style="display:block;font-size:11.5px;margin-top:10px;color:var(--text-muted)">
+          <label style="display:block;font-size:var(--fs-sm);margin-top:10px;color:var(--text-muted)">
             Pair via 6-Digit Code (from PC):
             <div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap">
               <input type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="24" class="input-field mono" id="input-pair-six-code" style="flex:1;min-width:140px" value="" placeholder="e.g. 482-917">
               <button type="button" class="btn-brass-sm" id="btn-claim-six-code">Connect Code</button>
             </div>
           </label>
-          <label style="display:block;font-size:11.5px;margin-top:10px;color:var(--text-muted)">
+          <label style="display:block;font-size:var(--fs-sm);margin-top:10px;color:var(--text-muted)">
             Or Paste <code>#pair=...</code> URL / Access Key:
             <input type="text" class="input-field mono pin-masked" id="input-pair-token" value="" placeholder="${isPaired ? 'Paired (paste new link to rotate)' : 'Paste #pair=... link or 64-hex key'}" autocomplete="off" spellcheck="false">
           </label>
@@ -2227,7 +2227,7 @@
             <button type="button" class="btn-ghost-sm" id="btn-apply-pair-token">Apply Pair Token</button>
             <button type="button" class="btn-ghost-sm" id="btn-copy-edge-deploy" aria-label="Copy Cloudflare Worker deploy command">Copy Edge Deploy Cmd</button>
           </div>
-          <label style="display:block;font-size:11.5px;margin-top:10px;color:var(--text-muted)">
+          <label style="display:block;font-size:var(--fs-sm);margin-top:10px;color:var(--text-muted)">
             Cloudflare Edge Relay URL (<code>wss://...</code>):
             <input type="url" class="input-field mono" id="input-edge-relay-url" value="${S.esc(effectiveEdgeUrl)}" placeholder="wss://theo-edge-relay.husseinbdeir.workers.dev/ws">
           </label>
@@ -2239,11 +2239,11 @@
         <div class="pairing-card">
           <div class="eyebrow">Bridge Endpoints</div>
           <p class="meta-timestamp" style="margin:6px 0">Loopback WebSocket (<code>127.0.0.1:4318/ws</code>), Cloudflare Edge WS, and Cloud Relay backstop.</p>
-          <div class="mono" style="font-size:11.5px;margin-top:8px">
+          <div class="mono" style="font-size:var(--fs-sm);margin-top:8px">
             <div><strong>Hosted PWA:</strong> ${S.esc(pwaUrl)}</div>
             <div style="margin-top:4px"><strong>Local Bridge:</strong> ${S.esc(lanUrl)}</div>
           </div>
-          <label style="display:block;font-size:11.5px;margin-top:10px;color:var(--text-muted)">
+          <label style="display:block;font-size:var(--fs-sm);margin-top:10px;color:var(--text-muted)">
             Custom Direct Bridge URL (optional opt-in LAN / Tunnel):
             <input type="url" class="input-field mono" id="input-custom-bridge" value="${S.esc(S.prefs.customBridgeUrl || '')}" placeholder="http://127.0.0.1:4318">
           </label>
@@ -2260,10 +2260,10 @@
           <div id="pin-inline-editor" class="pin-inline-editor" hidden>
             ${
               hasPin
-                ? `<label style="font-size:11.5px;color:var(--text-muted)">Current 4-digit PIN (required):<input type="text" inputmode="numeric" maxlength="4" class="input-field pin-masked" id="input-pin-current" placeholder="••••" autocomplete="off"></label>`
+                ? `<label style="font-size:var(--fs-sm);color:var(--text-muted)">Current 4-digit PIN (required):<input type="text" inputmode="numeric" maxlength="4" class="input-field pin-masked" id="input-pin-current" placeholder="••••" autocomplete="off"></label>`
                 : ''
             }
-            <label style="font-size:11.5px;color:var(--text-muted)">New 4-digit PIN ${hasPin ? '(leave empty to disable PIN)' : ''}:<input type="text" inputmode="numeric" maxlength="4" class="input-field pin-masked" id="input-pin-next" placeholder="4 digits" autocomplete="off"></label>
+            <label style="font-size:var(--fs-sm);color:var(--text-muted)">New 4-digit PIN ${hasPin ? '(leave empty to disable PIN)' : ''}:<input type="text" inputmode="numeric" maxlength="4" class="input-field pin-masked" id="input-pin-next" placeholder="4 digits" autocomplete="off"></label>
             <div class="pin-editor-row">
               <button type="button" class="btn-brass-sm" id="btn-pin-editor-save">Save PIN</button>
               <button type="button" class="btn-ghost-sm" id="btn-pin-editor-cancel">Cancel</button>

@@ -1091,7 +1091,7 @@
             return `
               <div class="split-watch-turn${m.role === 'user' ? ' is-user' : ''}">
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:3px">
-                  <strong style="font-size:11px;color:var(--text-heading)">${S.esc(roleLbl)}</strong>
+                  <strong style="font-size:var(--fs-xs);color:var(--text-heading)">${S.esc(roleLbl)}</strong>
                   ${stepsCnt > 0 ? `<span class="meta-timestamp tabular">${stepsCnt} step${stepsCnt === 1 ? '' : 's'}</span>` : ''}
                 </div>
                 <div style="color:var(--text-secondary)">${S.esc(snippet || (stepsCnt > 0 ? 'Executing workspace tool steps…' : 'Ready.'))}</div>
@@ -1557,7 +1557,7 @@
               const s = delivCached.slides[pNum - 1];
               if (!s) return '';
               const bulletsHtml = (s.bullets || []).map((b) => `<li dir="auto">${S.esc(b)}</li>`).join('');
-              const imgHtml = s.imageDataUri ? `<img src="${S.esc(s.imageDataUri)}" alt="Slide ${pNum}" style="max-width:100%;border-radius:6px">` : '';
+              const imgHtml = s.imageDataUri ? `<img src="${S.esc(s.imageDataUri)}" alt="Slide ${pNum}" style="max-width:100%;border-radius:var(--r-md)">` : '';
               return `<div class="insp-ooxml-card"><div class="insp-ooxml-title" dir="auto">${S.esc(s.title || `Slide ${pNum}`)}</div>${bulletsHtml ? `<ul class="insp-ooxml-bullets">${bulletsHtml}</ul>` : ''}${imgHtml}</div>`;
             }).join('')}</div>`;
           }
@@ -1711,7 +1711,7 @@
             .map(
               (c) => `
               <div class="studio-git-file-row">
-                <span class="mono" style="color:var(--brass);font-size:10.5px">${S.esc(c.hash || '')}</span>
+                <span class="mono" style="color:var(--brass);font-size:var(--fs-xs)">${S.esc(c.hash || '')}</span>
                 <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${S.esc(c.subject || '')}</span>
                 <span class="meta-timestamp tabular">${S.esc(c.relativeTime || '')}</span>
               </div>
@@ -1847,8 +1847,8 @@
               ? res.running
                 ? `<span class="meta-timestamp">Running…</span>`
                 : res.ok && res.passed
-                  ? `<span style="color:var(--emerald);font-weight:600;font-size:11px">✓ Passed (${res.durationMs || 1}ms)</span>`
-                  : `<span style="color:var(--crimson);font-weight:600;font-size:11px">✕ Failed</span>`
+                  ? `<span style="color:var(--emerald);font-weight:600;font-size:var(--fs-xs)">✓ Passed (${res.durationMs || 1}ms)</span>`
+                  : `<span style="color:var(--crimson);font-weight:600;font-size:var(--fs-xs)">✕ Failed</span>`
               : '';
             const diagsHtml = diags.length
               ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:5px">${diags

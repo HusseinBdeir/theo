@@ -587,7 +587,7 @@
           <summary>
             <span class="vs-answered-badge">${isSkipped ? 'Skipped' : anyToolPerm ? '✓ Resolved' : '✓ Answered'}</span>
             <span style="font-weight:500;color:var(--text-heading);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1">${S.esc(questions.length > 1 ? `${questions.length} Questions · ${firstPrompt}` : firstPrompt)}</span>
-            ${summaryText ? `<span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:38%">${S.esc(summaryText)}</span>` : ''}
+            ${summaryText ? `<span style="color:var(--text-muted);font-size:var(--fs-xs);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:38%">${S.esc(summaryText)}</span>` : ''}
             <span class="vs-thought-chev" aria-hidden="true">${S.CHEVRON_RIGHT_SVG}</span>
           </summary>
           <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border-hairline)">
@@ -642,7 +642,7 @@
               <div class="vs-q-prompt">${S.esc(q.question || 'Question')}</div>
               ${optionsList.length > 0 ? `<span class="vs-q-mode-pill">${S.esc(modeHint)}</span>` : ''}
             </div>
-            ${q.codePreview ? `<pre class="code-step-snippet mono" style="margin:6px 0 4px;padding:8px 10px;border-radius:8px;white-space:pre-wrap;word-break:break-all">${S.esc(q.codePreview)}</pre>` : ''}
+            ${q.codePreview ? `<pre class="code-step-snippet mono" style="margin:6px 0 4px;padding:8px 10px;border-radius:var(--r-md);white-space:pre-wrap;word-break:break-all">${S.esc(q.codePreview)}</pre>` : ''}
             ${q.description ? `<div class="vs-q-opt-desc" style="margin-bottom:6px">${S.esc(q.description)}</div>` : ''}
             ${optionsList.length > 0 ? `<div class="vs-q-options-list">${optionsHtml}</div>` : ''}
             <div class="vs-q-writein-wrap">

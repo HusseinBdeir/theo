@@ -221,6 +221,8 @@ function verifyAtomicShellParity(repoRoot, distDir) {
 
 const copied = buildDist();
 const parity = verifyAtomicShellParity(REPO_ROOT, DIST_DIR);
+// Design-token gate: no raw font sizes, radii or colours reach live (exits non-zero on a failure).
+execFileSync(process.execPath, [path.join(__dirname, 'verify_design_tokens.cjs'), '--root', REPO_ROOT], { stdio: 'inherit' });
 console.log(
   `[deploy_cf:theo] Staged ${copied.length} allowlisted public files into ${path.relative(REPO_ROOT, DIST_DIR) || '.cf-dist'} (atomic parity PASS: v${parity.expectedVer}, ${parity.jsCount} JS modules):`
 );

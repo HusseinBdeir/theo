@@ -2336,7 +2336,7 @@
             <strong>New Cloudflare address</strong>
             <span class="pill-count amber">Move App</span>
           </div>
-          <div class="meta-timestamp" style="color:var(--text-secondary);font-size:12.5px">
+          <div class="meta-timestamp" style="color:var(--text-secondary);font-size:var(--fs-md)">
             THEO moved off GitHub Pages to <strong>theo.husseinbdeir.workers.dev</strong>. Move your pairing and PIN in one tap.
           </div>
           <div class="push-banner-actions">
@@ -2355,7 +2355,7 @@
           <strong>Moved to Cloudflare</strong>
           <span class="pill-count emerald">Ready</span>
         </div>
-        <div class="meta-timestamp" style="color:var(--text-secondary);font-size:12.5px">
+        <div class="meta-timestamp" style="color:var(--text-secondary);font-size:var(--fs-md)">
           ${pushActive ? 'Your data moved and your old GitHub push slot is retired.' : 'Your pairing moved here safely. Re-enable Push Notifications on this device so alerts work.'}
         </div>
         <div class="push-banner-actions">

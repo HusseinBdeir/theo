@@ -3,6 +3,7 @@ scripts/*
 !scripts/verify_theo_pwa.cjs
 !scripts/deploy_cf.mjs
 !scripts/verify_theo_migration.cjs
+!scripts/verify_design_tokens.cjs
 node_modules/
 .cf-dist/
 .wrangler/
