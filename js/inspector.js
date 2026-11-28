@@ -1770,16 +1770,10 @@
       if (!m) return;
       const anchor = String(m.id || `turn-${idx}`);
       if (m.role === 'user') {
-        if (m.kind === 'task-notification') return;
+        if (S.isNonSubstantiveUserTurn?.(m)) return;
         const strippedRaw = String(m.text || '').replace(/<task-notification>[\s\S]*?<\/task-notification>/gi, '').trim();
         const cleanTitle = S.cleanUserPromptPreview(strippedRaw).slice(0, 140);
-        if (
-          !cleanTitle &&
-          ((Array.isArray(m.taskNotifications) && m.taskNotifications.length > 0) ||
-            /<task-notification>/i.test(String(m.text || '')))
-        ) {
-          return;
-        }
+        if (!cleanTitle) return;
         promptNum += 1;
         outlineItems.push({
           kicker: `Prompt #${promptNum}`,

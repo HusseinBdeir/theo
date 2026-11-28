@@ -876,6 +876,19 @@
     return { notifications, humanText: stripped };
   }
 
+  function isNonSubstantiveUserTurn(m) {
+    if (!m) return true;
+    if (m.role === 'checkpoint' || m.kind === 'task-notification') return true;
+    if (m.role !== 'user') return false;
+    const { humanText } = extractTaskNotificationsFromText(m.text || '', m.taskNotifications);
+    const hasSpecialUserMarkup = Boolean(
+      /^\/compact\b/i.test(humanText) ||
+        /\[LIVE WORKSTATION CONTEXT/i.test(m.text || '') ||
+        /\[Attached Files saved on workstation\]/i.test(m.text || '')
+    );
+    return !humanText && !hasSpecialUserMarkup;
+  }
+
   function renderTaskNotificationsHtml(notifications, turnIdKey, createdAt = '', savedOpenMap = null) {
     if (!Array.isArray(notifications) || notifications.length === 0) return '';
     const relTime = createdAt ? S.timeAgo(Date.parse(createdAt)) : '';
@@ -2325,8 +2338,7 @@
       const isThreadActivelyWorking = isSessionActivelyRunning(S.prefs.selectedThreadId);
       let lastSubstantiveIdx = -1;
       for (let i = messages.length - 1; i >= 0; i--) {
-        const msg = messages[i];
-        if (msg && msg.kind !== 'task-notification' && msg.role !== 'checkpoint') {
+        if (!isNonSubstantiveUserTurn(messages[i])) {
           lastSubstantiveIdx = i;
           break;
         }
@@ -3667,21 +3679,31 @@
     const row = (S.appState?.rows || []).find((r) => r.id === cleanId);
     const detail = S.threadsCache[cleanId] || null;
     const msgs = coalesceThreadMessages(detail?.messages || []);
-    const lastMsg = msgs.length > 0 ? msgs[msgs.length - 1] : null;
     const nonOptMsgs = msgs.filter((m) => !m.optimistic);
-    const lastNonOptMsg = nonOptMsgs.length > 0 ? nonOptMsgs[nonOptMsgs.length - 1] : null;
+    const findLastSubstantive = (arr) => {
+      for (let i = arr.length - 1; i >= 0; i--) {
+        if (!isNonSubstantiveUserTurn(arr[i])) return arr[i];
+      }
+      return null;
+    };
+    const lastSubstantiveMsg = findLastSubstantive(msgs);
+    const lastSubstantiveNonOptMsg = findLastSubstantive(nonOptMsgs);
 
     const stopRec = S.stoppedSessionsById.get(cleanId);
     if (stopRec) {
       const hasNewOptimisticUserTurn = Boolean(
-        lastMsg && lastMsg.optimistic && Number(lastMsg.optimisticAt || 0) > stopRec.at
+        lastSubstantiveMsg &&
+          lastSubstantiveMsg.optimistic &&
+          Number(lastSubstantiveMsg.optimisticAt || 0) > stopRec.at
       );
-      const lastNonOptTimeMs = lastNonOptMsg?.createdAt ? Date.parse(lastNonOptMsg.createdAt) : 0;
+      const lastNonOptTimeMs = lastSubstantiveNonOptMsg?.createdAt
+        ? Date.parse(lastSubstantiveNonOptMsg.createdAt)
+        : 0;
       const hasNewServerUserTurn = Boolean(
-        lastNonOptMsg &&
-          lastNonOptMsg.role === 'user' &&
-          lastNonOptMsg.id &&
-          lastNonOptMsg.id !== stopRec.lastMsgId &&
+        lastSubstantiveNonOptMsg &&
+          lastSubstantiveNonOptMsg.role === 'user' &&
+          lastSubstantiveNonOptMsg.id &&
+          lastSubstantiveNonOptMsg.id !== stopRec.lastMsgId &&
           lastNonOptTimeMs > stopRec.at + 1000
       );
       if (hasNewOptimisticUserTurn || hasNewServerUserTurn) {
@@ -3712,16 +3734,16 @@
     ) {
       return true;
     }
-    if (lastMsg) {
-      if (lastMsg.optimistic && Date.now() - Number(lastMsg.optimisticAt || 0) < 90000) {
+    if (lastSubstantiveMsg) {
+      if (lastSubstantiveMsg.optimistic && Date.now() - Number(lastSubstantiveMsg.optimisticAt || 0) < 90000) {
         return true;
       }
-      const msgTimeMs = lastMsg.createdAt ? Date.parse(lastMsg.createdAt) : 0;
+      const msgTimeMs = lastSubstantiveMsg.createdAt ? Date.parse(lastSubstantiveMsg.createdAt) : 0;
       const isFreshUserDispatch =
         msgTimeMs > 0 &&
         Date.now() - msgTimeMs < 35 * 1000 &&
         (!row || msgTimeMs > Number(row.at || 0));
-      if (lastMsg.role === 'user' && isFreshUserDispatch) {
+      if (lastSubstantiveMsg.role === 'user' && isFreshUserDispatch) {
         return true;
       }
     }
@@ -4233,6 +4255,7 @@
     getQuestionDraft,
     handleComposerFiles,
     isHostVsCodeOpenForSession,
+    isNonSubstantiveUserTurn,
     isSessionActivelyRunning,
     locallyCancelledBgTasks,
     lookupAnsweredQuestionState,

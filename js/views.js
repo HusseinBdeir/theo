@@ -393,13 +393,13 @@
       if (!item || !item.id) continue;
       const tid = String(item.id);
       liveRowIds.add(tid);
-      if (item.state === 'running') liveRowRunningIds.add(tid);
       const prev = byId.get(tid) || {};
       const keepPrevSettled =
         prev.state &&
         prev.state !== 'running' &&
         item.state === 'running' &&
         Number(prev.completedAt || 0) > Number(item.startedAt || 0);
+      if (item.state === 'running' && !keepPrevSettled) liveRowRunningIds.add(tid);
       byId.set(tid, {
         ...prev,
         ...item,
@@ -446,10 +446,11 @@
           }
         }
       } else if (declaredRunning > 0 && liveRowIds.size > 0) {
-        const sliceHasNonRunning = rawRow.some(
-          (t) => t && String(t.state || '').toLowerCase() !== 'running'
-        );
-        const isSliceCapped = rawRow.length >= 8 && !sliceHasNonRunning;
+        const isSliceCapped =
+          rawRow.length >= 8 &&
+          rawRow.every((t) =>
+            ['running', 'stalled', 'interrupted'].includes(String(t?.state || '').toLowerCase())
+          );
         const keepExtraRunning = isSliceCapped
           ? Math.max(0, declaredRunning - liveRowRunningIds.size)
           : 0;
@@ -514,7 +515,6 @@
       return Number(b.startedAt || 0) - Number(a.startedAt || 0);
     });
     const runningTasks = allTasks.filter((t) => t.state === 'running');
-    const totalCount = Math.max(allTasks.length, Number(row?.bgTotalCount || 0));
     const effectiveDeclaredRunning =
       !hostOffline && rowAuthoritative && typeof row?.bgRunningCount === 'number'
         ? Math.max(0, Number(row.bgRunningCount) - localCancelledLiveRowCount)
@@ -523,6 +523,7 @@
       effectiveDeclaredRunning >= 0
         ? Math.max(runningTasks.length, effectiveDeclaredRunning)
         : runningTasks.length;
+    const totalCount = Math.max(allTasks.length, Number(row?.bgTotalCount || 0), runningCount);
     return { allTasks, runningTasks, totalCount, runningCount };
   }
 
@@ -673,16 +674,20 @@
         (!hideDesktop || !S.isClaudeDesktopRow?.(r) || S.isSessionOpenTab?.(r))
     );
     const activeEntries = [];
+    let cappedExtraRunning = 0;
     for (const r of rows) {
-      const { allTasks } = getSessionBackgroundTasks(r, S.threadsCache[r.id]);
+      const { allTasks, runningCount } = getSessionBackgroundTasks(r, S.threadsCache[r.id]);
+      let rowRunningSeen = 0;
       for (const t of allTasks) {
         if (t.state === 'running' || t.state === 'stalled' || t.state === 'interrupted') {
           activeEntries.push({ row: r, task: t });
+          if (t.state === 'running') rowRunningSeen++;
         }
       }
+      cappedExtraRunning += Math.max(0, runningCount - rowRunningSeen);
     }
 
-    if (activeEntries.length === 0) {
+    if (activeEntries.length === 0 && cappedExtraRunning === 0) {
       secEl.hidden = true;
       listEl.innerHTML = '';
       if (stopAllBtn) stopAllBtn.hidden = true;
@@ -690,7 +695,8 @@
     }
 
     secEl.hidden = false;
-    const runningOnlyCount = activeEntries.filter((e) => e.task.state === 'running').length;
+    const runningOnlyCount =
+      activeEntries.filter((e) => e.task.state === 'running').length + cappedExtraRunning;
     if (pillEl) {
       pillEl.textContent =
         runningOnlyCount > 0
@@ -806,8 +812,8 @@
     if (popTitle) {
       popTitle.textContent =
         runningCount > 0
-          ? `Background Tasks (${runningCount} running · ${allTasks.length} total)`
-          : `Background Tasks (${allTasks.length})`;
+          ? `Background Tasks (${runningCount} running · ${totalCount} total)`
+          : `Background Tasks (${totalCount})`;
     }
     if (popStopAll) {
       popStopAll.hidden = runningCount === 0;

@@ -11041,11 +11041,8 @@ async function main() {
             {
               id: 'u34-qtn',
               role: 'user',
-              kind: 'task-notification',
-              text: '',
-              taskNotifications: [
-                { taskIds: ['bgq1'], status: 'completed', summary: 'Preflight check passed', note: '' }
-              ]
+              createdAt: new Date(now34 - 100).toISOString(),
+              text: '<task-notification><task-id>bgq1</task-id><status>completed</status><summary>Preflight check passed</summary></task-notification>'
             }
           ]
         },
@@ -11065,6 +11062,7 @@ async function main() {
 
       const staleNotifs34 = [
         { id: 'theo-unread-s34-live', tag: 'theo-unread-s34-live', threadId: 's34-live', title: 'Stale Read', checked: false, ts: now34 - 100000 },
+        { id: 'done-s34-live', tag: 'theo-done-s34-live', threadId: 's34-live', title: 'Task Complete', checked: false, ts: now34 - 1000 },
         { id: 'theo-unread-ghost', tag: 'theo-unread-ghost', threadId: 's34-ghost-deleted', title: 'Deleted', checked: false, ts: now34 - 200000 },
         { id: 'theo-unread-s34-unread', tag: 'theo-unread-s34-unread', threadId: 's34-unread', title: 'Live Unread', checked: false, ts: now34 - 2000 }
       ];
@@ -11128,6 +11126,7 @@ async function main() {
           const badgeTxt = (railBadge?.textContent || '').trim();
           const storedNotifs34 = JSON.parse(localStorage.getItem('theo_remote_notifications_v1') || '[]');
           const staleLiveNotifChecked = Boolean(storedNotifs34.find((n) => n && n.id === 'theo-unread-s34-live')?.checked);
+          const doneNotifKeptUnchecked = storedNotifs34.find((n) => n && n.id === 'done-s34-live')?.checked === false;
           const staleGhostNotifChecked = Boolean(storedNotifs34.find((n) => n && n.id === 'theo-unread-ghost')?.checked);
           const badgeRect = railBadge ? rect(railBadge) : null;
           const footerRect = footer ? rect(footer) : null;
@@ -11196,6 +11195,14 @@ async function main() {
           await new Promise((r) => setTimeout(r, 60));
           const activeUnreadBadgeHidden = Boolean(document.getElementById('rail-push-badge')?.hidden);
           const qAfterTnInteractive = Boolean(document.querySelector('#chat-stream .vs-question-card:not(.is-answered)'));
+          const sendBtn34 = document.getElementById('composer-send-btn');
+          const unreadDot34 = document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="s34-unread"] .ide-dot');
+          const rawTnNotRunning = Boolean(
+            sendBtn34 &&
+              !sendBtn34.classList.contains('is-stop') &&
+              unreadDot34 &&
+              !unreadDot34.classList.contains('working')
+          );
           document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="s34-live"]')?.click();
           await new Promise((r) => setTimeout(r, 60));
           const sameTurnSuppressed = Boolean(document.getElementById('rail-push-badge')?.hidden);
@@ -11204,13 +11211,14 @@ async function main() {
           return {
             bgHead, bgCnt, bgStopLbl, bgRowTitles, liveRowBgPill, liveTabBgPill,
             tnCount: tnCards.length, detailsExpanded, streamTxt, userBubbleTxt,
-            docTitle: document.title, badgeTxt, staleLiveNotifChecked, staleGhostNotifChecked, badgeInsideFooter, railDotDisplay,
+            docTitle: document.title, badgeTxt, staleLiveNotifChecked, doneNotifKeptUnchecked, staleGhostNotifChecked, badgeInsideFooter, railDotDisplay,
             chipRects, stripScrollX, runningChipCnt, inputChipCnt, unreadChipCnt,
             routeLbl, gitStripShown, gitStripTxt, inspOpenGit,
             claudeModeShown, claudeModeBefore, claudeModeAfter, agyModeHidden, agyRouteLbl,
             overflowVisible, ctxMenuOpen, ctxTabRows, wheelScrolled, fit99OneRow,
             activeUnreadBadgeHidden,
             qAfterTnInteractive,
+            rawTnNotRunning,
             sameTurnSuppressed,
             z34HasBgPill
           };
@@ -11227,11 +11235,13 @@ async function main() {
         assert.ok(!r34.streamTxt.includes('<task-notification>') && !r34.streamTxt.includes('__orphan_summary__') && !r34.streamTxt.includes('secret34.output') && !r34.streamTxt.includes('Secret harness instruction'), 'Raw internal XML and temp output-file paths must never appear in chat stream');
         assert.strictEqual(r34.userBubbleTxt, 'Real user prompt here', 'Only clean human user prompt must appear in .turn-bubble.user');
         assert.ok(!r34.docTitle.includes('—'), `document.title must never contain an em-dash (got "${r34.docTitle}")`);
-        assert.strictEqual(r34.badgeTxt, '1', `Stale read/deleted session notifications must auto-clear, leaving only s34-unread (got "${r34.badgeTxt}")`);
+        assert.strictEqual(r34.badgeTxt, '2', `Stale read/deleted session notifications must auto-clear while theo-done-s34-live + s34-unread stay active (got "${r34.badgeTxt}")`);
+        assert.strictEqual(r34.doneNotifKeptUnchecked, true, 'theo-done-s34-live must remain unchecked even when s34-live host row has unread:false');
         assert.strictEqual(r34.staleLiveNotifChecked, true, 'Stale theo-unread-s34-live must be marked checked in theo_remote_notifications_v1');
         assert.strictEqual(r34.staleGhostNotifChecked, true, 'Deleted-session theo-unread-ghost must be marked checked in theo_remote_notifications_v1');
         assert.strictEqual(r34.activeUnreadBadgeHidden, true, 'Active viewed unread session must not trigger phantom badge count in liveExtra');
-        assert.strictEqual(r34.qAfterTnInteractive, true, 'Trailing <task-notification> after unanswered AskUserQuestion must leave question card interactive');
+        assert.strictEqual(r34.qAfterTnInteractive, true, 'Trailing raw <task-notification> (without kind) after unanswered AskUserQuestion must leave question card interactive');
+        assert.strictEqual(r34.rawTnNotRunning, true, 'Trailing recent raw <task-notification> must not trigger Stop button or working status');
         assert.strictEqual(r34.sameTurnSuppressed, true, 'Switching away from s34-unread without a new turn must keep badge suppressed for same turn');
         assert.strictEqual(r34.badgeInsideFooter, true, '#rail-push-badge must stay strictly inside #ide-sidebar-footer');
         assert.strictEqual(r34.railDotDisplay, 'none', '#rail-push-dot must hide when #rail-push-badge is shown');
@@ -11312,6 +11322,58 @@ async function main() {
         assert.ok(!(burstRes34?.bgListText || '').includes('Stale Old Task 9'), 'Oldest stale cached running tasks beyond 14 must be evicted');
         assert.strictEqual(burstRes34?.badgeHidden, false, 'Previously viewed s34-unread receiving a new turn must unhide #rail-push-badge');
         assert.strictEqual(burstRes34?.badgeTxt, '1', 'Previously viewed s34-unread receiving a new turn must report badge count 1');
+
+        // Verify Pulse running pill & Chat BG popover title reflect 14 running + markAllNotificationsChecked allows next turn to re-raise badge
+        const postBurstChecks = await evalJs(`(async () => {
+          document.querySelector('#ide-editor-tabs [data-pin-bg-session="s34-live"]')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          const popTitleTxt = (document.getElementById('bg-popover-title')?.textContent || '').trim();
+          document.getElementById('btn-close-bgtasks')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          document.querySelector('[data-tab="pulse"]')?.click();
+          await new Promise((r) => setTimeout(r, 60));
+          const pulseBgPill = (document.getElementById('pulse-bgtasks-count-pill')?.textContent || '').trim();
+          document.querySelector('[data-tab="chat"]')?.click();
+          await new Promise((r) => setTimeout(r, 50));
+          document.getElementById('rail-push-btn')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          document.querySelector('#notif-modal [data-notif-act="check-all"]')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          const afterCheckAllHidden = Boolean(document.getElementById('rail-push-badge')?.hidden);
+          document.getElementById('notif-modal-close')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          return { popTitleTxt, pulseBgPill, afterCheckAllHidden };
+        })()`);
+        assert.ok(postBurstChecks.popTitleTxt.includes('14 running') && postBurstChecks.popTitleTxt.includes('19 total'), `Chat BG popover title must report 14 running · 19 total (got "${postBurstChecks.popTitleTxt}")`);
+        assert.strictEqual(postBurstChecks.pulseBgPill, '14 Running', `Pulse running pill must include capped slice tasks (got "${postBurstChecks.pulseBgPill}")`);
+        assert.strictEqual(postBurstChecks.afterCheckAllHidden, true, 'Mark All Checked must clear #rail-push-badge');
+
+        const burstPayload34_2 = {
+          ...burstPayload34,
+          generatedAt: Date.now() + 15000,
+          rows: burstPayload34.rows.map((r) =>
+            r.id === 's34-unread'
+              ? { ...r, unread: true, stepCount: 10, at: now34 + 15000, lastAssistantText: 'Follow-up after check-all' }
+              : r
+          )
+        };
+        srv.mockStatePayload = burstPayload34_2;
+        await evalJs(`(() => { window.dispatchEvent(new Event('focus')); return true; })()`);
+        let reRaised34 = null;
+        for (let i = 0; i < 40; i++) {
+          await new Promise((r) => setTimeout(r, 80));
+          const probe = await evalJs(`(() => ({
+            badgeHidden: Boolean(document.getElementById('rail-push-badge')?.hidden),
+            badgeTxt: (document.getElementById('rail-push-badge')?.textContent || '').trim()
+          }))()`).catch(() => null);
+          if (probe && !probe.badgeHidden) {
+            reRaised34 = probe;
+            break;
+          }
+          reRaised34 = probe;
+        }
+        assert.strictEqual(reRaised34?.badgeHidden, false, 'New turn after Mark All Checked must re-raise #rail-push-badge');
+        assert.strictEqual(reRaised34?.badgeTxt, '1', 'New turn after Mark All Checked must show badge count 1');
         console.log('[PASS] Adversarial #34: v103 Live Bg-Task Count/Badges, <task-notification> Cards, Unread Reconciliation, Footer Badge, 99/99/99 Filter Fit, Overflow Tabs, Git Strip & Inline Claude Mode verified');
       } finally {
         srv.mockStatePayload = null;

@@ -2070,8 +2070,9 @@
       typeof rowOrSid === 'object' && rowOrSid
         ? rowOrSid
         : (appState?.rows || []).find((r) => r && r.id === sid) || null;
-    const stamp = liveRow ? liveRow.stepCount || liveRow.at || fallbackTs || 0 : fallbackTs || 0;
-    return `theo-unread-${sid}-${stamp}`;
+    const step = liveRow ? Number(liveRow.stepCount || 0) : 0;
+    const stamp = liveRow ? Number(liveRow.at || fallbackTs || 0) : Number(fallbackTs || 0);
+    return `theo-unread-${sid}-${step}-${stamp}`;
   }
 
   function isNotifKeyChecked(...keys) {
@@ -2138,11 +2139,7 @@
       if (liveUnreadIds) {
         const tag = String(x.tag || '');
         const isUnreadNotif =
-          tag.startsWith('theo-unread-') ||
-          (!tag.startsWith('theo-app-') &&
-            !tag.startsWith('theo-quota-') &&
-            !x.reminderId &&
-            Boolean(x.threadId));
+          tag.startsWith('theo-unread-') || String(x.id || '').startsWith('theo-unread-');
         if (isUnreadNotif) {
           const sid = String(x.threadId || '').trim() || tag.replace(/^theo-unread-/, '');
           if (sid && !liveUnreadIds.has(sid)) return false;
@@ -2178,10 +2175,12 @@
       if (!r || !r.id || r.archived || !r.unread) continue;
       if (activeChatSelectedId && r.id === activeChatSelectedId) continue;
       const unreadKey = `theo-unread-${r.id}`;
+      const versionKey = getUnreadRowVersionKey(r, r.at || 0);
       const legacyUnreadKey = `theo-unread-${r.id}-${r.stepCount || r.at || 0}`;
       if (
         !seenSessionIds.has(r.id) &&
         !checkedSet.has(unreadKey) &&
+        !checkedSet.has(versionKey) &&
         !checkedSet.has(legacyUnreadKey) &&
         !checkedSet.has(`session:${r.id}`)
       ) {
@@ -2391,11 +2390,7 @@
         if (!it || it.checked) continue;
         const tag = String(it.tag || '');
         const isUnreadNotif =
-          tag.startsWith('theo-unread-') ||
-          (!tag.startsWith('theo-app-') &&
-            !tag.startsWith('theo-quota-') &&
-            !it.reminderId &&
-            Boolean(it.threadId));
+          tag.startsWith('theo-unread-') || String(it.id || '').startsWith('theo-unread-');
         if (!isUnreadNotif) continue;
         const sid = String(it.threadId || '').trim() || tag.replace(/^theo-unread-/, '');
         if (sid && !currentlyUnreadIds.has(sid)) {
@@ -2440,12 +2435,21 @@
     const freshCheckedSet = prunedCheckedSet ? activeCheckedSet : loadCheckedNotifKeys();
     for (const r of rows) {
       if (!r || !r.id || r.archived || !r.unread) continue;
-      if (activeChatSelectedId && r.id === activeChatSelectedId) continue;
+      if (activeChatSelectedId && r.id === activeChatSelectedId) {
+        const activeVKey = getUnreadRowVersionKey(r, r.at || 0);
+        if (activeVKey && !freshCheckedSet.has(activeVKey)) {
+          rememberCheckedNotifKeys(activeVKey);
+          freshCheckedSet.add(activeVKey);
+        }
+        continue;
+      }
       const tag = `theo-unread-${r.id}`;
       const versionKey = getUnreadRowVersionKey(r, r.at || 0);
+      const legacyVersionKey = `theo-unread-${r.id}-${r.stepCount || r.at || 0}`;
       if (
         freshCheckedSet.has(tag) ||
         freshCheckedSet.has(versionKey) ||
+        freshCheckedSet.has(legacyVersionKey) ||
         freshCheckedSet.has(`session:${r.id}`)
       ) {
         continue;
@@ -2609,10 +2613,13 @@
       return it;
     });
     if (!matchedItem) {
-      if (key.startsWith('theo-unread-') && !/^theo-unread-.*-\d+$/.test(key)) {
-        const sid = key.slice('theo-unread-'.length);
-        forgetCheckedNotifKeys(key, `session:${sid}`);
-        const vKey = getUnreadRowVersionKey(sid, Date.now());
+      const maybeSid = key.startsWith('theo-unread-') ? key.slice('theo-unread-'.length) : '';
+      const matchedRow = maybeSid
+        ? (appState?.rows || []).find((r) => r && r.id === maybeSid) || null
+        : null;
+      if (matchedRow) {
+        forgetCheckedNotifKeys(key, `session:${maybeSid}`);
+        const vKey = getUnreadRowVersionKey(matchedRow, Date.now());
         if (vKey) rememberCheckedNotifKeys(vKey);
       } else {
         rememberCheckedNotifKeys(key);
@@ -2666,6 +2673,13 @@
     const next = items.map((it) => {
       if (!it) return it;
       if (it.tag) checkedTags.push(it.tag);
+      const tagStr = String(it.tag || '');
+      if (tagStr.startsWith('theo-unread-') && it.threadId) {
+        forgetCheckedNotifKeys(`theo-unread-${it.threadId}`, `session:${it.threadId}`);
+        const vKey = getUnreadRowVersionKey(it.threadId, it.ts);
+        if (vKey) rememberCheckedNotifKeys(vKey);
+        return { ...it, turnKey: vKey || it.turnKey, checked: true, checkedAt: Date.now() };
+      }
       rememberCheckedNotifKeys(it.id, it.tag);
       return { ...it, checked: true, checkedAt: Date.now() };
     });
@@ -2674,7 +2688,9 @@
     }
     for (const r of appState?.rows || []) {
       if (r && r.id && r.unread) {
-        rememberCheckedNotifKeys(`theo-unread-${r.id}-${r.stepCount || r.at || 0}`);
+        forgetCheckedNotifKeys(`theo-unread-${r.id}`, `session:${r.id}`);
+        const vKey = getUnreadRowVersionKey(r, r.at || 0);
+        if (vKey) rememberCheckedNotifKeys(vKey);
       }
     }
     for (const q of collectHighUsageQuotaAlerts(appState).highAlerts) {
@@ -8236,7 +8252,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=103', { updateViaCache: 'none' })
+        .register('sw.js?v=104', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {
