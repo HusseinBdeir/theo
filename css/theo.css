@@ -73,7 +73,7 @@ html[data-theme="dark"] {
   --tint: #FFFFFF;
   --code-inline-bg: rgba(255, 255, 255, 0.055);
   --code-inline-border: rgba(255, 255, 255, 0.085);
-  --code-inline-fg: #DFC9A3;
+  --code-inline-fg: #D7BA7D;
   --chip-bg: #232324;
   --chip-border: rgba(255, 255, 255, 0.105);
   --chip-hover-bg: #2C2D2E;
@@ -225,7 +225,7 @@ html[data-theme="dark"] {
   --on-emerald: #111114;
 }
 /* @scales:end */
-/* @tokens-sha256: 7b4163ec38afe7a2cac0a4c88c9523b446af00cd00f3336bcc4ae93eaf78b37d */
+/* @tokens-sha256: e0d1445f03d58c6edfe25f56f91dd87e31ee33de21992dffe8b54ed1c4667bd7 */
 /* END GENERATED DESIGN TOKENS */
 
 *, *::before, *::after {
@@ -2386,11 +2386,11 @@ html[data-theme="dark"] .md-chip-ico.json { color: var(--amber); }
 .md-inline-code,
 .vs-artifact-desc code {
   display: inline;
-  padding: 1.5px 5.5px;
-  margin: 0 1px;
+  padding: 0 3px;
+  margin: 0;
   border-radius: var(--r-sm);
   background: var(--code-inline-bg);
-  border: 1px solid var(--code-inline-border);
+  border: none;
   color: var(--code-inline-fg);
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
@@ -2402,8 +2402,8 @@ html[data-theme="dark"] .md-chip-ico.json { color: var(--amber); }
 html[data-theme="dark"] .turn-text code:not(pre code),
 html[data-theme="dark"] .md-inline-code,
 html[data-theme="dark"] .vs-artifact-desc code {
-  background: var(--code-inline-bg);
-  border-color: var(--code-inline-border);
+  background: transparent;
+  border-color: transparent;
   color: var(--code-inline-fg);
 }
 
@@ -6278,7 +6278,7 @@ details.ide-side-section:not([open]) .ide-chevron {
   width: 100%;
   height: 5px;
   border-radius: var(--r-pill);
-  background: var(--tint-2);
+  background: var(--tint-1);
   overflow: hidden;
 }
 
@@ -6705,6 +6705,15 @@ details.ide-side-section:not([open]) .ide-chevron {
   }
 }
 
+.ide-workbench-topbar {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
 .ide-editor-tabs-bar {
   height: 35px;
   flex-shrink: 0;
@@ -6745,6 +6754,7 @@ details.ide-side-section:not([open]) .ide-chevron {
 }
 
 .ide-editor-tabs-scroll {
+  position: relative;
   flex: 1;
   min-width: 0;
   display: flex;
@@ -6967,11 +6977,37 @@ details.ide-side-section:not([open]) .ide-chevron {
   flex-shrink: 0;
 }
 
-#view-chat .btn-ghost-sm,
-#view-chat .ctx-window-pill {
+#view-chat .btn-ghost-sm {
   padding: 3px 9px;
   border-radius: var(--r-md);
   font-size: var(--fs-xs);
+}
+
+#view-chat .ctx-window-pill {
+  height: 26px;
+  padding: 0 8px;
+  gap: 6px;
+  border-radius: var(--r-md);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  line-height: 1;
+}
+
+#view-chat .ctx-window-pill:not(.is-soft-overrun) {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+
+#view-chat .ctx-window-pill:not(.is-soft-overrun):hover {
+  background: var(--tint-1);
+  border-color: transparent;
+  color: var(--text-heading);
+}
+
+#view-chat .ctx-ring {
+  width: 14px;
+  height: 14px;
 }
 
 #view-chat .ctx-Popover {
@@ -10148,10 +10184,16 @@ html[data-theme="light"] .sb-q-btn.primary {
   color: var(--text-heading);
 }
 
-#view-chat > .ctx-Popover {
+#view-chat > .ctx-Popover,
+#chat-primary-col > .ctx-Popover {
   flex-shrink: 0;
   max-height: 52dvh;
   overflow-y: auto;
+}
+
+#chat-primary-col > .ctx-Popover {
+  width: min(860px, calc(100% - 32px));
+  margin: 0 auto 6px;
 }
 
 /* Minimal VS Code-style New Session Empty State */
@@ -11761,7 +11803,8 @@ html[data-theme="light"] .sb-q-btn.primary {
 }
 
 .ide-tree-title[contenteditable="true"],
-.ide-tree-group-name[contenteditable="true"] {
+.ide-tree-group-name[contenteditable="true"],
+.ide-tab-title[contenteditable="true"] {
   outline: 1.5px solid var(--brass);
   background: var(--bg-ink);
   color: var(--text-heading);
@@ -12370,19 +12413,34 @@ html[data-theme="dark"] .btn-approve {
     padding: 2px 8px 8px;
   }
 
+  /* Where a provider has several accounts, the active card keeps a neutral surface and subtle emerald state border */
   .ide-acct-card {
-    padding: 8px 10px;
+    padding: 7px 9px;
     gap: 5px;
-  }
-
-  .ide-acct-card.is-active {
+    border-radius: var(--r-md);
+    background: color-mix(in srgb, var(--tint) 4%, transparent);
     border-color: var(--border-subtle);
   }
 
-  /* Where a provider has several accounts, the one in use carries the extension's green outline */
+  .ide-acct-card.collapsed {
+    padding-top: 6px;
+    padding-bottom: 6px;
+    gap: 0;
+  }
+
+  .ide-acct-card:not(.is-active) {
+    border-color: var(--border-hairline);
+    opacity: 0.94;
+  }
+
+  .ide-acct-card:not(.is-active):hover {
+    opacity: 1;
+    border-color: var(--border-subtle);
+  }
+
   .ide-acct-card.is-active.is-multi {
-    border-color: var(--emerald-line);
-    background: color-mix(in srgb, var(--emerald) 4%, var(--bg-ink));
+    border-color: color-mix(in srgb, var(--emerald) 22%, transparent);
+    background: color-mix(in srgb, var(--tint) 4%, transparent);
   }
 
   .ide-acct-head {
@@ -12415,9 +12473,32 @@ html[data-theme="dark"] .btn-approve {
   }
 
   .ide-plan-tag {
+    display: inline-flex;
+    align-items: center;
+    height: 16px;
     padding: 0 6px;
     border-radius: var(--r-pill);
+    background: var(--tint-1);
+    color: var(--text-secondary);
+    border: none;
+    font-size: var(--fs-xs);
     font-weight: 500;
+  }
+
+  .q-pool-toggle-btn {
+    padding: 1px 6px;
+    border-radius: var(--r-pill);
+    font-size: var(--fs-2xs);
+    font-weight: 500;
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+  }
+
+  .q-pool-toggle-btn:hover {
+    background: var(--tint-1);
+    color: var(--text-heading);
+    border-color: var(--border-subtle);
   }
 
   .ide-qpool-3p {
@@ -12460,17 +12541,16 @@ html[data-theme="dark"] .btn-approve {
   }
 
   .ide-group-pill {
-    min-width: 16px;
+    min-width: 18px;
+    height: 16px;
     padding: 0 5px;
+    border-radius: var(--r-pill);
     text-align: center;
-    font-weight: 600;
+    font-size: var(--fs-2xs);
+    font-weight: 500;
     line-height: 16px;
-    background: var(--steel);
-    color: var(--on-accent);
-  }
-
-  html[data-theme="dark"] .ide-group-pill {
-    color: var(--on-accent-ink);
+    background: var(--tint-2);
+    color: var(--text-primary);
   }
 
   .ide-tree-row {
@@ -12495,23 +12575,84 @@ html[data-theme="dark"] .btn-approve {
     opacity: 1;
   }
 
-  /* 3f. Tab strip: the active tab joins the editor, the strip's rule runs under the others */
-  .ide-editor-tabs-bar {
-    border-bottom: none;
+  /* 3f. Unified desktop workbench topbar: tabs + right utility buttons share one 35px VS Code strip */
+  .ide-workbench-topbar {
+    flex-direction: row;
+    align-items: stretch;
+    height: 35px;
+    min-height: 35px;
+    background: var(--bg-plate);
     box-shadow: inset 0 -1px 0 var(--border-subtle);
   }
 
+  .ide-workbench-topbar .ide-editor-tabs-bar {
+    flex: 1 1 auto;
+    width: auto;
+    height: 35px;
+    background: transparent;
+    border-bottom: none;
+    box-shadow: none;
+  }
+
+  #view-chat .ide-workbench-topbar .chat-header {
+    flex: 0 0 auto;
+    width: auto;
+    height: 35px;
+    min-height: 35px;
+    padding: 0 8px 0 4px;
+    background: transparent;
+    border-bottom: none;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  #view-chat .ide-workbench-topbar .chat-header-main {
+    display: none;
+  }
+
   .ide-editor-tab {
+    position: relative;
     min-width: 120px;
     max-width: 240px;
-    padding: 0 8px 0 12px;
+    padding: 0 10px 0 12px;
     gap: 7px;
+    border-right: 1px solid var(--border-hairline);
+    border-top: 1px solid transparent;
+    color: var(--text-secondary);
     font-size: var(--fs-md);
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+
+  .ide-editor-tab:hover:not(.active) {
+    background: color-mix(in srgb, var(--tint) 4%, transparent);
+    color: var(--text-primary);
+  }
+
+  .ide-editor-tab:active:not(.active) {
+    background: var(--tint-1);
   }
 
   .ide-editor-tab.active {
+    background: var(--bg-obsidian);
     color: var(--text-heading);
-    font-weight: 400;
+    font-weight: 500;
+    z-index: 1;
+    border-right-color: var(--border-subtle);
+    box-shadow: -1px 0 0 var(--border-subtle), 0 1px 0 var(--bg-obsidian);
+  }
+
+  .ide-editor-tab:focus-visible {
+    outline: 1px solid var(--focus);
+    outline-offset: -1px;
+  }
+
+  .ide-tab-badges {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
   }
 
   .ide-tab-close {
@@ -12521,16 +12662,18 @@ html[data-theme="dark"] .btn-approve {
   }
 
   .ide-tab-add-btn {
-    width: 35px;
+    width: 30px;
+    border-left: none;
+    color: var(--text-muted);
     font-size: var(--fs-xl);
   }
 
-  /* 3g. Chat header: one control height (26px), one radius, accent borders only for state */
-  #view-chat .chat-header {
-    min-height: 40px;
-    padding: 6px 12px 6px 14px;
+  .ide-tab-add-btn:hover {
+    background: var(--tint-1);
+    color: var(--text-heading);
   }
 
+  /* 3g. Workbench header actions & composer controls: 26px height, 6px radius, ghost at rest */
   #view-chat .chat-prov-badge {
     width: 22px;
     height: 22px;
@@ -12539,15 +12682,18 @@ html[data-theme="dark"] .btn-approve {
   }
 
   #view-chat .chat-header-actions {
-    gap: 6px;
+    gap: 4px;
   }
 
   #view-chat .bg-tasks-pill,
   #view-chat .ctx-window-pill,
   #view-chat .inspector-toggle-pill,
-  #view-chat .btn-chat-stop {
+  #view-chat .btn-chat-stop,
+  #view-chat .composer-icon-pill,
+  #view-chat .composer-model-pill,
+  #view-chat .composer-route-toggle-pill {
     height: 26px;
-    padding: 0 9px;
+    padding: 0 8px;
     gap: 6px;
     border-radius: var(--r-md);
     font-size: var(--fs-xs);
@@ -12555,30 +12701,62 @@ html[data-theme="dark"] .btn-approve {
     line-height: 1;
   }
 
+  #view-chat .composer-icon-pill {
+    width: 26px;
+    padding: 0;
+  }
+
+  #view-chat .chat-more-btn {
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border-radius: var(--r-md);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-secondary);
+  }
+
   #view-chat .bg-tasks-pill,
   #view-chat .ctx-window-pill,
   #view-chat .inspector-toggle-pill,
-  #view-chat .chat-more-btn {
+  #view-chat .composer-icon-pill,
+  #view-chat .composer-model-pill,
+  #view-chat .composer-route-toggle-pill {
     background: transparent;
+    border-color: transparent;
+    color: var(--text-secondary);
   }
 
   #view-chat .bg-tasks-pill:not(.has-running):not(.active),
-  #view-chat .ctx-window-pill:not(.is-soft-overrun) {
-    border-color: var(--border-subtle);
+  #view-chat .ctx-window-pill:not(.is-soft-overrun),
+  #view-chat .inspector-toggle-pill:not([aria-expanded="true"]) {
+    border-color: transparent;
     color: var(--text-secondary);
   }
 
   #view-chat .bg-tasks-pill:not(.has-running):hover,
   #view-chat .ctx-window-pill:not(.is-soft-overrun):hover,
   #view-chat .inspector-toggle-pill:hover,
-  #view-chat .chat-more-btn:hover {
+  #view-chat .chat-more-btn:hover,
+  #view-chat .composer-icon-pill:hover,
+  #view-chat .composer-model-pill:hover,
+  #view-chat .composer-model-pill[aria-expanded="true"],
+  #view-chat .composer-route-toggle-pill:hover,
+  #view-chat .composer-route-toggle-pill.active {
     background: var(--tint-1);
+    border-color: transparent;
+    color: var(--text-heading);
+  }
+
+  #view-chat .inspector-toggle-pill[aria-expanded="true"] {
+    background: var(--tint-2);
     border-color: var(--border-subtle);
     color: var(--text-heading);
   }
 
   #view-chat .bg-tasks-pill.has-running {
     background: color-mix(in srgb, var(--emerald) 8%, transparent);
+    border-color: var(--emerald-line);
   }
 
   #view-chat .ctx-ring {
@@ -12590,12 +12768,15 @@ html[data-theme="dark"] .btn-approve {
     background: transparent;
   }
 
-  /* 3h. Thread chips: fills instead of outlines for anything that is not a state */
+  /* 3h. Thread inline code & links: calm amber inline code and borderless file links */
   #view-chat .turn-text code:not(pre code),
   #view-chat .md-inline-code,
   #view-chat .vs-artifact-desc code {
-    padding: 1px 5px;
+    padding: 0 2px;
+    margin: 0;
     border: none;
+    background: transparent;
+    color: var(--code-inline-fg);
   }
 
   #view-chat .vs-live-step-count,
@@ -12611,19 +12792,51 @@ html[data-theme="dark"] .btn-approve {
     background: none;
   }
 
-  /* 3i. Composer: quiet controls on one 24px line */
+  /* 3i. Composer: clean capsule, ghost triggers & circular send button */
   #view-chat .composer-box {
     padding: 10px 12px 8px;
+    box-shadow: none;
   }
 
-  #view-chat .composer-model-pill,
-  #view-chat .composer-route-toggle-pill {
+  #view-chat .composer-send-btn:not(.is-stop):not(.is-ready) {
+    width: 26px;
+    height: 26px;
+    border-radius: var(--r-pill);
     background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    opacity: 0.55;
+    box-shadow: none;
   }
 
-  #view-chat .composer-model-pill:hover,
-  #view-chat .composer-route-toggle-pill:hover {
-    background: var(--tint-1);
+  #view-chat .composer-send-btn.is-stop {
+    width: 26px;
+    height: 26px;
+    border-radius: var(--r-pill);
+    opacity: 1;
+    background: color-mix(in srgb, var(--crimson) 14%, transparent);
+    border: 1px solid var(--crimson-line);
+    color: var(--crimson);
+    box-shadow: none;
+  }
+
+  #view-chat .composer-send-btn.is-ready:not(.is-stop) {
+    width: 26px;
+    height: 26px;
+    border-radius: var(--r-pill);
+  }
+
+  html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) #view-chat .composer-box:focus-within:not(.is-dragover) {
+    border-color: color-mix(in srgb, var(--tint) 22%, transparent);
+    box-shadow: none;
+  }
+
+  html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) #view-chat .composer-send-btn.is-ready:not(.is-stop) {
+    opacity: 1;
+    background: var(--text-heading);
+    color: var(--on-accent-ink);
+    border-color: transparent;
+    box-shadow: none;
   }
 
   /* 3j. v100 (Phase 8): the sidebar reads like the THEO sidebar in VS Code. The session list is
@@ -12697,10 +12910,10 @@ html[data-theme="dark"] .btn-approve {
     text-underline-offset: 2px;
   }
 
-  /* Account cards: 11px detail text in the secondary colour (was 10px in the muted one) */
+  /* Account cards: subtle email & quiet 11px labels */
   .ide-acct-sub {
     font-size: var(--fs-xs);
-    color: var(--text-secondary);
+    color: var(--text-muted);
   }
 
   .ide-qlabels,
@@ -12713,9 +12926,55 @@ html[data-theme="dark"] .btn-approve {
     color: var(--text-primary);
   }
 
+  .ide-qrst {
+    color: var(--text-muted);
+    font-weight: 400;
+  }
+
   .ide-qmeta strong {
-    color: var(--text-primary);
+    color: var(--text-heading);
     font-weight: 600;
+  }
+
+  /* Compact single-line Claude mode bar inside sidebar card */
+  .claude-mode-bar.is-sidebar {
+    margin-top: 3px;
+    padding-top: 4px;
+    border-top: 1px solid var(--border-hairline);
+    gap: 6px;
+    flex-wrap: nowrap;
+  }
+
+  .claude-mode-bar.is-sidebar .claude-mode-kicker {
+    font-size: var(--fs-2xs);
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 500;
+    color: var(--text-muted);
+  }
+
+  .claude-mode-bar.is-sidebar .claude-mode-seg {
+    flex: 0 1 auto;
+    background: color-mix(in srgb, var(--tint) 4%, transparent);
+    border: none;
+    padding: 1px;
+    gap: 1px;
+    border-radius: var(--r-sm);
+  }
+
+  .claude-mode-bar.is-sidebar .claude-mode-seg-btn {
+    height: 19px;
+    padding: 0 6px;
+    font-size: var(--fs-2xs);
+    font-weight: 500;
+    border: none;
+    color: var(--text-muted);
+  }
+
+  html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) .claude-mode-bar.is-sidebar .claude-mode-seg-btn.is-active {
+    background: var(--tint-2);
+    color: var(--text-heading);
+    border-color: transparent;
   }
 
   .ide-acct-role,
@@ -12825,14 +13084,16 @@ html[data-theme="dark"] .btn-approve {
     color: var(--text-secondary);
   }
 
-  /* 3k. v101 (Phase 9): Full VS Code Extension Parity (Sidebar Icons/Footer/Provider Bar + Graphite Workbench) */
+  /* 3k. v101–v102: Full VS Code Extension Parity (Sidebar Icons/Footer/Provider Bar + Graphite Workbench Polish) */
   .ide-sidebar-footer {
     height: auto;
-    min-height: 46px;
-    padding: 4px 6px;
+    min-height: 38px;
+    padding: 3px 6px;
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 2px;
+    border-top: 1px solid var(--border-hairline);
+    background: var(--bg-plate);
   }
 
   .ide-sidebar-footer .ide-foot-btn {
@@ -12841,14 +13102,20 @@ html[data-theme="dark"] .btn-approve {
     align-items: center;
     gap: 2px;
     width: 100%;
-    height: 38px;
-    padding: 3px 2px;
+    height: 32px;
+    padding: 2px;
     border-radius: var(--r-md);
+    color: var(--text-muted);
+  }
+
+  .ide-sidebar-footer .ide-foot-btn:hover {
+    color: var(--text-heading);
+    background: var(--tint-1);
   }
 
   .ide-sidebar-footer .ide-foot-btn svg {
-    width: 15px;
-    height: 15px;
+    width: 13px;
+    height: 13px;
   }
 
   .ide-sidebar-footer .ide-foot-lbl {
@@ -12864,13 +13131,30 @@ html[data-theme="dark"] .btn-approve {
   .ide-filter-strip {
     flex-wrap: nowrap;
     gap: 2px;
+    padding: 0 8px 4px;
     overflow: hidden;
   }
 
   .ide-filter-strip .ide-fchip {
     flex: 0 1 auto;
-    padding: 2px 6px;
+    padding: 1px 5px;
+    font-size: var(--fs-xs);
+    line-height: 18px;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
     white-space: nowrap;
+  }
+
+  .ide-filter-strip .ide-fchip:hover {
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--tint) 4%, transparent);
+  }
+
+  .ide-filter-strip .ide-fchip.active {
+    background: var(--tint-2);
+    color: var(--text-heading);
+    font-weight: 500;
   }
 
   .ide-tree-group-hdr {
@@ -13015,15 +13299,33 @@ html[data-theme="dark"] .btn-approve {
 
   #view-chat .turn-text,
   #view-chat .md-p,
-  #view-chat .md-list-item,
+  #view-chat .md-list-item {
+    font-size: var(--fs-md);
+    line-height: 1.6;
+  }
+
   #view-chat #composer-input {
     font-size: var(--fs-md);
-    line-height: 1.5;
+    line-height: 1.45;
+  }
+
+  #view-chat .md-p + .md-p {
+    margin-top: 8px;
+  }
+
+  #view-chat .md-list {
+    margin: 6px 0;
+    gap: 4px;
+  }
+
+  #view-chat .md-h2 {
+    margin: 16px 0 6px;
   }
 
   #view-chat .md-h3 {
     color: var(--text-heading);
     font-size: var(--fs-lg);
+    margin: 12px 0 4px;
   }
 
   #view-chat .md-h4 {
@@ -13033,7 +13335,7 @@ html[data-theme="dark"] .btn-approve {
 
   html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) .ide-editor-tab.active {
     border-top-width: 1px;
-    border-top-color: var(--steel);
+    border-top-color: var(--border-subtle);
   }
 
   html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) #ide-questions-count,
@@ -13068,42 +13370,82 @@ html[data-theme="dark"] .btn-approve {
   }
 
   html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) #view-chat .turn-bubble.user {
-    max-width: 100%;
+    width: fit-content;
+    max-width: min(86%, 680px);
+    margin-left: auto;
+    padding: 8px 13px;
     background: var(--bg-ink);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--r-md);
+    border-radius: var(--r-lg);
     box-shadow: none;
   }
 
   html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) #view-chat .turn-text code:not(pre code),
   html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) #view-chat .md-inline-code,
   html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) #view-chat .vs-artifact-desc code {
-    background: var(--tint-1);
-    color: var(--text-heading);
+    background: transparent;
+    color: var(--code-inline-fg);
     border: none;
+    padding: 0 2px;
+    margin: 0;
+    font-weight: 500;
   }
 
+  #view-chat .md-file-chip,
   html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) #view-chat .md-file-chip {
-    background: var(--tint-1);
-    border-color: var(--border-subtle);
+    background: transparent;
+    border-color: transparent;
     box-shadow: none;
+    padding: 0 3px;
+    margin: 0;
+    color: var(--steel);
   }
 
-  html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) #view-chat .md-chip-ico {
-    color: var(--steel);
+  #view-chat .md-file-chip:hover,
+  html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) #view-chat .md-file-chip:hover {
+    background: var(--tint-1);
+    border-color: transparent;
+    color: var(--text-heading);
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
 
   html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) #view-chat .md-table-wrap {
     border: none;
     border-radius: 0;
     background: transparent;
+    margin: 8px 0;
+  }
+
+  html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) #view-chat .md-table {
+    width: auto;
+    min-width: min(100%, 380px);
+    max-width: 100%;
+    font-size: var(--fs-md);
+    font-variant-numeric: tabular-nums;
   }
 
   html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) #view-chat .md-table th {
+    padding: 6px 24px 6px 0;
     background: transparent;
     color: var(--text-heading);
     border-bottom: 1px solid var(--border-subtle);
     font-weight: 600;
+  }
+
+  html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) #view-chat .md-table td {
+    padding: 6px 24px 6px 0;
+    border-bottom: 1px solid var(--border-hairline);
+    color: var(--text-primary);
+  }
+
+  html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) #view-chat .md-table th:last-child,
+  html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) #view-chat .md-table td:last-child {
+    padding-right: 0;
+  }
+
+  html[data-theme="dark"]:not([data-palette="velvet"]):not([data-palette="espresso"]) #view-chat .md-table tbody tr:last-child td {
+    border-bottom-color: var(--border-subtle);
   }
 }
 

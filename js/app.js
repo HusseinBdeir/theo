@@ -4947,8 +4947,13 @@
 
       const editorTabEl = e.target.closest('[data-editor-tab-id]');
       if (editorTabEl && editorTabEl.dataset.editorTabId) {
+        if (e.target.isContentEditable) return;
         const tid = editorTabEl.dataset.editorTabId;
         if (tid === '__new__') return;
+        if (!S.isNewSessionMode() && prefs.selectedThreadId === tid && prefs.activeTab === 'chat') {
+          markNotificationsCheckedForSession(tid);
+          return;
+        }
         recentResumeUntil = 0;
         S.ensureEditorTabOpen(tid);
         recordFreqUsage('threads', tid);
@@ -7172,13 +7177,30 @@
       S.renderIdeSidebar();
     });
 
-    // Middle-click to close open editor tab (VS Code parity)
+    // Middle-click to close open editor tab (VS Code parity); double-click active tab to rename
     $('ide-editor-tabs')?.addEventListener('auxclick', (e) => {
       if (isPinLocked() || e.button !== 1) return;
       const tab = e.target.closest('[data-editor-tab-id]');
       if (tab?.dataset.editorTabId) {
         e.preventDefault();
         S.closeEditorTab(tab.dataset.editorTabId);
+      }
+    });
+    $('ide-editor-tabs')?.addEventListener('dblclick', (e) => {
+      if (isPinLocked()) return;
+      if (S.activeIdeRename && S.activeIdeRename.kind === 'chat-session') return;
+      const tab = e.target.closest('.ide-editor-tab.active:not(.is-draft)[data-editor-tab-id]');
+      const tid = tab?.dataset.editorTabId || '';
+      if (!tid || tid === '__new__') return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (!S.beginIdeInlineRename('chat-session', tid)) {
+        S.beginIdeInlineRename('session', tid);
+      }
+    });
+    $('ide-editor-tabs')?.addEventListener('focusout', (e) => {
+      if (S.activeIdeRename && e.target === S.activeIdeRename.el) {
+        S.finishIdeInlineRename(true);
       }
     });
 
@@ -7826,7 +7848,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=101', { updateViaCache: 'none' })
+        .register('sw.js?v=102', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

@@ -3,6 +3,7 @@
 
   window.__theoRegisterModule('sidebar', (S) => {
   let pendingNewSessionBind = null;
+  let lastRenderedActiveTabId = '';
   const closedEditorTabIds = new Set();
 
   function ensureEditorTabOpen(tid) {
@@ -127,47 +128,172 @@
       S.saveJson(S.STORAGE_KEYS.PREFS, S.prefs);
     }
 
-    const tabsHtml = list
-      .map((id) => {
-        const r = rowById.get(id) || S.threadsCache[id] || { id, title: 'Session', provider: 'antigravity' };
-        const provKey = r.provider === 'claude' ? 'claude' : 'antigravity';
-        const isActive = !isNewDraft && id === curTid;
-        const isRunningNow = S.isSessionActivelyRunning(id);
-        const qCnt = getSessionPendingQuestionCount(r);
-        const stCls = isRunningNow
-          ? 'working'
-          : r.status === 'waiting' || qCnt > 0
-            ? 'waiting'
-            : r.unread
-              ? 'unread'
-              : '';
-        const rawTitle = String(r.title || S.threadsCache[id]?.title || 'Untitled Session').trim();
-        const bgInfo = r.bgTask?.state === 'running' ? getSessionRunningBgInfo(r) : null;
-        return `
-          <div class="ide-editor-tab${isActive ? ' active' : ''}${r.unread ? ' is-unread' : ''}" role="tab" tabindex="0" aria-selected="${isActive}" data-editor-tab-id="${S.esc(id)}" data-session-prov="${provKey}">
-            ${stCls ? `<span class="ide-dot ${stCls}"></span>` : ''}
-            <span class="prov-glyph">${S.PROVIDER_ICONS[provKey]}</span>
-            <span class="ide-tab-title">${S.esc(rawTitle)}</span>
-            ${qCnt > 0 ? `<span class="ide-row-pill q-pill tabular">${S.UI_ICONS.question}<span>${qCnt}</span></span>` : ''}
-            ${bgInfo ? `<span class="ide-row-pill bg-pill tabular">${bgInfo.isAgent ? S.UI_ICONS.subagent : S.UI_ICONS.terminal}<span>${bgInfo.count}</span></span>` : ''}
-            <button type="button" class="ide-tab-close" data-close-editor-tab="${S.esc(id)}" aria-label="Close ${S.esc(rawTitle)}">${S.UI_ICONS.close}</button>
-          </div>
-        `;
-      })
-      .join('');
-
     const newDraftProv = S.prefs.composerMode === 'new-claude' ? 'claude' : 'antigravity';
-    const newDraftTabHtml = isNewDraft
-      ? `
-        <div class="ide-editor-tab active is-draft" role="tab" tabindex="0" aria-selected="true" data-editor-tab-id="__new__" data-session-prov="${newDraftProv}">
-          <span class="prov-glyph">${S.PROVIDER_ICONS[newDraftProv]}</span>
-          <span class="ide-tab-title">New ${newDraftProv === 'claude' ? 'Claude' : 'Antigravity'} Session</span>
-          <button type="button" class="ide-tab-close" data-close-editor-tab="__new__" aria-label="Close new session draft">${S.UI_ICONS.close}</button>
-        </div>
-      `
-      : '';
+    const tabSpecs = list.map((id) => {
+      const r = rowById.get(id) || S.threadsCache[id] || { id, title: 'Session', provider: 'antigravity' };
+      const provKey = r.provider === 'claude' ? 'claude' : 'antigravity';
+      const isActive = !isNewDraft && id === curTid;
+      const isRunningNow = S.isSessionActivelyRunning(id);
+      const qCnt = getSessionPendingQuestionCount(r);
+      const stCls = isRunningNow
+        ? 'working'
+        : r.status === 'waiting' || qCnt > 0
+          ? 'waiting'
+          : r.unread
+            ? 'unread'
+            : '';
+      const rawTitle = String(r.title || S.threadsCache[id]?.title || 'Untitled Session').trim();
+      const bgInfo = r.bgTask?.state === 'running' ? getSessionRunningBgInfo(r) : null;
+      return {
+        id,
+        isDraft: false,
+        isActive,
+        unread: Boolean(r.unread),
+        provKey,
+        stCls,
+        rawTitle,
+        qCnt,
+        bgInfo,
+        closeLabel: `Close ${rawTitle}`
+      };
+    });
+    if (isNewDraft) {
+      tabSpecs.push({
+        id: '__new__',
+        isDraft: true,
+        isActive: true,
+        unread: false,
+        provKey: newDraftProv,
+        stCls: '',
+        rawTitle: `New ${newDraftProv === 'claude' ? 'Claude' : 'Antigravity'} Session`,
+        qCnt: 0,
+        bgInfo: null,
+        closeLabel: 'Close new session draft'
+      });
+    }
 
-    tabsEl.innerHTML = tabsHtml + newDraftTabHtml;
+    // Reconcile tab nodes in place so clicking or updating tabs never tears down hover/press transitions
+    const existingById = new Map();
+    for (const el of tabsEl.querySelectorAll(':scope > .ide-editor-tab[data-editor-tab-id]')) {
+      const eid = el.dataset.editorTabId || '';
+      if (eid && !existingById.has(eid)) existingById.set(eid, el);
+      else el.remove();
+    }
+    const wantIds = new Set(tabSpecs.map((s) => s.id));
+    for (const [eid, el] of existingById.entries()) {
+      if (!wantIds.has(eid)) {
+        if (activeIdeRename && activeIdeRename.el && el.contains(activeIdeRename.el)) {
+          finishIdeInlineRename(false);
+        }
+        el.remove();
+        existingById.delete(eid);
+      }
+    }
+
+    let activeTabEl = null;
+    let activeTabId = '';
+    tabSpecs.forEach((spec, idx) => {
+      let tabEl = existingById.get(spec.id);
+      if (!tabEl) {
+        tabEl = document.createElement('div');
+        tabEl.setAttribute('role', 'tab');
+        tabEl.setAttribute('tabindex', '0');
+        tabEl.dataset.editorTabId = spec.id;
+
+        const provEl = document.createElement('span');
+        provEl.className = 'prov-glyph';
+
+        const titleEl = document.createElement('span');
+        titleEl.className = 'ide-tab-title';
+
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'ide-tab-close';
+        closeBtn.innerHTML = S.UI_ICONS.close;
+
+        tabEl.append(provEl, titleEl, closeBtn);
+      }
+
+      const nextCls = `ide-editor-tab${spec.isActive ? ' active' : ''}${spec.unread ? ' is-unread' : ''}${spec.isDraft ? ' is-draft' : ''}`;
+      if (tabEl.className !== nextCls) tabEl.className = nextCls;
+      const nextAriaSel = spec.isActive ? 'true' : 'false';
+      if (tabEl.getAttribute('aria-selected') !== nextAriaSel) tabEl.setAttribute('aria-selected', nextAriaSel);
+      if (tabEl.dataset.sessionProv !== spec.provKey) tabEl.dataset.sessionProv = spec.provKey;
+
+      let dotEl = tabEl.querySelector(':scope > .ide-dot');
+      if (spec.stCls) {
+        if (!dotEl) {
+          dotEl = document.createElement('span');
+          tabEl.prepend(dotEl);
+        }
+        const dotCls = `ide-dot ${spec.stCls}`;
+        if (dotEl.className !== dotCls) dotEl.className = dotCls;
+      } else if (dotEl) {
+        dotEl.remove();
+      }
+
+      const provEl = tabEl.querySelector(':scope > .prov-glyph');
+      if (provEl && provEl.dataset.provKey !== spec.provKey) {
+        provEl.dataset.provKey = spec.provKey;
+        provEl.innerHTML = S.PROVIDER_ICONS[spec.provKey];
+      }
+
+      const titleEl = tabEl.querySelector(':scope > .ide-tab-title');
+      const editingTabTitle = Boolean(
+        activeIdeRename && activeIdeRename.el === titleEl && activeIdeRename.id === spec.id
+      );
+      if (titleEl && !editingTabTitle && titleEl.textContent !== spec.rawTitle) {
+        titleEl.textContent = spec.rawTitle;
+      }
+
+      let badgesEl = tabEl.querySelector(':scope > .ide-tab-badges');
+      const closeBtn = tabEl.querySelector(':scope > .ide-tab-close');
+      const badgeSig = `${spec.qCnt}|${spec.bgInfo ? `${spec.bgInfo.isAgent ? 'a' : 't'}:${spec.bgInfo.count}` : ''}`;
+      if (badgeSig === '0|') {
+        if (badgesEl) badgesEl.remove();
+      } else {
+        if (!badgesEl) {
+          badgesEl = document.createElement('span');
+          badgesEl.className = 'ide-tab-badges';
+          tabEl.insertBefore(badgesEl, closeBtn || null);
+        }
+        if (badgesEl.dataset.slotSig !== badgeSig) {
+          badgesEl.dataset.slotSig = badgeSig;
+          badgesEl.innerHTML =
+            (spec.qCnt > 0 ? `<span class="ide-row-pill q-pill tabular">${S.UI_ICONS.question}<span>${spec.qCnt}</span></span>` : '') +
+            (spec.bgInfo ? `<span class="ide-row-pill bg-pill tabular">${spec.bgInfo.isAgent ? S.UI_ICONS.subagent : S.UI_ICONS.terminal}<span>${spec.bgInfo.count}</span></span>` : '');
+        }
+      }
+      if (closeBtn) {
+        if (closeBtn.dataset.closeEditorTab !== spec.id) closeBtn.dataset.closeEditorTab = spec.id;
+        if (closeBtn.getAttribute('aria-label') !== spec.closeLabel) {
+          closeBtn.setAttribute('aria-label', spec.closeLabel);
+        }
+      }
+
+      if (tabsEl.children[idx] !== tabEl) {
+        tabsEl.insertBefore(tabEl, tabsEl.children[idx] || null);
+      }
+      if (spec.isActive) {
+        activeTabEl = tabEl;
+        activeTabId = spec.id;
+      }
+    });
+
+    if (activeTabEl && activeTabId !== lastRenderedActiveTabId) {
+      lastRenderedActiveTabId = activeTabId;
+      const barLeft = tabsEl.scrollLeft;
+      const barRight = barLeft + tabsEl.clientWidth;
+      const tabLeft = activeTabEl.offsetLeft;
+      const tabRight = tabLeft + activeTabEl.offsetWidth;
+      if (tabLeft < barLeft) {
+        tabsEl.scrollTo({ left: tabLeft, behavior: 'smooth' });
+      } else if (tabRight > barRight) {
+        tabsEl.scrollTo({ left: Math.max(0, tabRight - tabsEl.clientWidth), behavior: 'smooth' });
+      }
+    } else if (!activeTabEl) {
+      lastRenderedActiveTabId = '';
+    }
   }
 
   function isSessionOpenTab(r) {
@@ -787,7 +913,19 @@
     if (activeIdeRename) finishIdeInlineRename(false);
     let targetEl = null;
     if (kind === 'chat-session') {
-      targetEl = S.$('chat-session-title');
+      const hdrTitle = S.$('chat-session-title');
+      if (hdrTitle && hdrTitle.getClientRects().length > 0) {
+        targetEl = hdrTitle;
+      } else {
+        const tabsEl = S.$('ide-editor-tabs');
+        const tabEl = tabsEl
+          ? Array.from(tabsEl.querySelectorAll(':scope > .ide-editor-tab:not(.is-draft)[data-editor-tab-id]')).find(
+              (n) => n.dataset.editorTabId === id
+            )
+          : null;
+        const tabTitle = tabEl?.querySelector(':scope > .ide-tab-title') || null;
+        targetEl = tabTitle && tabTitle.getClientRects().length > 0 ? tabTitle : hdrTitle;
+      }
     } else {
       const treeEl = S.$('ide-sidebar-tree');
       if (!treeEl) return false;
@@ -1329,15 +1467,23 @@
     const hide3pSide = S.isThirdPartyQuotaHidden();
     const has3pSide = S.hasAnyAntigravityThirdPartyBars();
     const side3pPill = S.$('ide-toggle-3p-pill');
-    if (side3pPill) {
-      side3pPill.hidden = !(has3pSide || hide3pSide);
-      side3pPill.setAttribute('data-toggle-3p-quota', hide3pSide ? 'show' : 'hide');
-      side3pPill.textContent = hide3pSide ? '+ 3P' : 'Hide 3P';
-      side3pPill.setAttribute('aria-pressed', hide3pSide ? 'true' : 'false');
-    }
     if (accountsEl) {
       const { ordered, sameProvCounts } = S.getOrderedPulseQuotaCards();
       const signedInCards = ordered.filter(({ acct }) => S.isSignedInQuotaCard(acct));
+      const anyAgyExpanded = ordered.some(({ acct, provKey }) => {
+        if (provKey !== 'antigravity' || !S.isSignedInQuotaCard(acct)) return false;
+        const aId = acct?.id || 'antigravity:default';
+        const isAct = acct?.active !== false;
+        const m = (sameProvCounts.antigravity || 1) > 1;
+        const cKey = m ? aId : 'antigravity';
+        return !S.isQuotaCardCollapsed(cKey, aId, m, isAct);
+      });
+      if (side3pPill) {
+        side3pPill.hidden = !((has3pSide || hide3pSide) && !anyAgyExpanded);
+        side3pPill.setAttribute('data-toggle-3p-quota', hide3pSide ? 'show' : 'hide');
+        side3pPill.textContent = hide3pSide ? '+ 3P' : 'Hide 3P';
+        side3pPill.setAttribute('aria-pressed', hide3pSide ? 'true' : 'false');
+      }
       if (acctsCountEl) {
         acctsCountEl.hidden = signedInCards.length === 0;
         acctsCountEl.textContent = String(signedInCards.length);
@@ -1422,11 +1568,15 @@
               const gemBars = limits.filter((l) => !S.isThirdPartyQuotaBar(l));
               const tpBars = limits.filter((l) => S.isThirdPartyQuotaBar(l));
               if (hide3pSide) {
-                barsHtml = gemBars.length
-                  ? gemBars.map((l) => renderSideRow(l, false)).join('')
-                  : tpBars.length
-                    ? `<div class="q-pool-hidden-note"><span>Claude &amp; GPT hidden</span><button type="button" class="q-pool-toggle-btn" data-toggle-3p-quota="show" aria-label="Show Claude and GPT quota bars">Show</button></div>`
+                if (!gemBars.length && tpBars.length) {
+                  barsHtml = `<div class="q-pool-hidden-note"><span>Claude &amp; GPT hidden</span><button type="button" class="q-pool-toggle-btn" data-toggle-3p-quota="show" aria-label="Show Claude and GPT quota bars">Show</button></div>`;
+                } else if (tpBars.length) {
+                  barsHtml = `<div class="ide-qpool-group"><div class="ide-qpool-head"><span class="q-pool-dot agy"></span><span class="q-pool-title">Gemini models</span><button type="button" class="q-pool-toggle-btn" data-toggle-3p-quota="show" aria-label="Show Claude and GPT quota bars">+ Claude &amp; GPT</button></div>${gemBars.map((l) => renderSideRow(l, false)).join('')}</div>`;
+                } else {
+                  barsHtml = gemBars.length
+                    ? gemBars.map((l) => renderSideRow(l, false)).join('')
                     : `<div class="ide-acct-empty-usage">${S.esc(acct?.usageMessage || 'Window idle')}</div>`;
+                }
               } else if (tpBars.length) {
                 const gemHtml = gemBars.length
                   ? `<div class="ide-qpool-group"><div class="ide-qpool-head"><span class="q-pool-dot agy"></span><span class="q-pool-title">Gemini models</span></div>${gemBars.map((l) => renderSideRow(l, false)).join('')}</div>`
@@ -1461,10 +1611,20 @@
             const editRowHtml = isEditingLabel
               ? `<form class="ide-acct-edit-row" data-acct-label-form="${S.esc(acctId)}" data-acct-prov="${provKey}"><input type="text" class="ide-acct-inline-edit" value="${S.esc(activeInlineAcctEdit.value ?? nick)}" placeholder="Label (e.g. Work, Personal)" maxlength="32" autocomplete="off"><button type="submit" class="ide-link-pill">Save</button><button type="button" class="ide-link-pill" data-acct-label-cancel="1">Cancel</button></form>`
               : '';
+            const headerPlanHtml =
+              isActive && !multi
+                ? `<span class="ide-plan-tag" data-micro-tip="${S.esc(email ? `${email} · ${plan}` : plan)}">${S.esc(plan)}</span>`
+                : '';
+            const cardTip = email ? `${label}${nick ? ` (${nick})` : ''} · ${email}` : label;
+            const subRowHtml = multi
+              ? `<div class="ide-acct-sub">${email ? `<span class="ide-acct-email">${S.esc(email)}</span>` : '<span></span>'}<span class="ide-plan-tag">${S.esc(plan)}</span></div>`
+              : email
+                ? `<div class="ide-acct-sub"><span class="ide-acct-email">${S.esc(email)}</span></div>`
+                : '';
             return `
               <div class="ide-acct-card${isActive ? ' is-active' : ''}${multi ? ' is-multi' : ''}${isCollapsed ? ' collapsed' : ''}" data-quota-card-id="${S.esc(acctId)}" data-account-prov="${provKey}"${canReorderSide ? ' draggable="true"' : ''}>
                 <div class="ide-acct-head">
-                  <button type="button" class="ide-acct-toggle" data-quota-collapse="${S.esc(collapseKey)}" aria-expanded="${!isCollapsed}">
+                  <button type="button" class="ide-acct-toggle" data-quota-collapse="${S.esc(collapseKey)}" data-micro-tip="${S.esc(cardTip)}" aria-expanded="${!isCollapsed}">
                     <span class="ide-chevron-sm">${isCollapsed ? S.CHEVRON_RIGHT_SVG : S.CHEVRON_DOWN_SVG}</span>
                     <span class="prov-glyph">${S.PROVIDER_ICONS[provKey]}</span>
                     <span class="ide-acct-name">${S.esc(label)}</span>
@@ -1474,7 +1634,7 @@
                     ${
                       !isActive
                         ? `<button type="button" class="ide-acct-use-btn" data-account-switch="${S.esc(acctId)}" data-account-prov="${provKey}">${S.UI_ICONS.swap}<span>Use</span></button>`
-                        : `<span class="ide-acct-live-pill"><span class="ide-acct-active-dot"></span><span>Active</span></span>`
+                        : `${headerPlanHtml}<span class="ide-acct-live-pill"><span class="ide-acct-active-dot"></span><span>Active</span></span>`
                     }
                     ${moveBtnsHtml}
                     <button type="button" class="ide-acct-icon-btn" data-account-label="${S.esc(acctId)}" data-account-prov="${provKey}" data-account-nick="${S.esc(nick)}" data-account-surface="sidebar" data-micro-tip="Edit account label" aria-label="Edit account label">${S.UI_ICONS.pencil}</button>
@@ -1484,13 +1644,18 @@
                 ${
                   isCollapsed
                     ? editRowHtml
-                    : `${editRowHtml}<div class="ide-acct-sub">${email ? `<span>${S.esc(email)}</span>` : '<span></span>'}<span class="ide-plan-tag">${S.esc(plan)}</span></div>${barsHtml ? `<div class="ide-qstack">${barsHtml}</div>` : ''}${provKey === 'claude' && isActive ? S.renderClaudeModeSelectorHtml('sidebar') : ''}`
+                    : `${editRowHtml}${subRowHtml}${barsHtml ? `<div class="ide-qstack">${barsHtml}</div>` : ''}${provKey === 'claude' && isActive ? S.renderClaudeModeSelectorHtml('sidebar') : ''}`
                 }
               </div>
             `;
           })
           .join('');
       }
+    } else if (side3pPill) {
+      side3pPill.hidden = !(has3pSide || hide3pSide);
+      side3pPill.setAttribute('data-toggle-3p-quota', hide3pSide ? 'show' : 'hide');
+      side3pPill.textContent = hide3pSide ? '+ 3P' : 'Hide 3P';
+      side3pPill.setAttribute('aria-pressed', hide3pSide ? 'true' : 'false');
     }
 
     // 2. Live Approvals Banner in Sidebar

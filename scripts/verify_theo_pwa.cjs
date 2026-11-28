@@ -2183,7 +2183,7 @@ async function main() {
     })()`);
 
     assert.strictEqual(v59InteractiveProbe.xssTriggered, false, 'Hostile HTML in thoughtBlocks, subagents, questions & palettes must never execute');
-    assert.strictEqual(v59InteractiveProbe.inlineCodeColor, 'rgb(237, 237, 237)', `Expected neutral Graphite inline code rgb(237, 237, 237), got ${v59InteractiveProbe.inlineCodeColor}`);
+    assert.strictEqual(v59InteractiveProbe.inlineCodeColor, 'rgb(215, 186, 125)', `Expected calm amber Graphite inline code rgb(215, 186, 125), got ${v59InteractiveProbe.inlineCodeColor}`);
     assert.strictEqual(v59InteractiveProbe.secQuestionsVisible, true, 'Sidebar #ide-sec-questions must be visible when questions are pending');
     assert.strictEqual(v59InteractiveProbe.secBgVisible, true, 'Sidebar #ide-sec-bgtasks must be visible when Side Agents / tasks exist');
     assert.strictEqual(v59InteractiveProbe.dockVisibleDesktop, true, '#chat-question-dock must be visible above composer on desktop');
@@ -9038,17 +9038,23 @@ async function main() {
         const quickSwitchOpenedCmd = document.getElementById('cmd-modal')?.hidden === false;
         document.getElementById('cmd-close')?.click();
 
-        // Header inline rename (#btn-chat-rename-title & F2, Enter/Escape/whitespace + PIN lock guard)
+        // Header / active-tab inline rename (#btn-chat-rename-title & F2, Enter/Escape/whitespace + PIN lock guard)
         window.__theoLastQuarantinedCmd = null;
-        const origTitle = document.getElementById('chat-session-title')?.textContent?.trim() || '';
+        const getVisTitleEl = () => {
+          const h = document.getElementById('chat-session-title');
+          return h && h.getClientRects().length > 0
+            ? h
+            : document.querySelector('#ide-editor-tabs .ide-editor-tab.active .ide-tab-title');
+        };
+        const origTitle = getVisTitleEl()?.textContent?.trim() || '';
         document.getElementById('btn-chat-rename-title')?.click();
         await new Promise((r) => setTimeout(r, 25));
-        const titleEl = document.getElementById('chat-session-title');
+        const titleEl = getVisTitleEl();
         const editStartedBtn = Boolean(titleEl && titleEl.isContentEditable);
         if (titleEl) titleEl.textContent = 'Phase 3 Renamed Stream';
         titleEl?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
         await new Promise((r) => setTimeout(r, 35));
-        const renamedHeaderTitle = document.getElementById('chat-session-title')?.textContent?.trim() || '';
+        const renamedHeaderTitle = getVisTitleEl()?.textContent?.trim() || '';
         const renamedSidebarTitle = document.querySelector('.ide-tree-row[data-ide-open-session="v92-s1"] .ide-tree-title')?.textContent?.trim() || '';
         const renameCmd = window.__theoLastQuarantinedCmd || null;
 
@@ -9056,53 +9062,60 @@ async function main() {
         document.activeElement?.blur?.();
         window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true, cancelable: true }));
         await new Promise((r) => setTimeout(r, 25));
-        const editStartedF2 = Boolean(titleEl && titleEl.isContentEditable);
-        if (titleEl) titleEl.textContent = 'Should Revert On Escape';
-        titleEl?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        const f2TitleEl = getVisTitleEl();
+        const editStartedF2 = Boolean(f2TitleEl && f2TitleEl.isContentEditable);
+        if (f2TitleEl) f2TitleEl.textContent = 'Should Revert On Escape';
+        f2TitleEl?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
         await new Promise((r) => setTimeout(r, 25));
-        const afterEscapeTitle = document.getElementById('chat-session-title')?.textContent?.trim() || '';
+        const afterEscapeTitle = getVisTitleEl()?.textContent?.trim() || '';
 
         // Whitespace-only rename rejects
         document.getElementById('btn-chat-rename-title')?.click();
         await new Promise((r) => setTimeout(r, 20));
-        if (titleEl) titleEl.textContent = '   ';
-        titleEl?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+        const wsTitleEl = getVisTitleEl();
+        if (wsTitleEl) wsTitleEl.textContent = '   ';
+        wsTitleEl?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
         await new Promise((r) => setTimeout(r, 25));
-        const afterWhitespaceTitle = document.getElementById('chat-session-title')?.textContent?.trim() || '';
+        const afterWhitespaceTitle = getVisTitleEl()?.textContent?.trim() || '';
 
-        // Long session title ellipsis truncation on desktop (#chat-session-title scrollWidth > clientWidth, no overlap with rename/⌘K buttons)
-        document.getElementById('btn-chat-rename-title')?.click();
+        // Long session title ellipsis truncation on desktop (active editor tab .ide-tab-title scrollWidth > clientWidth, no overlap with close or right actions)
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true, cancelable: true }));
         await new Promise((r) => setTimeout(r, 20));
-        if (titleEl) titleEl.textContent = 'Very Long Phase 3 Session Title Used To Verify Desktop Header Ellipsis Truncation Without Overlap Across Viewport';
-        titleEl?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+        const longTitleEl = getVisTitleEl();
+        if (longTitleEl) longTitleEl.textContent = 'Very Long Phase 3 Session Title Used To Verify Desktop Header Ellipsis Truncation Without Overlap Across Viewport';
+        longTitleEl?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
         await new Promise((r) => setTimeout(r, 30));
-        const tRect = titleEl?.getBoundingClientRect();
-        const rRect = document.getElementById('btn-chat-rename-title')?.getBoundingClientRect();
-        const qRect = document.getElementById('btn-chat-quick-switch')?.getBoundingClientRect();
+        const visTitleAfter = getVisTitleEl();
+        const activeTabEl = document.querySelector('#ide-editor-tabs .ide-editor-tab.active');
+        const closeBtnRect = activeTabEl?.querySelector('.ide-tab-close')?.getBoundingClientRect();
+        const tRect = visTitleAfter?.getBoundingClientRect();
+        const tabsBarRect = document.getElementById('ide-editor-tabs-bar')?.getBoundingClientRect();
+        const actionsRect = document.querySelector('.ide-workbench-topbar .chat-header-actions')?.getBoundingClientRect();
         const longTitleTruncated = Boolean(
-          titleEl && tRect && rRect && qRect &&
-          getComputedStyle(titleEl).overflow === 'hidden' &&
-          getComputedStyle(titleEl).textOverflow === 'ellipsis' &&
-          titleEl.scrollWidth > titleEl.clientWidth &&
-          tRect.right <= rRect.left + 1 &&
-          rRect.right <= qRect.left + 1
+          visTitleAfter && tRect && closeBtnRect && tabsBarRect && actionsRect &&
+          getComputedStyle(visTitleAfter).overflow === 'hidden' &&
+          getComputedStyle(visTitleAfter).textOverflow === 'ellipsis' &&
+          visTitleAfter.scrollWidth > visTitleAfter.clientWidth &&
+          tRect.right <= closeBtnRect.left + 1 &&
+          tabsBarRect.right <= actionsRect.left + 1
         );
         // Restore concise title for remaining assertions
-        document.getElementById('btn-chat-rename-title')?.click();
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true, cancelable: true }));
         await new Promise((r) => setTimeout(r, 20));
-        if (titleEl) titleEl.textContent = 'Phase 3 Renamed Stream';
-        titleEl?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+        const restoreTitleEl = getVisTitleEl();
+        if (restoreTitleEl) restoreTitleEl.textContent = 'Phase 3 Renamed Stream';
+        restoreTitleEl?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
         await new Promise((r) => setTimeout(r, 25));
 
         // PIN lock blocks rename button, dblclick, and F2
         const pinOv = document.getElementById('pin-overlay');
         if (pinOv) pinOv.hidden = false;
         document.getElementById('btn-chat-rename-title')?.click();
-        const pinBlockedBtn = Boolean(titleEl && titleEl.isContentEditable);
-        titleEl?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
-        const pinBlockedDbl = Boolean(titleEl && titleEl.isContentEditable);
+        const pinBlockedBtn = Boolean(getVisTitleEl()?.isContentEditable);
+        document.querySelector('#ide-editor-tabs .ide-editor-tab.active')?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+        const pinBlockedDbl = Boolean(getVisTitleEl()?.isContentEditable);
         window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true, cancelable: true }));
-        const pinBlockedF2 = Boolean(titleEl && titleEl.isContentEditable);
+        const pinBlockedF2 = Boolean(getVisTitleEl()?.isContentEditable);
         if (pinOv) pinOv.hidden = true;
 
         // Model picker Adjust effort deduplication
@@ -9199,21 +9212,33 @@ async function main() {
       assert.strictEqual(shellAndRename.titleAttrCount, 0, 'Zero native [title] attributes allowed');
       assert.strictEqual(shellAndRename.overflowDesktop, 0, '0px horizontal overflow on desktop');
 
-      // 3. Mobile (390x844) cold boot lands on Pulse + 5th dock tab labeled Settings + 0px overflow
+      // 3. Mobile (390x844) cold boot lands on Pulse + 5th dock tab labeled Settings + 0px overflow + .chat-header-main visible on Chat
       await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true }, sessionId);
       await evalJs(`localStorage.removeItem('theo_remote_prefs_v1')`);
       await cdp.send('Page.navigate', { url: `${baseUrl}/?nosse=1` }, sessionId);
       await new Promise((r) => setTimeout(r, 600));
-      const mobileColdBoot = await evalJs(`(() => {
+      const mobileColdBoot = await evalJs(`(async () => {
         const dockAnalyticsLbl = document.querySelector('#mobile-bottom-dock [data-tab="analytics"]')?.textContent?.trim() || '';
+        const pulseActive = Boolean(document.getElementById('view-pulse')?.classList.contains('active'));
+        const overflowPulse = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+        document.querySelector('#mobile-bottom-dock [data-tab="chat"]')?.click();
+        await new Promise((r) => setTimeout(r, 40));
+        const hdrShown = (id) => {
+          const el = document.getElementById(id);
+          return Boolean(el && el.getClientRects().length > 0 && getComputedStyle(el).display !== 'none');
+        };
+        const mobileHeaderVisible = hdrShown('chat-session-title') && hdrShown('btn-chat-quick-switch');
+        const overflowMobile = Math.max(overflowPulse, Math.max(0, document.documentElement.scrollWidth - window.innerWidth));
         return {
-          pulseActive: Boolean(document.getElementById('view-pulse')?.classList.contains('active')),
+          pulseActive,
           dockAnalyticsLbl,
-          overflowMobile: Math.max(0, document.documentElement.scrollWidth - window.innerWidth)
+          mobileHeaderVisible,
+          overflowMobile
         };
       })()`);
       assert.strictEqual(mobileColdBoot.pulseActive, true, 'Mobile (390x844) cold boot must open #view-pulse.active');
       assert.ok(mobileColdBoot.dockAnalyticsLbl.includes('Settings'), `5th mobile dock tab must read Settings, got "${mobileColdBoot.dockAnalyticsLbl}"`);
+      assert.strictEqual(mobileColdBoot.mobileHeaderVisible, true, 'Mobile Chat must keep #chat-session-title and #btn-chat-quick-switch visible');
       assert.strictEqual(mobileColdBoot.overflowMobile, 0, '0px horizontal overflow on mobile cold boot');
       console.log('[PASS] Adversarial #28: Phase 3 (v92) Desktop Workbench Default, 1-Sidebar Shell, Single-Control Rule, Header Inline Rename & Copy Scrub verified');
     }
@@ -10343,14 +10368,15 @@ async function main() {
         })()`);
 
         // (a) Extension accents (theo-hub/resources/hub.css) and a title-bar colour that follows the palette
+        const spread32 = (c) => { const v = (String(c).match(/-?\d*\.?\d+/g) || []).slice(0, 3).map(Number); return v.length === 3 ? Math.max(...v) - Math.min(...v) : -1; };
         assert.strictEqual(p32.agy, '#3186FF', 'Graphite --agy must be the extension --progress-agy');
         assert.strictEqual(p32.claude, '#D97757', 'Graphite --claude must be the extension --progress-claude');
         assert.strictEqual(p32.emerald, '#89D185', 'Graphite --emerald must be the extension --status-busy');
         assert.strictEqual(p32.steel, '#3B82F6', 'Graphite --steel must be the extension --status-pending');
         assert.strictEqual(p32.metaTheme, p32.plate, '#meta-theme-color must equal the palette --bg-plate');
         assert.strictEqual(p32.workingDotBg, 'rgb(137, 209, 133)', `A running session dot must be solid extension green (got ${p32.workingDotBg})`);
-        assert.strictEqual(p32.groupPillBg, 'rgb(59, 130, 246)', `Group count badges must be filled with the selection blue (got ${p32.groupPillBg})`);
-        assert.strictEqual(p32.groupPillFg, 'rgb(17, 17, 20)', `Group count badges must use dark ink on the blue fill in dark palettes (got ${p32.groupPillFg})`);
+        assert.strictEqual(spread32(p32.groupPillBg) <= 3 && p32.groupPillBg !== 'rgba(0, 0, 0, 0)', true, `Group count badges must use a calm neutral Graphite fill (got ${p32.groupPillBg})`);
+        assert.strictEqual(p32.groupPillFg, p32.p8.primaryColour, `Group count badges must use readable primary ink on the neutral badge (got ${p32.groupPillFg})`);
 
         // (b) Sidebar headers stay on one line and inside the sidebar
         assert.strictEqual(p32.sideWidth, 300, 'Desktop sidebar must be 300px wide');
@@ -10464,7 +10490,6 @@ async function main() {
         assert.strictEqual(pal32.velvet.emerald, '#6E9E82', 'Velvet keeps its own calm --emerald');
         assert.strictEqual(pal32.espresso.agy, '#6E95C8', 'Espresso keeps its own calm --agy (no vivid blue in the zero-blue-light palette)');
         assert.strictEqual(pal32.graphite.agy, '#3186FF', 'Graphite returns to the extension --agy after the palette round trip');
-        const spread32 = (c) => { const v = (String(c).match(/-?\d*\.?\d+/g) || []).slice(0, 3).map(Number); return v.length === 3 ? Math.max(...v) - Math.min(...v) : -1; };
         assert.strictEqual(spread32(pal32.graphite.selection), 0, `Graphite selects a session in neutral grey (got ${pal32.graphite.selection})`);
         for (const pal of ['velvet', 'espresso', 'daylight']) {
           assert.ok(spread32(pal32[pal].selection) > 0.1, `${pal} keeps its own blue session selection (got ${pal32[pal].selection})`);
@@ -10522,6 +10547,54 @@ async function main() {
         assert.notStrictEqual(p8.activeBorder, p8.idleBorder, 'The account in use must be outlined differently from the others when a provider has several');
         assert.strictEqual(p8.idleRowColour, p8.primaryColour, `Session titles must use the primary text colour (got ${p8.idleRowColour})`);
         assert.ok(p8.connHeight <= 28, `Connection status must be one line (got ${p8.connHeight}px)`);
+        // Negative/reversal test for exception-only #rail-conn-btn: hidden while connected (with #rail-fleet-btn still opening #conn-modal),
+        // reappears <=28px when offline/unpaired, and hides again on reconnect
+        await evalJs(`(() => { window.dispatchEvent(new Event('focus')); return true; })()`);
+        let connInitHidden = false;
+        for (let i = 0; i < 20 && !connInitHidden; i++) {
+          await new Promise((r) => setTimeout(r, 50));
+          connInitHidden = await evalJs(`Boolean(document.getElementById('rail-conn-btn')?.hidden)`);
+        }
+        assert.strictEqual(connInitHidden, true, 'Connected desktop must hide #rail-conn-btn');
+        const fleetStillOpensConn = await evalJs(`(async () => {
+          document.getElementById('rail-fleet-btn')?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          const opened = document.getElementById('conn-modal')?.hidden === false;
+          document.getElementById('conn-modal-close')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          return opened;
+        })()`);
+        assert.strictEqual(fleetStillOpensConn, true, '#rail-fleet-btn must remain clickable to open #conn-modal when #rail-conn-btn is hidden');
+
+        await cdp.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }, sessionId);
+        await evalJs(`(() => {
+          window.dispatchEvent(new Event('offline'));
+          document.getElementById('mobile-sync-btn')?.click();
+          return true;
+        })()`);
+        let offConn = { hidden: true, height: 0 };
+        for (let i = 0; i < 30 && offConn.hidden; i++) {
+          await new Promise((r) => setTimeout(r, 60));
+          offConn = await evalJs(`(() => {
+            const b = document.getElementById('rail-conn-btn');
+            return { hidden: Boolean(b?.hidden), height: b ? Math.round(b.getBoundingClientRect().height) : 0 };
+          })()`);
+        }
+        assert.strictEqual(offConn.hidden, false, 'Offline/disconnected state must reveal exception-only #rail-conn-btn');
+        assert.ok(offConn.height > 0 && offConn.height <= 28, `Visible exception #rail-conn-btn must be 1..28px tall (got ${offConn.height}px)`);
+
+        await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }, sessionId);
+        await evalJs(`(() => {
+          window.dispatchEvent(new Event('online'));
+          window.dispatchEvent(new Event('focus'));
+          return true;
+        })()`);
+        let reConnHidden = false;
+        for (let i = 0; i < 30 && !reConnHidden; i++) {
+          await new Promise((r) => setTimeout(r, 60));
+          reConnHidden = await evalJs(`Boolean(document.getElementById('rail-conn-btn')?.hidden)`);
+        }
+        assert.strictEqual(reConnHidden, true, 'Reconnecting online must hide #rail-conn-btn again');
         assert.strictEqual(p8.task.rowHeight, 26, `A side task must be one 26px row (got ${p8.task.rowHeight}px)`);
         assert.strictEqual(p8.task.borderLeft, '0px', 'A running side task must carry no side stripe');
         assert.strictEqual(p8.task.borderTop, '0px', 'A side task must not be a bordered card');

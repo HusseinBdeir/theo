@@ -3134,6 +3134,7 @@
   }
 
   function updateConnectionBanner(overrideState = '') {
+    const railBtn = S.$('rail-conn-btn');
     const dotRail = S.$('rail-conn-dot');
     const titleRail = S.$('rail-conn-title');
     const subRail = S.$('rail-conn-sub');
@@ -3161,6 +3162,7 @@
         ? `WS${localWsRttMs > 0 ? ` ${localWsRttMs}ms` : ''}`
         : 'Live SSE';
       const isHeadlessDaemon = Boolean(S.appState?.connection?.standaloneMode);
+      if (railBtn) railBtn.hidden = true;
       if (dotRail) dotRail.className = 'conn-dot live';
       if (titleRail) titleRail.textContent = `${hostLabel} · ${wsBadge}`;
       if (subRail) {
@@ -3171,6 +3173,7 @@
       if (textMob) textMob.textContent = localWsAuthed ? 'Direct WS' : 'Direct SSE';
     } else if (connMode === 'edge' || edgeWsAuthed) {
       const rttTxt = edgeWsRttMs > 0 ? ` · ${edgeWsRttMs}ms` : '';
+      if (railBtn) railBtn.hidden = true;
       if (dotRail) dotRail.className = 'conn-dot live';
       if (titleRail) titleRail.textContent = `Edge WS · ${Math.max(1, onlineHosts)} Host${onlineHosts === 1 ? '' : 's'} Live`;
       if (subRail) subRail.textContent = `Cloudflare DO${rttTxt} · ${rowCount} sess · 24/7 Daemon`;
@@ -3178,6 +3181,7 @@
       if (dotMob) dotMob.className = 'conn-dot live';
       if (textMob) textMob.textContent = `Edge WS${rttTxt}`;
     } else if (connMode === 'cloud') {
+      if (railBtn) railBtn.hidden = true;
       if (dotRail) dotRail.className = 'conn-dot cloud';
       if (titleRail) {
         titleRail.textContent =
@@ -3189,6 +3193,8 @@
       if (textMob) textMob.textContent = snapAge ? `Live · ${snapAge.replace(' ago', '')}` : 'Cloud Live';
     } else {
       const paired = hasAnyPairingCredentials();
+      const hideWhileProbing = Boolean(paired && connMode === 'probing' && navigator.onLine !== false);
+      if (railBtn) railBtn.hidden = hideWhileProbing;
       if (dotRail) dotRail.className = 'conn-dot';
       if (titleRail) titleRail.textContent = paired ? 'Offline Snapshot' : 'Pair This Device';
       if (subRail) {
@@ -3198,7 +3204,7 @@
             ? `Cached ${snapAge} · 24/7 Daemon`
             : 'Waiting · 24/7 Daemon';
       }
-      if (pillMob) pillMob.hidden = paired && connMode === 'probing' && navigator.onLine !== false;
+      if (pillMob) pillMob.hidden = hideWhileProbing;
       if (dotMob) dotMob.className = 'conn-dot';
       if (textMob) {
         textMob.textContent = !paired

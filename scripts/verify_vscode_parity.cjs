@@ -618,6 +618,7 @@ async function runParity() {
           window.__THEO_HEADLESS_TEST = true;
           try {
             if (location.pathname !== '/hub' && location.pathname !== '/compare') {
+              window.__THEO_ALLOW_PROBE_MOCK_FETCH = true;
               localStorage.setItem('theo_remote_cache_v3', ${JSON.stringify(JSON.stringify(cachePayload))});
               localStorage.setItem('theo_remote_prefs_v1', ${JSON.stringify(JSON.stringify(seedPrefs))});
             }
@@ -658,7 +659,9 @@ async function runParity() {
 
     await evalJs(`((payload) => {
       const fh = document.getElementById('frame-hub');
+      const fp = document.getElementById('frame-pwa');
       fh.contentWindow.postMessage({ type: 'state', seq: 1, ...payload }, '*');
+      fp.contentWindow.dispatchEvent(new Event('focus'));
       return true;
     })(${JSON.stringify(fixture.statePayload)})`);
 
@@ -667,7 +670,10 @@ async function runParity() {
       await new Promise((r) => setTimeout(r, 80));
       hubHydrated = await evalJs(`(() => {
         const hd = document.getElementById('frame-hub').contentDocument;
-        return hd.querySelectorAll('.provider-card').length === 4 && hd.querySelectorAll('.session-item').length >= 4;
+        const pd = document.getElementById('frame-pwa').contentDocument;
+        return hd.querySelectorAll('.provider-card').length === 4 &&
+          hd.querySelectorAll('.session-item').length >= 4 &&
+          Boolean(pd.getElementById('rail-conn-btn')?.hidden);
       })()`);
     }
     if (!hubHydrated) {
@@ -734,7 +740,7 @@ async function runParity() {
       const hubSidebarBg = hw.getComputedStyle(hd.body).backgroundColor;
       const pwaSideEl = pd.getElementById('ide-explorer-sidebar');
       const pwaSidebarBg = pw.getComputedStyle(pwaSideEl).backgroundColor;
-      const pwaObsBg = pw.getComputedStyle(pd.querySelector('.main-stage')).backgroundColor;
+      const pwaObsBg = pw.getComputedStyle(pd.getElementById('chat-stream') || pd.querySelector('.view-pane.chat-pane-layout.active')).backgroundColor;
 
       const hubRow = hd.querySelector('.session-item');
       const pwaRow = pd.querySelector('#ide-sidebar-tree .ide-tree-row');
@@ -807,6 +813,7 @@ async function runParity() {
       }
 
       const activeTab = pd.querySelector('#ide-editor-tabs .ide-editor-tab.active');
+      const chatHeaderMain = pd.querySelector('#view-chat .chat-header-main');
       const h2 = pd.querySelector('#chat-stream .md-h2');
       const h3 = pd.querySelector('#chat-stream .md-h3');
       const h4 = pd.querySelector('#chat-stream .md-h4');
@@ -816,7 +823,7 @@ async function runParity() {
       const activeTabCs = activeTab ? pw.getComputedStyle(activeTab) : null;
       const codeCs = inlineCode ? pw.getComputedStyle(inlineCode) : null;
       const codeRgb = codeCs ? rgbNums(codeCs.color) : [];
-      const codeSpread = codeRgb.length === 3 ? Math.max(...codeRgb) - Math.min(...codeRgb) : 999;
+      const codeSpread = codeRgb.length === 3 ? Math.max(...codeRgb) - Math.min(...codeRgb) : 0;
 
       return {
         hubSidebarBg,
@@ -855,13 +862,19 @@ async function runParity() {
         hideDesktopInFilters: Boolean(hideDesktopEl && pd.getElementById('ide-sidebar-filters').contains(hideDesktopEl)),
         footBtns,
         glyphViolations,
+        activeTabBg: activeTabCs ? activeTabCs.backgroundColor : '',
         activeTabTopWidth: activeTabCs ? activeTabCs.borderTopWidth : '',
         activeTabTopColor: activeTabCs ? activeTabCs.borderTopColor : '',
+        chatHeaderMainHidden: Boolean(chatHeaderMain && pw.getComputedStyle(chatHeaderMain).display === 'none'),
+        ctxInComposer: isShown(pd.querySelector('.composer-footer-bar #btn-ctx-window')),
+        railConnVisible: isShown(pd.getElementById('rail-conn-btn')),
         h2Size: h2 ? parseFloat(pw.getComputedStyle(h2).fontSize) : 0,
         h3Size: h3 ? parseFloat(pw.getComputedStyle(h3).fontSize) : 0,
         h4Size: h4 ? parseFloat(pw.getComputedStyle(h4).fontSize) : 0,
         tableBorder: tableWrap ? pw.getComputedStyle(tableWrap).borderTopStyle : '',
+        codeBg: codeCs ? codeCs.backgroundColor : '',
         codeBorder: codeCs ? codeCs.borderTopStyle : '',
+        codeRgb,
         codeSpread,
         qSubmitBg: qSubmitBtn ? pw.getComputedStyle(qSubmitBtn).backgroundColor : ''
       };
@@ -910,16 +923,41 @@ async function runParity() {
         assert.strictEqual(fb.lblBelowSvg, true, `Footer label "${fb.label}" must sit below icon`);
       }
       assert.deepStrictEqual(r.glyphViolations, [], `Raw text glyphs found in buttons: ${JSON.stringify(r.glyphViolations)}`);
-      assert.strictEqual(r.activeTabTopWidth, '1px', `Active Graphite tab must use 1px top border (got ${r.activeTabTopWidth})`);
-      assert.strictEqual(r.activeTabTopColor, 'rgb(59, 130, 246)', `Active Graphite tab border must be --steel (got ${r.activeTabTopColor})`);
+      assert.strictEqual(r.activeTabBg, r.pwaObsBg, `Active Graphite tab must fuse seamlessly with --bg-obsidian (${r.activeTabBg} vs ${r.pwaObsBg})`);
+      assert.strictEqual(r.activeTabTopWidth, '1px', `Active Graphite tab must use 1px subtle top border (got ${r.activeTabTopWidth})`);
+      assert.notStrictEqual(r.activeTabTopColor, 'rgb(59, 130, 246)', 'Active Graphite tab must not show a bright blue stripe');
+      assert.strictEqual(r.chatHeaderMainHidden, true, 'Desktop unified topbar must hide duplicate .chat-header-main breadcrumb row');
+      assert.strictEqual(r.ctxInComposer, true, 'Context meter #btn-ctx-window must render inside .composer-footer-bar');
+      assert.strictEqual(r.railConnVisible, false, 'Healthy desktop #rail-conn-btn must stay hidden (exception-only)');
       assert.ok(r.h2Size > r.h3Size && r.h3Size > r.h4Size, `Markdown heading hierarchy h2>h3>h4 broken (${r.h2Size}, ${r.h3Size}, ${r.h4Size})`);
       assert.strictEqual(r.tableBorder, 'none', `Graphite markdown tables must be borderless (got ${r.tableBorder})`);
+      assert.strictEqual(r.codeBg, 'rgba(0, 0, 0, 0)', `Inline code must have transparent background without grey highlight pill (got ${r.codeBg})`);
       assert.strictEqual(r.codeBorder, 'none', `Inline code must be borderless (got ${r.codeBorder})`);
-      assert.ok(r.codeSpread <= 3, `Graphite inline code colour must be neutral white/grey (spread=${r.codeSpread})`);
+      assert.ok(
+        r.codeRgb.length === 3 && r.codeRgb[0] > r.codeRgb[1] && r.codeRgb[1] > r.codeRgb[2] && r.codeSpread >= 40,
+        `Graphite inline code colour must be calm warm sand-amber (rgb=${JSON.stringify(r.codeRgb)}, spread=${r.codeSpread})`
+      );
       assert.strictEqual(r.qSubmitBg, 'rgb(59, 130, 246)', `Graphite question submit button must use --steel (got ${r.qSubmitBg})`);
     }
 
     validateParity(report);
+
+    // Verify in-place DOM preservation when switching editor tabs (no innerHTML tear-down)
+    const tabReuseCheck = await evalJs(`(async () => {
+      const pd = document.getElementById('frame-pwa').contentDocument;
+      const secondTab = pd.querySelector('#ide-editor-tabs [data-editor-tab-id="sess-wait"]');
+      if (!secondTab) return { found: false };
+      secondTab.click();
+      await new Promise((r) => setTimeout(r, 80));
+      const sameDomNode = pd.querySelector('#ide-editor-tabs [data-editor-tab-id="sess-wait"]') === secondTab;
+      const nowActive = secondTab.classList.contains('active');
+      pd.querySelector('#ide-editor-tabs [data-editor-tab-id="sess-run"]')?.click();
+      await new Promise((r) => setTimeout(r, 80));
+      return { found: true, sameDomNode, nowActive };
+    })()`);
+    assert.strictEqual(tabReuseCheck.found, true, 'Second editor tab sess-wait must exist');
+    assert.strictEqual(tabReuseCheck.sameDomNode, true, 'Switching editor tabs must reconcile tab DOM nodes in place');
+    assert.strictEqual(tabReuseCheck.nowActive, true, 'Clicked tab must become .active immediately');
 
     // Verify first-click expansion AND second-click collapse reversal of a default-collapsed idle account card
     const firstClickExpand = await evalJs(`(async () => {
@@ -960,7 +998,9 @@ async function runParity() {
       ['text glyph button', { ...report, glyphViolations: [{ id: 'btn-chat-more', glyph: '⋯', txt: '⋯' }] }],
       ['unhidden closed dot', { ...report, closedDotHidden: false }],
       ['idle cards all open by default', { ...report, pwaIdleCollapsedCount: 0 }],
-      ['non-stacked reorder arrows', { ...report, moveBtnRects: [{ top: 10, bottom: 20, height: 10 }, { top: 10, bottom: 20, height: 10 }] }]
+      ['non-stacked reorder arrows', { ...report, moveBtnRects: [{ top: 10, bottom: 20, height: 10 }, { top: 10, bottom: 20, height: 10 }] }],
+      ['grey background pill on inline code', { ...report, codeBg: 'rgb(35, 36, 37)' }],
+      ['bright white inline code', { ...report, codeRgb: [237, 237, 237], codeSpread: 0 }]
     ];
     let caughtCount = 0;
     for (const [label, mutated] of plantedChecks) {
