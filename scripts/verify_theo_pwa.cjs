@@ -10826,12 +10826,506 @@ async function main() {
       } finally {
         srv.mockStatePayload = null;
         await evalJs(`(() => {
+          window.__THEO_ALLOW_PROBE_MOCK_FETCH = false;
           const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
           prefs.customBridgeUrl = '';
           prefs.collapsedQuotaCards = {};
           prefs.sidebarFilter = 'all';
           prefs.sidebarProvider = 'all';
           localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+          return true;
+        })()`).catch(() => {});
+      }
+    }
+
+    // Adversarial #34: v103 Live bg-task reconciliation (stale cache + offline host + missing r.bgTask),
+    // <task-notification> cards, stale unread auto-clear, footer badge containment, 1-row filter counts,
+    // composer git strip + inline Claude mode pill + contextual route pill
+    {
+      const now34 = Date.now();
+      const mkLim34 = (p) => [
+        { label: 'Session (5hr)', pct: p, reset: now34 + 3600000, known: true },
+        { label: 'Weekly (7 day)', pct: Math.min(99, p + 10), reset: now34 + 86400000, known: true }
+      ];
+      const p34Payload = {
+        generatedAt: now34,
+        claudePermissionMode: { defaultMode: 'bypassPermissions', rev: 1, updatedAt: now34 - 5000 },
+        device: { id: 'host-34', name: 'Workstation', role: 'primary' },
+        devices: [
+          { id: 'host-34', name: 'Workstation', online: true, lastSeenAt: now34 },
+          { id: 'dev-off-34', name: 'OfflineLaptop', online: false, lastSeenAt: now34 - 7200000 }
+        ],
+        providers: {
+          antigravity: {
+            active: true,
+            usage: { limits: mkLim34(18) },
+            account: { available: true, email: 'agy34@example.com', plan: 'Google AI Ultra' },
+            accounts: [
+              { id: 'antigravity:agy34@example.com', provider: 'antigravity', active: true, account: { available: true, email: 'agy34@example.com', plan: 'Google AI Ultra' }, usage: { limits: mkLim34(18) } }
+            ]
+          },
+          claude: {
+            active: true,
+            usage: { limits: mkLim34(32) },
+            account: { available: true, email: 'cl34@example.com', plan: 'Claude Ultra (10x)' },
+            accounts: [
+              { id: 'claude:cl34@example.com', provider: 'claude', active: true, account: { available: true, email: 'cl34@example.com', plan: 'Claude Ultra (10x)' }, usage: { limits: mkLim34(32) } }
+            ]
+          }
+        },
+        workspaces: [
+          {
+            id: 'theo-hub',
+            name: 'theo-hub',
+            path: 'C:\\Users\\hbdei\\bhfirms\\theo-hub',
+            branch: 'main',
+            dirtyCount: 13,
+            insertions: 1053,
+            deletions: 398,
+            modifiedFiles: [{ status: 'M', path: 'remote.js', added: 1053, removed: 398 }]
+          }
+        ],
+        rows: [
+          {
+            id: 's34-claude',
+            provider: 'claude',
+            title: 'Claude Task Notification Check',
+            status: 'waiting',
+            open: true,
+            unread: false,
+            at: now34 - 500,
+            folder: 'theo-hub',
+            branch: 'main',
+            model: 'Claude Opus 4.7',
+            deviceId: 'host-34'
+          },
+          {
+            id: 's34-live',
+            provider: 'antigravity',
+            title: 'Live Agent Missing bgTask Prop',
+            status: 'working',
+            open: true,
+            unread: false,
+            at: now34 - 60000,
+            folder: 'theo',
+            model: 'Gemini 4 Argon',
+            deviceId: 'host-34',
+            bgRunningCount: 1,
+            bgTasks: [
+              { id: 't34-live', kind: 'subagent', state: 'running', summary: 'Live Parity Runner', startedAt: now34 - 15000 },
+              { id: 't34-done', kind: 'task', state: 'completed', summary: 'Finished Task On Host', startedAt: now34 - 60000, completedAt: now34 - 5000 }
+            ]
+          },
+          {
+            id: 's34-unread',
+            provider: 'antigravity',
+            title: 'Unread Session 34',
+            status: 'idle',
+            unread: true,
+            open: false,
+            at: now34 - 2000,
+            deviceId: 'host-34'
+          },
+          {
+            id: 's34-z34',
+            provider: 'antigravity',
+            title: 'Fetched Earlier Now Settled Zero',
+            status: 'idle',
+            unread: false,
+            open: false,
+            at: now34 - 180000,
+            deviceId: 'host-34',
+            bgRunningCount: 0,
+            bgTasks: [{ id: 'tz-1', kind: 'task', state: 'completed', summary: 'Settled Now', startedAt: now34 - 180000, completedAt: now34 - 1000 }]
+          },
+          {
+            id: 's34-off',
+            provider: 'antigravity',
+            title: 'Offline Host Stale Running',
+            status: 'working',
+            unread: false,
+            open: false,
+            at: now34 - 3000,
+            deviceId: 'dev-off-34',
+            bgRunningCount: 1,
+            bgTasks: [{ id: 't34-off', kind: 'task', state: 'running', summary: 'Offline Dead Runner', startedAt: now34 - 90000 }]
+          }
+        ],
+        groups: []
+      };
+
+      const threads34 = {
+        's34-claude': {
+          id: 's34-claude',
+          title: 'Claude Task Notification Check',
+          provider: 'claude',
+          folder: 'theo-hub',
+          backgroundTasks: [
+            { id: 't34-hist-sub', kind: 'subagent', state: 'completed', summary: 'Historical completed subagent', startedAt: now34 - 120000, completedAt: now34 - 90000 }
+          ],
+          messages: [
+            {
+              id: 'u34-clean',
+              role: 'user',
+              createdAt: new Date(now34 - 40000).toISOString(),
+              text: '<system-reminder>Secret harness instruction</system-reminder>Real user prompt here'
+            },
+            {
+              id: 'u34-tn-xml',
+              role: 'user',
+              createdAt: new Date(now34 - 20000).toISOString(),
+              text: '<task-notification><task-id>af05934b</task-id><task-id>__orphan_summary__shell</task-id><output-file>C:\\Users\\hbdei\\AppData\\Local\\Temp\\secret34.output</output-file><status>stopped</status><summary>Background agent "Red-team" didn\'t finish</summary><note>Transcript saved cleanly.</note></task-notification>'
+            },
+            {
+              id: 'u34-tn-struct',
+              role: 'user',
+              kind: 'task-notification',
+              createdAt: new Date(now34 - 15000).toISOString(),
+              text: '',
+              taskNotifications: [
+                { taskIds: ['bs6bxsued'], status: 'completed', summary: 'Build finished cleanly', note: '' }
+              ]
+            },
+            {
+              id: 'a34-1',
+              role: 'assistant',
+              createdAt: new Date(now34 - 10000).toISOString(),
+              text: 'All set.'
+            }
+          ]
+        },
+        's34-live': {
+          id: 's34-live',
+          title: 'Live Agent Missing bgTask Prop',
+          provider: 'antigravity',
+          updatedAtMs: now34 - 120000,
+          _fetchedAt: now34 - 5000,
+          backgroundTasks: [
+            { id: 't34-done', kind: 'task', state: 'running', summary: 'Stale Cached Finished Task', startedAt: now34 - 60000 },
+            ...Array.from({ length: 10 }, (_, idx) => ({
+              id: `t34-stale-${idx}`,
+              kind: 'task',
+              state: 'running',
+              summary: `Stale Old Task ${idx}`,
+              startedAt: now34 - 70000 - idx * 1000
+            }))
+          ],
+          messages: [
+            { id: 'u34-l1', role: 'user', text: 'Run task' },
+            { id: 'a34-l1', role: 'assistant', text: 'Working...' }
+          ]
+        },
+        's34-unread': {
+          id: 's34-unread',
+          title: 'Unread Session 34',
+          provider: 'antigravity',
+          messages: [
+            { id: 'u34-q1', role: 'user', text: 'Ask me where to deploy' },
+            {
+              id: 'a34-q1',
+              role: 'assistant',
+              text: 'Choose target',
+              questions: [
+                {
+                  question: 'Deploy target?',
+                  header: 'Target',
+                  options: [
+                    { label: 'Staging', description: 'Pre-prod' },
+                    { label: 'Production', description: 'Live' }
+                  ],
+                  multiSelect: false,
+                  answered: false
+                }
+              ]
+            },
+            {
+              id: 'u34-qtn',
+              role: 'user',
+              kind: 'task-notification',
+              text: '',
+              taskNotifications: [
+                { taskIds: ['bgq1'], status: 'completed', summary: 'Preflight check passed', note: '' }
+              ]
+            }
+          ]
+        },
+        's34-z34': {
+          id: 's34-z34',
+          title: 'Fetched Earlier Now Settled Zero',
+          provider: 'antigravity',
+          updatedAtMs: now34 - 180000,
+          _fetchedAt: now34 - 60000,
+          backgroundTasks: [
+            { id: 'tz-1', kind: 'task', state: 'running', summary: 'Stale Running Zero Case', startedAt: now34 - 180000 },
+            { id: 'tz-2', kind: 'task', state: 'running', summary: 'Evicted Zero Case', startedAt: now34 - 180000 }
+          ],
+          messages: [{ id: 'uz-1', role: 'user', text: 'Check zero' }]
+        }
+      };
+
+      const staleNotifs34 = [
+        { id: 'theo-unread-s34-live', tag: 'theo-unread-s34-live', threadId: 's34-live', title: 'Stale Read', checked: false, ts: now34 - 100000 },
+        { id: 'theo-unread-ghost', tag: 'theo-unread-ghost', threadId: 's34-ghost-deleted', title: 'Deleted', checked: false, ts: now34 - 200000 },
+        { id: 'theo-unread-s34-unread', tag: 'theo-unread-s34-unread', threadId: 's34-unread', title: 'Live Unread', checked: false, ts: now34 - 2000 }
+      ];
+
+      try {
+        srv.mockStatePayload = p34Payload;
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 2, mobile: false }, sessionId);
+        await evalJs(`((snapJson, threadsJson, notifsJson, originUrl) => {
+          const snap = JSON.parse(snapJson);
+          const threads = JSON.parse(threadsJson);
+          const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+          prefs.theme = 'dark';
+          prefs.themeUserSet = true;
+          prefs.palette = 'graphite';
+          prefs.activeTab = 'chat';
+          prefs.desktopWorkbenchBootV92 = true;
+          prefs.collapsedQuotaCards = {};
+          prefs.sidebarFilter = 'all';
+          prefs.sidebarProvider = 'all';
+          prefs.pinnedBgSessionId = '';
+          prefs.selectedThreadId = 's34-claude';
+          prefs.customBridgeUrl = originUrl;
+          prefs.openEditorTabs = ['s34-claude', 's34-live'];
+          localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+          localStorage.setItem('theo_remote_cache_v3', JSON.stringify({ state: snap, snapshot: snap, threads, updatedAt: Date.now() }));
+          localStorage.setItem('theo_remote_notifications_v1', notifsJson);
+          localStorage.removeItem('theo_remote_checked_notifs_v1');
+          window.__p34OldPage = true;
+          location.reload();
+          return true;
+        })(${JSON.stringify(JSON.stringify(p34Payload))}, ${JSON.stringify(JSON.stringify(threads34))}, ${JSON.stringify(JSON.stringify(staleNotifs34))}, ${JSON.stringify(baseUrl)})`);
+
+        let ready34 = false;
+        for (let i = 0; i < 80 && !ready34; i++) {
+          await new Promise((r) => setTimeout(r, 100));
+          ready34 = await evalJs(`!window.__p34OldPage && document.readyState === 'complete' && document.querySelectorAll('#ide-sidebar-accounts .ide-acct-card').length === 2 && Boolean(document.querySelector('#chat-stream .vs-task-notif-card'))`).catch(() => false);
+        }
+        assert.strictEqual(ready34, true, 'Adversarial #34 reload must render account cards and .vs-task-notif-card');
+
+        const r34 = await evalJs(`(async () => {
+          const rect = (el) => el.getBoundingClientRect();
+          const bgHead = (document.getElementById('ide-bgtasks-heading')?.textContent || '').trim();
+          const bgCnt = (document.getElementById('ide-bgtasks-count')?.textContent || '').trim();
+          const bgStopLbl = (document.getElementById('ide-bgtasks-stop-all')?.textContent || '').trim();
+          const bgRowTitles = [...document.querySelectorAll('#ide-sidebar-bgtasks .ide-bg-title')].map((el) => el.textContent.trim());
+          const liveRowBgPill = (document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="s34-live"] .ide-row-pill.bg-pill')?.textContent || '').trim();
+          const liveTabBgPill = (document.querySelector('#ide-editor-tabs .ide-editor-tab[data-editor-tab-id="s34-live"] .ide-row-pill.bg-pill')?.textContent || '').trim();
+
+          const stream = document.getElementById('chat-stream');
+          const streamTxt = stream?.textContent || '';
+          const tnCards = [...stream.querySelectorAll('.vs-task-notif-card')];
+          const firstDetails = stream.querySelector('details.vs-task-notif-card');
+          firstDetails?.querySelector('summary')?.click();
+          await new Promise((r) => setTimeout(r, 30));
+          const detailsExpanded = Boolean(firstDetails && firstDetails.open);
+          const userBubbleTxt = [...stream.querySelectorAll('.turn-bubble.user .turn-text')].map((b) => b.textContent.trim()).join(' | ');
+
+          const footer = document.getElementById('ide-sidebar-footer');
+          const railBadge = document.getElementById('rail-push-badge');
+          const railDot = document.getElementById('rail-push-dot');
+          const badgeTxt = (railBadge?.textContent || '').trim();
+          const storedNotifs34 = JSON.parse(localStorage.getItem('theo_remote_notifications_v1') || '[]');
+          const staleLiveNotifChecked = Boolean(storedNotifs34.find((n) => n && n.id === 'theo-unread-s34-live')?.checked);
+          const staleGhostNotifChecked = Boolean(storedNotifs34.find((n) => n && n.id === 'theo-unread-ghost')?.checked);
+          const badgeRect = railBadge ? rect(railBadge) : null;
+          const footerRect = footer ? rect(footer) : null;
+          const badgeInsideFooter = Boolean(badgeRect && footerRect && badgeRect.top >= footerRect.top - 1);
+          const railDotDisplay = railDot ? getComputedStyle(railDot).display : 'missing';
+
+          const chips = [...document.querySelectorAll('#ide-sidebar-filters .ide-fchip')];
+          const chipRects = chips.map((c) => ({ txt: c.textContent.trim(), top: Math.round(rect(c).top), right: Math.round(rect(c).right) }));
+          const strip = document.getElementById('ide-sidebar-filters');
+          const stripScrollX = Boolean(strip && strip.scrollWidth > strip.clientWidth + 1);
+          const runningChipCnt = (strip.querySelector('[data-side-filter="working"] .ide-fchip-cnt')?.textContent || '').trim();
+          const inputChipCnt = (strip.querySelector('[data-side-filter="needs_input"] .ide-fchip-cnt')?.textContent || '').trim();
+          const unreadChipCnt = (strip.querySelector('[data-side-filter="unread"] .ide-fchip-cnt')?.textContent || '').trim();
+
+          const routeLbl = (document.getElementById('composer-route-pill-label')?.textContent || '').trim();
+          const gitStrip = document.getElementById('composer-git-strip');
+          const gitStripShown = Boolean(gitStrip && !gitStrip.hidden && getComputedStyle(gitStrip).display !== 'none');
+          const gitStripTxt = (gitStrip?.textContent || '').trim();
+          gitStrip?.querySelector('[data-open-git-review]')?.click();
+          await new Promise((r) => setTimeout(r, 50));
+          const inspPane = document.getElementById('ide-inspector-pane');
+          const inspOpenGit = Boolean(inspPane && !inspPane.hidden && document.querySelector('#ide-inspector-pane .ide-insp-tab.active')?.dataset.inspTab === 'git');
+
+          const modeBtn = document.getElementById('composer-claude-mode-btn');
+          const claudeModeShown = Boolean(modeBtn && !modeBtn.hidden && getComputedStyle(modeBtn).display !== 'none');
+          const claudeModeBefore = (modeBtn?.textContent || '').trim();
+          modeBtn?.click();
+          await new Promise((r) => setTimeout(r, 60));
+          const claudeModeAfter = (document.getElementById('composer-claude-mode-btn')?.textContent || '').trim();
+
+          document.querySelector('#ide-editor-tabs [data-editor-tab-id="s34-live"]')?.click();
+          await new Promise((r) => setTimeout(r, 60));
+          const agyModeHidden = Boolean(document.getElementById('composer-claude-mode-btn')?.hidden);
+          const agyRouteLbl = (document.getElementById('composer-route-pill-label')?.textContent || '').trim();
+
+          const overflowBtn = document.getElementById('btn-editor-tabs-overflow');
+          const overflowVisible = Boolean(overflowBtn && !overflowBtn.hidden);
+          overflowBtn?.click();
+          await new Promise((r) => setTimeout(r, 40));
+          const ctxMenuOpen = document.getElementById('ide-context-menu')?.hidden === false;
+          const ctxTabRows = document.querySelectorAll('#ide-context-menu .ctx-menu-tab-row').length;
+          document.body.click();
+          await new Promise((r) => setTimeout(r, 40));
+
+          const tabsScrollEl = document.getElementById('ide-editor-tabs');
+          let wheelScrolled = false;
+          if (tabsScrollEl) {
+            const prevMaxW = [...tabsScrollEl.querySelectorAll('.ide-editor-tab')].map((t) => t.style.minWidth);
+            tabsScrollEl.querySelectorAll('.ide-editor-tab').forEach((t) => { t.style.minWidth = '600px'; });
+            tabsScrollEl.scrollLeft = 0;
+            tabsScrollEl.dispatchEvent(new WheelEvent('wheel', { deltaY: 120, deltaX: 0, bubbles: true, cancelable: true }));
+            wheelScrolled = tabsScrollEl.scrollLeft > 0;
+            tabsScrollEl.querySelectorAll('.ide-editor-tab').forEach((t, idx) => { t.style.minWidth = prevMaxW[idx] || ''; });
+          }
+
+          strip.querySelector('[data-side-filter="working"]').innerHTML = '<span>Running</span><span class="ide-fchip-cnt tabular">99</span>';
+          strip.querySelector('[data-side-filter="needs_input"]').innerHTML = '<span>Input</span><span class="ide-fchip-cnt tabular">99</span>';
+          strip.querySelector('[data-side-filter="unread"]').innerHTML = '<span>Unread</span><span class="ide-fchip-cnt tabular">99</span>';
+          const chipTops99 = [...strip.querySelectorAll('.ide-fchip')].map((c) => Math.round(rect(c).top));
+          const fit99OneRow = Math.max(...chipTops99) - Math.min(...chipTops99) <= 2 && strip.scrollWidth <= strip.clientWidth;
+
+          // Opening the single unread session with fresh checkedSet must clear badge to hidden (even while host row still says unread:true)
+          localStorage.removeItem('theo_remote_checked_notifs_v1');
+          localStorage.setItem('theo_remote_notifications_v1', '[]');
+          document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="s34-unread"]')?.click();
+          await new Promise((r) => setTimeout(r, 60));
+          const activeUnreadBadgeHidden = Boolean(document.getElementById('rail-push-badge')?.hidden);
+          const qAfterTnInteractive = Boolean(document.querySelector('#chat-stream .vs-question-card:not(.is-answered)'));
+          document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="s34-live"]')?.click();
+          await new Promise((r) => setTimeout(r, 60));
+          const sameTurnSuppressed = Boolean(document.getElementById('rail-push-badge')?.hidden);
+          const z34HasBgPill = Boolean(document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="s34-z34"] .ide-row-pill.bg-pill'));
+
+          return {
+            bgHead, bgCnt, bgStopLbl, bgRowTitles, liveRowBgPill, liveTabBgPill,
+            tnCount: tnCards.length, detailsExpanded, streamTxt, userBubbleTxt,
+            docTitle: document.title, badgeTxt, staleLiveNotifChecked, staleGhostNotifChecked, badgeInsideFooter, railDotDisplay,
+            chipRects, stripScrollX, runningChipCnt, inputChipCnt, unreadChipCnt,
+            routeLbl, gitStripShown, gitStripTxt, inspOpenGit,
+            claudeModeShown, claudeModeBefore, claudeModeAfter, agyModeHidden, agyRouteLbl,
+            overflowVisible, ctxMenuOpen, ctxTabRows, wheelScrolled, fit99OneRow,
+            activeUnreadBadgeHidden,
+            qAfterTnInteractive,
+            sameTurnSuppressed,
+            z34HasBgPill
+          };
+        })()`);
+
+        assert.strictEqual(r34.bgHead, 'BACKGROUND TASKS', 'Sidebar task heading must match VS Code BACKGROUND TASKS');
+        assert.strictEqual(r34.bgCnt, '1 live', `Must count only the 1 real live online task, ignoring stale cache + offline host + historical subagents (got "${r34.bgCnt}")`);
+        assert.strictEqual(r34.bgStopLbl, 'Stop all', 'Header stop action must read Stop all');
+        assert.deepStrictEqual(r34.bgRowTitles, ['Live Parity Runner'], `Must exclude stale cache, completed tasks, offline host, and historical subagents (got ${JSON.stringify(r34.bgRowTitles)})`);
+        assert.strictEqual(r34.liveRowBgPill, '1', 'Session row must render .bg-pill even when r.bgTask is omitted');
+        assert.strictEqual(r34.liveTabBgPill, '1', 'Editor tab must render .bg-pill even when r.bgTask is omitted');
+        assert.strictEqual(r34.tnCount, 2, 'Both raw and structured <task-notification> blocks must render .vs-task-notif-card');
+        assert.strictEqual(r34.detailsExpanded, true, 'Clicking expandable task notification card must open its details');
+        assert.ok(!r34.streamTxt.includes('<task-notification>') && !r34.streamTxt.includes('__orphan_summary__') && !r34.streamTxt.includes('secret34.output') && !r34.streamTxt.includes('Secret harness instruction'), 'Raw internal XML and temp output-file paths must never appear in chat stream');
+        assert.strictEqual(r34.userBubbleTxt, 'Real user prompt here', 'Only clean human user prompt must appear in .turn-bubble.user');
+        assert.ok(!r34.docTitle.includes('—'), `document.title must never contain an em-dash (got "${r34.docTitle}")`);
+        assert.strictEqual(r34.badgeTxt, '1', `Stale read/deleted session notifications must auto-clear, leaving only s34-unread (got "${r34.badgeTxt}")`);
+        assert.strictEqual(r34.staleLiveNotifChecked, true, 'Stale theo-unread-s34-live must be marked checked in theo_remote_notifications_v1');
+        assert.strictEqual(r34.staleGhostNotifChecked, true, 'Deleted-session theo-unread-ghost must be marked checked in theo_remote_notifications_v1');
+        assert.strictEqual(r34.activeUnreadBadgeHidden, true, 'Active viewed unread session must not trigger phantom badge count in liveExtra');
+        assert.strictEqual(r34.qAfterTnInteractive, true, 'Trailing <task-notification> after unanswered AskUserQuestion must leave question card interactive');
+        assert.strictEqual(r34.sameTurnSuppressed, true, 'Switching away from s34-unread without a new turn must keep badge suppressed for same turn');
+        assert.strictEqual(r34.badgeInsideFooter, true, '#rail-push-badge must stay strictly inside #ide-sidebar-footer');
+        assert.strictEqual(r34.railDotDisplay, 'none', '#rail-push-dot must hide when #rail-push-badge is shown');
+        const tops34 = r34.chipRects.map((c) => c.top);
+        assert.ok(tops34.length === 6 && Math.max(...tops34) - Math.min(...tops34) <= 2, `Filter chips with live counts must remain on 1 row: ${JSON.stringify(r34.chipRects)}`);
+        assert.strictEqual(r34.stripScrollX, false, 'Filter strip with live counts must not overflow horizontally');
+        assert.strictEqual(r34.runningChipCnt, '1', 'Running chip must display live online count');
+        assert.strictEqual(r34.inputChipCnt, '1', 'Input chip must display live waiting count');
+        assert.strictEqual(r34.unreadChipCnt, '1', 'Unread chip must display live unread count');
+        assert.strictEqual(r34.routeLbl, 'theo-hub', 'Route pill label must display active session folder');
+        assert.strictEqual(r34.gitStripShown, true, 'Dirty workspace must display #composer-git-strip above composer');
+        assert.ok(r34.gitStripTxt.includes('13 files changed') && r34.gitStripTxt.includes('+1053') && r34.gitStripTxt.includes('-398'), `Git strip must show dirty count + diff stats (got "${r34.gitStripTxt}")`);
+        assert.strictEqual(r34.inspOpenGit, true, 'Clicking git strip must open Split Inspector on git tab');
+        assert.strictEqual(r34.claudeModeShown, true, 'Claude session must reveal inline #composer-claude-mode-btn');
+        assert.strictEqual(r34.claudeModeBefore, 'Bypass', 'Claude mode pill must show current mode');
+        assert.strictEqual(r34.claudeModeAfter, 'Auto', 'Clicking Claude mode pill must cycle mode');
+        assert.strictEqual(r34.agyModeHidden, true, 'Switching to Antigravity session must hide #composer-claude-mode-btn');
+        assert.strictEqual(r34.agyRouteLbl, 'theo', 'Switching to Antigravity session must update route pill label to theo');
+        assert.strictEqual(r34.overflowVisible, true, '#btn-editor-tabs-overflow must be visible with multiple open tabs');
+        assert.strictEqual(r34.ctxMenuOpen, true, 'Clicking #btn-editor-tabs-overflow must open #ide-context-menu');
+        assert.strictEqual(r34.ctxTabRows, 2, 'Tab overflow menu must list all 2 open editor tabs');
+        assert.strictEqual(r34.wheelScrolled, true, 'Vertical wheel over overflowing editor tabs must scroll horizontally');
+        assert.strictEqual(r34.fit99OneRow, true, 'Filter strip with 99/99/99 counters must stay on 1 single row without horizontal overflow');
+        assert.strictEqual(r34.z34HasBgPill, false, 'Live row with bgRunningCount:0 must override stale running detail even when _fetchedAt > row.at + 2000');
+
+        // Also test a live /api/state poll where 14 tasks are running on host (8-item slice vs 10 stale cached tasks) + re-unread on s34-unread
+        const burstPayload34 = {
+          ...p34Payload,
+          generatedAt: Date.now() + 5000,
+          rows: p34Payload.rows.map((r) => {
+            if (r.id === 's34-live') {
+              return {
+                ...r,
+                bgRunningCount: 14,
+                bgTasks: Array.from({ length: 8 }, (_, idx) => ({
+                  id: `t34-b-${idx}`,
+                  kind: 'task',
+                  state: 'running',
+                  summary: `Capped Live Task ${idx + 1}`,
+                  startedAt: now34 - idx * 100
+                }))
+              };
+            }
+            if (r.id === 's34-unread') {
+              return {
+                ...r,
+                unread: true,
+                stepCount: 9,
+                at: now34 + 9000,
+                lastAssistantText: 'New follow-up reply ready'
+              };
+            }
+            return r;
+          })
+        };
+        srv.mockStatePayload = burstPayload34;
+        await evalJs(`(() => { window.__THEO_ALLOW_PROBE_MOCK_FETCH = true; window.dispatchEvent(new Event('focus')); return true; })()`);
+        let burstRes34 = null;
+        for (let i = 0; i < 40; i++) {
+          await new Promise((r) => setTimeout(r, 80));
+          const probe = await evalJs(`(() => ({
+            bgCnt: (document.getElementById('ide-bgtasks-count')?.textContent || '').trim(),
+            rowPill: (document.querySelector('#ide-sidebar-tree .ide-tree-row[data-ide-open-session="s34-live"] .ide-row-pill.bg-pill')?.textContent || '').trim(),
+            tabPill: (document.querySelector('#ide-editor-tabs [data-editor-tab-id="s34-live"] .ide-row-pill.bg-pill')?.textContent || '').trim(),
+            bgListText: document.getElementById('ide-sidebar-bgtasks')?.textContent || '',
+            badgeHidden: Boolean(document.getElementById('rail-push-badge')?.hidden),
+            badgeTxt: (document.getElementById('rail-push-badge')?.textContent || '').trim()
+          }))()`).catch(() => null);
+          if (probe && probe.bgCnt === '14 live' && !probe.badgeHidden) {
+            burstRes34 = probe;
+            break;
+          }
+          burstRes34 = probe;
+        }
+        assert.strictEqual(burstRes34?.bgCnt, '14 live', `Capped 8-item bgTasks slice must preserve bgRunningCount: 14 without stale overflow (got ${JSON.stringify(burstRes34)})`);
+        assert.strictEqual(burstRes34?.rowPill, '14', 'Row bg-pill must show 14 when bgRunningCount is 14');
+        assert.strictEqual(burstRes34?.tabPill, '14', 'Tab bg-pill must show 14 when bgRunningCount is 14');
+        assert.ok(!(burstRes34?.bgListText || '').includes('Stale Old Task 9'), 'Oldest stale cached running tasks beyond 14 must be evicted');
+        assert.strictEqual(burstRes34?.badgeHidden, false, 'Previously viewed s34-unread receiving a new turn must unhide #rail-push-badge');
+        assert.strictEqual(burstRes34?.badgeTxt, '1', 'Previously viewed s34-unread receiving a new turn must report badge count 1');
+        console.log('[PASS] Adversarial #34: v103 Live Bg-Task Count/Badges, <task-notification> Cards, Unread Reconciliation, Footer Badge, 99/99/99 Filter Fit, Overflow Tabs, Git Strip & Inline Claude Mode verified');
+      } finally {
+        srv.mockStatePayload = null;
+        await evalJs(`(() => {
+          window.__THEO_ALLOW_PROBE_MOCK_FETCH = false;
+          const prefs = JSON.parse(localStorage.getItem('theo_remote_prefs_v1') || '{}');
+          prefs.customBridgeUrl = '';
+          prefs.collapsedQuotaCards = {};
+          prefs.sidebarFilter = 'all';
+          prefs.sidebarProvider = 'all';
+          prefs.inspectorOpen = false;
+          localStorage.setItem('theo_remote_prefs_v1', JSON.stringify(prefs));
+          localStorage.removeItem('theo_remote_notifications_v1');
+          localStorage.removeItem('theo_remote_checked_notifs_v1');
           return true;
         })()`).catch(() => {});
       }

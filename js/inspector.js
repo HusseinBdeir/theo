@@ -1770,10 +1770,20 @@
       if (!m) return;
       const anchor = String(m.id || `turn-${idx}`);
       if (m.role === 'user') {
+        if (m.kind === 'task-notification') return;
+        const strippedRaw = String(m.text || '').replace(/<task-notification>[\s\S]*?<\/task-notification>/gi, '').trim();
+        const cleanTitle = S.cleanUserPromptPreview(strippedRaw).slice(0, 140);
+        if (
+          !cleanTitle &&
+          ((Array.isArray(m.taskNotifications) && m.taskNotifications.length > 0) ||
+            /<task-notification>/i.test(String(m.text || '')))
+        ) {
+          return;
+        }
         promptNum += 1;
         outlineItems.push({
           kicker: `Prompt #${promptNum}`,
-          title: S.cleanUserPromptPreview(m.text).slice(0, 140) || 'User prompt',
+          title: cleanTitle || 'User prompt',
           anchor,
           detailKey: ''
         });

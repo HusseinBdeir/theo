@@ -2051,6 +2051,29 @@
     saveCheckedNotifKeys(set);
   }
 
+  function forgetCheckedNotifKeys(...keys) {
+    const set = loadCheckedNotifKeys();
+    let dirty = false;
+    for (const k of keys) {
+      if (k && set.delete(String(k))) dirty = true;
+    }
+    if (dirty) saveCheckedNotifKeys(set);
+  }
+
+  function getUnreadRowVersionKey(rowOrSid, fallbackTs = 0) {
+    const sid =
+      typeof rowOrSid === 'string'
+        ? rowOrSid.trim()
+        : String(rowOrSid?.id || '').trim();
+    if (!sid) return '';
+    const liveRow =
+      typeof rowOrSid === 'object' && rowOrSid
+        ? rowOrSid
+        : (appState?.rows || []).find((r) => r && r.id === sid) || null;
+    const stamp = liveRow ? liveRow.stepCount || liveRow.at || fallbackTs || 0 : fallbackTs || 0;
+    return `theo-unread-${sid}-${stamp}`;
+  }
+
   function isNotifKeyChecked(...keys) {
     const set = loadCheckedNotifKeys();
     return keys.some((k) => k && set.has(String(k)));
@@ -2099,7 +2122,34 @@
 
   function computeTheoUnreadBadgeCount(items = null) {
     const list = Array.isArray(items) ? items : loadNotifLog();
-    const uncheckedNotifs = list.filter((x) => x && !x.checked && !isHiddenThirdPartyNotifItem(x));
+    const liveRows = Array.isArray(appState?.rows) ? appState.rows : [];
+    const activeChatSelectedId =
+      prefs.activeTab === 'chat' && !S.isNewSessionMode?.() ? String(prefs.selectedThreadId || '') : '';
+    const liveUnreadIds =
+      liveRows.length > 0
+        ? new Set(
+            liveRows
+              .filter((r) => r && r.id && !r.archived && r.unread && r.id !== activeChatSelectedId)
+              .map((r) => String(r.id))
+          )
+        : null;
+    const uncheckedNotifs = list.filter((x) => {
+      if (!x || x.checked || isHiddenThirdPartyNotifItem(x)) return false;
+      if (liveUnreadIds) {
+        const tag = String(x.tag || '');
+        const isUnreadNotif =
+          tag.startsWith('theo-unread-') ||
+          (!tag.startsWith('theo-app-') &&
+            !tag.startsWith('theo-quota-') &&
+            !x.reminderId &&
+            Boolean(x.threadId));
+        if (isUnreadNotif) {
+          const sid = String(x.threadId || '').trim() || tag.replace(/^theo-unread-/, '');
+          if (sid && !liveUnreadIds.has(sid)) return false;
+        }
+      }
+      return true;
+    });
     const seenSessionIds = new Set(
       uncheckedNotifs.map((x) => x.threadId).filter(Boolean)
     );
@@ -2126,6 +2176,7 @@
     }
     for (const r of appState?.rows || []) {
       if (!r || !r.id || r.archived || !r.unread) continue;
+      if (activeChatSelectedId && r.id === activeChatSelectedId) continue;
       const unreadKey = `theo-unread-${r.id}`;
       const legacyUnreadKey = `theo-unread-${r.id}-${r.stepCount || r.at || 0}`;
       if (
@@ -2183,13 +2234,23 @@
     if (mobBtn) {
       mobBtn.classList.toggle('has-unread-badge', count > 0);
     }
+    const mobDot = $('mobile-push-dot');
+    if (mobDot) mobDot.hidden = count > 0;
     const railBtn = $('rail-push-btn');
     if (railBtn) {
       railBtn.classList.toggle('has-unread-badge', count > 0);
     }
+    const railDot = $('rail-push-dot');
+    if (railDot) railDot.hidden = count > 0;
 
     try {
-      const baseTitle = 'THEO — AI Session Workbench';
+      const curRow =
+        prefs.activeTab === 'chat' && !S.isNewSessionMode?.() && prefs.selectedThreadId
+          ? (appState?.rows || []).find((r) => r && r.id === prefs.selectedThreadId) ||
+            S.threadsCache?.[prefs.selectedThreadId]
+          : null;
+      const curTitle = String(curRow?.title || '').trim();
+      const baseTitle = curTitle ? `${curTitle} · THEO` : 'THEO';
       document.title = count > 0 ? `(${count}) ${baseTitle}` : baseTitle;
     } catch {}
 
@@ -2313,18 +2374,100 @@
       }
     }
 
-    // Seed unread sessions if not already represented or checked (1 entry per session)
+    // Auto-clear stale theo-unread-* entries once live state marks the session read, archived, selected, or removed
+    const activeChatSelectedId =
+      prefs.activeTab === 'chat' && !S.isNewSessionMode?.() ? String(prefs.selectedThreadId || '') : '';
+    const rowsById = new Map();
+    for (const r of rows) {
+      if (r && r.id) rowsById.set(String(r.id), r);
+    }
+    if (rows.length > 0) {
+      const currentlyUnreadIds = new Set(
+        rows
+          .filter((r) => r && r.id && !r.archived && r.unread && r.id !== activeChatSelectedId)
+          .map((r) => String(r.id))
+      );
+      for (const it of next) {
+        if (!it || it.checked) continue;
+        const tag = String(it.tag || '');
+        const isUnreadNotif =
+          tag.startsWith('theo-unread-') ||
+          (!tag.startsWith('theo-app-') &&
+            !tag.startsWith('theo-quota-') &&
+            !it.reminderId &&
+            Boolean(it.threadId));
+        if (!isUnreadNotif) continue;
+        const sid = String(it.threadId || '').trim() || tag.replace(/^theo-unread-/, '');
+        if (sid && !currentlyUnreadIds.has(sid)) {
+          const liveRow = rowsById.get(sid) || null;
+          it.checked = true;
+          it.checkedAt = Date.now();
+          forgetCheckedNotifKeys(`theo-unread-${sid}`, `session:${sid}`);
+          if (liveRow && !liveRow.archived && liveRow.unread && sid === activeChatSelectedId) {
+            const vKey = getUnreadRowVersionKey(liveRow, it.ts);
+            it.turnKey = vKey;
+            rememberCheckedNotifKeys(vKey);
+          }
+          changed = true;
+        }
+      }
+    }
+
+    // Prune checked markers for sessions the host now reports as read, so future unread turns notify cleanly
+    const activeCheckedSet = loadCheckedNotifKeys();
+    let prunedCheckedSet = false;
+    for (const r of rows) {
+      if (!r || !r.id || r.unread) continue;
+      const bareTag = `theo-unread-${r.id}`;
+      const turnPrefix = `${bareTag}-`;
+      const sessKey = `session:${r.id}`;
+      for (const ck of Array.from(activeCheckedSet)) {
+        if (ck === bareTag || ck === sessKey || ck.startsWith(turnPrefix)) {
+          activeCheckedSet.delete(ck);
+          prunedCheckedSet = true;
+        }
+      }
+      for (const it of next) {
+        if (it && it.checked && it.threadId === r.id && it.turnKey && String(it.tag || '').startsWith('theo-unread-')) {
+          delete it.turnKey;
+          changed = true;
+        }
+      }
+    }
+    if (prunedCheckedSet) saveCheckedNotifKeys(activeCheckedSet);
+
+    // Seed unread sessions if not already represented or checked (1 entry per session turn)
+    const freshCheckedSet = prunedCheckedSet ? activeCheckedSet : loadCheckedNotifKeys();
     for (const r of rows) {
       if (!r || !r.id || r.archived || !r.unread) continue;
+      if (activeChatSelectedId && r.id === activeChatSelectedId) continue;
       const tag = `theo-unread-${r.id}`;
-      const legacyTag = `theo-unread-${r.id}-${r.stepCount || r.at || 0}`;
-      if (checkedSet.has(tag) || checkedSet.has(legacyTag) || checkedSet.has(`session:${r.id}`)) continue;
-      const alreadyHasForThread = next.some((x) => x && x.threadId === r.id);
-      if (!alreadyHasForThread && !next.some((x) => x && (x.id === tag || x.tag === tag))) {
+      const versionKey = getUnreadRowVersionKey(r, r.at || 0);
+      if (
+        freshCheckedSet.has(tag) ||
+        freshCheckedSet.has(versionKey) ||
+        freshCheckedSet.has(`session:${r.id}`)
+      ) {
+        continue;
+      }
+      const existingIdx = next.findIndex(
+        (x) => x && x.threadId === r.id && !String(x.tag || '').startsWith('theo-app-')
+      );
+      const existingEntry = existingIdx >= 0 ? next[existingIdx] : null;
+      const sameTurnAlreadyChecked = Boolean(
+        existingEntry &&
+          existingEntry.checked &&
+          existingEntry.turnKey &&
+          existingEntry.turnKey === versionKey
+      );
+      if (sameTurnAlreadyChecked) continue;
+      if (!existingEntry || existingEntry.checked) {
+        if (existingIdx >= 0) next.splice(existingIdx, 1);
         const lastTxt = String(r.lastAssistantText || '').trim();
         next.unshift({
           id: tag,
           tag,
+          turnKey: versionKey,
           title: `● Unread Session · ${r.title || 'Session'}`,
           body: lastTxt
             ? lastTxt.slice(0, 140)
@@ -2453,13 +2596,27 @@
       if (it.id === key || it.tag === key) {
         matchedItem = it;
         if (it.tag) checkedTags.push(it.tag);
+        const tagStr = String(it.tag || '');
+        if (tagStr.startsWith('theo-unread-') && it.threadId) {
+          const vKey = getUnreadRowVersionKey(it.threadId, it.ts);
+          forgetCheckedNotifKeys(`theo-unread-${it.threadId}`, `session:${it.threadId}`);
+          if (vKey) rememberCheckedNotifKeys(vKey);
+          return { ...it, turnKey: vKey || it.turnKey, checked: true, checkedAt: Date.now() };
+        }
         rememberCheckedNotifKeys(it.id, it.tag);
         return { ...it, checked: true, checkedAt: Date.now() };
       }
       return it;
     });
     if (!matchedItem) {
-      rememberCheckedNotifKeys(key);
+      if (key.startsWith('theo-unread-') && !/^theo-unread-.*-\d+$/.test(key)) {
+        const sid = key.slice('theo-unread-'.length);
+        forgetCheckedNotifKeys(key, `session:${sid}`);
+        const vKey = getUnreadRowVersionKey(sid, Date.now());
+        if (vKey) rememberCheckedNotifKeys(vKey);
+      } else {
+        rememberCheckedNotifKeys(key);
+      }
       checkedTags.push(key);
     }
     saveNotifLog(next);
@@ -2473,14 +2630,25 @@
   function markNotificationsCheckedForSession(sessionId) {
     const sid = String(sessionId || '').trim();
     if (!sid) return;
+    const liveRow = (appState?.rows || []).find((r) => r && r.id === sid) || null;
     const items = loadNotifLog();
     const checkedTags = [];
     let changed = false;
+    forgetCheckedNotifKeys(`theo-unread-${sid}`, `session:${sid}`);
+    if (liveRow && liveRow.unread) {
+      rememberCheckedNotifKeys(getUnreadRowVersionKey(liveRow, Date.now()));
+    }
     const next = items.map((it) => {
       if (!it || it.checked) return it;
       if (it.threadId === sid) {
         changed = true;
         if (it.tag) checkedTags.push(it.tag);
+        const tagStr = String(it.tag || '');
+        if (tagStr.startsWith('theo-unread-')) {
+          const vKey = getUnreadRowVersionKey(liveRow || sid, it.ts);
+          if (vKey) rememberCheckedNotifKeys(vKey);
+          return { ...it, turnKey: vKey || it.turnKey, checked: true, checkedAt: Date.now() };
+        }
         rememberCheckedNotifKeys(it.id, it.tag);
         return { ...it, checked: true, checkedAt: Date.now() };
       }
@@ -2488,8 +2656,8 @@
     });
     if (changed) {
       saveNotifLog(next);
-      updateAppBadgeCount(true, checkedTags);
     }
+    updateAppBadgeCount(changed, checkedTags);
   }
 
   function markAllNotificationsChecked() {
@@ -3813,6 +3981,7 @@
       S.renderAnalyticsView();
     }
     S.renderIdeSidebar();
+    updateAppBadgeCount(false);
   }
 
   function renderAll() {
@@ -4100,6 +4269,31 @@
         }
         return;
       }
+      const cycleClaudeModeBtn = e.target.closest('[data-cycle-claude-mode]');
+      if (cycleClaudeModeBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        haptic(8);
+        const curMode = getEffectiveClaudePermissionMode();
+        const cycleOrder = ['bypassPermissions', 'auto', 'plan'];
+        const curIdx = cycleOrder.indexOf(curMode);
+        const nextMode = cycleOrder[(curIdx + 1) % cycleOrder.length];
+        await setFleetClaudeModeRemote(nextMode);
+        return;
+      }
+      const openGitReviewBtn = e.target.closest('[data-open-git-review]');
+      if (openGitReviewBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        haptic(8);
+        if (prefs.activeTab !== 'chat') switchTab('chat');
+        S.setInspectorOpen(true, 'git');
+        const wsId = String(openGitReviewBtn.dataset.openGitReview || '').trim();
+        if (wsId && typeof S.fetchWorkspaceDetail === 'function') {
+          S.fetchWorkspaceDetail(wsId).catch(() => {});
+        }
+        return;
+      }
       const claudeModeBtn = e.target.closest('[data-set-claude-mode]');
       if (claudeModeBtn) {
         e.preventDefault();
@@ -4140,7 +4334,8 @@
         !e.target?.closest?.('#ide-context-menu') &&
         !e.target?.closest?.('[data-sess-ctx-menu]') &&
         !e.target?.closest?.('[data-group-ctx-menu]') &&
-        !e.target?.closest?.('[data-acct-ctx-menu]')
+        !e.target?.closest?.('[data-acct-ctx-menu]') &&
+        !e.target?.closest?.('#btn-editor-tabs-overflow')
       ) {
         S.closeIdeContextMenu();
       }
@@ -4674,7 +4869,29 @@
             const pinnedRow = (appState?.rows || []).find((r) => r.id === prefs.pinnedBgSessionId);
             await S.cancelAllSessionBgTasks(prefs.pinnedBgSessionId, pinnedRow?.provider || 'antigravity');
           } else {
-            const rows = (appState?.rows || []).filter((r) => r && r.id && !r.archived);
+            const devFilter =
+              prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
+                ? prefs.selectedDeviceFilter
+                : '';
+            const hideDesktop = S.isClaudeDesktopHidden();
+            const rawProvScope = ['all', 'antigravity', 'claude'].includes(prefs.sidebarProvider)
+              ? prefs.sidebarProvider
+              : 'all';
+            const preProvRows = (appState?.rows || []).filter((r) => {
+              if (!r || !r.id || r.archived || S.isRowHostOffline?.(r)) return false;
+              if (devFilter && r.deviceId && r.deviceId !== devFilter) return false;
+              if (hideDesktop && S.isClaudeDesktopRow(r)) return false;
+              return true;
+            });
+            const agyCnt = preProvRows.filter((r) => (r.provider === 'claude' ? 'claude' : 'antigravity') === 'antigravity').length;
+            const claudeCnt = preProvRows.filter((r) => r.provider === 'claude').length;
+            let provScope = rawProvScope;
+            if (provScope === 'antigravity' && agyCnt === 0) provScope = 'all';
+            if (provScope === 'claude' && claudeCnt === 0) provScope = 'all';
+            const rows = preProvRows.filter((r) => {
+              const rProv = r.provider === 'claude' ? 'claude' : 'antigravity';
+              return provScope === 'all' || rProv === provScope;
+            });
             for (const r of rows) {
               const { runningCount } = S.getSessionBackgroundTasks(r, threadsCache[r.id]);
               if (runningCount > 0) {
@@ -4937,6 +5154,121 @@
         return;
       }
 
+      const tabsOverflowBtn = e.target.closest('#btn-editor-tabs-overflow');
+      if (tabsOverflowBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const menuEl = $('ide-context-menu');
+        if (menuEl && !menuEl.hidden && Boolean(menuEl.querySelector('.ctx-menu-tab-row'))) {
+          S.closeIdeContextMenu();
+          return;
+        }
+        if (menuEl && !menuEl.hidden) {
+          S.closeIdeContextMenu(true);
+        }
+        const specs = typeof S.getOpenEditorTabSpecs === 'function' ? S.getOpenEditorTabSpecs() : [];
+        if (menuEl && specs.length > 0) {
+          menuEl.innerHTML = specs
+            .map((sp) => {
+              const pCls = sp.isActive ? ' active' : '';
+              const checkSvg = sp.isActive ? `<span class="ctx-menu-tab-check">${S.UI_ICONS.check}</span>` : '';
+              const subFolder = sp.folder ? `<span class="ctx-menu-tab-sub">${esc(sp.folder)}</span>` : '';
+              return `<div class="ctx-menu-tab-row${pCls}"><button type="button" class="ctx-menu-item ctx-menu-tab-jump" data-ctx-tab-jump="${esc(sp.id)}" data-session-prov="${esc(sp.provKey)}">${checkSvg}<span class="ctx-menu-label"><span class="prov-glyph">${S.PROVIDER_ICONS[sp.provKey]}</span><span class="ctx-menu-tab-title">${esc(sp.rawTitle)}</span>${subFolder}</span></button>${
+                !sp.isDraft
+                  ? `<button type="button" class="ide-tab-close ctx-menu-tab-close" data-ctx-tab-close="${esc(sp.id)}" aria-label="Close ${esc(sp.rawTitle)}">${S.UI_ICONS.close}</button>`
+                  : ''
+              }</div>`;
+            })
+            .join('');
+          const rect = tabsOverflowBtn.getBoundingClientRect();
+          menuEl.hidden = false;
+          const mRect = menuEl.getBoundingClientRect();
+          const mW = mRect.width || 240;
+          menuEl.style.left = `${Math.max(8, Math.min(rect.right - mW, window.innerWidth - mW - 8))}px`;
+          menuEl.style.top = `${Math.min(rect.bottom + 4, window.innerHeight - (mRect.height || 200) - 8)}px`;
+        }
+        return;
+      }
+      const ctxTabCloseBtn = e.target.closest('[data-ctx-tab-close]');
+      if (ctxTabCloseBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        S.closeEditorTab(ctxTabCloseBtn.dataset.ctxTabClose || '');
+        S.closeIdeContextMenu();
+        return;
+      }
+      const ctxTabJumpBtn = e.target.closest('[data-ctx-tab-jump]');
+      if (ctxTabJumpBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const tid = ctxTabJumpBtn.dataset.ctxTabJump || '';
+        const prov = ctxTabJumpBtn.dataset.sessionProv || '';
+        S.closeIdeContextMenu();
+        if (tid && tid !== '__new__') {
+          recentResumeUntil = 0;
+          S.ensureEditorTabOpen(tid);
+          recordFreqUsage('threads', tid);
+          setPinnedNav({ threadId: tid, provider: prov, durationMs: 45000 });
+          prefs.selectedThreadId = tid;
+          prefs.lastReplyThreadId = tid;
+          prefs.composerMode = 'reply';
+          prefs.newSessionGroupId = '';
+          saveJson(STORAGE_KEYS.PREFS, prefs);
+          markNotificationsCheckedForSession(tid);
+          switchTab('chat');
+          S.renderIdeSidebar();
+          document.querySelector(`#ide-editor-tabs [data-editor-tab-id="${CSS.escape(tid)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+          S.fetchThreadDetail(tid, prov);
+        }
+        return;
+      }
+      const pinBgPillBtn = e.target.closest('[data-pin-bg-session]');
+      if (pinBgPillBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const sid = pinBgPillBtn.dataset.pinBgSession || '';
+        const fromEditorTab = Boolean(pinBgPillBtn.closest('#ide-editor-tabs'));
+        if (sid) {
+          if (fromEditorTab || window.innerWidth <= 1024 || prefs.sidebarCollapsed) {
+            const targetRow = (appState?.rows || []).find((r) => r && r.id === sid);
+            if (prefs.selectedThreadId !== sid || S.isNewSessionMode()) {
+              recentResumeUntil = 0;
+              S.ensureEditorTabOpen(sid);
+              setPinnedNav({
+                threadId: sid,
+                provider: targetRow?.provider || '',
+                durationMs: 45000
+              });
+              prefs.selectedThreadId = sid;
+              prefs.lastReplyThreadId = sid;
+              prefs.composerMode = 'reply';
+              prefs.newSessionGroupId = '';
+              saveJson(STORAGE_KEYS.PREFS, prefs);
+              markNotificationsCheckedForSession(sid);
+            } else {
+              markNotificationsCheckedForSession(sid);
+            }
+            const ctxPop = $('ctx-popover');
+            if (ctxPop) ctxPop.hidden = true;
+            const modelPop = $('model-picker-popover');
+            if (modelPop) modelPop.hidden = true;
+            if (prefs.activeTab !== 'chat') switchTab('chat');
+            const bgPop = $('bg-tasks-popover');
+            if (bgPop) bgPop.hidden = false;
+            S.renderIdeSidebar();
+            S.renderChatView(false);
+            S.fetchThreadDetail(sid, targetRow?.provider || '').catch(() => {});
+          } else {
+            prefs.pinnedBgSessionId = prefs.pinnedBgSessionId === sid ? '' : sid;
+            saveJson(STORAGE_KEYS.PREFS, prefs);
+            const secBg = $('ide-sec-bgtasks');
+            if (secBg) secBg.open = true;
+            S.renderIdeSidebar();
+            secBg?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          }
+        }
+        return;
+      }
       const closeTabBtn = e.target.closest('[data-close-editor-tab]');
       if (closeTabBtn) {
         e.stopPropagation();
@@ -4985,7 +5317,7 @@
       if (
         ideOpenRow &&
         ideOpenRow.dataset.ideOpenSession &&
-        !e.target.closest('[data-sess-act], [data-sess-inline-rename], [data-sess-ctx-menu], [data-approve-act], [data-close-editor-tab], [data-switch-neon-carbon], [contenteditable="true"]')
+        !e.target.closest('[data-sess-act], [data-sess-inline-rename], [data-sess-ctx-menu], [data-approve-act], [data-close-editor-tab], [data-switch-neon-carbon], [data-pin-bg-session], [contenteditable="true"]')
       ) {
         const sid = ideOpenRow.dataset.ideOpenSession;
         const prov = ideOpenRow.dataset.sessionProv || '';
@@ -5707,7 +6039,20 @@
           return;
         }
         if (act === 'stop-all-global') {
-          const rows = (appState?.rows || []).filter((r) => r && r.id && !r.archived);
+          const devFilter =
+            prefs.selectedDeviceFilter && prefs.selectedDeviceFilter !== 'all'
+              ? prefs.selectedDeviceFilter
+              : '';
+          const hideDesktop = S.isClaudeDesktopHidden();
+          const rows = (appState?.rows || []).filter(
+            (r) =>
+              r &&
+              r.id &&
+              !r.archived &&
+              !S.isRowHostOffline?.(r) &&
+              (!devFilter || !r.deviceId || r.deviceId === devFilter) &&
+              (!hideDesktop || !S.isClaudeDesktopRow(r) || S.isSessionOpenTab(r))
+          );
           for (const r of rows) {
             const { runningCount } = S.getSessionBackgroundTasks(r, threadsCache[r.id]);
             if (runningCount > 0) {
@@ -7177,7 +7522,15 @@
       S.renderIdeSidebar();
     });
 
-    // Middle-click to close open editor tab (VS Code parity); double-click active tab to rename
+    // Middle-click to close open editor tab (VS Code parity); vertical wheel scrolls horizontally; double-click active tab renames
+    $('ide-editor-tabs')?.addEventListener('wheel', (e) => {
+      const el = e.currentTarget;
+      if (!el || el.scrollWidth <= el.clientWidth) return;
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        e.preventDefault();
+        el.scrollLeft += e.deltaY;
+      }
+    }, { passive: false });
     $('ide-editor-tabs')?.addEventListener('auxclick', (e) => {
       if (isPinLocked() || e.button !== 1) return;
       const tab = e.target.closest('[data-editor-tab-id]');
@@ -7431,6 +7784,41 @@
         if (!inField && !anyModalOpen) {
           e.preventDefault();
           S.beginIdeInlineRename('chat-session', prefs.selectedThreadId);
+        }
+      } else if (
+        e.altKey &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.shiftKey &&
+        /^[1-9]$/.test(e.key)
+      ) {
+        const ae = document.activeElement;
+        const inField = Boolean(
+          ae &&
+            (ae.tagName === 'INPUT' ||
+              ae.tagName === 'TEXTAREA' ||
+              ae.tagName === 'SELECT' ||
+              ae.isContentEditable)
+        );
+        const specs = typeof S.getOpenEditorTabSpecs === 'function' ? S.getOpenEditorTabSpecs() : [];
+        if (!inField && specs.length > 0) {
+          const idxNum = Number(e.key);
+          const targetIdx = idxNum === 9 ? specs.length - 1 : Math.min(specs.length - 1, idxNum - 1);
+          const pick = specs[targetIdx];
+          if (pick && pick.id && pick.id !== '__new__') {
+            e.preventDefault();
+            recentResumeUntil = 0;
+            S.ensureEditorTabOpen(pick.id);
+            prefs.selectedThreadId = pick.id;
+            prefs.lastReplyThreadId = pick.id;
+            prefs.composerMode = 'reply';
+            saveJson(STORAGE_KEYS.PREFS, prefs);
+            markNotificationsCheckedForSession(pick.id);
+            if (prefs.activeTab !== 'chat') switchTab('chat');
+            S.renderChatView(true);
+            S.renderIdeSidebar();
+            S.fetchThreadDetail(pick.id, pick.provKey || '');
+          }
         }
       } else if (
         !e.metaKey &&
@@ -7848,7 +8236,7 @@
       });
 
       navigator.serviceWorker
-        .register('sw.js?v=102', { updateViaCache: 'none' })
+        .register('sw.js?v=103', { updateViaCache: 'none' })
         .then((reg) => {
           reg.update().catch(() => {});
           if (reg.waiting) {

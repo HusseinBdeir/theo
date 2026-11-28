@@ -642,10 +642,17 @@
     }
     const stateDev = S.appState?.device || S.appState?.connection?.device;
     if (stateDev && stateDev.id) {
+      const prevStateDev = fleetDevicesMap.get(stateDev.id);
+      const stateDevOnline =
+        connMode === 'local' || connMode === 'edge'
+          ? true
+          : stateDev.online !== undefined
+            ? Boolean(stateDev.online)
+            : Boolean(prevStateDev?.online);
       updateFleetDevices([
         {
           ...stateDev,
-          online: connMode === 'local' || connMode === 'edge' ? true : Boolean(stateDev.online),
+          online: stateDevOnline,
           sessionCount: (S.appState?.rows || []).filter(
             (r) => !r.archived && (!r.deviceId || r.deviceId === stateDev.id)
           ).length
@@ -839,11 +846,12 @@
         bestClaudeCatalog = snap.claudeModelCatalog;
       }
 
+      const snapAt = Number(snap?.generatedAt || Date.now());
       for (const r of snap.rows || []) {
         if (!r || !r.id) continue;
         const prev = rowMap.get(r.id);
         if (!prev) {
-          rowMap.set(r.id, { ...r });
+          rowMap.set(r.id, { ...r, _snapAt: snapAt });
         } else {
           const rAt = Number(r.at || 0);
           const pAt = Number(prev.at || 0);
@@ -872,6 +880,7 @@
             rowMap.set(r.id, {
               ...prev,
               ...r,
+              _snapAt: snapAt,
               pinned: winChatPinned,
               pinnedAt: winChatPinnedAt,
               pinUpdatedAt: winChatPinUpd
@@ -1080,7 +1089,7 @@
       for (const tid of watchedIds) {
         const row = (nextState.rows || []).find((r) => r && r.id === tid);
         if (!row) continue;
-        const rowStamp = `${row.status || ''}:${row.stepCount || 0}:${row.at || 0}:${String(row.preview || '').slice(0, 64)}`;
+        const rowStamp = `${row.status || ''}:${row.stepCount || 0}:${row.bgRunningCount || 0}:${row.at || 0}:${String(row.preview || '').slice(0, 64)}`;
         const prevStamp = lastSeenThreadStepStampById.get(tid) || '';
         S.setBoundedMap(lastSeenThreadStepStampById, tid, rowStamp);
         const isWorking = Boolean(row.status === 'working' || row.dot === 'running');
@@ -1102,7 +1111,7 @@
     const tid = String(msg?.threadId || msg?.id || tObj?.id || '').trim();
     if (!tid || !tObj || typeof tObj !== 'object') return false;
     S.setBoundedMap(lastThreadDetailReceivedAtById, tid, Date.now());
-    mergeRemoteThreads({ [tid]: tObj });
+    mergeRemoteThreads({ [tid]: tObj }, { markFresh: true });
     persistCache();
     if (S.prefs.activeTab === 'chat' && S.prefs.selectedThreadId === tid) {
       S.renderChatView(false);
@@ -2172,9 +2181,10 @@
     });
   }
 
-  function mergeRemoteThreads(incomingThreads) {
+  function mergeRemoteThreads(incomingThreads, opts = {}) {
     if (!incomingThreads || typeof incomingThreads !== 'object') return;
     const now = Date.now();
+    const markFresh = Boolean(opts && opts.markFresh);
     for (const [tid, remoteThread] of Object.entries(incomingThreads)) {
       if (!remoteThread || typeof remoteThread !== 'object') continue;
       const existing = S.threadsCache[tid];
@@ -2225,8 +2235,12 @@
           remoteMsgs.push(...optimisticMsgs);
         }
       }
+      const fetchedAt = markFresh
+        ? now
+        : Number(remoteThread._fetchedAt || existing?._fetchedAt || 0);
       S.threadsCache[tid] = {
         ...remoteThread,
+        ...(fetchedAt > 0 ? { _fetchedAt: fetchedAt } : {}),
         messages: remoteMsgs
       };
       if (remoteMsgs.length > 0) {
@@ -2633,7 +2647,7 @@
           const data = await res.json();
           if (data?.thread) {
             S.setBoundedMap(lastThreadDetailReceivedAtById, threadId, Date.now());
-            mergeRemoteThreads({ [threadId]: data.thread });
+            mergeRemoteThreads({ [threadId]: data.thread }, { markFresh: true });
             persistCache();
             if (S.prefs.activeTab === 'chat' && S.prefs.selectedThreadId === threadId) {
               S.renderChatView(!hadAnyCachedTurns);
@@ -2663,7 +2677,7 @@
           (Array.isArray(rpcOut?.result?.messages) ? rpcOut.result : null);
         if (threadObj) {
           S.setBoundedMap(lastThreadDetailReceivedAtById, threadId, Date.now());
-          mergeRemoteThreads({ [threadId]: threadObj });
+          mergeRemoteThreads({ [threadId]: threadObj }, { markFresh: true });
           persistCache();
           if (S.prefs.activeTab === 'chat' && S.prefs.selectedThreadId === threadId) {
             S.renderChatView(!hadAnyCachedTurns);

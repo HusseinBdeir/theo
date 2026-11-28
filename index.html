@@ -9,11 +9,11 @@
   <meta name="apple-mobile-web-app-title" content="THEO">
   <meta name="description" content="THEO workbench for Google Antigravity and Claude Code.">
   <title>THEO</title>
-  <link rel="manifest" href="manifest.json?v=102">
-  <link rel="icon" type="image/svg+xml" href="icon.svg?v=102">
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=102">
-  <link rel="apple-touch-icon" href="icon-180.png?v=102">
-  <link rel="stylesheet" href="css/theo.css?v=102">
+  <link rel="manifest" href="manifest.json?v=103">
+  <link rel="icon" type="image/svg+xml" href="icon.svg?v=103">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=103">
+  <link rel="apple-touch-icon" href="icon-180.png?v=103">
+  <link rel="stylesheet" href="css/theo.css?v=103">
   <script id="pre">
     (() => {
       try {
@@ -53,7 +53,7 @@
   <div id="pin-overlay" class="pin-overlay" hidden>
     <div class="pin-card">
       <div class="pin-brand">
-        <img src="icon.svg?v=102" alt="THEO" class="pin-logo">
+        <img src="icon.svg?v=103" alt="THEO" class="pin-logo">
         <div class="pin-title">THEO</div>
         <div class="brass-double-rule"></div>
       </div>
@@ -81,7 +81,7 @@
   <div class="app-shell" id="app-shell">
     <!-- Title bar of the installed desktop app; shown only when the window controls overlay is on -->
     <header class="wco-titlebar" id="wco-titlebar" aria-label="THEO window title bar">
-      <img src="icon.svg?v=102" alt="" class="wco-titlebar-icon">
+      <img src="icon.svg?v=103" alt="" class="wco-titlebar-icon">
       <button type="button" class="wco-titlebar-search" id="wco-titlebar-search" data-open-cmd-palette="1" aria-label="Search sessions and commands (⌘K)">
         <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         <span>Search sessions and commands</span>
@@ -94,13 +94,10 @@
       <div class="ide-explorer-sidebar" id="ide-explorer-sidebar">
         <div class="ide-sidebar-top">
           <button type="button" class="ide-brand-home-btn" id="btn-sidebar-brand" data-tab="chat" data-micro-tip="Workbench" aria-label="Open THEO Workbench">
-            <img src="icon.svg?v=102" alt="" class="ide-brand-icon">
+            <img src="icon.svg?v=103" alt="" class="ide-brand-icon">
             <span class="ide-sidebar-heading">THEO</span>
           </button>
           <div class="ide-sidebar-top-actions">
-            <button type="button" class="ide-mini-icon-btn" data-group-act="create" data-micro-tip="New Group" aria-label="New Session Group">
-              <svg viewBox="0 0 16 16"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v6a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 12z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
-            </button>
             <button type="button" class="ide-mini-icon-btn" id="btn-toggle-sidebar" data-sidebar-collapse="1" data-micro-tip="Collapse Sidebar (⌘B)" aria-label="Collapse Explorer Sidebar">
               <svg viewBox="0 0 16 16"><path d="M10 4L6 8l4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
@@ -159,12 +156,12 @@
           <summary class="ide-side-summary">
             <span class="ide-side-summary-left">
               <span class="ide-chevron" aria-hidden="true"><svg class="ui-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6L8 9.5L11.5 6"/></svg></span>
-              <span id="ide-bgtasks-heading">SIDE AGENTS &amp; TASKS</span>
+              <span id="ide-bgtasks-heading">BACKGROUND TASKS</span>
               <span class="ide-side-count emerald tabular" id="ide-bgtasks-count">0</span>
             </span>
             <span class="ide-side-summary-right">
               <span class="ide-link-pill" id="ide-bgtasks-unpin" role="button" tabindex="0" data-bg-side-act="unpin" hidden>All</span>
-              <span class="ide-link-pill danger" id="ide-bgtasks-stop-all" role="button" tabindex="0" data-bg-side-act="stop-all" hidden><svg class="ui-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.6"/></svg><span>Stop</span></span>
+              <span class="ide-link-pill danger" id="ide-bgtasks-stop-all" role="button" tabindex="0" data-bg-side-act="stop-all" hidden><svg class="ui-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.6"/></svg><span>Stop all</span></span>
             </span>
           </summary>
           <div class="ide-bgtasks-body" id="ide-sidebar-bgtasks"></div>
@@ -179,8 +176,8 @@
               <span class="ide-side-count tabular" id="ide-sidebar-count">0</span>
             </span>
             <span class="ide-side-summary-right">
-              <button type="button" class="ide-link-pill ide-hide-desktop-chip" id="ide-hide-desktop-chip" data-toggle-hide-desktop="1" hidden>Hide Desktop</button>
-              <button type="button" class="ide-link-pill icon-only" data-group-act="create" data-micro-tip="New Group" aria-label="New Session Group"><svg class="ui-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg></button>
+              <button type="button" class="ide-link-pill ide-hide-desktop-chip" id="ide-hide-desktop-chip" data-toggle-hide-desktop="1" data-micro-tip="Hide Claude Desktop app chats" hidden>Hide Desktop</button>
+              <button type="button" class="ide-link-pill icon-only" data-group-act="create" data-micro-tip="New session group" aria-label="New Session Group"><svg class="ui-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.3 1.4h4.7A1.5 1.5 0 0 1 14 5.9v5.6a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z"/><path d="M8 7v3.4M6.3 8.7h3.4"/></svg></button>
             </span>
           </div>
 
@@ -267,7 +264,7 @@
       <!-- Mobile & Compact Top Header -->
       <header class="mobile-topbar">
         <div class="mobile-brand">
-          <img src="icon.svg?v=102" alt="THEO" class="mobile-badge">
+          <img src="icon.svg?v=103" alt="THEO" class="mobile-badge">
           <div class="mobile-brand-copy">
             <div class="mobile-title-row">
               <div class="mobile-wordmark-stack">
@@ -461,7 +458,8 @@
               </button>
               <div class="ide-editor-tabs-scroll" id="ide-editor-tabs" role="tablist" aria-label="Open Session Tabs"></div>
               <div class="ide-editor-tabs-actions">
-                <button type="button" class="ide-tab-add-btn" data-quick-new="antigravity" aria-label="New Antigravity Session Tab"><svg class="ui-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg></button>
+                <button type="button" class="ide-tab-add-btn" id="btn-editor-tabs-overflow" data-editor-tabs-overflow="1" data-micro-tip="All open tabs" aria-label="List all open session tabs" hidden><svg class="ui-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6L8 9.5L11.5 6"/></svg></button>
+                <button type="button" class="ide-tab-add-btn" id="ide-editor-tabs-add" data-quick-new="antigravity" data-micro-tip="New Antigravity session tab" aria-label="New Antigravity Session Tab"><svg class="ui-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg></button>
               </div>
             </div>
 
@@ -581,6 +579,7 @@
 
               <!-- Floating VS Code Command Capsule Composer -->
               <form class="chat-composer" id="chat-composer-form">
+                <div class="composer-git-strip tabular" id="composer-git-strip" hidden></div>
                 <div class="composer-box" id="composer-box">
                   <!-- Interactive / & @ Autocomplete Popover -->
                   <div class="composer-slash-popover" id="composer-slash-popover" role="listbox" aria-label="Autocomplete suggestions" hidden></div>
@@ -599,9 +598,10 @@
                       </button>
                       <button type="button" class="composer-icon-pill" id="btn-composer-mention" aria-label="Mention workspace or file">@</button>
                       <button type="button" class="composer-icon-pill" id="btn-composer-slash" aria-label="Run slash action">/</button>
-                      <button type="button" class="composer-route-toggle-pill" id="btn-toggle-composer-route" aria-label="Toggle target host and workspace routing" aria-expanded="false">
-                        <svg class="ui-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="4.5" r="1.5"/><circle cx="12" cy="11.5" r="1.5"/><path d="M5.5 4.5h3a2 2 0 0 1 2 2v3.5"/></svg><span>Route</span>
+                      <button type="button" class="composer-route-toggle-pill" id="btn-toggle-composer-route" data-micro-tip="Target PC and workspace folder" aria-label="Toggle target host and workspace routing" aria-expanded="false">
+                        <svg class="ui-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="4.5" r="1.5"/><circle cx="12" cy="11.5" r="1.5"/><path d="M5.5 4.5h3a2 2 0 0 1 2 2v3.5"/></svg><span id="composer-route-pill-label">Route</span>
                       </button>
+                      <button type="button" class="composer-claude-mode-pill" id="composer-claude-mode-btn" data-cycle-claude-mode="1" data-micro-tip="Claude Code permission mode (click to cycle)" aria-label="Cycle Claude Code permission mode" hidden></button>
                       <button type="button" class="composer-model-pill tabular" id="composer-model-btn" aria-haspopup="menu" aria-expanded="false" aria-label="Change Model and Thinking Level">
                         <span id="composer-model-label">Gemini 4 Argon · High</span>
                         <span class="model-pill-chev" aria-hidden="true"><svg class="ui-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6L8 9.5L11.5 6"/></svg></span>
@@ -912,13 +912,13 @@
   <!-- Toast Stack -->
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="js/endpoints.js?v=102"></script>
-  <script src="js/models.js?v=102"></script>
-  <script src="js/transport.js?v=102"></script>
-  <script src="js/sidebar.js?v=102"></script>
-  <script src="js/inspector.js?v=102"></script>
-  <script src="js/chat.js?v=102"></script>
-  <script src="js/views.js?v=102"></script>
-  <script src="js/app.js?v=102"></script>
+  <script src="js/endpoints.js?v=103"></script>
+  <script src="js/models.js?v=103"></script>
+  <script src="js/transport.js?v=103"></script>
+  <script src="js/sidebar.js?v=103"></script>
+  <script src="js/inspector.js?v=103"></script>
+  <script src="js/chat.js?v=103"></script>
+  <script src="js/views.js?v=103"></script>
+  <script src="js/app.js?v=103"></script>
 </body>
 </html>

@@ -352,6 +352,23 @@
     return { label: 'Done', cls: '' };
   }
 
+  function isRowHostOffline(row) {
+    const devId = String(row?.deviceId || '').trim();
+    if (!devId) return false;
+    if (S.localWsDevice?.id && devId === S.localWsDevice.id) return false;
+    if (
+      S.appState?.device?.id &&
+      devId === S.appState.device.id &&
+      (S.connMode === 'local' || S.connMode === 'edge')
+    ) {
+      return false;
+    }
+    const fleet = typeof S.getUnifiedFleetDevices === 'function' ? S.getUnifiedFleetDevices() : [];
+    const dev = Array.isArray(fleet) ? fleet.find((d) => d && d.id === devId) : null;
+    if (!dev) return false;
+    return dev.online === false && !dev.local;
+  }
+
   function getSessionBackgroundTasks(row, threadDetail) {
     const sid = String(row?.id || threadDetail?.id || '').trim();
     const now = Date.now();
@@ -366,14 +383,91 @@
       ...(Array.isArray(row?.backgroundTasks) ? row.backgroundTasks : [])
     ];
     const byId = new Map();
-    for (const item of rawRow) {
+    for (const item of rawDetail) {
       if (!item || !item.id) continue;
       byId.set(String(item.id), { ...item });
     }
-    for (const item of rawDetail) {
+    const liveRowIds = new Set();
+    const liveRowRunningIds = new Set();
+    for (const item of rawRow) {
       if (!item || !item.id) continue;
-      const prev = byId.get(String(item.id)) || {};
-      byId.set(String(item.id), { ...prev, ...item });
+      const tid = String(item.id);
+      liveRowIds.add(tid);
+      if (item.state === 'running') liveRowRunningIds.add(tid);
+      const prev = byId.get(tid) || {};
+      const keepPrevSettled =
+        prev.state &&
+        prev.state !== 'running' &&
+        item.state === 'running' &&
+        Number(prev.completedAt || 0) > Number(item.startedAt || 0);
+      byId.set(tid, {
+        ...prev,
+        ...item,
+        ...(prev.subagentRole && !item.subagentRole ? { subagentRole: prev.subagentRole } : {}),
+        ...(prev.outputPreview && !item.outputPreview ? { outputPreview: prev.outputPreview } : {}),
+        ...(keepPrevSettled ? { state: prev.state, completedAt: prev.completedAt } : {})
+      });
+    }
+    const hasLiveRowSummary = Boolean(
+      row && (Array.isArray(row.bgTasks) || Array.isArray(row.backgroundTasks) || typeof row.bgRunningCount === 'number')
+    );
+    const rowAt = Number(row?._snapAt || S.appState?.generatedAt || row?.updatedAtMs || row?.at || 0);
+    const detailFetchedAt = Number(threadDetail?._fetchedAt || threadDetail?.updatedAtMs || 0);
+    const rowAuthoritative = hasLiveRowSummary && !(detailFetchedAt > rowAt + 2000);
+    const hostOffline = isRowHostOffline(row);
+    const declaredRunning = hasLiveRowSummary
+      ? typeof row.bgRunningCount === 'number'
+        ? Math.max(0, Number(row.bgRunningCount))
+        : liveRowRunningIds.size
+      : -1;
+    let localCancelledLiveRowCount = 0;
+    for (const tid of liveRowRunningIds) {
+      const tObj = byId.get(tid);
+      const cancelKey = `${sid}:${tid}`;
+      const cancelFullKey = tObj?.fullId ? `${sid}:${tObj.fullId}` : '';
+      if (
+        S.locallyCancelledBgTasks.has(cancelKey) ||
+        (cancelFullKey && S.locallyCancelledBgTasks.has(cancelFullKey))
+      ) {
+        localCancelledLiveRowCount++;
+      }
+    }
+    if (hostOffline || rowAuthoritative) {
+      if (hostOffline) {
+        for (const [tid, task] of byId.entries()) {
+          if (task && task.state === 'running') {
+            byId.set(tid, { ...task, state: 'interrupted' });
+          }
+        }
+      } else if (declaredRunning === 0) {
+        for (const [tid, task] of byId.entries()) {
+          if (task && task.state === 'running') {
+            byId.set(tid, { ...task, state: 'completed', completedAt: task.completedAt || rowAt || now });
+          }
+        }
+      } else if (declaredRunning > 0 && liveRowIds.size > 0) {
+        const sliceHasNonRunning = rawRow.some(
+          (t) => t && String(t.state || '').toLowerCase() !== 'running'
+        );
+        const isSliceCapped = rawRow.length >= 8 && !sliceHasNonRunning;
+        const keepExtraRunning = isSliceCapped
+          ? Math.max(0, declaredRunning - liveRowRunningIds.size)
+          : 0;
+        const staleRunning = [];
+        for (const [tid, task] of byId.entries()) {
+          if (task && task.state === 'running' && !liveRowIds.has(tid)) {
+            staleRunning.push([tid, task]);
+          }
+        }
+        if (staleRunning.length > keepExtraRunning) {
+          staleRunning.sort((a, b) => Number(a[1]?.startedAt || 0) - Number(b[1]?.startedAt || 0));
+          const evictCount = staleRunning.length - keepExtraRunning;
+          for (let i = 0; i < evictCount; i++) {
+            const [tid, task] = staleRunning[i];
+            byId.set(tid, { ...task, state: 'completed', completedAt: task.completedAt || rowAt || now });
+          }
+        }
+      }
     }
     if (Array.isArray(threadDetail?.messages)) {
       for (const m of threadDetail.messages) {
@@ -421,7 +515,14 @@
     });
     const runningTasks = allTasks.filter((t) => t.state === 'running');
     const totalCount = Math.max(allTasks.length, Number(row?.bgTotalCount || 0));
-    const runningCount = runningTasks.length;
+    const effectiveDeclaredRunning =
+      !hostOffline && rowAuthoritative && typeof row?.bgRunningCount === 'number'
+        ? Math.max(0, Number(row.bgRunningCount) - localCancelledLiveRowCount)
+        : -1;
+    const runningCount =
+      effectiveDeclaredRunning >= 0
+        ? Math.max(runningTasks.length, effectiveDeclaredRunning)
+        : runningTasks.length;
     return { allTasks, runningTasks, totalCount, runningCount };
   }
 
@@ -557,7 +658,20 @@
     const listEl = S.$('pulse-bgtasks-list');
     if (!secEl || !listEl) return;
 
-    const rows = (S.appState?.rows || []).filter((r) => r && r.id && !r.archived);
+    const devFilter =
+      S.prefs.selectedDeviceFilter && S.prefs.selectedDeviceFilter !== 'all'
+        ? S.prefs.selectedDeviceFilter
+        : '';
+    const hideDesktop = typeof S.isClaudeDesktopHidden === 'function' ? S.isClaudeDesktopHidden() : false;
+    const rows = (S.appState?.rows || []).filter(
+      (r) =>
+        r &&
+        r.id &&
+        !r.archived &&
+        !isRowHostOffline(r) &&
+        (!devFilter || !r.deviceId || r.deviceId === devFilter) &&
+        (!hideDesktop || !S.isClaudeDesktopRow?.(r) || S.isSessionOpenTab?.(r))
+    );
     const activeEntries = [];
     for (const r of rows) {
       const { allTasks } = getSessionBackgroundTasks(r, S.threadsCache[r.id]);
@@ -1430,7 +1544,7 @@
         </div>
         <div class="sess-right">
           ${
-            r.status === 'working' || r.dot === 'running' || r.bgTask?.state === 'running'
+            r.status === 'working' || r.dot === 'running' || r.bgTask?.state === 'running' || sessBgRunning > 0
               ? `<button type="button" class="sess-act-btn stop-btn" data-sess-act="stop" data-id="${S.esc(r.id || '')}" aria-label="Stop / interrupt running session">■ Stop</button>`
               : ''
           }
@@ -2476,6 +2590,7 @@
     getOrderedPulseQuotaCards,
     getSessionBackgroundTasks,
     hasSignedInProviderRemote,
+    isRowHostOffline,
     isSessionGroupCollapsed,
     isSignedInQuotaCard,
     openCommandPalette,

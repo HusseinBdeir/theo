@@ -806,8 +806,129 @@
     return s.slice(0, 76);
   }
 
+  function stripClaudeInternalTags(raw) {
+    return String(raw || '')
+      .replace(/<agent-message\b[^>]*>[\s\S]*?<\/agent-message>/gi, '')
+      .replace(/<browser_instruction>[\s\S]*?<\/browser_instruction>/gi, '')
+      .replace(/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/gi, '')
+      .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, '')
+      .replace(/<command-name>[\s\S]*?<\/command-name>/gi, '')
+      .replace(/<command-message>[\s\S]*?<\/command-message>/gi, '')
+      .replace(/<command-args>[\s\S]*?<\/command-args>/gi, '')
+      .replace(/<local-command-stdout>[\s\S]*?<\/local-command-stdout>/gi, '')
+      .replace(/<ide_opened_file>[\s\S]*?<\/ide_opened_file>/gi, '')
+      .replace(/<ide_selection>[\s\S]*?<\/ide_selection>/gi, '')
+      .replace(/\[Request interrupted[^\]]*\]/gi, '')
+      .trim();
+  }
+
+  function extractTaskNotificationsFromText(rawText, preExtracted = []) {
+    const notifications = [];
+    const seen = new Set();
+    const pushUnique = (item) => {
+      if (!item) return;
+      const taskIds = Array.isArray(item.taskIds)
+        ? item.taskIds.map((x) => String(x || '').trim()).filter((x) => x && !x.startsWith('__orphan_summary__'))
+        : [];
+      const status = String(item.status || 'info').toLowerCase() || 'info';
+      const summary = String(item.summary || '').trim();
+      const note = String(item.note || '').trim();
+      if (!summary && !note && taskIds.length === 0) return;
+      const key = `${status}|${summary}|${taskIds.join(',')}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      notifications.push({ taskIds, status, summary, note });
+    };
+
+    if (Array.isArray(preExtracted)) {
+      for (const item of preExtracted) pushUnique(item);
+    }
+
+    const src = String(rawText || '');
+    const blockRe = /<task-notification>([\s\S]*?)<\/task-notification>/gi;
+    let m;
+    while ((m = blockRe.exec(src)) !== null) {
+      const body = m[1] || '';
+      const taskIds = [];
+      const tidRe = /<task-id>([\s\S]*?)<\/task-id>/gi;
+      let tm;
+      while ((tm = tidRe.exec(body)) !== null) {
+        const cleanTid = String(tm[1] || '').trim();
+        if (cleanTid && !cleanTid.startsWith('__orphan_summary__')) {
+          taskIds.push(cleanTid);
+        }
+      }
+      const getTag = (tag) => {
+        const mTag = body.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+        return mTag ? String(mTag[1] || '').trim() : '';
+      };
+      pushUnique({
+        taskIds,
+        status: getTag('status').toLowerCase() || 'info',
+        summary: getTag('summary'),
+        note: getTag('note') || getTag('result')
+      });
+    }
+
+    const stripped = stripClaudeInternalTags(
+      src.replace(/<task-notification>[\s\S]*?<\/task-notification>/gi, '')
+    );
+    return { notifications, humanText: stripped };
+  }
+
+  function renderTaskNotificationsHtml(notifications, turnIdKey, createdAt = '', savedOpenMap = null) {
+    if (!Array.isArray(notifications) || notifications.length === 0) return '';
+    const relTime = createdAt ? S.timeAgo(Date.parse(createdAt)) : '';
+    return notifications
+      .map((tn, idx) => {
+        const statusKey = tn.status === 'completed' || tn.status === 'done'
+          ? 'completed'
+          : tn.status === 'failed' || tn.status === 'error'
+            ? 'failed'
+            : tn.status === 'stopped' || tn.status === 'cancelled'
+              ? 'stopped'
+              : 'info';
+        const statusLbl = statusKey === 'completed'
+          ? 'Completed'
+          : statusKey === 'failed'
+            ? 'Failed'
+            : statusKey === 'stopped'
+              ? 'Stopped'
+              : 'Notice';
+        const shownIds = tn.taskIds.slice(0, 2);
+        const extraIdCount = Math.max(0, tn.taskIds.length - shownIds.length);
+        const idsHtml = shownIds.length
+          ? `${shownIds.map((id) => `<span class="vs-tn-id mono">${S.esc(id)}</span>`).join('')}${extraIdCount > 0 ? `<span class="vs-tn-id tabular">+${extraIdCount}</span>` : ''}`
+          : '';
+        const summaryTxt = tn.summary || (shownIds.length ? `Background task ${shownIds.join(', ')} ${statusLbl.toLowerCase()}` : 'Background task update');
+        const headHtml = `
+          <span class="vs-tn-ico" aria-hidden="true">${S.UI_ICONS.terminal}</span>
+          <span class="vs-tn-badge is-${statusKey}">${S.esc(statusLbl)}</span>
+          <span class="vs-tn-summary">${S.esc(summaryTxt)}</span>
+          ${idsHtml}
+          ${idx === 0 && relTime ? `<span class="vs-tn-time tabular">${S.esc(relTime)}</span>` : ''}
+        `;
+        if (!tn.note) {
+          return `<div class="vs-task-notif-card is-static"><div class="vs-task-notif-summary">${headHtml}</div></div>`;
+        }
+        const tnKey = `${turnIdKey}:tn:${idx}`;
+        const isOpen = Boolean(savedOpenMap && savedOpenMap.get(tnKey) === true);
+        return `
+          <details class="vs-task-notif-card" data-chat-detail-key="${S.esc(tnKey)}" data-rendered-open="${isOpen ? '1' : '0'}"${isOpen ? ' open' : ''}>
+            <summary class="vs-task-notif-summary">${headHtml}<span class="vs-thought-chev" aria-hidden="true">${S.CHEVRON_RIGHT_SVG}</span></summary>
+            <div class="vs-task-notif-body">${S.esc(tn.note)}</div>
+          </details>
+        `;
+      })
+      .join('');
+  }
+
   function cleanUserPromptPreview(rawText) {
-    let text = String(rawText || '').trim();
+    const { notifications, humanText } = extractTaskNotificationsFromText(rawText);
+    let text = humanText;
+    if (!text && notifications.length > 0) {
+      return (notifications[0].summary || 'Background task update').replace(/\s+/g, ' ').trim();
+    }
     if (!text) return '';
     if (/^\/compact\b/i.test(text) && text.length <= 24) return '/compact';
     const ctxMatch = text.match(/^\[LIVE WORKSTATION CONTEXT(?:\s*[—-]\s*([^\]]+))?\]\s*\r?\n([\s\S]*?)(?:\r?\n\s*\r?\n|$)/i);
@@ -1444,6 +1565,126 @@
       directBtn.classList.toggle('active', isDirect);
       directBtn.textContent = isDirect ? 'Direct' : 'IDE Tab';
     }
+
+    const routeLblEl = S.$('composer-route-pill-label');
+    if (routeLblEl) {
+      const curRepo = String(S.prefs.composerRepoPrefix || '').trim();
+      const targetDev = String(S.prefs.composerTargetDevice || 'auto').trim();
+      const devEntry = targetDev !== 'auto' ? fleetDevices.find((d) => d && d.id === targetDev) : null;
+      const devName = devEntry?.name || (targetDev !== 'auto' ? targetDev : '');
+      let nextRouteLbl = 'Route';
+      if (isNewDraft) {
+        if (curRepo && devName) nextRouteLbl = `${devName} · ${curRepo}`;
+        else if (curRepo) nextRouteLbl = curRepo;
+        else if (devName) nextRouteLbl = devName;
+      } else {
+        const sessFolder = String(activeRow?.folder || '').trim();
+        if (sessFolder && !/^workspace$/i.test(sessFolder)) {
+          nextRouteLbl = sessFolder;
+        } else if (curRepo) {
+          nextRouteLbl = curRepo;
+        }
+      }
+      if (routeLblEl.textContent !== nextRouteLbl) routeLblEl.textContent = nextRouteLbl;
+    }
+  }
+
+  function syncComposerGitAndModeControls(activeRow, threadDetail, provKey, isNewDraft) {
+    const modeBtn = S.$('composer-claude-mode-btn');
+    if (modeBtn) {
+      if (provKey === 'claude') {
+        const activeMode =
+          typeof S.getEffectiveClaudePermissionMode === 'function'
+            ? S.getEffectiveClaudePermissionMode()
+            : S.claudeModeState?.defaultMode || 'bypassPermissions';
+        const shortLabel =
+          activeMode === 'bypassPermissions'
+            ? 'Bypass'
+            : activeMode === 'auto'
+              ? 'Auto'
+              : activeMode === 'plan'
+                ? 'Plan'
+                : 'Default';
+        const modeCls =
+          activeMode === 'bypassPermissions'
+            ? 'is-bypass'
+            : activeMode === 'auto'
+              ? 'is-auto'
+              : activeMode === 'plan'
+                ? 'is-plan'
+                : '';
+        modeBtn.hidden = false;
+        modeBtn.className = `composer-claude-mode-pill${modeCls ? ` ${modeCls}` : ''}`;
+        modeBtn.dataset.curClaudeMode = activeMode;
+        const wantHtml = `<span class="claude-mode-pill-dot" aria-hidden="true"></span><span>${S.esc(shortLabel)}</span>`;
+        if (modeBtn.dataset.modeHtmlSig !== `${activeMode}:${shortLabel}`) {
+          modeBtn.dataset.modeHtmlSig = `${activeMode}:${shortLabel}`;
+          modeBtn.innerHTML = wantHtml;
+        }
+      } else {
+        modeBtn.hidden = true;
+      }
+    }
+
+    const gitStripEl = S.$('composer-git-strip');
+    if (!gitStripEl) return;
+    if (isNewDraft || !activeRow?.id || activeRow.id === '__new__') {
+      gitStripEl.hidden = true;
+      gitStripEl.innerHTML = '';
+      gitStripEl.dataset.gitSig = '';
+      return;
+    }
+    const wsCtx =
+      typeof S.resolveSessionWorkspaceContext === 'function'
+        ? S.resolveSessionWorkspaceContext(activeRow, threadDetail)
+        : null;
+    const ws = wsCtx?.matchedWs || null;
+    const wsDet = ws?.id ? S.workspacesDetailCache?.[ws.id] : null;
+    const hasExplicitCleanWs = typeof ws?.dirtyCount === 'number' && Number(ws.dirtyCount) <= 0;
+    const modList = hasExplicitCleanWs
+      ? []
+      : Array.isArray(wsDet?.modifiedFiles) && wsDet.modifiedFiles.length
+        ? wsDet.modifiedFiles
+        : Array.isArray(ws?.modifiedFiles)
+          ? ws.modifiedFiles
+          : [];
+    const dirtyCnt = hasExplicitCleanWs ? 0 : Math.max(Number(ws?.dirtyCount || 0), modList.length);
+    if (!ws || ws.noGit || ws.id === 'theo-memory' || dirtyCnt <= 0) {
+      gitStripEl.hidden = true;
+      gitStripEl.innerHTML = '';
+      gitStripEl.dataset.gitSig = '';
+      return;
+    }
+    const ins = Number(
+      wsDet?.insertions ??
+        ws.insertions ??
+        modList.reduce((acc, f) => acc + Number(f?.added ?? f?.insertions ?? 0), 0)
+    );
+    const del = Number(
+      wsDet?.deletions ??
+        ws.deletions ??
+        modList.reduce((acc, f) => acc + Number(f?.removed ?? f?.deletions ?? 0), 0)
+    );
+    const diffHtml =
+      ins > 0 || del > 0
+        ? `<span class="composer-git-diff">${ins > 0 ? `<span class="diff-add">+${S.esc(String(ins))}</span>` : ''}${del > 0 ? `<span class="diff-del">-${S.esc(String(del))}</span>` : ''}</span>`
+        : '';
+    const metaLabel = ws.name ? `${ws.name}${ws.branch ? ` · ${ws.branch}` : ''}` : '';
+    const gitSig = `${ws.id}:${dirtyCnt}:${ins}:${del}:${metaLabel}`;
+    if (gitStripEl.dataset.gitSig !== gitSig) {
+      gitStripEl.dataset.gitSig = gitSig;
+      gitStripEl.innerHTML = `
+        <button type="button" class="composer-git-info-btn" data-open-git-review="${S.esc(ws.id || '')}" data-micro-tip="Inspect uncommitted changes in Split Inspector">
+          <svg class="ui-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4.5" cy="4" r="1.5"/><circle cx="4.5" cy="12" r="1.5"/><circle cx="11.5" cy="7.5" r="1.5"/><path d="M4.5 5.5v5M6 4h2.5a3 3 0 0 1 3 2"/></svg>
+          <strong>${dirtyCnt} ${dirtyCnt === 1 ? 'file' : 'files'} changed</strong>
+          ${diffHtml}
+          ${metaLabel ? `<span class="composer-git-ws">${S.esc(metaLabel)}</span>` : ''}
+          <span class="composer-git-chev" aria-hidden="true">${S.CHEVRON_RIGHT_SVG}</span>
+        </button>
+        <button type="button" class="composer-git-review-btn" data-open-git-review="${S.esc(ws.id || '')}">Review</button>
+      `;
+    }
+    gitStripEl.hidden = false;
   }
 
   function renderNewSessionLaunchpadHtml(provKey, modelCfg, grpObj) {
@@ -1956,6 +2197,7 @@
     } catch (err) {
       console.warn('[THEO] Chat bg tasks render error:', err?.message || err);
     }
+    syncComposerGitAndModeControls(activeRow, threadDetail, provKey, isNewDraft);
 
     const messages = isNewDraft ? [] : coalesceThreadMessages(threadDetail?.messages || []);
     const sessionApprovals = isNewDraft
@@ -2081,10 +2323,20 @@
       const savedOpenMap = S.getThreadOpenDetailsMap(S.prefs.selectedThreadId, false);
       const sessionBgTasks = S.getSessionBackgroundTasks(activeRow, threadDetail);
       const isThreadActivelyWorking = isSessionActivelyRunning(S.prefs.selectedThreadId);
+      let lastSubstantiveIdx = -1;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const msg = messages[i];
+        if (msg && msg.kind !== 'task-notification' && msg.role !== 'checkpoint') {
+          lastSubstantiveIdx = i;
+          break;
+        }
+      }
       const turnsHtml = messages
         .map((m, msgIdx) => {
           const isUser = m.role === 'user';
-          const isLastTurn = msgIdx === messages.length - 1;
+          const isLastTurn =
+            msgIdx === messages.length - 1 ||
+            (lastSubstantiveIdx >= 0 && msgIdx >= lastSubstantiveIdx);
           const turnIdKey = String(m.id || `turn-${msgIdx}`);
 
           if (m.role === 'checkpoint') {
@@ -2106,10 +2358,31 @@
           }
 
           if (isUser) {
+            const { notifications, humanText } = extractTaskNotificationsFromText(
+              m.text || '',
+              m.taskNotifications
+            );
+            const hasSpecialUserMarkup = Boolean(
+              /^\/compact\b/i.test(humanText) ||
+                /\[LIVE WORKSTATION CONTEXT/i.test(m.text || '') ||
+                /\[Attached Files saved on workstation\]/i.test(m.text || '')
+            );
+            const tnHtml = notifications.length
+              ? `<div class="turn-task-notif-wrap" data-turn-anchor="${S.esc(turnIdKey)}">${renderTaskNotificationsHtml(
+                  notifications,
+                  turnIdKey,
+                  m.createdAt || '',
+                  savedOpenMap
+                )}</div>`
+              : '';
+            if (m.kind === 'task-notification' || (!humanText && !hasSpecialUserMarkup)) {
+              return tnHtml;
+            }
             return `
               <div class="turn-bubble user" data-turn-anchor="${S.esc(turnIdKey)}">
-                ${renderUserTurnContentHtml(m.text || '', turnIdKey, m.createdAt || '', savedOpenMap)}
+                ${renderUserTurnContentHtml(humanText, turnIdKey, m.createdAt || '', savedOpenMap)}
               </div>
+              ${tnHtml}
             `;
           }
 
@@ -3424,11 +3697,20 @@
     if (liveStream && liveStream.status === 'working' && Date.now() - Number(liveStream.receivedAt || 0) < 45000) {
       return true;
     }
-    if (row?.status === 'working' || row?.dot === 'running' || row?.bgTask?.state === 'running') {
-      return true;
+    if (S.isRowHostOffline?.(row)) {
+      return false;
     }
     if (row?.status === 'waiting' || row?.pendingQuestion) {
       return false;
+    }
+    if (
+      row?.status === 'working' ||
+      row?.dot === 'running' ||
+      row?.bgTask?.state === 'running' ||
+      Number(row?.bgRunningCount || 0) > 0 ||
+      (Array.isArray(row?.bgTasks) && row.bgTasks.some((t) => t && t.state === 'running'))
+    ) {
+      return true;
     }
     if (lastMsg) {
       if (lastMsg.optimistic && Date.now() - Number(lastMsg.optimisticAt || 0) < 90000) {
@@ -3514,6 +3796,10 @@
       row.elsewhere = false;
       row.reason = null;
       row.bgTask = null;
+      row.bgRunningCount = 0;
+      if (Array.isArray(row.bgTasks)) {
+        row.bgTasks = row.bgTasks.map((t) => (t && t.state === 'running' ? { ...t, state: 'cancelled' } : t));
+      }
     }
 
     S.haptic(20);

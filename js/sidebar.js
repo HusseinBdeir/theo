@@ -143,7 +143,8 @@
             ? 'unread'
             : '';
       const rawTitle = String(r.title || S.threadsCache[id]?.title || 'Untitled Session').trim();
-      const bgInfo = r.bgTask?.state === 'running' ? getSessionRunningBgInfo(r) : null;
+      const folder = String(r.folder || S.threadsCache[id]?.folder || '').trim();
+      const bgInfo = getSessionRunningBgInfo(r);
       return {
         id,
         isDraft: false,
@@ -152,6 +153,7 @@
         provKey,
         stCls,
         rawTitle,
+        folder,
         qCnt,
         bgInfo,
         closeLabel: `Close ${rawTitle}`
@@ -166,6 +168,7 @@
         provKey: newDraftProv,
         stCls: '',
         rawTitle: `New ${newDraftProv === 'claude' ? 'Claude' : 'Antigravity'} Session`,
+        folder: String(S.prefs.composerRepoPrefix || '').trim(),
         qCnt: 0,
         bgInfo: null,
         closeLabel: 'Close new session draft'
@@ -219,6 +222,8 @@
       const nextAriaSel = spec.isActive ? 'true' : 'false';
       if (tabEl.getAttribute('aria-selected') !== nextAriaSel) tabEl.setAttribute('aria-selected', nextAriaSel);
       if (tabEl.dataset.sessionProv !== spec.provKey) tabEl.dataset.sessionProv = spec.provKey;
+      const tipTxt = `${spec.rawTitle}${spec.folder ? ` · ${spec.folder}` : ''}`;
+      if (tabEl.dataset.microTip !== tipTxt) tabEl.dataset.microTip = tipTxt;
 
       let dotEl = tabEl.querySelector(':scope > .ide-dot');
       if (spec.stCls) {
@@ -259,9 +264,14 @@
         }
         if (badgesEl.dataset.slotSig !== badgeSig) {
           badgesEl.dataset.slotSig = badgeSig;
+          const bgTip = spec.bgInfo
+            ? spec.bgInfo.count === 1
+              ? '1 live background task · Click to inspect'
+              : `${spec.bgInfo.count} live background tasks · Click to inspect`
+            : '';
           badgesEl.innerHTML =
             (spec.qCnt > 0 ? `<span class="ide-row-pill q-pill tabular">${S.UI_ICONS.question}<span>${spec.qCnt}</span></span>` : '') +
-            (spec.bgInfo ? `<span class="ide-row-pill bg-pill tabular">${spec.bgInfo.isAgent ? S.UI_ICONS.subagent : S.UI_ICONS.terminal}<span>${spec.bgInfo.count}</span></span>` : '');
+            (spec.bgInfo ? `<span class="ide-row-pill bg-pill tabular" data-pin-bg-session="${S.esc(spec.id)}" data-micro-tip="${S.esc(bgTip)}">${spec.bgInfo.isAgent ? S.UI_ICONS.subagent : S.UI_ICONS.terminal}<span>${spec.bgInfo.count}</span></span>` : '');
         }
       }
       if (closeBtn) {
@@ -293,6 +303,25 @@
       }
     } else if (!activeTabEl) {
       lastRenderedActiveTabId = '';
+    }
+
+    const activeSpec = tabSpecs.find((s) => s.isActive) || tabSpecs[tabSpecs.length - 1];
+    const addTabBtn = S.$('ide-editor-tabs-add');
+    if (addTabBtn && activeSpec) {
+      const addProv = activeSpec.provKey === 'claude' ? 'claude' : 'antigravity';
+      addTabBtn.dataset.quickNew = addProv;
+      addTabBtn.setAttribute(
+        'aria-label',
+        addProv === 'claude' ? 'New Claude Code Session Tab' : 'New Antigravity Session Tab'
+      );
+      addTabBtn.dataset.microTip =
+        addProv === 'claude' ? 'New Claude Code session tab' : 'New Antigravity session tab';
+    }
+    S._lastEditorTabSpecs = tabSpecs;
+    const overflowBtn = S.$('btn-editor-tabs-overflow');
+    if (overflowBtn) {
+      const hasOverflow = tabsEl.scrollWidth > tabsEl.clientWidth + 2 || tabSpecs.length >= 2;
+      overflowBtn.hidden = !hasOverflow;
     }
   }
 
@@ -379,11 +408,18 @@
   }
 
   function getSessionRunningBgInfo(r) {
-    if (!r?.id) return null;
+    if (!r?.id || S.isRowHostOffline?.(r)) return null;
     const { runningTasks, runningCount } = S.getSessionBackgroundTasks(r, S.threadsCache[r.id]);
-    if (runningCount <= 0) return null;
-    const isAgent = runningTasks.some((t) => t.kind === 'subagent');
-    return { count: runningCount, isAgent };
+    if (runningCount > 0) {
+      const isAgent = runningTasks.some((t) => t.kind === 'subagent');
+      return { count: runningCount, isAgent };
+    }
+    const noArray = !Array.isArray(r.bgTasks) || r.bgTasks.length === 0;
+    const fallbackCnt = noArray ? Math.max(0, Number(r.bgRunningCount || 0)) : 0;
+    if (fallbackCnt > 0) {
+      return { count: fallbackCnt, isAgent: false };
+    }
+    return null;
   }
 
   function getSessionRunningBgBadge(r) {
@@ -1219,7 +1255,11 @@
           : ''
       }
       ${qCnt > 0 ? `<span class="ide-row-pill q-pill tabular">${S.UI_ICONS.question}<span>${qCnt}</span></span>` : ''}
-      ${bgInfo ? `<span class="ide-row-pill bg-pill tabular">${bgInfo.isAgent ? S.UI_ICONS.subagent : S.UI_ICONS.terminal}<span>${bgInfo.count}</span></span>` : ''}
+      ${
+        bgInfo
+          ? `<span class="ide-row-pill bg-pill tabular" data-pin-bg-session="${S.esc(r.id)}" data-micro-tip="${S.esc(bgInfo.count === 1 ? '1 live background task · Click to inspect' : `${bgInfo.count} live background tasks · Click to inspect`)}">${bgInfo.isAgent ? S.UI_ICONS.subagent : S.UI_ICONS.terminal}<span>${bgInfo.count}</span></span>`
+          : ''
+      }
       <span class="ide-tree-age tabular">${S.esc(age)}</span>
       <span class="ide-tree-acts">
         ${
@@ -1261,7 +1301,7 @@
             ? 'open'
             : 'closed';
     const age = shortSidebarAge(getRowLastWorkedMs(r));
-    const bgInfo = r.bgTask?.state === 'running' ? getSessionRunningBgInfo(r) : null;
+    const bgInfo = getSessionRunningBgInfo(r);
     const bgSig = bgInfo ? `${bgInfo.count}:${bgInfo.isAgent ? 1 : 0}` : '';
     const isArc = Boolean(r.archived);
     const desiredClass = `ide-tree-row${isSelected ? ' active' : ''}${isPinnedRow ? ' is-pinned' : ''}${isOpenTab ? ' is-open-tab' : ''}${r.unread ? ' is-unread' : ''}${isArc ? ' is-archived' : ''}`;
@@ -1616,6 +1656,26 @@
                 ? `<span class="ide-plan-tag" data-micro-tip="${S.esc(email ? `${email} · ${plan}` : plan)}">${S.esc(plan)}</span>`
                 : '';
             const cardTip = email ? `${label}${nick ? ` (${nick})` : ''} · ${email}` : label;
+            const suppressHeaderBadge = Boolean(
+              !isCollapsed &&
+                email &&
+                badgeTxt &&
+                (badgeTxt.toLowerCase() === email.toLowerCase() ||
+                  badgeTxt.toLowerCase() === shortEmail.toLowerCase())
+            );
+            const knownPcts = limits
+              .filter((l) => l && l.known !== false)
+              .map((l) => {
+                const passed = Boolean(l.expired || (l.reset && l.reset <= nowMs));
+                const rawP = l.pct !== undefined ? l.pct : l.usedPercent;
+                return passed ? 0 : Math.min(100, Math.max(0, Math.round(Number(rawP || 0))));
+              });
+            const peakPct = knownPcts.length ? Math.max(...knownPcts) : null;
+            const miniPctCls = peakPct !== null ? (peakPct >= 90 ? 'crit' : peakPct >= 78 ? 'warn' : '') : '';
+            const collapsedPctHtml =
+              isCollapsed && peakPct !== null
+                ? `<span class="ide-acct-mini-pct${miniPctCls ? ` ${miniPctCls}` : ''} tabular">${peakPct}%</span>`
+                : '';
             const subRowHtml = multi
               ? `<div class="ide-acct-sub">${email ? `<span class="ide-acct-email">${S.esc(email)}</span>` : '<span></span>'}<span class="ide-plan-tag">${S.esc(plan)}</span></div>`
               : email
@@ -1628,13 +1688,15 @@
                     <span class="ide-chevron-sm">${isCollapsed ? S.CHEVRON_RIGHT_SVG : S.CHEVRON_DOWN_SVG}</span>
                     <span class="prov-glyph">${S.PROVIDER_ICONS[provKey]}</span>
                     <span class="ide-acct-name">${S.esc(label)}</span>
-                    ${badgeTxt ? `<span class="ide-acct-role${isActive ? ' primary' : ''}">${S.esc(badgeTxt)}</span>` : ''}
+                    ${badgeTxt && !suppressHeaderBadge ? `<span class="ide-acct-role${isActive ? ' primary' : ''}">${S.esc(badgeTxt)}</span>` : ''}
                   </button>
                   <div class="ide-acct-actions">
                     ${
                       !isActive
-                        ? `<button type="button" class="ide-acct-use-btn" data-account-switch="${S.esc(acctId)}" data-account-prov="${provKey}">${S.UI_ICONS.swap}<span>Use</span></button>`
-                        : `${headerPlanHtml}<span class="ide-acct-live-pill"><span class="ide-acct-active-dot"></span><span>Active</span></span>`
+                        ? `${collapsedPctHtml}<button type="button" class="ide-acct-use-btn" data-account-switch="${S.esc(acctId)}" data-account-prov="${provKey}">${S.UI_ICONS.swap}<span>Use</span></button>`
+                        : multi
+                          ? `${collapsedPctHtml}${headerPlanHtml}<span class="ide-acct-live-pill"><span class="ide-acct-active-dot"></span><span>Active</span></span>`
+                          : `${collapsedPctHtml}${headerPlanHtml}`
                     }
                     ${moveBtnsHtml}
                     <button type="button" class="ide-acct-icon-btn" data-account-label="${S.esc(acctId)}" data-account-prov="${provKey}" data-account-nick="${S.esc(nick)}" data-account-surface="sidebar" data-micro-tip="Edit account label" aria-label="Edit account label">${S.UI_ICONS.pencil}</button>
@@ -1716,11 +1778,34 @@
       hideDesktopChip.classList.toggle('active', hideDesktop);
       hideDesktopChip.setAttribute('aria-pressed', hideDesktop ? 'true' : 'false');
       hideDesktopChip.textContent = hideDesktop ? 'Desktop Hidden' : 'Hide Desktop';
+      hideDesktopChip.dataset.microTip = hideDesktop
+        ? 'Show Claude Desktop app chats'
+        : 'Hide Claude Desktop app chats';
     }
     const visibleHostRows = hideDesktop ? rawHostRows.filter((r) => !S.isClaudeDesktopRow(r)) : rawHostRows;
     const allRows = visibleHostRows.filter((r) => !r.archived);
     const archivedRows = visibleHostRows.filter((r) => r.archived);
     if (countEl) countEl.textContent = String(allRows.length);
+
+    let provScope = ['all', 'antigravity', 'claude'].includes(S.prefs.sidebarProvider)
+      ? S.prefs.sidebarProvider
+      : 'all';
+    const filterSourceRows = S.prefs.sidebarFilter === 'archived' ? archivedRows : allRows;
+    const provCountAll = filterSourceRows.length;
+    const provCountAgy = filterSourceRows.filter((r) => (r.provider === 'claude' ? 'claude' : 'antigravity') === 'antigravity').length;
+    const provCountClaude = filterSourceRows.filter((r) => r.provider === 'claude').length;
+    if (provScope === 'antigravity' && provCountAgy === 0) provScope = 'all';
+    if (provScope === 'claude' && provCountClaude === 0) provScope = 'all';
+    const provBarEl = S.$('ide-provider-bar');
+    if (provBarEl) provBarEl.hidden = provCountAgy === 0 || provCountClaude === 0;
+    if (S.$('ide-prov-count-all')) S.$('ide-prov-count-all').textContent = String(provCountAll);
+    if (S.$('ide-prov-count-agy')) S.$('ide-prov-count-agy').textContent = String(provCountAgy);
+    if (S.$('ide-prov-count-claude')) S.$('ide-prov-count-claude').textContent = String(provCountClaude);
+    document.querySelectorAll('#ide-provider-bar .ide-provider-tab[data-side-prov]').forEach((btn) => {
+      const on = btn.dataset.sideProv === provScope;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
 
     // 3A. Sidebar Interactive QUESTIONS Section (VS Code Hub Parity)
     if (secQuestionsEl && sidebarQuestionsEl) {
@@ -1822,34 +1907,43 @@
         S.saveJson(S.STORAGE_KEYS.PREFS, S.prefs);
       }
       const bgEntries = [];
+      let cappedExtraRunning = 0;
       if (pinnedRow) {
-        const { allTasks } = S.getSessionBackgroundTasks(pinnedRow, S.threadsCache[pinnedRow.id]);
+        const { allTasks, runningCount } = S.getSessionBackgroundTasks(pinnedRow, S.threadsCache[pinnedRow.id]);
         for (const t of allTasks.slice(0, 12)) {
           bgEntries.push({ row: pinnedRow, task: t });
         }
+        const shownRun = allTasks.slice(0, 12).filter((t) => t.state === 'running').length;
+        cappedExtraRunning = Math.max(0, runningCount - shownRun);
       } else {
         const seenEntryKeys = new Set();
         for (const r of allRows) {
-          const { allTasks } = S.getSessionBackgroundTasks(r, S.threadsCache[r.id]);
+          if (S.isRowHostOffline?.(r)) continue;
+          const rProv = r.provider === 'claude' ? 'claude' : 'antigravity';
+          if (provScope !== 'all' && rProv !== provScope) continue;
+          const { allTasks, runningCount } = S.getSessionBackgroundTasks(r, S.threadsCache[r.id]);
+          let rowRunningSeen = 0;
           for (const t of allTasks) {
             const isActiveTask =
               t.state === 'running' || t.state === 'stalled' || t.state === 'interrupted';
-            const isSelectedSubagent = r.id === curSelected && t.kind === 'subagent';
-            if (isActiveTask || isSelectedSubagent) {
+            if (isActiveTask) {
               const eKey = `${r.id}:${t.id}`;
               if (!seenEntryKeys.has(eKey)) {
                 seenEntryKeys.add(eKey);
                 bgEntries.push({ row: r, task: t });
+                if (t.state === 'running') rowRunningSeen++;
               }
             }
           }
+          cappedExtraRunning += Math.max(0, runningCount - rowRunningSeen);
         }
       }
-      const runningBgCount = bgEntries.filter((e) => e.task.state === 'running').length;
+      const runningBgCount =
+        bgEntries.filter((e) => e.task.state === 'running').length + cappedExtraRunning;
       if (bgHeadingEl) {
         bgHeadingEl.textContent = pinnedRow
           ? `PINNED · ${String(pinnedRow.title || 'Session').slice(0, 14)}`
-          : 'SIDE AGENTS & TASKS';
+          : 'BACKGROUND TASKS';
       }
       if (bgUnpinBtn) bgUnpinBtn.hidden = !pinnedRow;
       if (bgStopAllBtn) bgStopAllBtn.hidden = runningBgCount === 0;
@@ -1904,28 +1998,41 @@
       }
     }
 
-    document.querySelectorAll('#ide-sidebar-filters .ide-fchip[data-side-filter]').forEach((btn) => {
-      btn.classList.toggle('active', btn.dataset.sideFilter === S.prefs.sidebarFilter);
+    const provActiveRows = allRows.filter((r) => {
+      const rProv = r.provider === 'claude' ? 'claude' : 'antigravity';
+      return provScope === 'all' || rProv === provScope;
     });
-
-    let provScope = ['all', 'antigravity', 'claude'].includes(S.prefs.sidebarProvider)
-      ? S.prefs.sidebarProvider
-      : 'all';
-    const filterSourceRows = S.prefs.sidebarFilter === 'archived' ? archivedRows : allRows;
-    const provCountAll = filterSourceRows.length;
-    const provCountAgy = filterSourceRows.filter((r) => (r.provider === 'claude' ? 'claude' : 'antigravity') === 'antigravity').length;
-    const provCountClaude = filterSourceRows.filter((r) => r.provider === 'claude').length;
-    if (provScope === 'antigravity' && provCountAgy === 0) provScope = 'all';
-    if (provScope === 'claude' && provCountClaude === 0) provScope = 'all';
-    const provBarEl = S.$('ide-provider-bar');
-    if (provBarEl) provBarEl.hidden = provCountAgy === 0 || provCountClaude === 0;
-    if (S.$('ide-prov-count-all')) S.$('ide-prov-count-all').textContent = String(provCountAll);
-    if (S.$('ide-prov-count-agy')) S.$('ide-prov-count-agy').textContent = String(provCountAgy);
-    if (S.$('ide-prov-count-claude')) S.$('ide-prov-count-claude').textContent = String(provCountClaude);
-    document.querySelectorAll('#ide-provider-bar .ide-provider-tab[data-side-prov]').forEach((btn) => {
-      const on = btn.dataset.sideProv === provScope;
-      btn.classList.toggle('active', on);
-      btn.setAttribute('aria-selected', on ? 'true' : 'false');
+    const isRowWorking = (r) =>
+      !S.isRowHostOffline?.(r) && (r.status === 'working' || S.isSessionActivelyRunning(r.id));
+    const isRowNeedsInput = (r) => r.status === 'waiting' || getSessionPendingQuestionCount(r) > 0;
+    const filterChipCounts = {
+      working: provActiveRows.filter(isRowWorking).length,
+      needs_input: provActiveRows.filter(isRowNeedsInput).length,
+      unread: provActiveRows.filter((r) => Boolean(r.unread)).length
+    };
+    const FILTER_CHIP_LABELS = {
+      all: 'All',
+      working: 'Running',
+      needs_input: 'Input',
+      unread: 'Unread',
+      open: 'Open',
+      archived: 'Archived'
+    };
+    document.querySelectorAll('#ide-sidebar-filters .ide-fchip[data-side-filter]').forEach((btn) => {
+      const key = btn.dataset.sideFilter || '';
+      btn.classList.toggle('active', key === S.prefs.sidebarFilter);
+      const baseLbl = FILTER_CHIP_LABELS[key];
+      if (!baseLbl) return;
+      const cnt = Number(filterChipCounts[key] || 0);
+      const cntTxt = cnt > 99 ? '99' : String(cnt);
+      const wantHtml =
+        cnt > 0
+          ? `<span>${baseLbl}</span><span class="ide-fchip-cnt tabular">${cntTxt}</span>`
+          : `<span>${baseLbl}</span>`;
+      if (btn.dataset.chipRenderSig !== `${baseLbl}:${cntTxt}:${cnt > 0 ? 1 : 0}`) {
+        btn.dataset.chipRenderSig = `${baseLbl}:${cntTxt}:${cnt > 0 ? 1 : 0}`;
+        btn.innerHTML = wantHtml;
+      }
     });
 
     const groups = Array.isArray(S.appState?.groups) ? S.appState.groups : [];
@@ -1937,8 +2044,8 @@
     const rawFiltered = filterSourceRows.filter((r) => {
       const rowProv = r.provider === 'claude' ? 'claude' : 'antigravity';
       if (provScope !== 'all' && rowProv !== provScope) return false;
-      if (S.prefs.sidebarFilter === 'working' && r.status !== 'working') return false;
-      if (S.prefs.sidebarFilter === 'needs_input' && r.status !== 'waiting') return false;
+      if (S.prefs.sidebarFilter === 'working' && !isRowWorking(r)) return false;
+      if (S.prefs.sidebarFilter === 'needs_input' && !isRowNeedsInput(r)) return false;
       if (S.prefs.sidebarFilter === 'unread' && !r.unread) return false;
       if (S.prefs.sidebarFilter === 'open' && !isSessionOpenTab(r)) return false;
       if (q) {
@@ -2642,6 +2749,10 @@
       r.elsewhere = false;
       r.reason = null;
       r.bgTask = null;
+      r.bgRunningCount = 0;
+      if (Array.isArray(r.bgTasks)) {
+        r.bgTasks = r.bgTasks.map((t) => (t && t.state === 'running' ? { ...t, state: 'cancelled' } : t));
+      }
     }
   }
 
@@ -2660,6 +2771,7 @@
     exitNewSessionModeToReply,
     finishIdeInlineRename,
     flushDeferredIdeTreeOrder,
+    getOpenEditorTabSpecs: () => (Array.isArray(S._lastEditorTabSpecs) ? S._lastEditorTabSpecs : []),
     getRowLastWorkedMs,
     isNewSessionMode,
     isSessionOpenTab,
